@@ -71,7 +71,6 @@ entity/field metadata ──► resolveDefaultPage(entity, role)   [L1, pure]
 {
   "id": "pg_order_form", "entity": "Order", "type": "form",
   "base": "auto",                      // L1 default this overlays
-  "componentVersion": "1",             // catalog version pin (ADR-009)
   "root": {                            // component tree (L3)
     "type": "FormLayout", "props": { "columns": 2 },
     "children": [
@@ -89,8 +88,10 @@ entity/field metadata ──► resolveDefaultPage(entity, role)   [L1, pure]
 ```
 
 Rules: every node = `{type, version?, props, children?, bind?, visibility?}`; `props`
-must validate against the component's JSON Schema at save and publish time; unknown
-component/version = build error in builder, safe fallback in runtime.
+must validate against the component's JSON Schema at save and publish time; a node's
+`version` pins the catalog component it renders — the builder writes it explicitly on
+save, and a missing `version` resolves to the catalog's current stable but is rejected
+at publish. Unknown component/version = build error in builder, safe fallback in runtime.
 
 ## 5. Default Resolver Rules (L1)
 
@@ -162,10 +163,10 @@ form defaults. Role changes re-resolve defaults (L1 is role-parameterized).
 ## 10. Tenant Onboarding Flow
 
 Platform-admin driven (no self-serve billing in Phase 2): create tenant → bootstrap
-realm/client assignment (per ADR-007-era Keycloak config; realm strategy = Open
-Question Q4 in PHASE-0 spec) → first admin user → create first app → land in entity
-builder. Target: < 5 minutes platform-admin time, fully scripted in API terms for
-E2E tests.
+realm/client assignment (Keycloak per the Phase 0 compose stack; realm strategy =
+Open Question Q1 in the PHASE-0 spec) → first admin user → create first app → land
+in entity builder. Target: < 5 minutes platform-admin time, fully scripted in API
+terms for E2E tests.
 
 ## 11. Testing Standards
 

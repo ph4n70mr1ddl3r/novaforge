@@ -118,7 +118,7 @@ CLI/tools later): request context, error model, small value types.
    `record Context(String tenantId, String actorId)`; `set/current/clear`; `current()`
    returns `Optional`. (Implemented in spike — reuse.)
 2. `com.novaforge.common.error.ErrorCode` — sealed interface + enum
-   `PlatformErrorCode(String code, HttpStatus-ish int httpStatus)` seed set:
+   `PlatformErrorCode(String code, int httpStatus)` seed set:
    `VALIDATION_FAILED(4000,400)`, `NOT_FOUND(4004,404)`, `CONFLICT_VERSION(4090,409)`,
    `FORBIDDEN(4003,403)`, `TENANT_MISSING(4001,400)`, `INTERNAL(5000,500)`.
 3. `com.novaforge.common.error.ProblemErrors` — record carrying

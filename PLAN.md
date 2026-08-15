@@ -12,7 +12,7 @@
 |---|--------|------------------|
 | P1 | **Data Modeling** | Entities, 20+ field types, relationships (lookup, master-detail, many-to-many), validations, uniqueness, indexes, audit trail, soft delete |
 | P2 | **UI Builder** | Drag-and-drop pages: forms, lists, dashboards, wizards, tabs; conditional visibility; mobile-responsive layouts |
-| P3 | **Business Logic** | Validation rules, formula fields, roll-up summaries, sandboxed server-side scripts, before/after event hooks |
+| P3 | **Business Logic** | Validation rules, formula fields, roll-up summaries, declarative event hooks (flow-IR primitives per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md)), sandboxed scripts as escape hatch only |
 | P4 | **Workflow & Automation** | BPMN processes, document state machines (Draft → Posted), approval chains, scheduled jobs, escalation, SLAs |
 | P5 | **Reporting & Analytics** | Report builder (grouping, pivots, charts), dashboards, scheduled exports, drill-down to records |
 | P6 | **Security & Tenancy** | Multi-tenancy, RBAC + record-level + field-level permissions, data segregation, audit log, OAuth2/OIDC SSO |
@@ -87,7 +87,7 @@ Shared libraries (no separate service): `metadata-model`, `security-context`, `k
 | Scripting | GraalVM JS in sandbox with CPU/memory/IO limits |
 | Resilience | Resilience4j (circuit breakers, retries, bulkheads) |
 | API docs | OpenAPI 3 generated per service, aggregated at gateway |
-| Frontend | React 19 + TypeScript; metadata-driven renderer; builder on React-Flow/agnostic-dnd |
+| Frontend | React 19.2.x + TypeScript; metadata-driven renderer (layered per [ADR-009](./docs/adr/ADR-009-declarative-ui.md)); builder on React-Flow/agnostic-dnd |
 | Observability | Micrometer + Prometheus + Grafana, OpenTelemetry traces, Loki logs |
 | Build/CI | Maven multi-module, GitHub Actions, Testcontainers 2 |
 | Containers | Podman + Buildah (rootless, daemonless), OCI images |
@@ -120,7 +120,7 @@ Shared libraries (no separate service): `metadata-model`, `security-context`, `k
 ### Phase 3 — Business Logic Engine (4–5 weeks)
 - Declarative-first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md): flow IR + closed primitive set (setField, createRecord, publishEvent, callConnector, branch, iterate, requestApproval, transitionState); scripts demoted to escape hatch, script-ratio tracked
 - Validation rules, formula fields, roll-up summaries
-- Event hooks → sandboxed scripts (before/after save, on delete, on query)
+- Event hooks: flow-IR step graphs built from the primitive set (before/after save, on delete, on query); sandboxed scripts only where primitives cannot express the logic
 - Kafka domain events emitted from Data Runtime
 - **Exit:** order totals computed, inventory reserved via hook, no code
 

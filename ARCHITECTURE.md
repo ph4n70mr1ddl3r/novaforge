@@ -73,10 +73,11 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
   - `GET /api/runtime/{entity}?filter=...&sort=...&page=...` (structured query DSL, not raw SQL)
   - `POST /api/runtime/{entity}/query` for complex queries (aggregations)
   - `POST /api/runtime/batch` for bulk ops
-- Responsibilities per request: resolve metadata → authorize (object/field/record) → apply defaults & server-side defaults → run validation rules → execute scripts (sync hooks via Script Engine) → persist with optimistic locking → emit Kafka event → return shaped projection (respecting field-level security).
+- Responsibilities per request: resolve metadata → authorize (object/field/record) → apply defaults & server-side defaults → run validation rules → apply hooks (flow-IR primitives first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md); sandboxed scripts only as escape hatch via Script Engine) → persist with optimistic locking → emit Kafka event → return shaped projection (respecting field-level security).
 - Record locking: `version` int, HTTP 409 on conflict; document-level locks for ERP posting flows.
 
 ### 2.5 Script Engine
+- **Role per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md): escape hatch only** — sync hooks run flow-IR primitives (compiled at publish); scripts are written when primitives cannot express the logic, and their usage is tracked (script-ratio KPI).
 - GraalVM polyglot (JS), `Context` per execution with:
   - CPU-time and heap caps, statement/loop watchdog
   - No host I/O; an explicit whitelisted API surface (`$record`, `$metadata.query`, `$http` only inside connector sandbox, `$log`)
@@ -237,14 +238,15 @@ spring_erp/
 │   └── scheduler-service/
 ├── frontend/
 │   ├── builder-ui/               # React design-time
-│   └── runtime-ui/               # metadata renderer + shell
+│   ├── runtime-ui/               # metadata renderer + shell
+│   └── shared/                   # page-model types, expression runtime, registry
 ├── deploy/
 │   ├── compose/                  # podman-compose: lean local stack (PG, Redis,
 │   │                             #   Kafka, Keycloak, single service)
 │   ├── kind/                     # Kind-on-Podman cluster config (full stack)
 │   ├── helm/                     # per-service charts + umbrella
 │   └── k8s-base/                 # shared manifests (also `podman kube play`-able)
-└── docs/adr/                     # architecture decision records
+└── docs/{adr,specs}/              # architecture decision records, phase specs
 ```
 
 ## 8. ADR Log (decide early, record why)
