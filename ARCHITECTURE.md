@@ -66,7 +66,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 ### 2.3 Metadata Service (design-time)
 - Owns: `AppDefinition`, `EntityDefinition`, `FieldDefinition`, `RelationshipDefinition`, `PageDefinition`, `RuleDefinition`, `WorkflowDefinition`, `ReportDefinition`, `PermissionSet`, plus app-scoped settings definitions (sequences, currencies, localization, shared enums — the Settings branch of PLAN.md §2; sequence *execution* stays with the Data Runtime per PLAN.md §3).
 - Validates definitions on save (schema validation + referential integrity, e.g., formula references exist).
-- On publish: bumps version, writes to `metadata_versions`, invalidates caches (`metadata.invalidated` on the Kafka spine; until Kafka lands in Phase 3, an interim transport — Redis pub/sub or similar — is pinned by the Phase 1 spec, PLAN.md §5), triggers storage materializer (see §4).
+- On publish: bumps version, writes to `metadata_versions`, emits `metadata.published` on the Kafka spine (cache invalidation and the §4 storage materializer both react to this one event; until Kafka lands in Phase 3, an interim transport — Redis pub/sub or similar — is pinned by the Phase 1 spec, PLAN.md §5).
 - API: REST + async import/export of app ZIP (JSON definitions) for promotion.
 
 ### 2.4 Data Runtime Service (the heart)
@@ -85,7 +85,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
   - No host I/O; an explicit whitelisted API surface (`$record`, `$data.query` (the Data Runtime query API under the caller's authorization, §5 item 4 — scripts cannot bypass the single data path), `$http` only inside connector sandbox, `$log`)
   - Warm context pool per tenant app version
 - The **expression DSL** (formulas, validation rules, flow guards per ADR-008; UI bindings per ADR-009) is **not evaluated here**: it is a pure, deterministic language served by the shared `expression-dsl` library (§7), used in-process by the Metadata Service (compile-checks, Phase 2) and the Data Runtime (write-path evaluation, Phase 3) — no sandbox needed. This service exists solely for GraalJS escape-hatch scripts.
-- Script failure policy: `beforeSave`/`beforeDelete` failure = abort transaction; `afterSave`/`afterDelete` failure = retry via Kafka (idempotency required).
+- Hook failure policy (flow-IR graphs and escape-hatch scripts alike): `beforeSave`/`beforeDelete` failure = abort transaction; `afterSave`/`afterDelete` failure = retry via Kafka (idempotency required).
 
 ### 2.6 Workflow Service
 - Flowable 7 embedded; process definitions authored as BPMN XML by the designer UI.
@@ -104,7 +104,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 - **Notification Service:** templates (entity/field tokens), channel preferences, inbox + email via SMTP/SES.
 - **Integration Service:** connector runtime (outbound REST with mapping/retry/circuit-breaker, inbound webhook endpoints with HMAC validation), all deliveries idempotent with DLQ.
 - **Audit Service:** Kafka consumer → append-only store (Postgres partitioned by month; option to offload cold data to S3/Parquet later).
-- **Scheduler Service:** DB-backed cron registry + ShedLock-style distributed locks; triggers scheduled flows and scripts (ADR-008), reports, workflow timers.
+- **Scheduler Service:** DB-backed cron registry + ShedLock-style distributed locks; triggers scheduled flows and scripts (ADR-008), scheduled reports, and scheduled workflow process starts — in-process BPMN timers (escalations and the like) stay with embedded Flowable (§2.6).
 
 ---
 
@@ -185,6 +185,7 @@ CREATE INDEX ON rec_journal_entry (tenant_id, entry_date DESC);
 - Materializer listens to `metadata.published` and creates/refreshes projections — no DDL on the hot path, DDL happens at publish time only.
 - Postgres **RLS** (`tenant_id = current_setting('app.tenant')`) as defense-in-depth against tenant leakage.
 - App-layer type enforcement: decimal precision/scale is validated in the Data Runtime (BigDecimal always).
+- The whole strategy sits behind the Data Runtime's `storage` module boundary (§7) — the storage SPI that lets the strategy evolve without touching the engine or API layers (PLAN.md §6).
 
 **Money rule:** `decimal(18,4)` minimum storage; all arithmetic via `BigDecimal` with banker's rounding config per currency. Never doubles, anywhere.
 

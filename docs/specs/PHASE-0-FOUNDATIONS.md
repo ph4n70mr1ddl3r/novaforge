@@ -172,7 +172,11 @@ spring:
 ```
 
 The `novaforge.upstreams.metadata-service` property defaults to
-`http://localhost:8081` in the local profile.
+`http://localhost:8081` in the local profile. Two named Spring profiles are
+defined in Phase 0: `local` — the defaults above, for running the JVM services
+directly on the laptop against the §7 compose infrastructure — and
+`integration` — used by the Keycloak-backed tests of §6.3, which obtain real
+tokens from the compose realm.
 
 Security config: stateless resource server, issuer-uri from
 `novaforge.auth.issuer-uri` property (defaults to local Keycloak

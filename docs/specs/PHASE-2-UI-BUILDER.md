@@ -147,11 +147,12 @@ flow from field metadata into form defaults. Role changes re-resolve defaults
 ## 7. Expression DSL Sharing (with ADR-008)
 
 - One grammar for validations, formulas, flow guards, UI `visibility`/`required`/
-  `disabled` bindings (ADR-008 #3).
+  `read-only` bindings (ADR-008 #3 — `read-only` per ADR-009 #3 and the field
+  metadata `readonly` flag, ARCHITECTURE.md §3).
 - Phase 2 ships expression-DSL v1 as a shared asset: the TS evaluator for renderer
   bindings plus a JVM reference parser/evaluator in a shared platform lib
-  (`platform/libs/expression-dsl`, ARCHITECTURE.md §7 — the same engine the Data
-  Runtime evaluates in the Phase 3 write path), wired into the Metadata Service so
+  (`platform/libs/expression-dsl`, ARCHITECTURE.md §7 — the same engine behind
+  the Data Runtime's Phase 3 write-path evaluation), wired into the Metadata Service so
   expressions are compile-checked at save/publish (like props schemas). Server-side
   evaluation of expression semantics in the write path (validation rules, formulas)
   arrives in Phase 3 — until then the write path is enforced by the Phase 1 field
