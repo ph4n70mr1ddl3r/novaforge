@@ -233,9 +233,11 @@ containers.
 
 - Every service: actuator + `micrometer-registry-prometheus` endpoint exposure
   (`health,info,prometheus`); build-info goal enabled.
-- Tracing: start with Micrometer tracing (bridge) + OTLP exporter span naming;
-  W3C traceparent propagation through gateway → services verified by seeing a trace id
-  in both services' logs for one proxied request. Full OTel collector deferred (Q2).
+- Tracing: Micrometer tracing (bridge) with W3C traceparent propagated gateway →
+  services; acceptance is the same trace id in both services' logs for one proxied
+  request. Phase 0 ships no tracing backend (the §7 stack has none) — OTLP export
+  activates when a backend lands (Q2; expected alongside Phase 3 Kafka tracing).
+  Full OTel collector deferred (Q2).
 - Grafana dashboard v0: one row per service — availability (up), HTTP p95, JVM heap.
 
 ## 9. CI (GitHub Actions)
@@ -287,9 +289,10 @@ Q1 gates T4–T5; Q2 gates T8; Q3–Q4 are scheduling calls to close by the end 
 - **Q1 — Keycloak realm strategy:** single realm + tenant claim vs realm-per-tenant
   (ARCHITECTURE.md §2.2 flags this as a Phase 0 decision). *Recommendation: single
   realm — simpler at our scale; revisit at true tenant isolation requirements.*
-- **Q2 — Tracing backend:** Micrometer+OTLP to Grafana Tempo now, vs full OTel
-  collector later. *Recommendation: bridge now; collector when Kafka tracing (Phase 3)
-  demands header propagation.*
+- **Q2 — Tracing backend:** Grafana Tempo (OTLP) in the compose stack now vs full OTel
+  collector later — either way Phase 0 verifies tracing via log trace-id correlation
+  only (§8). *Recommendation: bridge + log correlation now; choose the backend when
+  Kafka tracing (Phase 3) demands header propagation.*
 - **Q3 — Kind-on-Podman cluster in Phase 0 or Phase 1:** compose covers the exit
   criteria; cluster work could slip if time-pressed. *Recommendation: slip to Phase 1
   start; keep compose as the lean path.*

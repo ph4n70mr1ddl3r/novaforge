@@ -73,7 +73,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
   - `GET /api/v1/runtime/{entity}?filter=...&sort=...&page=...` (structured query DSL, not raw SQL)
   - `POST /api/v1/runtime/{entity}/query` for complex queries (aggregations)
   - `POST /api/v1/runtime/batch` for bulk ops
-- Responsibilities per request: resolve metadata → authorize (object/field/record) → apply field defaults → run validation rules → apply hooks (flow-IR primitives first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md); sandboxed scripts only as escape hatch via Script Engine) → persist with optimistic locking → emit Kafka event → return shaped projection (respecting field-level security).
+- Responsibilities per request: resolve metadata → authorize (object/field/record) → apply field defaults → evaluate formula/roll-up fields (§3) → run validation rules → apply hooks (flow-IR primitives first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md); sandboxed scripts only as escape hatch via Script Engine) → persist with optimistic locking → emit Kafka event → return shaped projection (respecting field-level security).
 - Record locking: `version` int, HTTP 409 on conflict; document-level locks for ERP posting flows.
 
 ### 2.5 Script Engine
@@ -138,7 +138,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 
 Field types (v1): text, longText, richText, enum, boolean, int, long, **decimal(p,s)**, date, datetime, time, uuid, email, phone, url, json, lookup, child, m2m, file, money(currency-aware).
 
-Fields may carry an optional `group` label; default detail pages section on it (no group → a single default section — see the Phase 2 spec's default-resolver rules).
+Fields may carry an optional `group` label; default detail pages section on it (no group → a single default section — see the Phase 2 spec's default-resolver rules). Common field attributes: `required`, `readonly`, `length`, `precision`/`scale`, `group`, `formula` (evaluated at write time, §2.4). Entities may likewise carry an optional `module` label; app navigation groups entities by it (no module → a default group, mirroring field groups).
 
 ---
 
@@ -253,6 +253,8 @@ spring_erp/
 │   └── k8s-base/                 # shared manifests (also `podman kube play`-able)
 └── docs/{adr,specs}/              # architecture decision records, phase specs
 ```
+
+No `identity/` module exists: Identity is a *deployed* Keycloak (realm/client configuration under `deploy/`, per PLAN.md §3), not bespoke service code; tenant/role administration data lives in the platform DB (§2.2, ADR-002).
 
 ## 8. ADR Log (decide early, record why)
 

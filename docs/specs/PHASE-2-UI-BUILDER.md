@@ -94,7 +94,8 @@ save, and a missing `version` resolves to the catalog's current stable but is re
 at publish. Unknown component/version = build error in builder, safe fallback in runtime.
 `actions` entries follow the same `{type, props?}` shape from a closed declarative set
 (rung 2 of ADR-009's escape-hatch ladder) — no scripts. v1 action set: `save`,
-`cancel`, `delete`, `openPage`; the set grows only via versioned platform features
+`cancel`, `delete`, `openPage` (`runFlow` from ADR-009's action ladder joins when the
+flow engine lands in Phase 3); the set grows only via versioned platform features
 (same policy as ADR-008's primitives). Per ADR-009 L2, the *persisted*
 artifact stores deltas against the L1 default; the concrete delta encoding is Q2 (§13),
 decided at T2 — the example above shows the overlay's logical content, not its storage
@@ -206,7 +207,7 @@ terms for E2E tests.
 | # | Task | Content | Acceptance criteria |
 |---|---|---|---|
 | T1 | FE workspace + stack pin | pnpm workspace, Vite, React 19.2.x, TS strict, CI lint/test, form-library decision (Q1) | Scaffold builds in CI; decision recorded |
-| T2 | Page model + registry core | TS types for §4, JSON Schema validation, lazy component registry, version pinning | Invalid props rejected at save; unknown version → fallback + warning |
+| T2 | Page model + registry core | TS types for §4, JSON Schema validation, lazy component registry, version pinning, overlay-format decision (Q2, §13) | Invalid props rejected at save; unknown version → fallback + warning; Q2 decision recorded |
 | T3 | v1 component catalog | §6.3 components with props schemas + Playwright stories | Storybook-style gallery green incl. axe |
 | T4 | Expression runtime v1 | Parser/evaluator for pure expressions in TS + JVM reference engine (compile-checks expressions at Metadata-Service save/publish); shared conformance fixtures across both | 100% shared-fixture parity; invalid expression rejected at save/publish |
 | T5 | Default resolver (L1) | §5 rules incl. role parameterization | Golden-file suite green |

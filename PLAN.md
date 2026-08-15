@@ -57,7 +57,7 @@ Tenant
 | Service | Responsibility |
 |---------|----------------|
 | **API Gateway** (Spring Cloud Gateway) | Routing, auth token relay, rate limiting, CORS |
-| **Identity Service** | OIDC (Keycloak), users, tenants, roles, SSO federation |
+| **Identity Service** | OIDC via deployed Keycloak — no bespoke service module (ARCHITECTURE.md §7); users, tenants, roles, SSO federation |
 | **Metadata Service** | CRUD of app definitions: entities, fields, pages, rules; validation of definitions; versioning & change-sets |
 | **Data Runtime Service** | Generic record APIs driven by metadata; permission enforcement; query engine (filter/sort/page/aggregate); sequences; audit emission; in-process expression & field-validation engine (ADR-008 #3) |
 | **Script Engine Service** | Sandboxed execution of user scripts (escape hatch per ADR-008); resource limits, warm pools — the expression DSL runs in-process in the Data Runtime, not here (ADR-008 #3) |
@@ -154,6 +154,7 @@ Build on the platform itself:
 ### Phase 8 — App Lifecycle & Hardening (4–6 weeks)
 - App packaging/versioning, change-set promotion dev→staging→prod, rollback
 - Templates & marketplace concept; performance & load testing (target: p95 < 300 ms list queries at 1M rows/tenant)
+- i18n/localization editor for translation-ready metadata (deferred from Phase 2 — PHASE-2 spec Q3)
 - Security review, pen test, DR/backup strategy
 
 > **Total: ~8–10 months with a small senior team** (see §7). Phases 1–3 are the make-or-break core. Phases 2–6 can partially overlap once the core stabilizes.
