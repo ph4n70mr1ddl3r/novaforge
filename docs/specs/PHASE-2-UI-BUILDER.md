@@ -115,7 +115,7 @@ Field type → widget mapping (v1):
 | enum | `FieldSelect` |
 | boolean | `FieldSwitch` |
 | int / long / decimal / money | `FieldNumber` (locale-aware, money shows currency) |
-| date / datetime / time | `FieldDate` family |
+| date / datetime / time | `FieldDate` (one component; date/datetime/time as prop modes) |
 | uuid | readonly on form, shown on detail |
 | lookup | `FieldLookup` (search-as-you-type via query DSL, min 2 chars) |
 | child | `RelatedList` (inline-editable grid, cascade rules honored) |

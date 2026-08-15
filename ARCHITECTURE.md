@@ -42,6 +42,8 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
                                    └───────────┘   └─────────────┘
 ```
 
+*Sketch — the File and Scheduler services (§2.8) are omitted for readability.*
+
 **Principles**
 1. **Single write path:** all record writes go through Data Runtime — it enforces metadata, permissions, validations, and emits events. Nothing writes to tenant tables directly.
 2. **Metadata is cached aggressively** (Redis + in-memory, version-keyed) — every request consults hot metadata.
@@ -62,7 +64,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 - Recommendation: Keycloak handles *authentication only*; Data Runtime handles *authorization* (roles stored in platform DB) — simpler than syncing dynamic roles into Keycloak.
 
 ### 2.3 Metadata Service (design-time)
-- Owns: `AppDefinition`, `EntityDefinition`, `FieldDefinition`, `RelationshipDefinition`, `PageDefinition`, `RuleDefinition`, `WorkflowDefinition`, `ReportDefinition`, `PermissionSet`.
+- Owns: `AppDefinition`, `EntityDefinition`, `FieldDefinition`, `RelationshipDefinition`, `PageDefinition`, `RuleDefinition`, `WorkflowDefinition`, `ReportDefinition`, `PermissionSet`, plus app-scoped settings definitions (sequences, currencies, localization, shared enums — the Settings branch of PLAN.md §2; sequence *execution* stays with the Data Runtime per PLAN.md §3).
 - Validates definitions on save (schema validation + referential integrity, e.g., formula references exist).
 - On publish: bumps version, writes to `metadata_versions`, invalidates caches (`metadata.invalidated` on the Kafka spine; until Kafka lands in Phase 3, an interim transport — Redis pub/sub or similar — is pinned by the Phase 1 spec, PLAN.md §5), triggers storage materializer (see §4).
 - API: REST + async import/export of app ZIP (JSON definitions) for promotion.
@@ -80,7 +82,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 - **Role per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md): escape hatch only** — sync hooks run flow-IR primitives (compiled at publish); scripts are written when primitives cannot express the logic, and their usage is tracked (script-ratio KPI).
 - GraalVM polyglot (JS), `Context` per execution with:
   - CPU-time and heap caps, statement/loop watchdog
-  - No host I/O; an explicit whitelisted API surface (`$record`, `$metadata.query`, `$http` only inside connector sandbox, `$log`)
+  - No host I/O; an explicit whitelisted API surface (`$record`, `$data.query` (the Data Runtime query API under the caller's authorization, §5.4 — scripts cannot bypass the single data path), `$http` only inside connector sandbox, `$log`)
   - Warm context pool per tenant app version
 - The **expression DSL** (formulas, validation rules, flow guards per ADR-008; UI bindings per ADR-009) is **not evaluated here**: it is a pure, deterministic language served by the shared `expression-dsl` library (§7), used in-process by the Metadata Service (compile-checks, Phase 2) and the Data Runtime (write-path evaluation, Phase 3) — no sandbox needed. This service exists solely for GraalJS escape-hatch scripts.
 - Script failure policy: `beforeSave` failure = abort transaction; `afterSave` failure = retry via Kafka (idempotency required).
@@ -93,7 +95,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 
 ### 2.7 Reporting Service
 - Compiles report definitions into Query DSL calls (never raw SQL), supports: filters, group-by, aggregates, pivot, drill-through links.
-- Large exports run async (scheduler) streaming to file service.
+- Large exports run async (scheduler) streaming to file service (File Service lands in Phase 6 — direct downloads until then; PLAN.md §5).
 - Chart payloads shaped for the frontend chart lib (ECharts).
 
 ### 2.8 Other services
@@ -182,7 +184,7 @@ CREATE INDEX ON rec_journal_entry (tenant_id, entry_date DESC);
 - Base table (`rec_records`) is the source of truth for generic ops; per-entity tables are **projection views** (or generated tables) for query performance on indexed fields.
 - Materializer listens to `metadata.published` and creates/refreshes projections — no DDL on the hot path, DDL happens at publish time only.
 - Postgres **RLS** (`tenant_id = current_setting('app.tenant')`) as defense-in-depth against tenant leakage.
-- App-layer type enforcement decimal/precision is validated in Data Runtime (BigDecimal always).
+- App-layer type enforcement: decimal precision/scale is validated in the Data Runtime (BigDecimal always).
 
 **Money rule:** `decimal(18,4)` minimum storage; all arithmetic via `BigDecimal` with banker's rounding config per currency. Never doubles, anywhere.
 

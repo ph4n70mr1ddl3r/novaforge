@@ -50,6 +50,10 @@ unreadable; these justify the escape hatch.
 
 - Phase 3 sequencing inverts: build the primitive engine + flow IR first; script
   engine work moves after, sized to actual escape-hatch demand.
+- Primitives backed by later-phase services — `requestApproval`/`transitionState`
+  (Workflow Service, Phase 4) and `callConnector` (Integration Service, Phase 6) —
+  are fixed in the v1 grammar; their execution targets activate as those services
+  land (PLAN.md §5).
 - The expression language and flow IR become critical-path platform assets — they
   need their own JSON Schema, versioning, and conformance tests (shared with the
   client, per ADR-009).

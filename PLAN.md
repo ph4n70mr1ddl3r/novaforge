@@ -121,7 +121,7 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 - **Exit:** build a 3-entity app (e.g., customers/orders/lines) purely via UI
 
 ### Phase 3 — Business Logic Engine (4–5 weeks)
-- Declarative-first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md): flow IR + closed primitive set (setField, createRecord, updateRecord, publishEvent, callConnector, branch, iterate, requestApproval, transitionState); scripts demoted to escape hatch, script-ratio tracked
+- Declarative-first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md): flow IR + closed primitive set (setField, createRecord, updateRecord, publishEvent, callConnector, branch, iterate, requestApproval, transitionState); scripts demoted to escape hatch, script-ratio tracked (primitives backed by later-phase services — `requestApproval`/`transitionState` → Workflow in Phase 4, `callConnector` → Integration in Phase 6 — are fixed in the v1 grammar and activate as those services land)
 - Expression validation rules (extending Phase 1's field constraints), formula fields, roll-up summaries
 - Event hooks: flow-IR step graphs built from the primitive set (before/after save, on delete, on query); sandboxed scripts only where primitives cannot express the logic
 - Kafka domain events emitted from Data Runtime
@@ -135,7 +135,7 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 
 ### Phase 5 — Reporting & Dashboards (3–4 weeks)
 - Report builder (filters, groups, aggregates, charts), dashboard composer
-- Scheduled report delivery; CSV/XLSX export; drill-down
+- Scheduled report delivery; CSV/XLSX export (direct downloads in Phase 5; async large-export streaming via the File Service — ARCHITECTURE.md §2.7 — activates when it lands in Phase 6); drill-down
 - **Exit:** A/R aging report + executive dashboard
 
 ### Phase 6 — Integration Layer (3–4 weeks)
