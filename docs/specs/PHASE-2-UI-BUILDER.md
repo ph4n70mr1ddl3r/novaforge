@@ -27,7 +27,7 @@ the builder UI*, including:
 
 Out of scope: dashboards/charts (Phase 5), script/flow designer (Phase 3), custom
 component SDK (chartered in §6 item 4, built on demand), full record-level sharing rules
-(criteria sharing lands Phase 3–4 as needed by ERP flows).
+(owner/role-hierarchy/criteria rules land Phase 3–4 as needed by ERP flows — §9).
 
 ## 2. Frontend Stack (pin exact versions at T1)
 
@@ -90,8 +90,11 @@ entity/field metadata ──► resolveDefaultPage(entity, role)   [L1, pure]
 }
 ```
 
-Rules: every node = `{type, version?, props, children?, bind?, visibility?}`; `props`
-must validate against the component's JSON Schema at save and publish time; a node's
+Rules: every node = `{type, version?, props, children?, bind?, visibility?, required?,
+readonly?}`; `visibility`/`required`/`readonly` carry expression-DSL bindings (§7) that
+override the field-metadata defaults (§5 — names match the ARCHITECTURE.md §3 flags);
+`props` must validate against the component's JSON Schema at save and publish time; a
+node's
 `version` pins the catalog component it renders — the builder writes it explicitly on
 save, and a missing `version` resolves to the catalog's current stable but is rejected
 at publish. Unknown component/version = build error in builder, safe fallback in runtime.
@@ -99,7 +102,10 @@ at publish. Unknown component/version = build error in builder, safe fallback in
 (rung 2 of ADR-009's escape-hatch ladder) — no scripts. v1 action set: `save`,
 `cancel`, `delete`, `openPage` (`runFlow` from ADR-009's action ladder joins when the
 flow engine lands in Phase 3); the set grows only via versioned platform features
-(same policy as ADR-008's primitives). Per ADR-009 L2, the *persisted*
+(same policy as ADR-008's primitives). String-valued action props may interpolate the
+current record with `${path}` templates (`${record.id}` above) — the same `${…}`
+convention as ADR-008's `createRecord`/`updateRecord` record templates, resolved when
+the action dispatches. Per ADR-009 L2, the *persisted*
 artifact stores deltas against the L1 default; the concrete delta encoding is Q2 (§13),
 decided at T2 — the example above shows the overlay's logical content, not its storage
 format.
@@ -195,7 +201,10 @@ flow from field metadata into form defaults. Role changes re-resolve defaults
   permission changes emit audit events once the Phase 3 event spine lands
   (ARCHITECTURE.md §5); Phase 2 defines the audit event shapes so nothing is
   re-modeled later.
-- Field-level and object permissions are themselves metadata (versioned, promoted).
+- Field-level and object permissions are themselves metadata (versioned, promoted);
+  user→role *assignments* are tenant data in the platform DB — the authorization home
+  per ARCHITECTURE.md §2.2 — read by the Data Runtime at request time and not promoted
+  with the app.
 
 ## 10. Tenant Onboarding Flow
 
