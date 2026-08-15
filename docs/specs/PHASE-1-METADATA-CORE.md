@@ -57,7 +57,9 @@ Schema v0 validation rules (enforced on save, §4): entity `apiName` PascalCase 
 unique per app; field `apiName` camelCase and unique per entity; relationship targets
 resolve within the app; `displayField` exists; enum `values` non-empty;
 `precision`/`scale` valid for decimal; index fields exist; field types restricted to
-the v1 set of ARCHITECTURE.md §3.
+the v1 set of ARCHITECTURE.md §3. The `file` type is schema-valid from v0 but has no
+upload path until the File Service lands (Phase 6 — PLAN.md §5); PHASE-2 §5's
+disabled stub is the matching UI state.
 
 ## 4. Metadata Service: Definitions, Validation, Publish
 
@@ -118,12 +120,15 @@ Query DSL v1 (JSON; golden-tested against generated SQL, §9):
   "page": { "size": 50, "offset": 0 } }
 ```
 
-Operators v1: `and`/`or` nesting, `eq ne in gt gte lt lte contains isNull`.
-Aggregates: `count sum avg min max` with optional `groupBy`. Paging model is Q2 (§12).
+Operators v1: `and`/`or` nesting, `eq ne in gt gte lt lte contains isNull`
+(`contains` on text fields only). Aggregates: `count sum avg min max` with optional
+`groupBy`. Paging model is Q2 (§12). The GET list endpoint carries the same DSL
+URL-encoded in its `filter`/`sort`/`page` params; anything richer — deep nesting,
+aggregates — goes to `POST /{entity}/query`.
 
 Write path (the Phase 1 slice of the ARCHITECTURE.md §2.4 pipeline): resolve metadata →
-authorize (§7) → apply static field `default`s (expression defaults arrive with the
-DSL, Phase 3) → field validations → persist with optimistic locking → event seam
+authorize (§7) → apply static field `default`s (expression defaults arrive with
+Phase 3 write-path evaluation — PHASE-2 §7) → field validations → persist with optimistic locking → event seam
 (below) → shaped projection. Field validations v1: `required`, type, `length`,
 `precision`/`scale` (BigDecimal, never doubles — ARCHITECTURE.md §4 money rule), enum
 membership, `uniqueness`, lookup-target existence, writes to `readonly` fields

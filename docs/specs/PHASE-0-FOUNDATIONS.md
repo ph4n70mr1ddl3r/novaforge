@@ -252,7 +252,8 @@ containers.
   W3C traceparent propagated gateway → services; acceptance is the same trace id in
   both services' logs for one proxied request. Phase 0 ships no tracing or log backend (the §7 stack has no such
   backend — Prometheus + Grafana only) — OTLP export activates when a tracing
-  backend lands (Q2; expected alongside Phase 3 Kafka tracing), and Loki
+  backend lands (Q2; expected alongside Phase 3 Kafka tracing — the choice closes
+  with the Phase 3 spec, PHASE-3-BUSINESS-LOGIC.md §13/Q4), and Loki
   (PLAN.md §4) joins the compose stack in that same expansion.
   Full OTel collector deferred (Q2).
 - Grafana dashboard v0: one row per service — availability (up), HTTP p95, JVM heap.

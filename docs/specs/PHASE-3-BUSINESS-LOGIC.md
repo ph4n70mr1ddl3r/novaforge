@@ -31,7 +31,9 @@ builder UI; and the tracing/log backend expansion of PHASE-0 §8.
 Out of scope: approvals and state machines — `requestApproval`/`transitionState`
 stay grammar-fixed and dormant until Workflow lands (Phase 4), `callConnector` until
 Integration (Phase 6); scheduled jobs (Phase 4, Scheduler); query-path hooks
-(deferred until a concrete need — PLAN.md §5); notification delivery (no Notification
+(deferred until a concrete need — PLAN.md §5); record-level sharing rules (they land
+Phase 3–4 as ERP flows demand — PHASE-2 §9; this phase's exit needs none);
+notification delivery (no Notification
 Service yet; scratch actors have no channels anyway — ADR-010 #3); promotion gating
 and headless CI runs (Phase 8 — ADR-010 #5); report targets (Phase 5).
 
@@ -80,7 +82,8 @@ slots Phase 1 left inert:
   Phase 1 field constraints. API failure renders `VALIDATION_FAILED` problem+json;
   tests see it as `validation(rule)` (§7).
 - **Formula fields:** evaluated at write time and stored, never computed on read;
-  app writes rejected (the Phase 1 `readonly` rule).
+  formula fields are implicitly `readonly`, so app writes are rejected (the Phase 1
+  rule).
 - **Roll-up summaries:** parent aggregates (`SUM/COUNT/MIN/MAX/AVG`) over child
   collections, recomputed in the child's write transaction — the sketch's
   `SUM(lines.debit)` is the canonical case. Strategy is Q2 (§13).

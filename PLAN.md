@@ -190,6 +190,6 @@ Build on the platform itself:
 
 1. Approve stack & phase plan; stand up Phase 0 repo skeleton
 2. Run the storage spike: hybrid JSONB + projections (ARCHITECTURE.md §4) against a 1M-row dataset — 3-day timebox; confirm or adjust, and record the final call in ADR-001
-3. Review the drafted Phase 1 spec ([docs/specs/PHASE-1-METADATA-CORE.md](./docs/specs/PHASE-1-METADATA-CORE.md)); its T1 starts from Metadata JSON Schema v0 (entity/field/relationship/page) once the spike (item 2) closes ADR-001
+3. Review the drafted Phase 1 spec ([docs/specs/PHASE-1-METADATA-CORE.md](./docs/specs/PHASE-1-METADATA-CORE.md)); its T1 starts from Metadata JSON Schema v0 (app/entity/field/relationship/page) once the spike (item 2) closes ADR-001
 4. Stand up Keycloak + Gateway + one service end-to-end with CI
 5. Recruit/select team; set up project tracker with the phase backlog

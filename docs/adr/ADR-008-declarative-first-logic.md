@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-15
-- **Affects:** PLAN.md P3 (Business Logic), ARCHITECTURE.md §2.4/§2.5, Phase 2 delivery (expression DSL v1 — PHASE-2 spec §7) and Phase 3 delivery
+- **Affects:** PLAN.md P3 (Business Logic), ARCHITECTURE.md §2.4/§2.5, Phase 2 delivery (expression DSL v1 — PHASE-2 spec §7) and Phase 3 delivery (PHASE-3-BUSINESS-LOGIC.md)
 
 ## Context
 
