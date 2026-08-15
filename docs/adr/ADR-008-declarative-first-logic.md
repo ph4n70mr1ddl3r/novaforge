@@ -30,7 +30,7 @@ unreadable; these justify the escape hatch.
 1. **Hook execution model = flow IR**: a typed directed graph of steps, stored as
    versioned JSON in the Metadata Service, compiled (reference/type-checked) at
    publish time — never naively interpreted per request (p95 < 150 ms write target,
-   PLAN.md §9).
+   ARCHITECTURE.md §9).
 2. **Closed primitive set for v1**: `setField` (expression), `createRecord` /
    `updateRecord` (template), `publishEvent`, `callConnector`, `branch` (expression
    guard), `iterate` (over related records), `requestApproval`, `transitionState`.

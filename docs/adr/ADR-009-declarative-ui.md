@@ -40,7 +40,7 @@ makes the layering explicit and binding.
    cataloged custom components. Each rung is versioned data.
 5. **Cross-cutting requirements:** theming via design tokens (W3C DTCG format);
    WCAG 2.2 AA for builder and generated UI; server-side paging over the query DSL
-   with virtualized tables for large lists (100k+ rows, PLAN.md §9).
+   with virtualized tables for large lists (100k+ rows — PLAN.md §1 non-negotiables).
 6. **Stack:** React 19.2.x + TypeScript (19.2.8 current as of 2026-08; no React 20
    exists). Builder canvas: React-Flow + agnostic-dnd per PLAN.md §4.
 

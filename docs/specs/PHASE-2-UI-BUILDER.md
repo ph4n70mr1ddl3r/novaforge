@@ -26,7 +26,7 @@ the builder UI*, including:
 5. Tenant onboarding flow (create tenant → first admin → first app).
 
 Out of scope: dashboards/charts (Phase 5), script/flow designer (Phase 3), custom
-component SDK (chartered in §6.4, built on demand), full record-level sharing rules
+component SDK (chartered in §6 item 4, built on demand), full record-level sharing rules
 (criteria sharing lands Phase 3–4 as needed by ERP flows).
 
 ## 2. Frontend Stack (pin exact versions at T1)
@@ -92,6 +92,8 @@ must validate against the component's JSON Schema at save and publish time; a no
 `version` pins the catalog component it renders — the builder writes it explicitly on
 save, and a missing `version` resolves to the catalog's current stable but is rejected
 at publish. Unknown component/version = build error in builder, safe fallback in runtime.
+`actions` entries follow the same `{type, props?}` shape from a closed declarative set
+(rung 2 of ADR-009's escape-hatch ladder) — no scripts.
 
 ## 5. Default Resolver Rules (L1)
 
@@ -100,7 +102,7 @@ Field type → widget mapping (v1):
 | Field type (ARCHITECTURE.md §3) | Default widget |
 |---|---|
 | text / email / phone / url | typed `FieldInput` (input type + client hint) |
-| longText / richText | textarea / rich editor |
+| longText / richText | `FieldInput` multiline / `FieldRichText` |
 | enum | `FieldSelect` |
 | boolean | `FieldSwitch` |
 | int / long / decimal / money | `FieldNumber` (locale-aware, money shows currency) |
@@ -109,7 +111,7 @@ Field type → widget mapping (v1):
 | lookup | `FieldLookup` (search-as-you-type via query DSL, min 2 chars) |
 | child | `RelatedList` (inline-editable grid, cascade rules honored) |
 | m2m | `FieldMultiLookup` |
-| json | code viewer (Phase 2: readonly) |
+| json | `FieldJson` code viewer (Phase 2: readonly) |
 | file | `FileUpload` stub (File Service arrives later — disabled gracefully) |
 
 List view defaults: display field + next 4 visible-by-role fields, `RecordActions`
@@ -123,9 +125,10 @@ form defaults. Role changes re-resolve defaults (L1 is role-parameterized).
    data requirements declaration (fields/relationships it reads), and a version.
 2. Lifecycle: `draft → stable → deprecated`; pages pin versions; deprecation emits
    migration guidance. Registry is metadata, deployable per app version.
-3. v1 catalog (~12 components): AppShell, NavList, FormLayout, ListLayout,
-   RecordHeader, FieldInput/Number/Select/Switch/Date/Lookup, RelatedList,
-   RecordActions, EmptyState.
+3. v1 catalog (18 components): AppShell, NavList, FormLayout, ListLayout,
+   RecordHeader, FieldInput, FieldNumber, FieldSelect, FieldSwitch, FieldDate,
+   FieldLookup, FieldMultiLookup, FieldRichText, FieldJson, FileUpload (stub,
+   disabled until the File Service lands), RelatedList, RecordActions, EmptyState.
 4. Custom component SDK (escape hatch): charter only — iframe-sandboxed, catalog
    entry with props schema, versioned like everything else.
 
@@ -149,6 +152,9 @@ form defaults. Role changes re-resolve defaults (L1 is role-parameterized).
   full-document snapshots with structural sharing are acceptable v1.
 - Simultaneous edit protection: optimistic locking on page definitions (409 →
   rebase prompt), consistent with Data Runtime record locking.
+- Saves and publishes go through the Metadata Service definition APIs — page
+  definitions are versioned metadata; the UI Builder Service (ARCHITECTURE.md §2.8)
+  adds catalog/preview concerns, not a separate persistence path.
 
 ## 9. Security Integration (RBAC + field-level)
 
@@ -157,7 +163,8 @@ form defaults. Role changes re-resolve defaults (L1 is role-parameterized).
 - Enforcement is **server-side only** (Data Runtime projections strip hidden fields;
   ARCHITECTURE.md §5) — the builder/resolver only *renders* the role-appropriate UI.
 - Admin/builder/user capabilities: `builder` role gates design-time UI routes;
-  permission changes emit audit events (Phase 0 audit spine).
+  permission changes emit audit events (audit trail lands with the Phase 3 event
+  spine — ARCHITECTURE.md §5).
 - Field-level and object permissions are themselves metadata (versioned, promoted).
 
 ## 10. Tenant Onboarding Flow

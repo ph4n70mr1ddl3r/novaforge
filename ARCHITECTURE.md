@@ -53,7 +53,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 ## 2. Service Details
 
 ### 2.1 API Gateway
-- Spring Cloud Gateway; routes `/api/runtime/**`, `/api/metadata/**`, `/api/workflow/**`, etc.
+- Spring Cloud Gateway; routes `/api/v1/runtime/**`, `/api/v1/metadata/**`, `/api/v1/workflow/**`, etc. (versioning rule: §6)
 - JWT validation (Keycloak JWKS), tenant header derivation (`X-Tenant-Id` from token claim), rate limiting via Redis.
 
 ### 2.2 Identity Service
@@ -69,11 +69,11 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 
 ### 2.4 Data Runtime Service (the heart)
 - Generic REST API:
-  - `POST /api/runtime/{entity}` create, `GET .../{id}`, `PATCH`, `DELETE`
-  - `GET /api/runtime/{entity}?filter=...&sort=...&page=...` (structured query DSL, not raw SQL)
-  - `POST /api/runtime/{entity}/query` for complex queries (aggregations)
-  - `POST /api/runtime/batch` for bulk ops
-- Responsibilities per request: resolve metadata → authorize (object/field/record) → apply defaults & server-side defaults → run validation rules → apply hooks (flow-IR primitives first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md); sandboxed scripts only as escape hatch via Script Engine) → persist with optimistic locking → emit Kafka event → return shaped projection (respecting field-level security).
+  - `POST /api/v1/runtime/{entity}` create, `GET .../{id}`, `PATCH`, `DELETE`
+  - `GET /api/v1/runtime/{entity}?filter=...&sort=...&page=...` (structured query DSL, not raw SQL)
+  - `POST /api/v1/runtime/{entity}/query` for complex queries (aggregations)
+  - `POST /api/v1/runtime/batch` for bulk ops
+- Responsibilities per request: resolve metadata → authorize (object/field/record) → apply field defaults → run validation rules → apply hooks (flow-IR primitives first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md); sandboxed scripts only as escape hatch via Script Engine) → persist with optimistic locking → emit Kafka event → return shaped projection (respecting field-level security).
 - Record locking: `version` int, HTTP 409 on conflict; document-level locks for ERP posting flows.
 
 ### 2.5 Script Engine
@@ -82,13 +82,13 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
   - CPU-time and heap caps, statement/loop watchdog
   - No host I/O; an explicit whitelisted API surface (`$record`, `$metadata.query`, `$http` only inside connector sandbox, `$log`)
   - Warm context pool per tenant app version
-- Also evaluates **formula fields** (pure expression DSL compiled to JS) and **validation rules**.
+- Also evaluates **formula fields** (pure expression DSL) and **validation rules**.
 - Script failure policy: `beforeSave` failure = abort transaction; `afterSave` failure = retry via Kafka (idempotency required).
 
 ### 2.6 Workflow Service
 - Flowable 7 embedded; process definitions authored as BPMN XML by the designer UI.
 - Subscriptions to domain events can start processes (`on record.updated where status='submitted'`).
-- **State machines** as first-class metadata (states, allowed transitions, guards in script DSL) — most ERP flows are state machines, not full BPMN.
+- **State machines** as first-class metadata (states, allowed transitions, guards in the platform expression DSL per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md)) — most ERP flows are state machines, not full BPMN.
 - Human tasks exposed via task inbox API; approvals support sequential/parallel, delegation, reassignment, escalation timers.
 
 ### 2.7 Reporting Service
@@ -97,6 +97,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 - Chart payloads shaped for the frontend chart lib (ECharts).
 
 ### 2.8 Other services
+- **UI Builder Service:** component catalog hosting, builder sessions, preview/scaffolding. Page/layout definitions persist as versioned metadata in the Metadata Service (§2.3) — no separate persistence path, so promotion stays uniform.
 - **File Service:** MinIO/S3, presigned uploads, attachment metadata entity, checksum, optional ClamAV hook.
 - **Notification Service:** templates (entity/field tokens), channel preferences, inbox + email via SMTP/SES.
 - **Integration Service:** connector runtime (outbound REST with mapping/retry/circuit-breaker, inbound webhook endpoints with HMAC validation), all deliveries idempotent with DLQ.
@@ -149,7 +150,7 @@ Three options for storing *tenant record data* under dynamic schemas:
 | Ops complexity | DDL migrations per tenant | Low | Low-moderate |
 | Multi-tenant scale | Table explosion risk (entities × tenants) | Clean | Clean |
 
-**Chosen: Hybrid JSONB.**
+**Chosen: Hybrid JSONB** — to be load-validated by the 1M-row spike (PLAN.md §8) before Phase 1 implementation; ADR-001 records the final call.
 ```sql
 CREATE TABLE rec_records (
   id            uuid PRIMARY KEY,
@@ -214,7 +215,7 @@ CREATE INDEX ON rec_journal_entry (tenant_id, entry_date DESC);
 
 ```
 spring_erp/
-├── PLAN.md, ARCHITECTURE.md, ROADMAP (tracker sync)
+├── PLAN.md, ARCHITECTURE.md
 ├── platform/                     # shared libs (versions managed by root pom.xml)
 │   └── libs/                     # shared libraries
 │       ├── common-core/          # result types, error codes, context
@@ -241,7 +242,7 @@ spring_erp/
 │   ├── runtime-ui/               # metadata renderer + shell
 │   └── shared/                   # page-model types, expression runtime, registry
 ├── deploy/
-│   ├── compose/                  # podman-compose: lean local stack (PG, Redis,
+│   ├── compose/                  # podman compose: lean local stack (PG, Redis,
 │   │                             #   Kafka, Keycloak, single service)
 │   ├── kind/                     # Kind-on-Podman cluster config (full stack)
 │   ├── helm/                     # per-service charts + umbrella
@@ -257,7 +258,7 @@ spring_erp/
 | 002 | AuthN in Keycloak, AuthZ in platform DB | Proposed |
 | 003 | Scripting: GraalVM JS sandbox | Proposed |
 | 004 | Workflow: Flowable embedded + native state machines | Proposed |
-| 005 | Monorepo, Maven, Spring Boot 4.1 / Java 21 | Accepted |
+| 005 | Monorepo, Maven, Java 21 (Boot/Cloud versions: ADR-007) | Proposed |
 | 006 | Multi-tenancy: shared schema + RLS | Proposed |
 | 007 | Adopt latest: Spring Boot 4.1 / Spring Framework 7 / Cloud 2025.1 | Accepted — [ADR-007](./docs/adr/ADR-007-adopt-spring-boot-4.md) |
 | 008 | Declarative-first business logic; scripts as escape hatch | Accepted — [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md) |

@@ -38,7 +38,7 @@ Tenant
  └── App (versioned artifact)
       ├── Entities ── Fields, Relationships, Validations, Formulas
       ├── Pages/Layouts ── Forms, Lists, Dashboards, Navigation
-      ├── Business Rules ── Script hooks (beforeSave/afterSave/...), scheduled scripts
+      ├── Business Rules ── Event hooks (flow-IR step graphs; scripts as escape hatch per ADR-008), scheduled jobs
       ├── Workflows ── BPMN definitions, state machines, approvals
       ├── Reports & Dashboards
       ├── Permissions ── Roles, profiles, record rules, field security
@@ -62,7 +62,7 @@ Tenant
 | **Data Runtime Service** | Generic record APIs driven by metadata; permission enforcement; query engine (filter/sort/page/aggregate); sequences; audit emission |
 | **Script Engine Service** | Sandboxed execution of user scripts/formulas (GraalJS), resource limits, warm pools |
 | **Workflow Service** | Flowable (BPMN) runtime, approvals, state machines, timers/tasks |
-| **UI Builder Service** | Page/layout persistence, component catalog, preview/scaffolding |
+| **UI Builder Service** | Component catalog, builder sessions, preview/scaffolding (page/layout definitions persist as versioned metadata in the Metadata Service) |
 | **Reporting Service** | Report definitions, execution against Data Runtime query API, chart data shaping, scheduled delivery |
 | **File Service** | Attachments, images, presigned storage (S3/MinIO), virus-scan hook |
 | **Notification Service** | Email/SMS/push/websocket fan-out, templates, user preferences |
@@ -70,7 +70,7 @@ Tenant
 | **Scheduler Service** | Cron-definitions, job orchestration, distributed locks |
 | **Audit Service** | Append-only event log (Kafka → store), who/what/when, field diffs |
 
-Shared libraries (no separate service): `metadata-model`, `security-context`, `kafka-events`, `error-handling`, `query-dsl`.
+Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, `metadata-model`, `security-context`, `event-schemas`, `test-support`.
 
 ---
 
@@ -84,7 +84,7 @@ Shared libraries (no separate service): `metadata-model`, `security-context`, `k
 | Cache | Redis (metadata cache, sequences, distributed locks) |
 | Messaging | Kafka (domain events, audit, webhooks, cache invalidation) |
 | Workflow | Flowable 7 (embedded in Workflow Service) |
-| Scripting | GraalVM JS in sandbox with CPU/memory/IO limits |
+| Scripting | GraalVM JS sandbox — CPU/memory caps, no host I/O by default (escape hatch per ADR-008) |
 | Resilience | Resilience4j (circuit breakers, retries, bulkheads) |
 | API docs | OpenAPI 3 generated per service, aggregated at gateway |
 | Frontend | React 19.2.x + TypeScript; metadata-driven renderer (layered per [ADR-009](./docs/adr/ADR-009-declarative-ui.md)); builder on React-Flow/agnostic-dnd |
@@ -100,12 +100,13 @@ Shared libraries (no separate service): `metadata-model`, `security-context`, `k
 
 ### Phase 0 — Foundations (2–3 weeks)
 - Monorepo scaffolding, Maven multi-module, shared libs — detailed spec: [docs/specs/PHASE-0-FOUNDATIONS.md](./docs/specs/PHASE-0-FOUNDATIONS.md); stack decision: [ADR-007](./docs/adr/ADR-007-adopt-spring-boot-4.md)
-- K8s dev environment: Kind cluster on Podman (full stack) + Helm; podman-compose for lean single-service runs; CI pipeline on `quay.io/podman/stable` runners
+- Local dev: Podman compose as the primary path; Kind-on-Podman cluster + Helm as a stretch goal (recommendation: slip to Phase 1 — PHASE-0 spec Q3); CI on GitHub Actions `ubuntu-latest` first, `quay.io/podman/stable` runners wired when Testcontainers jobs land in Phase 1
 - Keycloak, Postgres, Redis, Kafka provisioning; gateway skeleton; observability baseline
 - **Exit:** "hello world" service behind gateway with JWT auth + traces + dashboards
 
 ### Phase 1 — Metadata Core & Data Runtime (4–6 weeks) ← *highest risk, do first*
 - Metadata model: entity/field/relationship definition schemas
+- K8s dev environment (Kind-on-Podman + Helm) if not landed as the Phase 0 stretch goal
 - Data Runtime: generic record CRUD + query DSL + permission checks
 - Storage strategy implementation (see ARCHITECTURE.md §4)
 - Generated REST API per entity; sequences; soft delete; optimistic locking
@@ -118,7 +119,7 @@ Shared libraries (no separate service): `metadata-model`, `security-context`, `k
 - **Exit:** build a 3-entity app (e.g., customers/orders/lines) purely via UI
 
 ### Phase 3 — Business Logic Engine (4–5 weeks)
-- Declarative-first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md): flow IR + closed primitive set (setField, createRecord, publishEvent, callConnector, branch, iterate, requestApproval, transitionState); scripts demoted to escape hatch, script-ratio tracked
+- Declarative-first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md): flow IR + closed primitive set (setField, createRecord, updateRecord, publishEvent, callConnector, branch, iterate, requestApproval, transitionState); scripts demoted to escape hatch, script-ratio tracked
 - Validation rules, formula fields, roll-up summaries
 - Event hooks: flow-IR step graphs built from the primitive set (before/after save, on delete, on query); sandboxed scripts only where primitives cannot express the logic
 - Kafka domain events emitted from Data Runtime
@@ -179,7 +180,7 @@ Build on the platform itself:
 ## 8. Immediate Next Steps
 
 1. Approve stack & phase plan; stand up Phase 0 repo skeleton
-2. Prototype the storage strategy spike (JSONB vs DDL) with 1M-row dataset — 3-day timebox, decide on data
+2. Run the storage spike: hybrid JSONB + projections (ARCHITECTURE.md §4) against a 1M-row dataset — 3-day timebox; confirm or adjust, and record the final call in ADR-001
 3. Draft Metadata JSON Schema v0 (entity/field/relationship/page)
 4. Stand up Keycloak + Gateway + one service end-to-end with CI
 5. Recruit/select team; set up project tracker with the phase backlog

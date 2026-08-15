@@ -21,7 +21,7 @@ In scope: monorepo + parent build, shared-lib skeleton, gateway + one backing se
 local infrastructure (Podman compose), JWT auth at the edge, observability baseline, CI.
 
 Out of scope: metadata model, Data Runtime, React frontends, Helm/K8s (Kind cluster is a
-stretch goal — see §12 T9 and Open Question Q3).
+stretch goal — Open Question Q3 recommends slipping it to Phase 1).
 
 ## 2. Locked Version Matrix
 
@@ -142,8 +142,8 @@ ErrorCode uniqueness of `code`. AC: `mvn -pl platform/libs/common-core verify` g
 
 ### 6.1 `novaforge-gateway` (port 8080)
 
-Responsibilities in Phase 0: route `/api/metadata/**` → metadata-service; JWT
-validation; pass-through tenant header; health.
+Responsibilities in Phase 0: route `/api/v1/metadata/**` → metadata-service (versioning
+rule: ARCHITECTURE.md §6); JWT validation; pass-through tenant header; health.
 
 Dependencies: `spring-cloud-starter-gateway-server-webmvc`,
 `spring-boot-starter-security-oauth2-resource-server`,
@@ -161,7 +161,7 @@ spring:
             - id: metadata-service
               uri: ${novaforge.upstreams.metadata-service}
               predicates:
-                - Path=/api/metadata/**
+                - Path=/api/v1/metadata/**
 ```
 
 Security config: stateless resource server, issuer-uri from
@@ -179,7 +179,7 @@ Phase 0 skeleton proving the stack end-to-end; the real definition APIs arrive i
 later phases.
 
 Endpoints:
-- `GET /api/metadata/ping` → `{"service":"metadata-service","status":"ok","springFrameworkVersion":"7.0.8"}`
+- `GET /api/v1/metadata/ping` → `{"service":"metadata-service","status":"ok","springFrameworkVersion":"7.0.8"}`
   (version assertions in tests make silent framework downgrades visible).
 - `GET /actuator/health` (liveness/readiness probes enabled).
 
@@ -194,7 +194,7 @@ Dependencies: `novaforge-common-core`, `spring-boot-starter-webmvc`,
 
 - Context loads; `/actuator/health` → 200 `{"status":"UP"}`.
 - Ping: assert service/status and **exact framework version `7.0.8`**.
-- Gateway route proof: request `/api/metadata/ping` with no downstream running →
+- Gateway route proof: request `/api/v1/metadata/ping` with no downstream running →
   ServletException caused by `ResourceAccessException` (connection refused proves the
   route matched and proxy was attempted, not a 404).
 - Gateway JWT: unsigned/invalid token → 401 problem+json; valid token (issued from
@@ -231,8 +231,8 @@ Requirements: named volumes for keycloak/postgres data; healthchecks on all;
 
 `build.yaml`: on PR + push to main.
 1. Job `build` (ubuntu-latest, Temurin 21, Maven cache): `./mvnw -B -ntp verify`.
-2. Job `native-check` later; Testcontainers-based jobs deferred to Phase 1 (needs the
-   Podman-socket runner setup from PLAN.md §5 Phase 0 — only wire the runner label then).
+2. Job `native-check` later; Testcontainers-based jobs deferred to Phase 1, together
+   with wiring the `quay.io/podman/stable` Podman-socket runner label (PLAN.md §5).
 3. Concurrency cancel on superseded PRs; artifacts: surefire reports on failure.
 
 ## 10. Testing Standards (Boot 4 specifics)
@@ -254,17 +254,19 @@ Each task is independently mergeable; tasks T1–T3 unblock everything else.
 | T1 | Restore spike scaffold | Recreate structure from `spike/boot-4.1-scaffold` (POMs, TenantContext, gateway+metadata skeletons incl. YAML route + tests) | `./mvnw verify` green on Temurin 21 |
 | T2 | Maven wrapper + README | `mvn wrapper:wrapper`; README quickstart (prereqs, verify, run compose) | Fresh clone builds with no local Maven |
 | T3 | common-core error model | `ErrorCode`, `PlatformErrorCode`, `ProblemErrors` + tests (§5.2) | Lib tests green; no Spring web deps (`mvn dependency:tree` check) |
-| T4 | Keycloak realm export | Realm `novaforge`, client, test user; mounted into compose | `demo` login via CLI yields usable JWT |
+| T4 | Keycloak realm export | Realm `novaforge`, client `novaforge-api` with client scope `novaforge.api`, user `demo`; mounted into compose | `demo` login via CLI yields JWT carrying scope `novaforge.api` |
 | T5 | Compose stack | §7 services, volumes, healthchecks, pinned tags | `podman compose up -d` → all healthy |
 | T6 | Gateway JWT + tenant header | Resource-server config, issuer property, problem+json errors, `X-Tenant-Id` derivation from claim | Invalid token → 401; valid → proxied ping 200 carrying tenant header |
-| T7 | Service JWT verification | Same resource-server config on metadata-service; tenant into `TenantContext` via filter | Direct call w/o token → 401; with token → 200 |
+| T7 | Service JWT verification | Same resource-server config on metadata-service; tenant derived from the token claim into `TenantContext` via filter (services do not trust the gateway header) | Direct call w/o token → 401; with token → 200 |
 | T8 | Observability | Prometheus scrape configs, Grafana dashboard, build-info, log correlation check | Dashboard shows both services; one proxied request yields shared trace id |
 | T9 | CI pipeline | §9 build job | PR triggers green run incl. tests |
 | T10 | Exit review | Walk PLAN.md §5 Phase 0 exit criteria on compose stack | Demo: browser/curl → gateway → JWT → ping, visible in Grafana |
 
 Dependency order: T1 → T2 → (T3, T4) → T5 → T6 → T7 → T8 → T9; T10 last.
 
-## 12. Open Questions (decide before/at T5–T6)
+## 12. Open Questions
+
+Q1–Q2 gate T5–T6; Q3–Q4 are scheduling calls to close by the end of Phase 0.
 
 - **Q1 — Keycloak realm strategy:** single realm + tenant claim vs realm-per-tenant
   (ARCHITECTURE.md §2.2 flags this as a Phase 0 decision). *Recommendation: single
