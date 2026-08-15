@@ -112,12 +112,13 @@ Shared libraries (no separate service): `metadata-model`, `security-context`, `k
 - **Exit:** create entity via API → CRUD records via generic API with validations enforced
 
 ### Phase 2 — Builder UI & Security (4–6 weeks)
-- Entity builder UI; form/list page auto-generation; basic customization
+- Entity builder UI; form/list page auto-generation; basic customization — detailed spec: [docs/specs/PHASE-2-UI-BUILDER.md](./docs/specs/PHASE-2-UI-BUILDER.md); UI layering decision: [ADR-009](./docs/adr/ADR-009-declarative-ui.md)
 - RBAC: roles, object permissions, field-level security
 - Tenant onboarding flow
 - **Exit:** build a 3-entity app (e.g., customers/orders/lines) purely via UI
 
 ### Phase 3 — Business Logic Engine (4–5 weeks)
+- Declarative-first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md): flow IR + closed primitive set (setField, createRecord, publishEvent, callConnector, branch, iterate, requestApproval, transitionState); scripts demoted to escape hatch, script-ratio tracked
 - Validation rules, formula fields, roll-up summaries
 - Event hooks → sandboxed scripts (before/after save, on delete, on query)
 - Kafka domain events emitted from Data Runtime

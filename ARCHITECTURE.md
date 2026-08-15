@@ -258,6 +258,8 @@ spring_erp/
 | 005 | Monorepo, Maven, Spring Boot 4.1 / Java 21 | Accepted |
 | 006 | Multi-tenancy: shared schema + RLS | Proposed |
 | 007 | Adopt latest: Spring Boot 4.1 / Spring Framework 7 / Cloud 2025.1 | Accepted — [ADR-007](./docs/adr/ADR-007-adopt-spring-boot-4.md) |
+| 008 | Declarative-first business logic; scripts as escape hatch | Accepted — [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md) |
+| 009 | Declarative UI: layered generation + component catalog, no codegen | Accepted — [ADR-009](./docs/adr/ADR-009-declarative-ui.md) |
 
 ## 9. Performance Targets (validated in Phase 1, not Phase 7)
 
