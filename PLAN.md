@@ -60,7 +60,7 @@ Tenant
 | **Identity Service** | OIDC (Keycloak), users, tenants, roles, SSO federation |
 | **Metadata Service** | CRUD of app definitions: entities, fields, pages, rules; validation of definitions; versioning & change-sets |
 | **Data Runtime Service** | Generic record APIs driven by metadata; permission enforcement; query engine (filter/sort/page/aggregate); sequences; audit emission |
-| **Script Engine Service** | Sandboxed execution of user scripts/formulas (GraalJS), resource limits, warm pools |
+| **Script Engine Service** | Sandboxed execution of user scripts (escape hatch per ADR-008) plus expression-DSL evaluation for formulas/validations; resource limits, warm pools |
 | **Workflow Service** | Flowable (BPMN) runtime, approvals, state machines, timers/tasks |
 | **UI Builder Service** | Component catalog, builder sessions, preview/scaffolding (page/layout definitions persist as versioned metadata in the Metadata Service) |
 | **Reporting Service** | Report definitions, execution against Data Runtime query API, chart data shaping, scheduled delivery |
@@ -110,6 +110,7 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 - Data Runtime: generic record CRUD + query DSL + permission checks
 - Storage strategy implementation (see ARCHITECTURE.md §4)
 - Generated REST API per entity; sequences; soft delete; optimistic locking
+- Detailed spec: not yet written — drafting the Phase 1 spec (`docs/specs/`) is the next documentation task (§8); it must pin, among other things, the metadata cache-invalidation transport used until the Kafka event spine lands in Phase 3 (ARCHITECTURE.md §2.3)
 - **Exit:** create entity via API → CRUD records via generic API with validations enforced
 
 ### Phase 2 — Builder UI & Security (4–6 weeks)
@@ -138,6 +139,7 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 ### Phase 6 — Integration Layer (3–4 weeks)
 - Webhook dispatch (signed, retried); inbound webhook endpoint per entity
 - REST connector framework + mapping engine; bulk import/export (async, resumable)
+- File Service: attachments + presigned uploads (S3/MinIO) — required by bulk import/export; unblocks the Phase 2 `FileUpload` stub before ERP dogfood
 - **Exit:** sync bank feed or Stripe transactions via connector into Payments entity
 
 ### Phase 7 — ERP Dogfood (6–8 weeks) ← *the proving ground*
@@ -181,6 +183,6 @@ Build on the platform itself:
 
 1. Approve stack & phase plan; stand up Phase 0 repo skeleton
 2. Run the storage spike: hybrid JSONB + projections (ARCHITECTURE.md §4) against a 1M-row dataset — 3-day timebox; confirm or adjust, and record the final call in ADR-001
-3. Draft Metadata JSON Schema v0 (entity/field/relationship/page)
+3. Draft the Phase 1 implementation spec (docs/specs/), starting with Metadata JSON Schema v0 (entity/field/relationship/page)
 4. Stand up Keycloak + Gateway + one service end-to-end with CI
 5. Recruit/select team; set up project tracker with the phase backlog

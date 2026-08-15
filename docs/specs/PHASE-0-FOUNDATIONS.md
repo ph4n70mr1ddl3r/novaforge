@@ -36,8 +36,8 @@ All versions verified against Maven Central on 2026-08-15 (see ADR-007 for evide
 | Spring Cloud | **2025.1.2** | Imported BOM in root POM |
 | Jackson | 3.1.4 (default) | `tools.jackson` namespace |
 | JUnit / Testcontainers | 6.0.3 / 2.0.5 | New coordinates, see §10 |
-| Keycloak | 26.x (container) | Pin exact tag at T6 |
-| PostgreSQL / Redis / Kafka | 16 / 7.x / 4.x (containers) | Pin exact tags at T6 |
+| Keycloak | 26.x (container) | Pin exact tag at T5 |
+| PostgreSQL / Redis / Kafka | 16 / 7.x / 4.x (containers) | Pin exact tags at T5 |
 
 Patch upgrades (4.1.x, 2025.1.x) are allowed any time; minors are decision points.
 
@@ -56,7 +56,9 @@ spring_erp/
 │   ├── gateway/                   # §6.1
 │   └── metadata-service/          # §6.2 (skeleton only)
 ├── deploy/
-│   └── compose/novaforge.yaml     # §7 local infra (podman compose)
+│   └── compose/
+│       ├── novaforge.yaml         # §7 local infra (podman compose)
+│       └── observability/         # prometheus scrape config + grafana dashboard (T8)
 ├── .github/workflows/build.yaml   # §9 CI
 └── docs/{adr,specs}/
 ```
@@ -118,9 +120,10 @@ CLI/tools later): request context, error model, small value types.
    `record Context(String tenantId, String actorId)`; `set/current/clear`; `current()`
    returns `Optional`. (Implemented in spike — reuse.)
 2. `com.novaforge.common.error.ErrorCode` — sealed interface + enum
-   `PlatformErrorCode(String code, int httpStatus)` seed set:
-   `VALIDATION_FAILED(4000,400)`, `NOT_FOUND(4004,404)`, `CONFLICT_VERSION(4090,409)`,
-   `FORBIDDEN(4003,403)`, `TENANT_MISSING(4001,400)`, `INTERNAL(5000,500)`.
+   `PlatformErrorCode(String code, int httpStatus)`; `code` is a stable numeric
+   string. Seed set: `VALIDATION_FAILED("4000",400)`, `NOT_FOUND("4004",404)`,
+   `CONFLICT_VERSION("4090",409)`, `FORBIDDEN("4003",403)`,
+   `TENANT_MISSING("4001",400)`, `INTERNAL("5000",500)`.
 3. `com.novaforge.common.error.ProblemErrors` — record carrying
    `List<FieldError>`/`List<GlobalError>` for RFC 7807 extension fields; the
    `@RestControllerAdvice` that renders it lives per-service (Phase 1), not in the lib.
@@ -143,7 +146,8 @@ ErrorCode uniqueness of `code`. AC: `mvn -pl platform/libs/common-core verify` g
 ### 6.1 `novaforge-gateway` (port 8080)
 
 Responsibilities in Phase 0: route `/api/v1/metadata/**` → metadata-service (versioning
-rule: ARCHITECTURE.md §6); JWT validation; pass-through tenant header; health.
+rule: ARCHITECTURE.md §6); JWT validation; pass-through tenant header (informational —
+services derive tenant from the token claim themselves, see T7); health.
 
 Dependencies: `spring-cloud-starter-gateway-server-webmvc`,
 `spring-boot-starter-security-oauth2-resource-server`,
@@ -164,6 +168,9 @@ spring:
                 - Path=/api/v1/metadata/**
 ```
 
+The `novaforge.upstreams.metadata-service` property defaults to
+`http://localhost:8081` in the local profile.
+
 Security config: stateless resource server, issuer-uri from
 `novaforge.auth.issuer-uri` property (defaults to local Keycloak
 `http://localhost:8082/realms/novaforge`); actuator endpoints permitted anonymously;
@@ -183,7 +190,8 @@ Endpoints:
   (version assertions in tests make silent framework downgrades visible).
 - `GET /actuator/health` (liveness/readiness probes enabled).
 
-Also resource-server secured (same issuer property) — services must not trust the
+Also resource-server secured (same issuer property and the same `novaforge.api`
+scope requirement as the gateway) — services must not trust the
 gateway alone (defense in depth, ARCHITECTURE.md §5).
 
 Dependencies: `novaforge-common-core`, `spring-boot-starter-webmvc`,
@@ -205,7 +213,7 @@ Dependencies: `novaforge-common-core`, `spring-boot-starter-webmvc`,
 
 `deploy/compose/novaforge.yaml` run with `podman compose up -d` (Podman 4.9 present):
 
-| Service | Image (pin tag at T6) | Port | Purpose |
+| Service | Image (pin tag at T5) | Port | Purpose |
 |---|---|---|---|
 | keycloak | `quay.io/keycloak/keycloak:26.x` | 8082 | realm `novaforge`, `start-dev`, pre-configured realm export |
 | postgres | `docker.io/library/postgres:16` | 5432 | shared instance, per-service databases |
@@ -217,6 +225,9 @@ Dependencies: `novaforge-common-core`, `spring-boot-starter-webmvc`,
 Requirements: named volumes for keycloak/postgres data; healthchecks on all;
 `depends_on: condition: service_healthy`; a mounted Keycloak realm JSON creating realm
 `novaforge`, client `novaforge-api`, and a `demo` user. Compose must work rootless.
+Prometheus scrape config and Grafana provisioning/dashboard JSON live in
+`deploy/compose/observability/` (§3; built in T8) and are bind-mounted into their
+containers.
 
 ## 8. Observability Baseline
 

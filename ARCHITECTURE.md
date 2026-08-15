@@ -118,8 +118,10 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
     { "apiName": "entryDate",  "type": "date", "required": true },
     { "apiName": "status",     "type": "enum", "values": ["DRAFT","POSTED","REVERSED"] },
     { "apiName": "periodId",   "type": "lookup", "target": "AccountingPeriod" },
-    { "apiName": "totalDebit", "type": "decimal", "precision": 18, "scale": 4,
-      "formula": "SUM(lines.debit)" }   // roll-up/formula evaluated at write time
+    { "apiName": "totalDebit",  "type": "decimal", "precision": 18, "scale": 4,
+      "formula": "SUM(lines.debit)" },  // roll-up/formula evaluated at write time
+    { "apiName": "totalCredit", "type": "decimal", "precision": 18, "scale": 4,
+      "formula": "SUM(lines.credit)" }
   ],
   "relationships": [
     { "apiName": "lines", "type": "child", "target": "JournalLine",
@@ -264,7 +266,7 @@ spring_erp/
 | 008 | Declarative-first business logic; scripts as escape hatch | Accepted — [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md) |
 | 009 | Declarative UI: layered generation + component catalog, no codegen | Accepted — [ADR-009](./docs/adr/ADR-009-declarative-ui.md) |
 
-## 9. Performance Targets (validated in Phase 1, not Phase 7)
+## 9. Performance Targets (storage/query targets validated by the Phase 1 load test — see §4; report and script targets validated as those services land in Phases 3–5)
 
 | Operation | Target |
 |-----------|--------|

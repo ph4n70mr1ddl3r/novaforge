@@ -93,7 +93,10 @@ must validate against the component's JSON Schema at save and publish time; a no
 save, and a missing `version` resolves to the catalog's current stable but is rejected
 at publish. Unknown component/version = build error in builder, safe fallback in runtime.
 `actions` entries follow the same `{type, props?}` shape from a closed declarative set
-(rung 2 of ADR-009's escape-hatch ladder) — no scripts.
+(rung 2 of ADR-009's escape-hatch ladder) — no scripts. Per ADR-009 L2, the *persisted*
+artifact stores deltas against the L1 default; the concrete delta encoding is Q2 (§13),
+decided at T2 — the example above shows the overlay's logical content, not its storage
+format.
 
 ## 5. Default Resolver Rules (L1)
 
@@ -112,7 +115,7 @@ Field type → widget mapping (v1):
 | child | `RelatedList` (inline-editable grid, cascade rules honored) |
 | m2m | `FieldMultiLookup` |
 | json | `FieldJson` code viewer (Phase 2: readonly) |
-| file | `FileUpload` stub (File Service arrives later — disabled gracefully) |
+| file | `FileUpload` stub (File Service lands in Phase 6 — PLAN.md §5; stub disabled gracefully until then) |
 
 List view defaults: display field + next 4 visible-by-role fields, `RecordActions`
 column; detail view: sections grouped by field group metadata; navigation: entities
@@ -128,7 +131,8 @@ form defaults. Role changes re-resolve defaults (L1 is role-parameterized).
 3. v1 catalog (18 components): AppShell, NavList, FormLayout, ListLayout,
    RecordHeader, FieldInput, FieldNumber, FieldSelect, FieldSwitch, FieldDate,
    FieldLookup, FieldMultiLookup, FieldRichText, FieldJson, FileUpload (stub,
-   disabled until the File Service lands), RelatedList, RecordActions, EmptyState.
+   disabled until the File Service lands — Phase 6, PLAN.md §5), RelatedList,
+   RecordActions, EmptyState.
 4. Custom component SDK (escape hatch): charter only — iframe-sandboxed, catalog
    entry with props schema, versioned like everything else.
 
@@ -163,8 +167,9 @@ form defaults. Role changes re-resolve defaults (L1 is role-parameterized).
 - Enforcement is **server-side only** (Data Runtime projections strip hidden fields;
   ARCHITECTURE.md §5) — the builder/resolver only *renders* the role-appropriate UI.
 - Admin/builder/user capabilities: `builder` role gates design-time UI routes;
-  permission changes emit audit events (audit trail lands with the Phase 3 event
-  spine — ARCHITECTURE.md §5).
+  permission changes emit audit events once the Phase 3 event spine lands
+  (ARCHITECTURE.md §5); Phase 2 defines the audit event shapes so nothing is
+  re-modeled later.
 - Field-level and object permissions are themselves metadata (versioned, promoted).
 
 ## 10. Tenant Onboarding Flow
@@ -197,7 +202,7 @@ terms for E2E tests.
 | T6 | Runtime renderer + shell | Interpreter, TanStack Query data layer against Phase 1 APIs, server-side paging/virtualization | 100k-row fixture list: p95 render smooth, paging server-side only |
 | T7 | Entity builder UI | §8 wizard/grid over Metadata APIs | Create/modify entities incl. relationships without API calls by hand |
 | T8 | Page builder (L2 overlays) | Canvas, palette, property panel, preview, undo, optimistic locking | Customize order form per §4 example; 409 rebase prompt works |
-| T9 | RBAC + field security | §9 editors + server projection enforcement | Cross-role leakage tests fail closed; audit events emitted |
+| T9 | RBAC + field security | §9 editors + server projection enforcement | Cross-role leakage tests fail closed; permission-change audit event shapes defined (§9; durable audit trail lands with the Phase 3 event spine) |
 | T10 | Tenant onboarding + exit demo | §10 flow + scripted golden journey | Phase 2 exit criteria demo'd on compose stack |
 
 Dependency order: T1 → T2 → (T3, T4, T5) → T6 → T7 → T8 → T9 → T10.
