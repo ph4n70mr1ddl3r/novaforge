@@ -69,7 +69,7 @@ logic, pages, and permissions are all versioned JSON, the tests can be too.
 5. **Phasing.** v1 lands with Phase 3 (validations, formula/roll-up fields, hook
    outcomes; permission-denial assertions ride on Phase 2 RBAC); approval and
    state-machine assertions with Phase 4 (`requestApproval`/`transitionState` are
-   already in the v1 grammar, ADR-008 #2); promotion gating, change-set review
+   already in the v1 grammar, ADR-008 #2 — vocabulary: PHASE-4 spec §12); promotion gating, change-set review
    integration, and headless API runs with Phase 8.
 
 ## Consequences

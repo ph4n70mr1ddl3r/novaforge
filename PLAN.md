@@ -135,6 +135,7 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 - Test-harness vocabulary grows with the Workflow Service: `requestApproval`/`transitionState` assertions (ADR-010)
 - Human task inbox; email notifications; timers, escalation, SLAs (P4)
 - Scheduler Service (cron registry + distributed locks — ARCHITECTURE.md §2.8) lands here; scheduled jobs (this phase) and Phase 5's scheduled report delivery build on it
+- Detailed spec (spec-driven): [docs/specs/PHASE-4-WORKFLOW-APPROVALS.md](./docs/specs/PHASE-4-WORKFLOW-APPROVALS.md) — pins SLA semantics, segregation-of-duties enforcement (fail closed), state machines as write-path-enforced metadata (no engine bypass), durable flow suspension for `requestApproval`, Scheduler/Notification v1 with the job-definitions-vs-registry split, and the record-sharing remainder of PHASE-2 §9; acceptance criteria are ADR-010 suites wherever expressible
 - **Exit:** purchase order requires manager approval above threshold, with escalation
 
 ### Phase 5 — Reporting & Dashboards (3–4 weeks)

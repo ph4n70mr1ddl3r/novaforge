@@ -209,7 +209,8 @@ flow from field metadata into form defaults. Role changes re-resolve defaults
 - Enforcement is **server-side only** (Data Runtime projections strip hidden fields;
   ARCHITECTURE.md §5) — the builder/resolver only *renders* the role-appropriate UI.
 - Record-level sharing: Phase 2 default is full visibility under the object CRUD
-  matrix; owner/role-hierarchy/criteria rules land Phase 3–4 (§1). Cross-tenant
+  matrix; owner/role-hierarchy/criteria rules land by Phase 4
+  (PHASE-4-WORKFLOW-APPROVALS.md §10; Phase 3 needed none). Cross-tenant
   isolation is already enforced (RLS + query filters, ARCHITECTURE.md §4–5).
 - Admin/builder/user capabilities: `builder` role gates design-time UI routes;
   permission changes emit audit events once the Phase 3 event spine lands

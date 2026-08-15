@@ -32,7 +32,8 @@ Out of scope: approvals and state machines — `requestApproval`/`transitionStat
 stay grammar-fixed and dormant until Workflow lands (Phase 4), `callConnector` until
 Integration (Phase 6); scheduled jobs (Phase 4, Scheduler); query-path hooks
 (deferred until a concrete need — PLAN.md §5); record-level sharing rules (they land
-Phase 3–4 as ERP flows demand — PHASE-2 §9; this phase's exit needs none);
+Phase 3–4 as ERP flows demand — PHASE-2 §9; this phase's exit needs none —
+landing: PHASE-4 spec §10);
 notification delivery (no Notification
 Service yet; scratch actors have no channels anyway — ADR-010 #3); promotion gating
 and headless CI runs (Phase 8 — ADR-010 #5); report targets (Phase 5).
