@@ -78,7 +78,7 @@ Shared libraries (no separate service): `metadata-model`, `security-context`, `k
 
 | Concern | Choice |
 |---------|--------|
-| Language/Runtime | Java 21 LTS, Spring Boot 3.x, Spring Cloud 2024.x |
+| Language/Runtime | Java 21 LTS, Spring Boot 4.1.x (Spring Framework 7.0.x), Spring Cloud 2025.1.x |
 | Auth | Keycloak (OIDC) — offloads user mgmt, MFA, federation |
 | Databases | PostgreSQL 16 (metadata + tenant data; JSONB hybrid) |
 | Cache | Redis (metadata cache, sequences, distributed locks) |
@@ -89,17 +89,17 @@ Shared libraries (no separate service): `metadata-model`, `security-context`, `k
 | API docs | OpenAPI 3 generated per service, aggregated at gateway |
 | Frontend | React 19 + TypeScript; metadata-driven renderer; builder on React-Flow/agnostic-dnd |
 | Observability | Micrometer + Prometheus + Grafana, OpenTelemetry traces, Loki logs |
-| Build/CI | Gradle multi-module (or Maven), GitHub Actions, Testcontainers |
+| Build/CI | Maven multi-module, GitHub Actions, Testcontainers 2 |
 | Containers | Podman + Buildah (rootless, daemonless), OCI images |
 | Orchestration | Kubernetes + Helm; local clusters via Kind-on-Podman; Skaffold (podman runner) for inner-loop dev |
-| Testing | JUnit 5, Testcontainers (Podman socket), ArchUnit (module rules), Playwright (E2E) |
+| Testing | JUnit 6, Testcontainers 2 (Podman socket), ArchUnit (module rules), Playwright (E2E) |
 
 ---
 
 ## 5. Delivery Roadmap
 
 ### Phase 0 — Foundations (2–3 weeks)
-- Monorepo scaffolding, Gradle multi-module, shared libs
+- Monorepo scaffolding, Maven multi-module, shared libs — detailed spec: [docs/specs/PHASE-0-FOUNDATIONS.md](./docs/specs/PHASE-0-FOUNDATIONS.md); stack decision: [ADR-007](./docs/adr/ADR-007-adopt-spring-boot-4.md)
 - K8s dev environment: Kind cluster on Podman (full stack) + Helm; podman-compose for lean single-service runs; CI pipeline on `quay.io/podman/stable` runners
 - Keycloak, Postgres, Redis, Kafka provisioning; gateway skeleton; observability baseline
 - **Exit:** "hello world" service behind gateway with JWT auth + traces + dashboards

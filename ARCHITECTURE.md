@@ -214,8 +214,7 @@ CREATE INDEX ON rec_journal_entry (tenant_id, entry_date DESC);
 ```
 spring_erp/
 ├── PLAN.md, ARCHITECTURE.md, ROADMAP (tracker sync)
-├── platform/                     # shared Gradle build & BOM
-│   ├── build.gradle.kts          # platform BOM: Spring versions
+├── platform/                     # shared libs (versions managed by root pom.xml)
 │   └── libs/                     # shared libraries
 │       ├── common-core/          # result types, error codes, context
 │       ├── metadata-model/       # definition POJOs + JSON schema
@@ -256,8 +255,9 @@ spring_erp/
 | 002 | AuthN in Keycloak, AuthZ in platform DB | Proposed |
 | 003 | Scripting: GraalVM JS sandbox | Proposed |
 | 004 | Workflow: Flowable embedded + native state machines | Proposed |
-| 005 | Monorepo, Gradle, Spring Boot 3 / Java 21 | Proposed |
+| 005 | Monorepo, Maven, Spring Boot 4.1 / Java 21 | Accepted |
 | 006 | Multi-tenancy: shared schema + RLS | Proposed |
+| 007 | Adopt latest: Spring Boot 4.1 / Spring Framework 7 / Cloud 2025.1 | Accepted — [ADR-007](./docs/adr/ADR-007-adopt-spring-boot-4.md) |
 
 ## 9. Performance Targets (validated in Phase 1, not Phase 7)
 

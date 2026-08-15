@@ -3,6 +3,9 @@
 build/
 !gradle/wrapper/gradle-wrapper.jar
 
+# Maven
+target/
+
 # Java
 *.class
 *.jar
