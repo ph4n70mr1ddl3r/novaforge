@@ -64,7 +64,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 - Recommendation: Keycloak handles *authentication only*; Data Runtime handles *authorization* (roles stored in platform DB) — simpler than syncing dynamic roles into Keycloak.
 
 ### 2.3 Metadata Service (design-time)
-- Owns: `AppDefinition`, `EntityDefinition`, `FieldDefinition`, `RelationshipDefinition`, `PageDefinition`, `RuleDefinition`, `WorkflowDefinition`, `ReportDefinition`, `PermissionSet`, plus app-scoped settings definitions (sequences, currencies, localization, shared enums — the Settings branch of PLAN.md §2; sequence *execution* stays with the Data Runtime per PLAN.md §3).
+- Owns: `AppDefinition`, `EntityDefinition`, `FieldDefinition`, `RelationshipDefinition`, `PageDefinition`, `RuleDefinition`, `WorkflowDefinition`, `ReportDefinition`, `DashboardDefinition`, `PermissionSet`, plus connector/webhook definitions (the Integrations branch of PLAN.md §2), sandboxed-script artifacts (versioned with the same review/promotion path as definitions — ADR-008 #4), and app-scoped settings definitions (sequences, currencies, localization, shared enums — the Settings branch of PLAN.md §2; sequence *execution* stays with the Data Runtime per PLAN.md §3).
 - Validates definitions on save (schema validation + referential integrity, e.g., formula references exist).
 - On publish: bumps version, writes to `metadata_versions`, emits `metadata.published` on the Kafka spine (cache invalidation and the §4 storage materializer both react to this one event; until Kafka lands in Phase 3, an interim transport — Redis pub/sub or similar — is pinned by the Phase 1 spec, PLAN.md §5).
 - API: REST + async import/export of app ZIP (JSON definitions) for promotion.
@@ -104,7 +104,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 - **Notification Service:** templates (entity/field tokens), channel preferences, inbox + email via SMTP/SES.
 - **Integration Service:** connector runtime (outbound REST with mapping/retry/circuit-breaker, inbound webhook endpoints with HMAC validation), all deliveries idempotent with DLQ.
 - **Audit Service:** Kafka consumer → append-only store (Postgres partitioned by month; option to offload cold data to S3/Parquet later).
-- **Scheduler Service:** DB-backed cron registry + ShedLock-style distributed locks; triggers scheduled flows and scripts (ADR-008), scheduled reports, and scheduled workflow process starts — in-process BPMN timers (escalations and the like) stay with embedded Flowable (§2.6).
+- **Scheduler Service:** DB-backed cron registry + ShedLock-style distributed locks; scheduled-job definitions are versioned app metadata (the Business Rules branch of PLAN.md §2) — the registry is the runtime schedule state activated on publish. Triggers scheduled flows and scripts (ADR-008), scheduled reports, and scheduled workflow process starts; in-process BPMN timers (escalations and the like) stay with embedded Flowable (§2.6).
 
 ---
 
@@ -253,8 +253,9 @@ spring_erp/
 │   └── shared/                   # page-model types, expression runtime, registry
 ├── deploy/
 │   ├── compose/                  # podman compose: lean local stack (PG, Redis,
-│   │                             #   Kafka, Keycloak, Prometheus/Grafana,
-│   │                             #   gateway + one backing service)
+│   │                             #   Kafka, Keycloak, Prometheus/Grafana —
+│   │                             #   infra only, per the Phase 0 spec §7;
+│   │                             #   gateway + backing service run on the host)
 │   ├── kind/                     # Kind-on-Podman cluster config (full stack)
 │   ├── helm/                     # per-service charts + umbrella
 │   └── k8s-base/                 # shared manifests (also `podman kube play`-able)

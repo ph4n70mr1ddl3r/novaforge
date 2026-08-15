@@ -86,7 +86,7 @@ entity/field metadata ──► resolveDefaultPage(entity, role)   [L1, pure]
   },
   "actions": [                                            // declarative action ladder
     { "type": "save" },
-    { "type": "openPage", "props": { "page": "pg_order_form", "id": "${record.id}" } }
+    { "type": "openPage", "props": { "page": "pg_order_detail", "id": "${record.id}" } }
   ]
 }
 ```

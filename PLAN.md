@@ -67,7 +67,7 @@ Tenant
 | **File Service** | Attachments, images, presigned storage (S3/MinIO), virus-scan hook |
 | **Notification Service** | Email/SMS/push/websocket fan-out, templates, user preferences |
 | **Integration Service** | Connectors (REST/SOAP/DB/file), webhook dispatch, retry/DLQ, mapping engine |
-| **Scheduler Service** | Cron-definitions, job orchestration, distributed locks |
+| **Scheduler Service** | Cron registry & orchestration of scheduled jobs (job definitions are versioned app metadata activated on publish — ARCHITECTURE.md §2.8), distributed locks |
 | **Audit Service** | Append-only event log (Kafka → store), who/what/when, field diffs |
 
 Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, `metadata-model`, `security-context`, `event-schemas`, `test-support`, `expression-dsl` (JVM parser/evaluator for the shared expression language — PHASE-2 spec §7).
