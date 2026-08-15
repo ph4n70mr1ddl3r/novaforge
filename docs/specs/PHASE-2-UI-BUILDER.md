@@ -64,7 +64,7 @@ entity/field metadata ──► resolveDefaultPage(entity, role)   [L1, pure]
 ```
 
 - The resolver runs **client-side** (pure TS function) so the builder can preview
-  defaults instantly; the same output is snapshot-tested in CI (golden files, §11.1).
+  defaults instantly; the same output is snapshot-tested in CI (golden files, §11 item 1).
 - The renderer never branches on entity specifics — only on component types.
 
 ## 4. Page Model v0
@@ -116,7 +116,7 @@ Field type → widget mapping (v1):
 | boolean | `FieldSwitch` |
 | int / long / decimal / money | `FieldNumber` (locale-aware, money shows currency) |
 | date / datetime / time | `FieldDate` (one component; date/datetime/time as prop modes) |
-| uuid | readonly on form, shown on detail |
+| uuid | typed `FieldInput` (readonly) on form; shown on detail |
 | lookup | `FieldLookup` (search-as-you-type via query DSL, min 2 chars) |
 | child | `RelatedList` (inline-editable grid, cascade rules honored) |
 | m2m | `FieldMultiLookup` |
@@ -220,7 +220,7 @@ terms for E2E tests.
 |---|---|---|---|
 | T1 | FE workspace + stack pin | pnpm workspace, Vite, React 19.2.x, TS strict, CI lint/test, form-library decision (Q1) | Scaffold builds in CI; decision recorded |
 | T2 | Page model + registry core | TS types for §4, JSON Schema validation, lazy component registry, version pinning, overlay-format decision (Q2, §13) | Invalid props rejected at save; unknown version → fallback + warning; Q2 decision recorded |
-| T3 | v1 component catalog | §6.3 components with props schemas + Playwright stories | Storybook-style gallery green incl. axe |
+| T3 | v1 component catalog | §6 item 3 components with props schemas + Playwright stories | Storybook-style gallery green incl. axe |
 | T4 | Expression runtime v1 | Parser/evaluator for pure expressions in TS + JVM reference engine (compile-checks expressions at Metadata-Service save/publish); shared conformance fixtures across both | 100% shared-fixture parity; invalid expression rejected at save/publish |
 | T5 | Default resolver (L1) | §5 rules incl. role parameterization | Golden-file suite green |
 | T6 | Runtime renderer + shell | Interpreter, TanStack Query data layer against Phase 1 APIs, server-side paging/virtualization | 100k-row fixture list served via server-side paging only; virtualized scrolling responsive in Playwright smoke |
@@ -234,6 +234,10 @@ Note: T5/T6 can start against Phase 1 APIs as soon as Phase 1 exit criteria pass
 T3 runs parallel throughout.
 
 ## 13. Open Questions
+
+Closure points: Q1 at T1 (§2) and Q2 at T2 (§4) as noted above; Q3 before T5 — the
+golden files pin label handling — and Q4–Q5 by T6, when the app shell and its
+serving model land.
 
 - **Q1 — Form layer:** react-hook-form + own JSON Schema mapping (control, size) vs
   Uniforms (batteries included, opinionated themes). *Recommendation: react-hook-form

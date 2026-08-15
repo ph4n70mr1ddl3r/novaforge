@@ -138,7 +138,7 @@ ErrorCode uniqueness of `code`. AC: `mvn -pl platform/libs/common-core verify` g
 
 - `metadata-model` (Phase 1): definition POJOs + JSON Schema for entity/field/relationship/page.
 - `security-context` (Phase 1): tenant/actor propagation helpers on top of TenantContext
-  (reactor context, Kafka headers, mock-test fixtures).
+  (async-executor propagation, Kafka headers, mock-test fixtures).
 - `event-schemas` (Phase 3): Kafka domain-event contracts.
 - `expression-dsl` (Phase 2): JVM parser/evaluator for the shared expression language
   (ADR-008 #3); conformance fixtures shared with `frontend/shared` (PHASE-2 spec §7).

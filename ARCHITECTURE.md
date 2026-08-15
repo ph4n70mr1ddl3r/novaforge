@@ -82,10 +82,10 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 - **Role per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md): escape hatch only** — sync hooks run flow-IR primitives (compiled at publish); scripts are written when primitives cannot express the logic, and their usage is tracked (script-ratio KPI).
 - GraalVM polyglot (JS), `Context` per execution with:
   - CPU-time and heap caps, statement/loop watchdog
-  - No host I/O; an explicit whitelisted API surface (`$record`, `$data.query` (the Data Runtime query API under the caller's authorization, §5.4 — scripts cannot bypass the single data path), `$http` only inside connector sandbox, `$log`)
+  - No host I/O; an explicit whitelisted API surface (`$record`, `$data.query` (the Data Runtime query API under the caller's authorization, §5 item 4 — scripts cannot bypass the single data path), `$http` only inside connector sandbox, `$log`)
   - Warm context pool per tenant app version
 - The **expression DSL** (formulas, validation rules, flow guards per ADR-008; UI bindings per ADR-009) is **not evaluated here**: it is a pure, deterministic language served by the shared `expression-dsl` library (§7), used in-process by the Metadata Service (compile-checks, Phase 2) and the Data Runtime (write-path evaluation, Phase 3) — no sandbox needed. This service exists solely for GraalJS escape-hatch scripts.
-- Script failure policy: `beforeSave` failure = abort transaction; `afterSave` failure = retry via Kafka (idempotency required).
+- Script failure policy: `beforeSave`/`beforeDelete` failure = abort transaction; `afterSave`/`afterDelete` failure = retry via Kafka (idempotency required).
 
 ### 2.6 Workflow Service
 - Flowable 7 embedded; process definitions authored as BPMN XML by the designer UI.
