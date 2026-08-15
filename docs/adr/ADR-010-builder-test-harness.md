@@ -47,7 +47,7 @@ logic, pages, and permissions are all versioned JSON, the tests can be too.
              "template": { "customerId": "${Customer[0].id}", "amount": 5000 },
              "expect": "ok" }
          ],
-         "assert": [ "${Order.status} == 'PENDING_APPROVAL'" ]
+         "assert": [ "${Order[0].status} == 'PENDING_APPROVAL'" ]
        }
      ]
    }

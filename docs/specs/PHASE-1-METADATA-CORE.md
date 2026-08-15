@@ -139,9 +139,11 @@ mechanism Phase 2 field security builds on (PHASE-2 spec §9).
   ("4090", PHASE-0 §5.2).
 - **Soft delete:** `deleted` flag; reads and lists exclude deleted by default;
   `includeDeleted=true` is admin-only.
-- **Idempotency:** `Idempotency-Key` honored on create and batch (ARCHITECTURE.md §6):
-  the response is recorded in Redis keyed (tenant, actor, key) with a 24 h TTL; replay
-  returns the original outcome.
+- **Idempotency:** `Idempotency-Key` honored on create and batch in Phase 1 — the
+  first installment of ARCHITECTURE.md §6's "all mutating APIs" bar (update/delete
+  replay keys reuse the identical mechanism when a client needs them). The response
+  is recorded in Redis keyed (tenant, actor, key) with a 24 h TTL; replay returns the
+  original outcome.
 - **Sequences:** definitions are Settings metadata (owned by the Metadata Service,
   ARCHITECTURE.md §2.3); execution lives here (PLAN.md §3). Two modes: `cached`
   (default — Redis block allocation, gaps allowed) and `gapless` (allocated inside the

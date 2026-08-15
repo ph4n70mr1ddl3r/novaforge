@@ -118,8 +118,9 @@ PHASE-2 §9 promised the durable audit trail "lands with the Phase 3 event spine
 so the consumer lands with the producer:
 
 - Pure consumer of the spine (ARCHITECTURE.md §1 principle 3); append-only Postgres
-  store partitioned by month (ARCHITECTURE.md §2.8); S3/Parquet cold offload stays
-  deferred.
+  store partitioned by month (ARCHITECTURE.md §2.8) in its own database on the
+  compose instance — the PHASE-1 §6 per-service pattern; S3/Parquet cold offload
+  stays deferred.
 - Captures the shapes Phase 2 defined: write events with field-level diffs, auth
   events (published to the spine by a Keycloak event listener — deployed config
   under `deploy/`, not bespoke service code, per ARCHITECTURE.md §7's
@@ -165,7 +166,7 @@ The concrete `TestSuiteDefinition` encoding ADR-010 left illustrative, pinned:
           "template": { "customerId": "${Customer[0].id}",
                         "lines": [ { "item": "WIDGET", "qty": 2, "price": "25.00" } ] },
           "expect": "ok" } ],
-      "assert": [ "${Order.total} == 50.00" ] },
+      "assert": [ "${Order[0].total} == 50.00" ] },
     { "name": "unbalanced_entry_rejected",
       "steps": [
         { "op": "createRecord", "entity": "JournalEntry", "asRole": "accountant",

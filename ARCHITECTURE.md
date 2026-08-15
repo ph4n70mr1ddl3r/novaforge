@@ -56,7 +56,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 
 ### 2.1 API Gateway
 - Spring Cloud Gateway; routes `/api/v1/runtime/**`, `/api/v1/metadata/**`, `/api/v1/workflow/**`, etc. (versioning rule: §6)
-- JWT validation (Keycloak JWKS), tenant header derivation (`X-Tenant-Id` from token claim), rate limiting via Redis. The default JWT requirement has exactly one API-route exception — the anonymous inbound-webhook prefix that arrives with Phase 6 (PHASE-6 spec §2/§6), rate-limited from its first day.
+- JWT validation (Keycloak JWKS), tenant header derivation (`X-Tenant-Id` from token claim), rate limiting via Redis — the limiter itself activates with Phase 6's first public route (PHASE-0 §6.1's deferral; PHASE-6 §6), not at Phase 0. The default JWT requirement has exactly one API-route exception — the anonymous inbound-webhook prefix that arrives with Phase 6 (PHASE-6 spec §2/§6), rate-limited from its first day.
 
 ### 2.2 Identity Service
 - Keycloak realms: one realm per tenant (or single realm + tenant claim — decide at Phase 0; single realm scales simpler, realm-per-tenant isolates better).
@@ -241,7 +241,7 @@ spring_erp/
 │   │   ├── api/  engine/  storage/  authorization/
 │   ├── script-engine/
 │   ├── workflow-service/
-│   ├── ui-builder-service/
+│   ├── ui-builder-service/      # on-demand extraction only (§2.8) — not a v1 module
 │   ├── reporting-service/
 │   ├── file-service/
 │   ├── notification-service/

@@ -49,7 +49,7 @@ demands it, per PHASE-2 §1).
 | Inventory | `Item`, `Receipt`, `Issue`, `StockLedger` (append-only movements) | **Weighted-average costing** (PLAN.md §5; Q1); stock ledger = child movements with running cost roll-ups (Phase 3 roll-ups) |
 | Period close | Checklist driven by Phase 4 workflows | Tasks per close step (reconciliations, accruals); `AccountingPeriod` locking (§4) |
 | Financial reports | Trial balance, A/R aging (the Phase 5 exit artifact), P&L sketch, executive dashboard | All Phase 5 definitions |
-| Settings | Currencies + rate table, sequences, chart-of-accounts structure | Settings metadata (ARCHITECTURE.md §2.3) |
+| Settings | Currencies, sequences, chart-of-accounts structure (the FX rate table is an app entity per the multi-currency pin below) | Settings metadata (ARCHITECTURE.md §2.3) |
 
 **Multi-currency (a PLAN.md §1 non-negotiable) — pinned scope:** one book currency
 per tenant; documents may be issued in a document currency converted at the rate on
@@ -94,7 +94,7 @@ harness vocabulary to assert them (§9).
   against the budget (rule 3).
 - Dunning = scheduled reports (Phase 5 scheduler target) + letter generation; the
   schedule logic is expressions over aging buckets.
-- Bank feed = the Phase 6 exit connector, reused as a Settings-configured job.
+- Bank feed = the Phase 6 exit connector, reused as a Scheduler job (Phase 4 §7).
 
 ## 6. UI Scope
 

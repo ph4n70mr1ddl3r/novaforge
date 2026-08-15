@@ -51,9 +51,9 @@ pages (PHASE-2 deferral, unchanged).
 | Addition | Detail |
 |---|---|
 | `novaforge-workflow-service` | Port 8086; gateway route `/api/v1/workflow/**` (already anticipated by ARCHITECTURE.md §2.1). Flowable 7 embedded. **ADR-004 moves Proposed → Accepted with a written file at phase start** (the ARCHITECTURE.md §8 convention). |
-| `novaforge-scheduler-service` | Port 8087; internal (no gateway route) — registry administration happens via publish, not REST. |
+| `novaforge-scheduler-service` | Port 8087; no gateway route for administration — the registry is publish-driven, never written over REST (§7). One read-only status route serves §11's builder visibility: `GET /api/v1/scheduler/jobs` (builder role). |
 | `novaforge-notification-service` | Port 8088; gateway route `/api/v1/notifications/**` (inbox read + preferences). |
-| Compose | **Mailpit** joins the stack (SMTP 1025, UI 8025) as the local email sink. No other new infra — Postgres/Kafka/Redis are reused. |
+| Compose | **Mailpit** joins the stack (SMTP 1025, UI 8025) as the local email sink. No other new infrastructure — the Postgres/Kafka/Redis instances are reused; each new service adds its own database on the shared Postgres (the PHASE-1 §6 pattern). |
 | `common-core` | Two error codes join the seed set: `STATE_TRANSITION("4010", 400)` and `SOD_VIOLATION("4011", 400)` (the PHASE-0 §5.2 set is a seed, not a ceiling). |
 | `event-schemas` | New contracts: `task.created/assigned/completed/escalated`, `sla.warn/breach`, `notification.delivered`. |
 | `metadata-model` | New schemas: `StateMachineDefinition`, `SLADefinition`, `SharingRuleDefinition` (PermissionSet branch). |
@@ -170,8 +170,8 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 - **Job definitions are the scheduled-job half of `RuleDefinition`**
   (ARCHITECTURE.md §2.3): `{ cron, target: flow | script | processStart | report,
   params, enabled }`, versioned metadata **activated on publish** — the registry is
-  runtime state (next-fire, run history), never authored directly (the thirteenth-
-  pass job-definitions-vs-registry split).
+  runtime state (next-fire, run history), never authored directly (the
+  job-definitions-vs-registry split).
 - DB-backed registry + ShedLock-style distributed locks (ARCHITECTURE.md §2.8);
   executions audited; a `scheduler.job.run` event per fire (success/failure).
 - **Targets:** `flow` → the compiled-graph engine in the Data Runtime via an internal
@@ -234,8 +234,9 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 - **Sharing-rule editor** (§10).
 - **Task inbox in `runtime-ui`**: my-tasks list (server-side paged), approve/reject
   with comment, delegate; notification inbox + preferences.
-- Scheduler visibility: job list + last-run status in the builder (read-only v1 —
-  the registry is publish-driven, §7).
+- Scheduler visibility: job list + last-run status in the builder via the
+  read-only `GET /api/v1/scheduler/jobs` (§2; administration stays publish-driven —
+  the registry is never written over REST, §7).
 
 ## 12. Test-Harness Growth (ADR-010 #5's Phase 4 vocabulary)
 
@@ -254,7 +255,9 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 ## 13. Security & Audit
 
 - AuthN/authZ as Phase 0–2: JWT at every service, tenant from claims, object-level
-  gate on new APIs (`/api/v1/workflow/**` = `user`+; reassign = admin/builder).
+  gate on new APIs (`/api/v1/workflow/**` = `user`+; reassign = admin/builder;
+  `/api/v1/notifications/**` = `user`+, own inbox/preferences only;
+  `GET /api/v1/scheduler/jobs` = `builder`+).
 - Task access: assignee, the task's role holders, or admin — enforced server-side.
 - Audited: task lifecycle, approve/reject/delegate/reassign with actors and
   comments, SLA warn/breach, escalations, scheduler fires, sharing-rule publishes
@@ -290,7 +293,7 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 | T2 | State-machine metadata | Schema in metadata-model, save/publish validation (§3) | Invalid machines rejected at save; compiled at publish |
 | T3 | Write-path enforcement | Transition checks + guards + `STATE_TRANSITION`; `transitionState` activation (§3) | §14.2 suite green; primitive rides the same check |
 | T4 | Tasks + inbox API | Task model, lifecycle, events, REST (§5) | CRUD per §5; `task.*` on spine; access rules enforced |
-| T5 | `requestApproval` | Durable suspension/resume, SoD fail-closed (§4) | §14.1/§14.3 suites green; `SOD_VIOLATION` case covered |
+| T5 | `requestApproval` | Durable suspension/resume, SoD fail-closed (§4) | §14.3 suite green; `SOD_VIOLATION` case covered (§14.1's journey form rides T11's `resolveTask` vocabulary) |
 | T6 | SLAs + escalation | Definitions, Flowable timers, breach flow, metrics (§6) | Clock-advanced warn/breach/escalation suite green |
 | T7 | Scheduler | Registry, locks, targets, misfire policy (§7) | §14.4 green; publish activates a job end-to-end |
 | T8 | Notification v1 | Consumer, templates, inbox + email, Mailpit (§8) | Email visible in Mailpit; preferences honored |
@@ -300,7 +303,8 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 | T12 | Exit review | Walk PLAN §5 exit + dashboards | Demo: PO above threshold → approve → POSTED, escalation shown |
 
 Dependency order: T1 → (T2, T4) → (T3, T5) → T6 → T11 → T12. Parallel tracks:
-T7 after T1; T8 after T4; T9 from Phase 2 substrate; T10 staged as its engines land.
+T7 after T1; T8 after T4; T9 from Phase 2 substrate (its §14.5 visibility suites
+ride T11's `queryRecord`); T10 staged as its engines land.
 
 ## 16. Open Questions (both non-blocking)
 
