@@ -67,7 +67,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 - Owns: `AppDefinition`, `EntityDefinition`, `FieldDefinition`, `RelationshipDefinition`, `PageDefinition`, `RuleDefinition` (event-hook and scheduled-job rules — the Business Rules branch of PLAN.md §2; the cron *registry* stays with the Scheduler, §2.8), `WorkflowDefinition`, `ReportDefinition`, `DashboardDefinition`, `PermissionSet` (app role definitions + object/field/record-rule security — the Permissions branch of PLAN.md §2; user→role assignments are tenant data, not promoted metadata — PHASE-2 spec §9), `TestSuiteDefinition` (builder test suites — [ADR-010](./docs/adr/ADR-010-builder-test-harness.md)), plus connector, webhook, and API-client definitions (the Integrations branch of PLAN.md §2), sandboxed-script artifacts (versioned with the same review/promotion path as definitions — ADR-008 #4), and app-scoped settings definitions (sequences, currencies, localization, shared enums — the Settings branch of PLAN.md §2; sequence *execution* stays with the Data Runtime per PLAN.md §3).
 - Validates definitions on save (schema validation + referential integrity, e.g., formula references exist).
 - Hosts the **test runner** per [ADR-010](./docs/adr/ADR-010-builder-test-harness.md): executes builder test suites against a scratch tenant pinned to a published draft version — steps run as synthetic actors through the Data Runtime's generic APIs (no test mode in the write path), and run artifacts are bound to the exact definition version; green runs gate change-set promotion (PLAN.md P8).
-- On publish: bumps version, writes to `metadata_versions`, emits `metadata.published` on the Kafka spine (cache invalidation and the §4 storage materializer both react to this one event; until Kafka lands in Phase 3, an interim transport — Redis pub/sub or similar — is pinned by the Phase 1 spec, PLAN.md §5).
+- On publish: bumps version, writes to `metadata_versions`, emits `metadata.published` on the Kafka spine (cache invalidation and the §4 storage materializer both react to this one event; until Kafka lands in Phase 3, Redis pub/sub carries the same envelope — pinned in the Phase 1 spec, PHASE-1-METADATA-CORE.md §4).
 - API: REST + async import/export of app ZIP (JSON definitions) for promotion.
 
 ### 2.4 Data Runtime Service (the heart)
@@ -282,7 +282,7 @@ No `identity/` module exists: Identity is a *deployed* Keycloak (realm/client co
 
 Entries marked *Proposed* live in this log only — an ADR file is written when the decision is accepted (e.g. ADR-001's file will record the storage-spike outcome, §4).
 
-## 9. Performance Targets (storage/query targets: approach validated by the pre-Phase-1 storage spike — §4 / PLAN.md §8 — implementation by the Phase 1 load test; report and script targets validated as those services land in Phases 3–5)
+## 9. Performance Targets (storage/query targets: approach validated by the pre-Phase-1 storage spike — §4 / PLAN.md §8 — implementation by the Phase 1 load test (PHASE-1-METADATA-CORE.md §10); report and script targets validated as those services land in Phases 3–5)
 
 | Operation | Target |
 |-----------|--------|

@@ -111,7 +111,7 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 - Data Runtime: generic record CRUD + query DSL + permission checks
 - Storage strategy implementation (see ARCHITECTURE.md §4)
 - REST API per entity — auto-exposed by the generic runtime, no per-entity codegen (ARCHITECTURE.md §2.4); sequences; soft delete; optimistic locking
-- Detailed spec: not yet written — drafting the Phase 1 spec (`docs/specs/`) is the next documentation task (§8); it must pin, among other things, the metadata cache-invalidation transport used until the Kafka event spine lands in Phase 3 (ARCHITECTURE.md §2.3)
+- Detailed spec: [docs/specs/PHASE-1-METADATA-CORE.md](./docs/specs/PHASE-1-METADATA-CORE.md) — it pins the metadata cache-invalidation transport used until the Kafka event spine lands in Phase 3 (Redis pub/sub carrying the future Kafka envelope — ARCHITECTURE.md §2.3, spec §4)
 - **Exit:** create entity via API → CRUD records via generic API with field validations (required/type/uniqueness) enforced
 
 ### Phase 2 — Builder UI & Security (4–6 weeks)
@@ -189,6 +189,6 @@ Build on the platform itself:
 
 1. Approve stack & phase plan; stand up Phase 0 repo skeleton
 2. Run the storage spike: hybrid JSONB + projections (ARCHITECTURE.md §4) against a 1M-row dataset — 3-day timebox; confirm or adjust, and record the final call in ADR-001
-3. Draft the Phase 1 implementation spec (docs/specs/), starting with Metadata JSON Schema v0 (entity/field/relationship/page)
+3. Review the drafted Phase 1 spec ([docs/specs/PHASE-1-METADATA-CORE.md](./docs/specs/PHASE-1-METADATA-CORE.md)); its T1 starts from Metadata JSON Schema v0 (entity/field/relationship/page) once the spike (item 2) closes ADR-001
 4. Stand up Keycloak + Gateway + one service end-to-end with CI
 5. Recruit/select team; set up project tracker with the phase backlog
