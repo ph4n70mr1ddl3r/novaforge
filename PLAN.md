@@ -17,7 +17,7 @@
 | P5 | **Reporting & Analytics** | Report builder (grouping, pivots, charts), dashboards, scheduled exports, drill-down to records |
 | P6 | **Security & Tenancy** | Multi-tenancy, RBAC + record-level + field-level permissions, data segregation, audit log, OAuth2/OIDC SSO |
 | P7 | **Integration** | Generated REST APIs, webhooks, inbound/outbound connectors, message bus topics, import/export |
-| P8 | **App Lifecycle** | Apps as versioned artifacts (JSON), sandboxes, change sets, promotion, rollback, app templates/marketplace |
+| P8 | **App Lifecycle** | Apps as versioned artifacts (JSON), sandboxes, change sets, promotion (test-gated per [ADR-010](./docs/adr/ADR-010-builder-test-harness.md)), rollback, app templates/marketplace |
 
 **ERP-grade requirements that force platform quality (non-negotiables):**
 - Decimal-precision money handling (never floats), multi-currency
@@ -43,6 +43,7 @@ Tenant
       ├── Reports & Dashboards
       ├── Permissions ── Roles, record rules, field security
       ├── Integrations ── Connectors, webhooks, API clients
+      ├── Tests ── Suites: fixtures, steps, assertions (ADR-010)
       └── Settings ── Sequences, currencies, localization, enums
 ```
 
@@ -58,7 +59,7 @@ Tenant
 |---------|----------------|
 | **API Gateway** (Spring Cloud Gateway) | Routing, auth token relay, rate limiting, CORS |
 | **Identity Service** | OIDC via deployed Keycloak — no bespoke service module (ARCHITECTURE.md §7); authentication, MFA, SSO federation; tenant/role administration data lives in the platform DB (ADR-002) |
-| **Metadata Service** | CRUD of app definitions: entities, fields, pages, rules; validation of definitions; versioning & change-sets |
+| **Metadata Service** | CRUD of app definitions: entities, fields, pages, rules; validation of definitions; versioning & change-sets; builder test-suite runner (ADR-010) |
 | **Data Runtime Service** | Generic record APIs driven by metadata; permission enforcement; query engine (filter/sort/page/aggregate); sequences; audit emission; in-process expression & field-validation engine (ADR-008 #3) |
 | **Script Engine Service** | Sandboxed execution of user scripts (escape hatch per ADR-008); resource limits, warm pools — the expression DSL runs in-process in the Data Runtime, not here (ADR-008 #3) |
 | **Workflow Service** | Flowable (BPMN) runtime, approvals, state machines, timers/tasks |
@@ -125,10 +126,12 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 - Expression validation rules (extending Phase 1's field constraints), formula fields, roll-up summaries
 - Event hooks: flow-IR step graphs built from the primitive set (before/after save, on delete — v1 hooks run on the write path only, ARCHITECTURE.md §2.4; query-path hooks are deferred until a concrete need); sandboxed scripts only where primitives cannot express the logic
 - Kafka domain events emitted from Data Runtime
-- **Exit:** order totals computed, inventory reserved via hook, no code
+- Builder test harness v1 per [ADR-010](./docs/adr/ADR-010-builder-test-harness.md): suites (fixtures → steps → assertions) over validations, formula/roll-up fields, and hook outcomes, run against a scratch tenant through the single write path — the concrete installment of ADR-008's "generated tests"
+- **Exit:** order totals computed, inventory reserved via hook, no code — verified by a builder-authored suite
 
 ### Phase 4 — Workflow & Approvals (4–5 weeks)
 - Flowable integration; state-machine designer; approval chains (parallel/sequential, delegation)
+- Test-harness vocabulary grows with the Workflow Service: `requestApproval`/`transitionState` assertions (ADR-010)
 - Human task inbox; email notifications; timers/escalation
 - Scheduler Service (cron registry + distributed locks — ARCHITECTURE.md §2.8) lands here; scheduled jobs (this phase) and Phase 5's scheduled report delivery build on it
 - **Exit:** purchase order requires manager approval above threshold, with escalation
@@ -153,7 +156,7 @@ Build on the platform itself:
 - **Exit:** book invoice → auto journal → post → financial reports reconcile. Every missing platform capability becomes a prioritized backlog item.
 
 ### Phase 8 — App Lifecycle & Hardening (4–6 weeks)
-- App packaging/versioning, change-set promotion dev→staging→prod, rollback
+- App packaging/versioning, change-set promotion dev→staging→prod, rollback — promotion gated by recorded green suite runs, suite results shown in change-set review, headless runs for CI (ADR-010)
 - Templates & marketplace concept; performance & load testing (target: p95 < 300 ms list queries at 1M rows/tenant)
 - i18n/localization editor for translation-ready metadata (deferred from Phase 2 — PHASE-2 spec Q3)
 - Security review, pen test, DR/backup strategy

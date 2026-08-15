@@ -64,8 +64,9 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 - Recommendation: Keycloak handles *authentication only*; Data Runtime handles *authorization* (roles stored in platform DB) — simpler than syncing dynamic roles into Keycloak.
 
 ### 2.3 Metadata Service (design-time)
-- Owns: `AppDefinition`, `EntityDefinition`, `FieldDefinition`, `RelationshipDefinition`, `PageDefinition`, `RuleDefinition`, `WorkflowDefinition`, `ReportDefinition`, `DashboardDefinition`, `PermissionSet`, plus connector/webhook definitions (the Integrations branch of PLAN.md §2), sandboxed-script artifacts (versioned with the same review/promotion path as definitions — ADR-008 #4), and app-scoped settings definitions (sequences, currencies, localization, shared enums — the Settings branch of PLAN.md §2; sequence *execution* stays with the Data Runtime per PLAN.md §3).
+- Owns: `AppDefinition`, `EntityDefinition`, `FieldDefinition`, `RelationshipDefinition`, `PageDefinition`, `RuleDefinition`, `WorkflowDefinition`, `ReportDefinition`, `DashboardDefinition`, `PermissionSet`, `TestSuiteDefinition` (builder test suites — [ADR-010](./docs/adr/ADR-010-builder-test-harness.md)), plus connector/webhook definitions (the Integrations branch of PLAN.md §2), sandboxed-script artifacts (versioned with the same review/promotion path as definitions — ADR-008 #4), and app-scoped settings definitions (sequences, currencies, localization, shared enums — the Settings branch of PLAN.md §2; sequence *execution* stays with the Data Runtime per PLAN.md §3).
 - Validates definitions on save (schema validation + referential integrity, e.g., formula references exist).
+- Hosts the **test runner** per [ADR-010](./docs/adr/ADR-010-builder-test-harness.md): executes builder test suites against a scratch tenant pinned to a published draft version — steps run as synthetic actors through the Data Runtime's generic APIs (no test mode in the write path), and run artifacts are bound to the exact definition version; green runs gate change-set promotion (PLAN.md P8).
 - On publish: bumps version, writes to `metadata_versions`, emits `metadata.published` on the Kafka spine (cache invalidation and the §4 storage materializer both react to this one event; until Kafka lands in Phase 3, an interim transport — Redis pub/sub or similar — is pinned by the Phase 1 spec, PLAN.md §5).
 - API: REST + async import/export of app ZIP (JSON definitions) for promotion.
 
@@ -277,6 +278,7 @@ No `identity/` module exists: Identity is a *deployed* Keycloak (realm/client co
 | 007 | Adopt latest: Spring Boot 4.1 / Spring Framework 7 / Cloud 2025.1 | Accepted — [ADR-007](./docs/adr/ADR-007-adopt-spring-boot-4.md) |
 | 008 | Declarative-first business logic; scripts as escape hatch | Accepted — [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md) |
 | 009 | Declarative UI: layered generation + component catalog, no codegen | Accepted — [ADR-009](./docs/adr/ADR-009-declarative-ui.md) |
+| 010 | Builder test harness: tests as versioned metadata, gating promotion | Accepted — [ADR-010](./docs/adr/ADR-010-builder-test-harness.md) |
 
 Entries marked *Proposed* live in this log only — an ADR file is written when the decision is accepted (e.g. ADR-001's file will record the storage-spike outcome, §4).
 
