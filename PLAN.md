@@ -141,12 +141,14 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 ### Phase 5 — Reporting & Dashboards (3–4 weeks)
 - Report builder (filters, groups, aggregates, charts), dashboard composer
 - Scheduled report delivery; CSV/XLSX export (direct downloads in Phase 5; async large-export streaming via the File Service — ARCHITECTURE.md §2.7 — activates when it lands in Phase 6); drill-down
+- Detailed spec (spec-driven): [docs/specs/PHASE-5-REPORTING.md](./docs/specs/PHASE-5-REPORTING.md) — reports compile to the query DSL over promoted fields (actor-scoped: sharing-rule row filters apply; the §9 "materialized path" = projection columns), dashboards ship as versioned catalog components (PHASE-2 Q4's deferral), sync export capped at 10k rows with the async handoff designed for Phase 6, and the Scheduler's dormant `report` target activates
 - **Exit:** A/R aging report + executive dashboard
 
 ### Phase 6 — Integration Layer (3–4 weeks)
 - Webhook dispatch (signed, retried); inbound webhook endpoint per entity
 - REST connector framework + mapping engine — REST connectors first; the SOAP/DB/file connector types (§3) join the same frame only when dogfood demand appears (§6 scope rule); bulk import/export (async, resumable)
 - File Service: attachments + presigned uploads (S3/MinIO) — required by bulk import/export; unblocks the Phase 2 `FileUpload` stub before ERP dogfood
+- Detailed spec (spec-driven): [docs/specs/PHASE-6-INTEGRATION.md](./docs/specs/PHASE-6-INTEGRATION.md) — one HMAC-SHA256+timestamp scheme in both directions (inbound webhooks ride the gateway's only anonymous route), `callConnector` activates with a 10 s timeout under the PHASE-3 failure policy, credentials live only as references (AES-GCM at rest), imports checkpoint per row for exactly-once resume, and the file field type gains its upload path
 - **Exit:** sync bank feed or Stripe transactions via connector into Payments entity
 
 ### Phase 7 — ERP Dogfood (6–8 weeks) ← *the proving ground*
@@ -155,6 +157,7 @@ Build on the platform itself:
 - AR/AP: invoices, credit notes, payments, dunning
 - Inventory: items, receipts, issues, weighted-average costing, stock ledger
 - Period close checklist driven by workflows
+- Detailed spec (spec-driven): [docs/specs/PHASE-7-ERP-DOGFOOD.md](./docs/specs/PHASE-7-ERP-DOGFOOD.md) — binding dogfood rules (zero app code, ≤ 20% script ratio, gap log before any workaround), pinned multi-currency scope, and the two anticipated platform harvests (`freezeOnTerminal` posting immutability, `PeriodLock`) landing as versioned features once the gaps confirm; the reconciliation suite is the acceptance contract
 - **Exit:** book invoice → auto journal → post → financial reports reconcile. Every missing platform capability becomes a prioritized backlog item.
 
 ### Phase 8 — App Lifecycle & Hardening (4–6 weeks)
@@ -162,6 +165,7 @@ Build on the platform itself:
 - Templates & marketplace concept; performance & load testing (target: p95 < 300 ms list queries at 1M rows/tenant)
 - i18n/localization editor for translation-ready metadata (deferred from Phase 2 — PHASE-2 spec Q3)
 - Security review, pen test, DR/backup strategy
+- Detailed spec (spec-driven): [docs/specs/PHASE-8-LIFECYCLE.md](./docs/specs/PHASE-8-LIFECYCLE.md) — the scratch-tenant mechanism grows into dev/staging/prod environments (one provisioning path, per ADR-010), promotion-gate mechanics pinned (green run against exactly V, visible audited overrides, compatibility-scoped rollback), headless API + CI wiring, templates-as-artifacts with a catalog-only marketplace, the i18n editor with its fallback chain, and the pinned pen-test/DR scope
 
 > **Total: ~8–10 months with a small senior team** (see §7). Phases 1–3 are the make-or-break core. Phases 2–6 can partially overlap once the core stabilizes.
 

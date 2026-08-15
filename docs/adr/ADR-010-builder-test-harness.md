@@ -70,7 +70,8 @@ logic, pages, and permissions are all versioned JSON, the tests can be too.
    outcomes; permission-denial assertions ride on Phase 2 RBAC); approval and
    state-machine assertions with Phase 4 (`requestApproval`/`transitionState` are
    already in the v1 grammar, ADR-008 #2 — vocabulary: PHASE-4 spec §12); promotion gating, change-set review
-   integration, and headless API runs with Phase 8.
+   integration, and headless API runs with Phase 8 (mechanics:
+   PHASE-8-LIFECYCLE.md §3–5).
 
 ## Consequences
 

@@ -96,7 +96,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 
 ### 2.7 Reporting Service
 - Compiles report definitions into Query DSL calls (never raw SQL), supports: filters, group-by, aggregates, pivot, drill-through links.
-- Large exports run async (scheduler) streaming to file service (File Service lands in Phase 6 — direct downloads until then; PLAN.md §5).
+- Large exports run async (scheduler) streaming to file service (File Service lands in Phase 6 — direct downloads capped at 10k rows until then: PHASE-5 spec §6, async job: PHASE-6 spec §7).
 - Chart payloads shaped for the frontend chart lib (ECharts).
 
 ### 2.8 Other services
