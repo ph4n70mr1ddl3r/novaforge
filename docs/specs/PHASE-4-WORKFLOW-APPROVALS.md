@@ -40,9 +40,11 @@ No design decisions are deferred to implementation time; the only open items are
 
 Out of scope: BPMN *visual* designer (Q1 — execution and event-starts ship, the
 canvas waits for demand); scheduled report delivery (Phase 5 registers consumers);
-multi-level escalation chains (v1 is single-level, §6); period locking / posting
-immutability (Phase 7 platform enhancements); wizard/tab pages (PHASE-2 deferral,
-unchanged).
+multi-level escalation chains (v1 is single-level, §6); sequential approval chains
+(v1 modes are `any` and parallel-unanimous `all`, §4 — sequential arrives as a
+versioned mode when a flow demands it, the same policy as every primitive growth);
+period locking / posting immutability (Phase 7 platform enhancements); wizard/tab
+pages (PHASE-2 deferral, unchanged).
 
 ## 2. Service & Infrastructure Additions
 
@@ -151,6 +153,11 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 - **Semantics:** wall-clock duration from task `createdAt`; `warnAt` is a fraction of
   `target` (0.8 = warn at 80%). Timers are in-process Flowable jobs (ARCHITECTURE
   §2.8 keeps escalation timers with embedded Flowable, not the Scheduler).
+- **Precedence over the primitive's own `timeout` — pinned:** a task's
+  `sla`/`dueAt` come from a matching `SLADefinition` when one matches the scope;
+  otherwise the `requestApproval` step's own `timeout`/`escalateTo` apply (`warnAt`
+  defaulting to 0.8). The dedicated definition wins — the governed overlay beats
+  the inline default, and both paths emit the same `sla.*` events.
 - **Breach:** the open task becomes `ESCALATED`; a replacement task is created for
   `escalateTo`; `sla.breach` is emitted; both actions audited; a counter metric
   (`novaforge.sla.breach`) increments. Single-level escalation in v1 (a chain is a
@@ -269,9 +276,9 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 4. Scheduler: ShedLock single-fire under concurrent leaders; misfire skips (§7);
    `flow`/`script`/`processStart` targets fire with system principal and land in
    audit.
-5. Sharing: visibility matrix per role (owner/hierarchy/criteria) via `queryRecord`
-  -based suites; write/delete governed by the same evaluation; no rule → Phase 2
-   default preserved (regression).
+5. Sharing: visibility matrix per role (owner/hierarchy/criteria) via
+   `queryRecord`-based suites; write/delete governed by the same evaluation; no
+   rule → Phase 2 default preserved (regression).
 6. Notification: template token resolution; preference filtering; synthetic actors
    skip delivery but emit events.
 

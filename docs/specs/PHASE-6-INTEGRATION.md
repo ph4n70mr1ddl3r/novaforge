@@ -22,7 +22,9 @@ disabled `FileUpload` stub before the ERP dogfood.
 
 Out of scope: SOAP/DB/file connector types (they join the same frame only on dogfood
 demand — PLAN.md §3/§5, ARCHITECTURE.md §2.8); a connector marketplace (P8 concept);
-OAuth grants beyond client-credentials (Q1); streaming/outbound event connectors.
+OAuth grants beyond client-credentials (Q1); streaming/outbound event connectors and
+tenant-facing message-bus topics (PLAN P7's remaining integration item — both
+post-1.0 demand work).
 
 ## 2. Service & Infrastructure Additions
 
@@ -94,12 +96,15 @@ OAuth grants beyond client-credentials (Q1); streaming/outbound event connectors
   write path is absolute).
 - Idempotency: provider event id (or body hash when absent) dedupes; poison
   messages DLQ with the payload preserved for replay from the builder.
+- **Rate limiting lands here:** the anonymous route is the gateway's only public
+  API path (§2), and it is rate-limited — Redis, enforced at the gateway — from
+  its first day. The PHASE-0 §6.1 deferral activates with the route that needs it.
 
 ## 7. Bulk Import / Export (async, resumable) + Async Report Export
 
 - **Import:** file lands via presigned upload (§8) → `ImportJob` metadata-scoped
   definition `{ entity, mapping, mode: create | upsert, keyFields }` → chunked
-  processing through the batch API (per-item outcomes, §PHASE-1 5) → **checkpointed
+  processing through the batch API (per-item outcomes, PHASE-1 §5) → **checkpointed
   for resume**: a killed job restarts from its last checkpoint with per-row
   idempotency (upsert keys or generated keys recorded), so a row is applied
   exactly once.

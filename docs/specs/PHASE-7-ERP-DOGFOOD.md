@@ -35,8 +35,8 @@ prioritized backlog item, not worked around silently.
 4. Every module ships with builder-authored suites (§9) — an unverified module is
    not done.
 
-Out of scope: platform features not demanded by the ERP (the §6 scope rule runs
-in reverse here — the dogfood *is* the filter); FIFO costing (Q1); full dunning
+Out of scope: platform features not demanded by the ERP (PLAN.md §6's scope rule
+runs in reverse here — the dogfood *is* the filter); FIFO costing (Q1); full dunning
 automation (Q2); the wizard/tab/mobile UI backlog (pulled only if this phase
 demands it, per PHASE-2 §1).
 
@@ -65,8 +65,9 @@ is confirmed in practice:
 
 1. **`freezeOnTerminal` (posting/immutability primitive):** an entity-level flag —
    when a record's state machine sits in a terminal state, *all* writes to the
-   record are rejected (today's Phase 4 state machines guard only the state field).
-   This is what makes the journal append-only in fact, not convention.
+   record are rejected with `RECORD_FROZEN("4014", 400)` (today's Phase 4 state
+   machines guard only the state field). This is what makes the journal
+   append-only in fact, not convention.
 2. **`PeriodLock` (period locking):** a settings-level lock per `AccountingPeriod`;
    the Data Runtime write path rejects dated-into-closed-period writes
    (`STATE_TRANSITION`-class error, new code `PERIOD_LOCKED("4013", 400)`).
@@ -122,8 +123,8 @@ are pre-accepted pending confirmation; everything else earns its place.
 1. **Reconciliation suite (the exit):** book invoice → journal auto-created and
    balanced → approval → POSTED → trial balance nets to zero; A/R aging totals
    equal the GL control account (via `runReport` assertions, PHASE-5 §9).
-2. Immutability: PATCH on a posted entry rejected; reversal entry posts and nets
-   the original to zero.
+2. Immutability: PATCH on a posted entry rejected (`error(RECORD_FROZEN)`);
+   reversal entry posts and nets the original to zero.
 3. `PeriodLock`: posting into a closed period rejected (`error(PERIOD_LOCKED)`);
    close checklist completes only with all tasks resolved.
 4. Costing: receipt → issue at weighted average, decimal-exact through the rounding

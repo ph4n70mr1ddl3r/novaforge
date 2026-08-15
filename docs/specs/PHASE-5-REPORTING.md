@@ -24,7 +24,7 @@ journey verifiable by a builder-authored suite.
 Out of scope: async large-export streaming via the File Service (activates when it
 lands in Phase 6 — PLAN.md §5; direct downloads only here, §6); ad-hoc free-form
 query UI (Q2); end-user self-serve subscriptions (Q1); pixel-perfect/BI-grade
-reporting (never a v1 goal); cross-app federation.
+reporting and dedicated pivot mechanics (never a v1 goal); cross-app federation.
 
 ## 2. Service & Infrastructure Additions
 
@@ -52,13 +52,18 @@ reporting (never a v1 goal); cross-app federation.
 
 - **Save/publish validation:** fields exist on the entity; aggregate fields are
   numeric (decimal sums as BigDecimal — PLAN.md §1 money rule); bucket expressions
-  compile (Phase 2 JVM engine); groupBy fields are projection-promoted or the
-  definition is rejected with guidance (reporting rides the §4 materialized path).
+  compile (Phase 2 JVM engine); groupBy and aggregate fields are projection-promoted
+  or the definition is rejected with guidance (reporting rides the §4 materialized
+  path — sums execute on promoted columns).
 - Reports compile to Data Runtime query/aggregate calls — **never raw SQL**
   (ARCHITECTURE.md §2.7). Buckets lower to `branch`-style case expressions in the
   aggregate pipeline, not client-side shaping.
 - `daysOverdue`-style inputs are formula fields on the entity (Phase 3), evaluated at
   write time — reports never recompute row logic.
+- Multi-field groupBy is v1's pivot: the aging example renders rows × bucket columns
+  from its two-level groupBy — the coverage ARCHITECTURE.md §2.7's "pivot" names;
+  dedicated pivot mechanics (asymmetric layouts, custom cross-tabs) stay out of v1
+  (§1).
 
 ## 4. Execution Semantics
 
@@ -74,9 +79,11 @@ reporting (never a v1 goal); cross-app federation.
   against projection-promoted/indexed columns via the Phase 1 aggregate endpoint; no
   separate materialized-view machinery in v1. Definitions referencing non-promoted
   group-by fields are rejected at save (§3).
-- Result caching: keyed (report, params, definition version, actor role set) with a
-  60 s TTL, invalidated on `metadata.published`. Cache is a latency tool, never an
-  authorization boundary (row filters still apply per actor).
+- Result caching: keyed (report, params, definition version, the requesting actor —
+  identity plus effective sharing-rule row filter) with a 60 s TTL, invalidated on
+  `metadata.published`. Cache is a latency tool, never an authorization boundary
+  (row filters still apply per actor). Role set alone is not a safe key: owner-based
+  sharing differs between users holding identical roles.
 
 ## 5. Dashboards & Catalog Components
 
@@ -104,11 +111,12 @@ reporting (never a v1 goal); cross-app federation.
 ## 7. Scheduled Delivery
 
 - The Scheduler's `report` target activates (registered dormant in Phase 4 §7):
-  job params `{ reportId, params, recipients: roles|users, format }`.
+  job params `{ reportId, params, runAsRole, recipients: roles|users, format }`.
 - Execution: run as a **system principal over an explicitly permissioned scope** —
-  scheduled reports declare an `runAsRole` (default: the app's reporting role), so
-  row filters still bound the dataset; pinning this avoids both leaks and
-  system-principal-everything.
+  scheduled reports declare a `runAsRole` (default: the app's `reporting` role; a
+  role that does not resolve against the app's definitions is a save-time
+  validation error), so row filters still bound the dataset; pinning this avoids
+  both leaks and system-principal-everything.
 - Delivery via the Notification Service (template + attachment), Mailpit locally;
   delivery audited; failures visible in the scheduler job history.
 
@@ -127,7 +135,9 @@ reporting (never a v1 goal); cross-app federation.
   assertions — the A/R aging suite asserts aging totals equal the ledger sums (the
   Phase 7 reconciliation seed).
 - Visibility suites: a low-privilege role's `runReport` respects sharing-rule row
-  filters (regression against §4); cached results never leak across roles.
+  filters (regression against §4); cached results never leak across roles — nor
+  between same-role users under owner-based sharing (the cache key carries the
+  actor, §4).
 
 ## 10. Testing Standards
 

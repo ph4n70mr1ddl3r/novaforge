@@ -20,7 +20,7 @@ Deliver the Phase 8 exit — **pinned** (PLAN.md §5 lists scope, not an exit): 
 ERP app promotes dev → staging → prod through suite-gated change sets with a
 demonstrated rollback; the full-scale load target passes; the i18n editor ships;
 the security review and DR drill close.* Every missing capability found here still
-becomes a backlog item (the §6 discipline never stops).
+becomes a backlog item (the PHASE-7 §1 discipline never stops).
 
 Out of scope: marketplace commerce (Q2 — templates import/export ship, buying and
 selling do not); multi-region; self-serve tenant billing; environment auto-scaling
@@ -63,10 +63,12 @@ environment mechanism — one provisioning path, no second system:
 1. **Gate:** promoting version V to an environment requires a recorded **green run
    of all app suites against exactly V** (run artifacts are version-bound —
    PHASE-3 §7 — so the check is mechanical: latest recorded run for V is green).
-2. **Order:** dev → staging → prod; each hop is its own gated promotion (prod
-   requires the staging run against V, plus explicit platform-admin approval —
-   Q1 settles whether anything more is required; recommendation: no timed burn-in
-   in v1).
+2. **Order:** dev → staging → prod; each hop is its own gated promotion. The prod
+   hop's green-run evidence is the same version-bound artifact set that admitted V
+   to staging — run artifacts attach to V, never to an environment (suites always
+   execute on scratch tenants, ADR-010 #3; there is no "run inside staging") — plus
+   explicit platform-admin approval (Q1 settles whether anything more is required;
+   recommendation: no timed burn-in in v1).
 3. **Override:** platform-admin only, reason recorded, audited, and *shown in the
    change-set review forever* — an override is a visible artifact, not a secret.
 4. **Rollback:** redeploying a prior version through the same gate machinery.
@@ -78,8 +80,9 @@ environment mechanism — one provisioning path, no second system:
 
 ## 5. Headless Runs & CI (ADR-010's third activation)
 
-- Public API: `POST /api/v1/metadata/suites/{id}/runs` (and app-wide) returning a
-  run handle; artifacts consumable via API — the builder UI is a client of the same
+- Public API: `POST /api/v1/metadata/suites/{id}/runs` (single suite) and
+  `POST /api/v1/metadata/apps/{appId}/suite-runs` (app-wide) returning a run
+  handle; artifacts consumable via API — the builder UI is a client of the same
   API, never a prerequisite.
 - CI wiring: the platform repo's pipeline runs the platform's own suites on PRs
   (dogfooding the harness); a per-app promotion pipeline pattern (green run →
@@ -111,7 +114,8 @@ environment mechanism — one provisioning path, no second system:
 
 - **Load validation at full scale:** re-run the Phase 1/3 load profiles with *all*
   services live — list p95 < 300 ms @ 1M rows/tenant stays the gate
-  (ARCHITECTURE.md §9 / PLAN.md §8); dashboards for every §9 target row green.
+  (ARCHITECTURE.md §9 / PLAN.md §5 Phase 8); dashboards for every ARCHITECTURE.md
+  §9 target row green.
 - **Security review + pen test (scope pinned):** the authz matrix end-to-end
   (object/field/record), RLS under adversarial tenants, script sandbox escape
   attempts, HMAC webhook endpoints (PHASE-6 §5–6), gateway rate limits on public
@@ -143,7 +147,7 @@ environment mechanism — one provisioning path, no second system:
 | T5 | Headless API + CI wiring | §5 | PR pipeline runs suites via API only |
 | T6 | Templates + catalog | §6 | ERP app exported/imported as a template |
 | T7 | i18n editor + fallback | §7 | Translation round-trip; fallback suite green |
-| T8 | Load validation at scale | §8 profiles with all services | All §9 targets green, dashboards populated |
+| T8 | Load validation at scale | §8 profiles with all services | All ARCHITECTURE.md §9 targets green, dashboards populated |
 | T9 | Security review + pen test | §8 scope | Findings triaged; criticals fixed |
 | T10 | DR/backup + rotation drill | §8 | Restore drill executed; rotation exercised |
 

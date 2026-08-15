@@ -189,8 +189,9 @@ Security config: stateless resource server, issuer-uri from
 everything else requires scope `novaforge.api`. On validation failure return RFC 7807
 `application/problem+json`.
 
-Out of scope (later phases): rate limiting (Redis), CORS, request logging, route
-discovery (K8s service name URI).
+Out of scope (later phases): rate limiting (Redis — lands in Phase 6 with the first
+public API route, PHASE-6 §6), CORS, request logging, route discovery (K8s service
+name URI).
 
 ### 6.2 `novaforge-metadata-service` (port 8081)
 

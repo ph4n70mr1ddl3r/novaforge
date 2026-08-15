@@ -56,7 +56,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 
 ### 2.1 API Gateway
 - Spring Cloud Gateway; routes `/api/v1/runtime/**`, `/api/v1/metadata/**`, `/api/v1/workflow/**`, etc. (versioning rule: §6)
-- JWT validation (Keycloak JWKS), tenant header derivation (`X-Tenant-Id` from token claim), rate limiting via Redis.
+- JWT validation (Keycloak JWKS), tenant header derivation (`X-Tenant-Id` from token claim), rate limiting via Redis. The default JWT requirement has exactly one API-route exception — the anonymous inbound-webhook prefix that arrives with Phase 6 (PHASE-6 spec §2/§6), rate-limited from its first day.
 
 ### 2.2 Identity Service
 - Keycloak realms: one realm per tenant (or single realm + tenant claim — decide at Phase 0; single realm scales simpler, realm-per-tenant isolates better).
@@ -77,7 +77,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
   - `POST /api/v1/runtime/{entity}/query` for complex queries (aggregations)
   - `POST /api/v1/runtime/batch` for bulk ops
 - Responsibilities per request: resolve metadata → authorize (object/field/record) → apply field defaults → evaluate formula/roll-up fields (§3) → run validation rules → apply hooks (flow-IR primitives first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md); sandboxed scripts only as escape hatch via Script Engine) → persist with optimistic locking → emit Kafka event (via transactional outbox — PHASE-3 spec §4) → return shaped projection (respecting field-level security).
-- Record locking: `version` int, HTTP 409 on conflict; document-level locks for ERP posting flows.
+- Record locking: `version` int, HTTP 409 on conflict; ERP posting documents get their immutability from Phase 7's `freezeOnTerminal` terminal-state write freeze (PHASE-7 spec §3) rather than bespoke lock machinery.
 
 ### 2.5 Script Engine
 - **Role per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md): escape hatch only** — sync hooks run flow-IR primitives (compiled at publish); scripts are written when primitives cannot express the logic, and their usage is tracked (script-ratio KPI).
@@ -95,12 +95,12 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 - Human tasks exposed via task inbox API; approvals support sequential/parallel, delegation, reassignment, escalation timers.
 
 ### 2.7 Reporting Service
-- Compiles report definitions into Query DSL calls (never raw SQL), supports: filters, group-by, aggregates, pivot, drill-through links.
+- Compiles report definitions into Query DSL calls (never raw SQL), supports: filters, group-by, aggregates, pivot (v1: multi-field group-by — PHASE-5 spec §3), drill-through links.
 - Large exports run async (scheduler) streaming to file service (File Service lands in Phase 6 — direct downloads capped at 10k rows until then: PHASE-5 spec §6, async job: PHASE-6 spec §7).
 - Chart payloads shaped for the frontend chart lib (ECharts).
 
 ### 2.8 Other services
-- **UI Builder Service:** component catalog hosting, builder sessions, preview/scaffolding. Page/layout definitions persist as versioned metadata in the Metadata Service (§2.3) — no separate persistence path, so promotion stays uniform.
+- **UI Builder Service:** component catalog hosting, builder sessions, preview/scaffolding. Page/layout definitions persist as versioned metadata in the Metadata Service (§2.3) — no separate persistence path, so promotion stays uniform. No separate module exists in v1: the catalog ships as versioned metadata and preview runs client-side; the service is extracted only if builder sessions/scaffolding later need server-side state (PHASE-2 spec §8).
 - **File Service:** MinIO/S3, presigned uploads, attachment metadata entity, checksum, optional ClamAV hook.
 - **Notification Service:** templates (entity/field tokens), channel preferences, inbox + email via SMTP/SES.
 - **Integration Service:** connector runtime (outbound REST first — the SOAP/DB/file connector types of PLAN.md §3 join the same frame on demand — with mapping/retry/circuit-breaker, inbound webhook endpoints with HMAC validation), all deliveries idempotent with DLQ.
@@ -141,7 +141,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 
 Field types (v1): text, longText, richText, enum, boolean, int, long, **decimal(p,s)**, date, datetime, time, uuid, email, phone, url, json, lookup, child, m2m, file, money(currency-aware).
 
-Fields may carry an optional `group` label; default detail pages section on it (no group → a single default section — see the Phase 2 spec's default-resolver rules). Common field attributes: `required`, `readonly`, `length`, `precision`/`scale`, `group`, `formula` (evaluated at write time, §2.4). Entities may likewise carry an optional `module` label; app navigation groups entities by it (no module → a default group, mirroring field groups).
+Fields may carry an optional `group` label; default detail pages section on it (no group → a single default section — see the Phase 2 spec's default-resolver rules). Common field attributes: `required`, `readonly`, `default` (static values from Phase 1; expression defaults arrive with Phase 3 write-path evaluation — PHASE-1 spec §5), `length`, `precision`/`scale`, `group`, `formula` (evaluated at write time, §2.4). Entities may likewise carry an optional `module` label; app navigation groups entities by it (no module → a default group, mirroring field groups).
 
 ---
 
@@ -280,7 +280,7 @@ No `identity/` module exists: Identity is a *deployed* Keycloak (realm/client co
 | 009 | Declarative UI: layered generation + component catalog, no codegen | Accepted — [ADR-009](./docs/adr/ADR-009-declarative-ui.md) |
 | 010 | Builder test harness: tests as versioned metadata, gating promotion | Accepted — [ADR-010](./docs/adr/ADR-010-builder-test-harness.md) |
 
-Entries marked *Proposed* live in this log only — an ADR file is written when the decision is accepted (e.g. ADR-001's file will record the storage-spike outcome, §4).
+Entries marked *Proposed* live in this log only — an ADR file is written when the decision is accepted (e.g. ADR-001's file will record the storage-spike outcome, §4). Expected acceptance points: ADR-005 with the Phase 0 repo skeleton (PHASE-0 §4), ADR-001 at storage-spike closure (PHASE-1 §2), ADR-002/ADR-006 with the Phase 1 authorization gate and RLS implementation (PHASE-1 §6–§7), ADR-003 at the Phase 3 Script Engine landing (PHASE-3 §6), ADR-004 at Phase 4 start (PHASE-4 §2).
 
 ## 9. Performance Targets (storage/query targets: approach validated by the pre-Phase-1 storage spike — §4 / PLAN.md §8 — implementation by the Phase 1 load test (PHASE-1-METADATA-CORE.md §10); report and script targets validated as those services land in Phases 3–5)
 

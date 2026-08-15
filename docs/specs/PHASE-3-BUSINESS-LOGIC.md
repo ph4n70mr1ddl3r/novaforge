@@ -121,7 +121,10 @@ so the consumer lands with the producer:
   store partitioned by month (ARCHITECTURE.md §2.8); S3/Parquet cold offload stays
   deferred.
 - Captures the shapes Phase 2 defined: write events with field-level diffs, auth
-  events, permission changes, definition publishes (ARCHITECTURE.md §5 item 5).
+  events (published to the spine by a Keycloak event listener — deployed config
+  under `deploy/`, not bespoke service code, per ARCHITECTURE.md §7's
+  identity-is-deployed stance), permission changes, definition publishes
+  (ARCHITECTURE.md §5 item 5).
 - New service `novaforge-audit-service` (port 8085); read API for admins at
   `/api/v1/audit/**` via the gateway. Audit *UI* is a later phase. Append-only is
   enforced mechanically — the store's role has no UPDATE/DELETE grants.
@@ -175,8 +178,9 @@ The concrete `TestSuiteDefinition` encoding ADR-010 left illustrative, pinned:
 - Step vocabulary v1: `createRecord`, `updateRecord`, `deleteRecord`, reusing
   ADR-008's template/`${…}` conventions (the same interpolation PHASE-2 §4 defines
   for action props). `expect`: `ok` | `error(code)` | `validation(rule)` — the
-  common-core codes (PHASE-0 §5.2). Monetary literals are strings, never numbers
-  (PLAN.md §1 money rule).
+  common-core codes (PHASE-0 §5.2). Monetary values in step templates are strings,
+  never JSON numbers (PLAN.md §1 money rule — JSON numbers are floats); assertion
+  expressions use the DSL's exact decimal literals (`50.00` above).
 - Assertions are platform-expression predicates over step results
   (`${Entity[n].path}` references).
 - Runner in the Metadata Service (ARCHITECTURE.md §2.3): scratch tenant wiped per
