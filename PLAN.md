@@ -59,7 +59,7 @@ Tenant
 |---------|----------------|
 | **API Gateway** (Spring Cloud Gateway) | Routing, auth token relay, rate limiting, CORS |
 | **Identity Service** | OIDC via deployed Keycloak — no bespoke service module (ARCHITECTURE.md §7); authentication, MFA, SSO federation; tenant/role administration data lives in the platform DB (ADR-002) |
-| **Metadata Service** | CRUD of app definitions: entities, fields, pages, rules; validation of definitions; versioning & change-sets; builder test-suite runner (ADR-010) |
+| **Metadata Service** | CRUD of app definitions: entities, fields, pages, rules (full owns-list: ARCHITECTURE.md §2.3); validation of definitions; versioning & change-sets; builder test-suite runner (ADR-010) |
 | **Data Runtime Service** | Generic record APIs driven by metadata; permission enforcement; query engine (filter/sort/page/aggregate); sequences; audit emission; in-process expression & field-validation engine (ADR-008 #3) |
 | **Script Engine Service** | Sandboxed execution of user scripts (escape hatch per ADR-008); resource limits, warm pools — the expression DSL runs in-process in the Data Runtime, not here (ADR-008 #3) |
 | **Workflow Service** | Flowable (BPMN) runtime, approvals, state machines, timers/tasks |
@@ -132,7 +132,7 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 ### Phase 4 — Workflow & Approvals (4–5 weeks)
 - Flowable integration; state-machine designer; approval chains (parallel/sequential, delegation)
 - Test-harness vocabulary grows with the Workflow Service: `requestApproval`/`transitionState` assertions (ADR-010)
-- Human task inbox; email notifications; timers/escalation
+- Human task inbox; email notifications; timers, escalation, SLAs (P4)
 - Scheduler Service (cron registry + distributed locks — ARCHITECTURE.md §2.8) lands here; scheduled jobs (this phase) and Phase 5's scheduled report delivery build on it
 - **Exit:** purchase order requires manager approval above threshold, with escalation
 

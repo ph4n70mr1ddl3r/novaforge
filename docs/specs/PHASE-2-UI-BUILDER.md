@@ -27,7 +27,10 @@ the builder UI*, including:
 
 Out of scope: dashboards/charts (Phase 5), script/flow designer (Phase 3), custom
 component SDK (chartered in §6 item 4, built on demand), full record-level sharing rules
-(owner/role-hierarchy/criteria rules land Phase 3–4 as needed by ERP flows — §9).
+(owner/role-hierarchy/criteria rules land Phase 3–4 as needed by ERP flows — §9), and
+wizard/tab composite pages plus mobile-specific layout tuning (PLAN.md P2 features —
+deferred until the v1 catalog and overlay model stabilize; backlog until ERP dogfood
+demands them).
 
 ## 2. Frontend Stack (pin exact versions at T1)
 
@@ -98,7 +101,9 @@ whether a component takes a binding is declared in its catalog contract (§6 ite
 and where the bound name repeats in widget config (`props.field`,
 `props.relationship`), save/publish validation rejects a mismatch.
 `visibility`/`required`/`readonly` carry expression-DSL bindings (§7) that
-override the field-metadata defaults (§5 — names match the ARCHITECTURE.md §3 flags);
+override the field-metadata defaults (§5 — `required`/`readonly` match the
+field-metadata flags, ARCHITECTURE.md §3; `visibility` defaults to role-based
+field security);
 `props` must validate against the component's JSON Schema at save and publish time; a
 node's `version` pins the catalog component it renders — the builder writes it
 explicitly on save, and a missing `version` resolves to the catalog's current stable
@@ -159,9 +164,10 @@ flow from field metadata into form defaults. Role changes re-resolve defaults
 
 ## 7. Expression DSL Sharing (with ADR-008)
 
-- One grammar for validations, formulas, flow guards, UI `visibility`/`required`/
-  `read-only` bindings (ADR-008 #3 — `read-only` per ADR-009 #3 and the field
-  metadata `readonly` flag, ARCHITECTURE.md §3).
+- One grammar for validations, formulas, flow guards, and UI bindings — page-model
+  slots `visibility`/`required`/`readonly` (§4; the slot name matches the
+  field-metadata `readonly` flag, ARCHITECTURE.md §3 — ADR-008 #3 and ADR-009 #3
+  spell the concept `read-only`).
 - Phase 2 ships expression-DSL v1 as a shared asset: the TS evaluator for renderer
   bindings plus a JVM reference parser/evaluator in a shared platform lib
   (`platform/libs/expression-dsl`, ARCHITECTURE.md §7 — the same engine behind

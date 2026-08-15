@@ -154,7 +154,10 @@ services derive tenant from the token claim themselves, see T7); health.
 
 Dependencies: `spring-cloud-starter-gateway-server-webmvc`,
 `spring-boot-starter-security-oauth2-resource-server`,
-`spring-boot-starter-actuator`, test: `spring-boot-starter-webmvc-test`.
+`spring-boot-starter-actuator`, test: `spring-boot-starter-webmvc-test`;
+observability per §8 adds `io.micrometer:micrometer-registry-prometheus` and
+`io.micrometer:micrometer-tracing-bridge-otel` (Boot-BOM versions; the OTLP
+exporter joins only when a tracing backend lands — Q2).
 
 Routes (YAML only — ADR-007 #5; verified syntax for Gateway 5.0.x):
 
@@ -204,7 +207,10 @@ gateway alone (defense in depth, ARCHITECTURE.md §5).
 
 Dependencies: `novaforge-common-core`, `spring-boot-starter-webmvc`,
 `spring-boot-starter-validation`, `spring-boot-starter-security-oauth2-resource-server`,
-`spring-boot-starter-actuator`, test: `spring-boot-starter-webmvc-test`.
+`spring-boot-starter-actuator`, test: `spring-boot-starter-webmvc-test`;
+observability per §8 adds `io.micrometer:micrometer-registry-prometheus` and
+`io.micrometer:micrometer-tracing-bridge-otel` (Boot-BOM versions; the OTLP
+exporter joins only when a tracing backend lands — Q2).
 
 ### 6.3 Test specifications (both services)
 
@@ -241,9 +247,9 @@ containers.
 
 - Every service: actuator + `micrometer-registry-prometheus` endpoint exposure
   (`health,info,prometheus`); build-info goal enabled.
-- Tracing: Micrometer tracing (bridge) with W3C traceparent propagated gateway →
-  services; acceptance is the same trace id in both services' logs for one proxied
-  request. Phase 0 ships no tracing or log backend (the §7 stack has no such
+- Tracing: Micrometer tracing (otel bridge — the §6.1/§6.2 dependency lists) with
+  W3C traceparent propagated gateway → services; acceptance is the same trace id in
+  both services' logs for one proxied request. Phase 0 ships no tracing or log backend (the §7 stack has no such
   backend — Prometheus + Grafana only) — OTLP export activates when a tracing
   backend lands (Q2; expected alongside Phase 3 Kafka tracing), and Loki
   (PLAN.md §4) joins the compose stack in that same expansion.
