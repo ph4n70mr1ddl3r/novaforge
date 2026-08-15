@@ -57,7 +57,7 @@ Tenant
 | Service | Responsibility |
 |---------|----------------|
 | **API Gateway** (Spring Cloud Gateway) | Routing, auth token relay, rate limiting, CORS |
-| **Identity Service** | OIDC via deployed Keycloak — no bespoke service module (ARCHITECTURE.md §7); users, tenants, roles, SSO federation |
+| **Identity Service** | OIDC via deployed Keycloak — no bespoke service module (ARCHITECTURE.md §7); authentication, MFA, SSO federation; tenant/role administration data lives in the platform DB (ADR-002) |
 | **Metadata Service** | CRUD of app definitions: entities, fields, pages, rules; validation of definitions; versioning & change-sets |
 | **Data Runtime Service** | Generic record APIs driven by metadata; permission enforcement; query engine (filter/sort/page/aggregate); sequences; audit emission; in-process expression & field-validation engine (ADR-008 #3) |
 | **Script Engine Service** | Sandboxed execution of user scripts (escape hatch per ADR-008); resource limits, warm pools — the expression DSL runs in-process in the Data Runtime, not here (ADR-008 #3) |
@@ -171,7 +171,7 @@ Build on the platform itself:
 | User scripts crash or hang the platform | GraalVM isolates with CPU/memory caps, no I/O by default, kill-switch timeouts |
 | Workflow vs script event semantics confusing | Single event spine (Kafka) with documented delivery semantics (at-least-once, idempotency keys) |
 | Scope explosion ("build everything") | ERP dogfood is the acceptance test; every feature must trace to it |
-| Microservice sprawl slows early delivery | Start with gateway + 3 core services; extract others only when boundaries prove stable |
+| Microservice sprawl slows early delivery | Start with gateway + Metadata + Data Runtime (Identity is deployed Keycloak, not built — §3); extract other services only when boundaries prove stable (ADR-008 already sequences Script Engine after the flow engine) |
 
 ---
 

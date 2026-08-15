@@ -175,7 +175,11 @@ flow from field metadata into form defaults. Role changes re-resolve defaults
   rebase prompt), consistent with Data Runtime record locking.
 - Saves and publishes go through the Metadata Service definition APIs — page
   definitions are versioned metadata; the UI Builder Service (ARCHITECTURE.md §2.8)
-  adds catalog/preview concerns, not a separate persistence path.
+  adds catalog/preview concerns, not a separate persistence path. Phase 2 ships no
+  separate `ui-builder-service` module: the catalog deploys as versioned metadata
+  (components are lazy static chunks), and preview runs client-side — the service is
+  extracted only if builder sessions/scaffolding later need server-side state
+  (PLAN.md §6 extract-when-stable rule).
 
 ## 9. Security Integration (RBAC + field-level)
 

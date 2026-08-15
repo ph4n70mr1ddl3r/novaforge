@@ -272,6 +272,8 @@ No `identity/` module exists: Identity is a *deployed* Keycloak (realm/client co
 | 008 | Declarative-first business logic; scripts as escape hatch | Accepted — [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md) |
 | 009 | Declarative UI: layered generation + component catalog, no codegen | Accepted — [ADR-009](./docs/adr/ADR-009-declarative-ui.md) |
 
+Entries marked *Proposed* live in this log only — an ADR file is written when the decision is accepted (e.g. ADR-001's file will record the storage-spike outcome, §4).
+
 ## 9. Performance Targets (storage/query targets: approach validated by the pre-Phase-1 storage spike — §4 / PLAN.md §8 — implementation by the Phase 1 load test; report and script targets validated as those services land in Phases 3–5)
 
 | Operation | Target |
