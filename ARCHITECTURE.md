@@ -1,0 +1,270 @@
+# NovaForge — Technical Architecture
+
+Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, security model, and the hardest technical problems.
+
+---
+
+## 1. System Overview
+
+```
+                                ┌──────────────────────────────────────────┐
+                                │                 Kubernetes              │
+   Browser ── HTTPS ──►  API Gateway (Spring Cloud Gateway)               │
+   (Builder & Runtime UI)       │  routing • JWT verify • rate limit      │
+                                └─────┬────────────────────────┬─────────┘
+                                      │                        │
+                    ┌─────────────────┼──────────────┐         │
+                    ▼                 ▼              ▼         ▼
+              ┌──────────┐    ┌──────────────┐  ┌────────┐ ┌─────────┐
+              │Identity  │    │Metadata Svc  │  │UI      │ │Reporting│
+              │(Keycloak)│    │(design-time) │  │Builder │ │Service  │
+              └──────────┘    └──────┬───────┘  └────────┘ └─────────┘
+                                      │ applies versions
+                                      ▼
+                              ┌───────────────┐     ┌──────────────┐
+                              │Data Runtime   │◄───►│Script Engine │
+                              │Service (CRUD, │    │(GraalVM JS)  │
+                              │query DSL,     │    └──────────────┘
+                              │permissions)   │
+                              └───┬───────┬───┘
+                    ┌─────────────┘       └─────────────┐
+                    ▼                                     ▼
+             ┌────────────┐                        ┌───────────┐
+             │ PostgreSQL │                        │   Kafka   │
+             │ (JSONB     │                        │ domain    │
+             │  hybrid)   │                        │ events,   │
+             └────────────┘                        │ audit     │
+             ┌────────────┐                        └─────┬─────┘
+             │Redis (meta│                              │
+             │cache,seq) │        ┌───────────┐   ┌──────┴──────┐
+             └────────────┘        │Workflow   │◄──┤Audit/Notify/│
+                                   │(Flowable) │   │Integration  │
+                                   └───────────┘   └─────────────┘
+```
+
+**Principles**
+1. **Single write path:** all record writes go through Data Runtime — it enforces metadata, permissions, validations, and emits events. Nothing writes to tenant tables directly.
+2. **Metadata is cached aggressively** (Redis + in-memory, version-keyed) — every request consults hot metadata.
+3. **Event spine:** Data Runtime publishes `record.created/updated/deleted` on Kafka; workflow, audit, notifications, integrations are pure consumers.
+4. **Design-time/runtime split:** Metadata Service mutates definitions; Data Runtime serves traffic. Promotions are versioned definition deployments.
+
+---
+
+## 2. Service Details
+
+### 2.1 API Gateway
+- Spring Cloud Gateway; routes `/api/runtime/**`, `/api/metadata/**`, `/api/workflow/**`, etc.
+- JWT validation (Keycloak JWKS), tenant header derivation (`X-Tenant-Id` from token claim), rate limiting via Redis.
+
+### 2.2 Identity Service
+- Keycloak realms: one realm per tenant (or single realm + tenant claim — decide at Phase 0; single realm scales simpler, realm-per-tenant isolates better).
+- Roles: platform roles (`admin`, `builder`, `user`) + app-defined roles synced from Metadata Service via Keycloak Admin API or fine-grained authz (Authz Service inside Data Runtime).
+- Recommendation: Keycloak handles *authentication only*; Data Runtime handles *authorization* (roles stored in platform DB) — simpler than syncing dynamic roles into Keycloak.
+
+### 2.3 Metadata Service (design-time)
+- Owns: `AppDefinition`, `EntityDefinition`, `FieldDefinition`, `RelationshipDefinition`, `PageDefinition`, `RuleDefinition`, `WorkflowDefinition`, `ReportDefinition`, `PermissionSet`.
+- Validates definitions on save (schema validation + referential integrity, e.g., formula references exist).
+- On publish: bumps version, writes to `metadata_versions`, invalidates caches (Kafka `metadata.invalidated`), triggers storage materializer (see §4).
+- API: REST + async import/export of app ZIP (JSON definitions) for promotion.
+
+### 2.4 Data Runtime Service (the heart)
+- Generic REST API:
+  - `POST /api/runtime/{entity}` create, `GET .../{id}`, `PATCH`, `DELETE`
+  - `GET /api/runtime/{entity}?filter=...&sort=...&page=...` (structured query DSL, not raw SQL)
+  - `POST /api/runtime/{entity}/query` for complex queries (aggregations)
+  - `POST /api/runtime/batch` for bulk ops
+- Responsibilities per request: resolve metadata → authorize (object/field/record) → apply defaults & server-side defaults → run validation rules → execute scripts (sync hooks via Script Engine) → persist with optimistic locking → emit Kafka event → return shaped projection (respecting field-level security).
+- Record locking: `version` int, HTTP 409 on conflict; document-level locks for ERP posting flows.
+
+### 2.5 Script Engine
+- GraalVM polyglot (JS), `Context` per execution with:
+  - CPU-time and heap caps, statement/loop watchdog
+  - No host I/O; an explicit whitelisted API surface (`$record`, `$metadata.query`, `$http` only inside connector sandbox, `$log`)
+  - Warm context pool per tenant app version
+- Also evaluates **formula fields** (pure expression DSL compiled to JS) and **validation rules**.
+- Script failure policy: `beforeSave` failure = abort transaction; `afterSave` failure = retry via Kafka (idempotency required).
+
+### 2.6 Workflow Service
+- Flowable 7 embedded; process definitions authored as BPMN XML by the designer UI.
+- Subscriptions to domain events can start processes (`on record.updated where status='submitted'`).
+- **State machines** as first-class metadata (states, allowed transitions, guards in script DSL) — most ERP flows are state machines, not full BPMN.
+- Human tasks exposed via task inbox API; approvals support sequential/parallel, delegation, reassignment, escalation timers.
+
+### 2.7 Reporting Service
+- Compiles report definitions into Query DSL calls (never raw SQL), supports: filters, group-by, aggregates, pivot, drill-through links.
+- Large exports run async (scheduler) streaming to file service.
+- Chart payloads shaped for the frontend chart lib (ECharts).
+
+### 2.8 Other services
+- **File Service:** MinIO/S3, presigned uploads, attachment metadata entity, checksum, optional ClamAV hook.
+- **Notification Service:** templates (entity/field tokens), channel preferences, inbox + email via SMTP/SES.
+- **Integration Service:** connector runtime (outbound REST with mapping/retry/circuit-breaker, inbound webhook endpoints with HMAC validation), all deliveries idempotent with DLQ.
+- **Audit Service:** Kafka consumer → append-only store (Postgres partitioned by month; option to offload cold data to S3/Parquet later).
+- **Scheduler Service:** DB-backed cron registry + ShedLock-style distributed locks; triggers scripts, reports, workflow timers.
+
+---
+
+## 3. Metadata Model (v0 sketch)
+
+```jsonc
+// EntityDefinition
+{
+  "id": "ent_journal_entry", "apiName": "JournalEntry",
+  "label": "Journal Entry", "displayField": "reference",
+  "fields": [
+    { "apiName": "reference",  "type": "text", "length": 32, "required": true },
+    { "apiName": "entryDate",  "type": "date", "required": true },
+    { "apiName": "status",     "type": "enum", "values": ["DRAFT","POSTED","REVERSED"] },
+    { "apiName": "periodId",   "type": "lookup", "target": "AccountingPeriod" },
+    { "apiName": "totalDebit", "type": "decimal", "precision": 18, "scale": 4,
+      "formula": "SUM(lines.debit)" }   // roll-up/formula evaluated at write time
+  ],
+  "relationships": [
+    { "apiName": "lines", "type": "child", "target": "JournalLine",
+      "cascadeDelete": true }   // child = master-detail
+  ],
+  "validations": [
+    { "name": "balanced", "scope": "record",
+      "expression": "totalDebit == totalCredit",
+      "message": "Entry must balance" }
+  ],
+  "indexes": [{ "fields": ["entryDate"], "unique": false }]
+}
+```
+
+Field types (v1): text, longText, richText, enum, boolean, int, long, **decimal(p,s)**, date, datetime, time, uuid, email, phone, url, json, lookup, child, m2m, file, money(currency-aware).
+
+---
+
+## 4. The Storage Decision (critical)
+
+Three options for storing *tenant record data* under dynamic schemas:
+
+| | A: Dynamic DDL (table per entity) | B: Pure JSONB | **C: Hybrid (recommended)** |
+|---|---|---|---|
+| Schema change | ALTER TABLE (fast on PG, but risky at runtime) | None | None for most changes; add generated column on demand |
+| Query perf | Native | GIN + expression indexes only | Native for hot fields via generated columns |
+| Integrity | Full FK/NOT NULL/CHECK | App-enforced only | App-enforced + DB CHECKs on generated columns |
+| Ops complexity | DDL migrations per tenant | Low | Low-moderate |
+| Multi-tenant scale | Table explosion risk (entities × tenants) | Clean | Clean |
+
+**Chosen: Hybrid JSONB.**
+```sql
+CREATE TABLE rec_records (
+  id            uuid PRIMARY KEY,
+  tenant_id     uuid NOT NULL,
+  entity_id     text NOT NULL,
+  version       int NOT NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL,
+  created_by    uuid NOT NULL,
+  updated_by    uuid NOT NULL,
+  deleted       boolean NOT NULL DEFAULT false,
+  data          jsonb NOT NULL
+);
+-- Per-entity materialized hot columns:
+CREATE TABLE rec_journal_entry (
+  id uuid PRIMARY KEY,
+  tenant_id uuid NOT NULL,
+  data jsonb NOT NULL,
+  -- generated columns promoted from JSONB for filter/sort/index:
+  reference text GENERATED ALWAYS AS (data->>'reference') STORED,
+  entry_date date GENERATED ALWAYS AS ((data->>'entryDate')::date) STORED
+);
+CREATE INDEX ON rec_journal_entry (tenant_id, entry_date DESC);
+```
+- Base table (`rec_records`) is the source of truth for generic ops; per-entity tables are **projection views** (or generated tables) for query performance on indexed fields.
+- Materializer listens to `metadata.published` and creates/refreshes projections — no DDL on the hot path, DDL happens at publish time only.
+- Postgres **RLS** (`tenant_id = current_setting('app.tenant')`) as defense-in-depth against tenant leakage.
+- App-layer type enforcement decimal/precision is validated in Data Runtime (BigDecimal always).
+
+**Money rule:** `decimal(18,4)` minimum storage; all arithmetic via `BigDecimal` with banker's rounding config per currency. Never doubles, anywhere.
+
+---
+
+## 5. Security Model
+
+1. **Authentication:** OIDC JWT (Keycloak); gateway validates signature/expiry; services re-derive tenant from claims.
+2. **Authorization layers (Data Runtime):**
+   - *Object-level:* role × entity → CRUD allow matrix
+   - *Field-level:* visible/read-only/hidden per role; projections strip hidden fields server-side
+   - *Record-level:* rule-based sharing (owner, role hierarchy, criteria sharing) evaluated into row filters appended to every query
+3. **Tenant isolation:** JWT claim → request context → RLS session var → every query filtered. Integration tests assert cross-tenant access fails.
+4. **Script sandbox:** see §2.5; scripts run with the *calling user's* authorization context.
+5. **Audit:** every write emits audit event (field-level diffs); auth events, permission changes, definition publishes audited too.
+6. **Secrets:** connector credentials encrypted at rest (AES-GCM, keys in KMS/Vault).
+
+## 6. Cross-Cutting Concerns
+
+- **Tracing:** OpenTelemetry (W3C traceparent propagated; Kafka headers carry trace context).
+- **Idempotency:** all mutating APIs accept `Idempotency-Key`; event consumers dedupe on `(event_id, consumer)`.
+- **Versioning:** REST APIs versioned `/api/v1/...`; app definitions versioned independently; runtime executes the *published* version, builder edits drafts.
+- **Errors:** RFC 7807 problem+json with platform error codes.
+- **Config:** Spring Cloud Config / Kubernetes ConfigMaps; per-env Helm values.
+- **Container toolchain (Podman-first):**
+  - Build/run locally with **Podman + Buildah** — rootless and daemonless; `podman machine` on macOS/Windows.
+  - Local Kubernetes via **Kind with the Podman provider** (`KIND_EXPERIMENTAL_PROVIDER=podman`) or Minikube `--driver=podman`.
+  - **Skaffold** `--platform=podman` (or `container-structure` config) for inner-loop rebuild/deploy against the local Kind cluster.
+  - **Testcontainers** works with Podman: expose the podman socket and set `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` (rootless) — CI included.
+  - Single-service debugging without a cluster: `podman kube play` runs the same K8s manifests from `deploy/k8s-base/`.
+  - Production nodes run containerd/CRI-O; Podman-built OCI images are drop-in compatible. CI builds with `quay.io/podman/stable` and pushes to any registry (GHCR/Quay).
+
+## 7. Suggested Repo Layout (monorepo)
+
+```
+spring_erp/
+├── PLAN.md, ARCHITECTURE.md, ROADMAP (tracker sync)
+├── platform/                     # shared Gradle build & BOM
+│   ├── build.gradle.kts          # platform BOM: Spring versions
+│   └── libs/                     # shared libraries
+│       ├── common-core/          # result types, error codes, context
+│       ├── metadata-model/       # definition POJOs + JSON schema
+│       ├── security-context/     # tenant/actor propagation
+│       ├── event-schemas/        # Kafka event contracts
+│       └── test-support/         # Testcontainers bases
+├── services/
+│   ├── gateway/
+│   ├── metadata-service/
+│   ├── data-runtime/             # largest service — split modules:
+│   │   ├── api/  engine/  storage/  authorization/
+│   ├── script-engine/
+│   ├── workflow-service/
+│   ├── ui-builder-service/
+│   ├── reporting-service/
+│   ├── file-service/
+│   ├── notification-service/
+│   ├── integration-service/
+│   ├── audit-service/
+│   └── scheduler-service/
+├── frontend/
+│   ├── builder-ui/               # React design-time
+│   └── runtime-ui/               # metadata renderer + shell
+├── deploy/
+│   ├── compose/                  # podman-compose: lean local stack (PG, Redis,
+│   │                             #   Kafka, Keycloak, single service)
+│   ├── kind/                     # Kind-on-Podman cluster config (full stack)
+│   ├── helm/                     # per-service charts + umbrella
+│   └── k8s-base/                 # shared manifests (also `podman kube play`-able)
+└── docs/adr/                     # architecture decision records
+```
+
+## 8. ADR Log (decide early, record why)
+
+| ADR | Topic | Status |
+|-----|-------|--------|
+| 001 | Storage strategy: hybrid JSONB + projections | Proposed |
+| 002 | AuthN in Keycloak, AuthZ in platform DB | Proposed |
+| 003 | Scripting: GraalVM JS sandbox | Proposed |
+| 004 | Workflow: Flowable embedded + native state machines | Proposed |
+| 005 | Monorepo, Gradle, Spring Boot 3 / Java 21 | Proposed |
+| 006 | Multi-tenancy: shared schema + RLS | Proposed |
+
+## 9. Performance Targets (validated in Phase 1, not Phase 7)
+
+| Operation | Target |
+|-----------|--------|
+| Simple record read (cache warm) | p95 < 50 ms |
+| Filtered list query, 1M rows/tenant, indexed | p95 < 300 ms |
+| Record write with 1 sync hook | p95 < 150 ms |
+| Report (1M rows aggregate, materialized path) | p95 < 2 s |
+| Script hook execution (warm) | p95 < 20 ms |
