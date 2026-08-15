@@ -41,7 +41,7 @@ Tenant
       ├── Business Rules ── Event hooks (flow-IR step graphs; scripts as escape hatch per ADR-008), scheduled jobs
       ├── Workflows ── BPMN definitions, state machines, approvals
       ├── Reports & Dashboards
-      ├── Permissions ── Roles, profiles, record rules, field security
+      ├── Permissions ── Roles, record rules, field security
       ├── Integrations ── Connectors, webhooks, API clients
       └── Settings ── Sequences, currencies, localization, enums
 ```

@@ -183,6 +183,7 @@ CREATE INDEX ON rec_journal_entry (tenant_id, entry_date DESC);
 ```
 - Base table (`rec_records`) is the source of truth for generic ops; per-entity tables are **projection views** (or generated tables) for query performance on indexed fields.
 - Materializer listens to `metadata.published` and creates/refreshes projections — no DDL on the hot path, DDL happens at publish time only.
+- The sketch's `CREATE TABLE` depicts the generated-table variant, where `data` is duplicated and must be kept current (trigger-maintained or dual-written on the Data Runtime write path); a pure view over `rec_records` needs no sync but forgoes stored generated columns and their indexes. Which variant — and its sync mechanics — is a central question for the 1M-row spike; ADR-001 records the call (PLAN.md §8).
 - Postgres **RLS** (`tenant_id = current_setting('app.tenant')`) as defense-in-depth against tenant leakage.
 - App-layer type enforcement: decimal precision/scale is validated in the Data Runtime (BigDecimal always).
 - The whole strategy sits behind the Data Runtime's `storage` module boundary (§7) — the storage SPI that lets the strategy evolve without touching the engine or API layers (PLAN.md §6).
@@ -252,7 +253,8 @@ spring_erp/
 │   └── shared/                   # page-model types, expression runtime, registry
 ├── deploy/
 │   ├── compose/                  # podman compose: lean local stack (PG, Redis,
-│   │                             #   Kafka, Keycloak, single service)
+│   │                             #   Kafka, Keycloak, Prometheus/Grafana,
+│   │                             #   gateway + one backing service)
 │   ├── kind/                     # Kind-on-Podman cluster config (full stack)
 │   ├── helm/                     # per-service charts + umbrella
 │   └── k8s-base/                 # shared manifests (also `podman kube play`-able)

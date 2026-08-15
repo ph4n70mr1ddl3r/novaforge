@@ -78,9 +78,10 @@ entity/field metadata ──► resolveDefaultPage(entity, role)   [L1, pure]
     "type": "FormLayout", "props": { "columns": 2 },
     "children": [
       { "type": "FieldInput", "props": { "field": "reference" }, "bind": "reference" },
-      { "type": "FieldSelect", "props": { "field": "status" },
+      { "type": "FieldSelect", "props": { "field": "status" }, "bind": "status",
         "visibility": "status != 'POSTED'" },                 // platform expression DSL
-      { "type": "RelatedList", "props": { "relationship": "lines", "pageSize": 50 } }
+      { "type": "RelatedList", "props": { "relationship": "lines", "pageSize": 50 },
+        "bind": "lines" }
     ]
   },
   "actions": [                                            // declarative action ladder
@@ -91,13 +92,18 @@ entity/field metadata ──► resolveDefaultPage(entity, role)   [L1, pure]
 ```
 
 Rules: every node = `{type, version?, props, children?, bind?, visibility?, required?,
-readonly?}`; `visibility`/`required`/`readonly` carry expression-DSL bindings (§7) that
+readonly?}`; `bind` is the node's data binding — the record field (or relationship
+path, for collection widgets such as `RelatedList`) the component reads/writes;
+whether a component takes a binding is declared in its catalog contract (§6 item 1),
+and where the bound name repeats in widget config (`props.field`,
+`props.relationship`), save/publish validation rejects a mismatch.
+`visibility`/`required`/`readonly` carry expression-DSL bindings (§7) that
 override the field-metadata defaults (§5 — names match the ARCHITECTURE.md §3 flags);
 `props` must validate against the component's JSON Schema at save and publish time; a
-node's
-`version` pins the catalog component it renders — the builder writes it explicitly on
-save, and a missing `version` resolves to the catalog's current stable but is rejected
-at publish. Unknown component/version = build error in builder, safe fallback in runtime.
+node's `version` pins the catalog component it renders — the builder writes it
+explicitly on save, and a missing `version` resolves to the catalog's current stable
+but is rejected at publish. Unknown component/version = build error in builder, safe
+fallback in runtime.
 `actions` entries follow the same `{type, props?}` shape from a closed declarative set
 (rung 2 of ADR-009's escape-hatch ladder) — no scripts. v1 action set: `save`,
 `cancel`, `delete`, `openPage` (`runFlow` from ADR-009's action ladder joins when the
@@ -139,7 +145,8 @@ flow from field metadata into form defaults. Role changes re-resolve defaults
 ## 6. Component Catalog Contract (L3)
 
 1. Each component ships: implementation (lazy React chunk), **props JSON Schema**,
-   data requirements declaration (fields/relationships it reads), and a version.
+   data requirements declaration (fields/relationships it reads, and whether the
+   component takes a `bind` slot — §4), and a version.
 2. Lifecycle: `draft → stable → deprecated`; pages pin versions; deprecation emits
    migration guidance. Registry is metadata, deployable per app version.
 3. v1 catalog (18 components): AppShell, NavList, FormLayout, ListLayout,

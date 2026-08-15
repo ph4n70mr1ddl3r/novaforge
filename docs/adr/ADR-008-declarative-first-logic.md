@@ -35,9 +35,9 @@ unreadable; these justify the escape hatch.
    `updateRecord` (template), `publishEvent`, `callConnector`, `branch` (expression
    guard), `iterate` (over related records), `requestApproval`, `transitionState`.
    Primitives are added as versioned platform features, not per-app code.
-3. **One expression language** shared by formulas, validation rules, UI visibility
-   (ADR-009), and step bindings — compiled once, evaluated on server (authoritative)
-   and optionally client (UX sugar).
+3. **One expression language** shared by formulas, validation rules, UI bindings
+   (visibility/required/read-only — ADR-009 #3), and step bindings — compiled once,
+   evaluated on server (authoritative) and optionally client (UX sugar).
 4. **GraalJS sandbox is demoted to escape hatch.** Scripts remain supported, but are
    versioned artifacts with the same review/promotion path as definitions, and their
    use is tracked.
