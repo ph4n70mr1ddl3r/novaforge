@@ -149,8 +149,9 @@ ErrorCode uniqueness of `code`. AC: `mvn -pl platform/libs/common-core verify` g
 ### 6.1 `novaforge-gateway` (port 8080)
 
 Responsibilities in Phase 0: route `/api/v1/metadata/**` → metadata-service (versioning
-rule: ARCHITECTURE.md §6); JWT validation; pass-through tenant header (informational —
-services derive tenant from the token claim themselves, see T7); health.
+rule: ARCHITECTURE.md §6); JWT validation; tenant header `X-Tenant-Id` derived from the
+token claim and passed downstream (informational — services derive tenant from the claim
+themselves, see T7); health.
 
 Dependencies: `spring-cloud-starter-gateway-server-webmvc`,
 `spring-boot-starter-security-oauth2-resource-server`,

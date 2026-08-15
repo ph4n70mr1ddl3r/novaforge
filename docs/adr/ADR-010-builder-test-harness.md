@@ -25,7 +25,8 @@ logic, pages, and permissions are all versioned JSON, the tests can be too.
    other artifact.
 2. **Closed vocabulary, existing conventions.** Steps reuse ADR-008's
    primitive/template conventions (`createRecord`/`updateRecord` with `${…}`
-   templates — the same interpolation ADR-009 uses for action props); each step
+   templates — the same interpolation the PHASE-2 spec §4 defines for UI action
+   props); each step
    declares a role (`asRole`) and an expected outcome (`ok`, `error(code)`,
    `validation(rule)` — the platform error codes of `common-core`,
    PHASE-0 spec §5.2). Assertions are platform-expression predicates over step
