@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-16
-- **Affects:** PLAN.md P8 (App Lifecycle), §2 Core Abstractions, §3 (Metadata Service), §5 Phases 3/4/8; ARCHITECTURE.md §2.3; future Phase 3 spec
+- **Affects:** PLAN.md P8 (App Lifecycle), §2 Core Abstractions, §3 (Metadata Service), §5 Phases 3/4/8; ARCHITECTURE.md §2.3; Phase 3 spec (PHASE-3-BUSINESS-LOGIC.md)
 
 ## Context
 
@@ -34,7 +34,8 @@ logic, pages, and permissions are all versioned JSON, the tests can be too.
    platform features, same policy as ADR-008 #2.
 
    ```jsonc
-   // TestSuiteDefinition (illustrative — concrete encoding pinned by the Phase 3 spec)
+   // TestSuiteDefinition (illustrative — concrete encoding pinned by the
+   // Phase 3 spec, PHASE-3-BUSINESS-LOGIC.md §7)
    {
      "id": "ts_order_rules",
      "cases": [
@@ -78,8 +79,8 @@ logic, pages, and permissions are all versioned JSON, the tests can be too.
 - Run artifacts (per-step traces, assertion results) are tenant data with retention
   (last N per definition version), surfaced in the builder UI and via API — the
   headless form is the hook for CI-driven promotion later.
-- Determinism: period-lock and dunning-style tests need a controlled clock; whether
-  `now()` freezes per run is a question for the Phase 3 spec.
+- Determinism: period-lock and dunning-style tests need a controlled clock; the
+  Phase 3 spec pins a per-run frozen clock (PHASE-3-BUSINESS-LOGIC.md §7).
 - Suite coverage joins script ratio (ADR-008 #5) as an app-health signal in the
   builder.
 - The Phase 3 scratch-tenant mechanism is the seed of P8's sandboxes — the same

@@ -127,6 +127,7 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 - Event hooks: flow-IR step graphs built from the primitive set (before/after save, on delete — v1 hooks run on the write path only, ARCHITECTURE.md §2.4; query-path hooks are deferred until a concrete need); sandboxed scripts only where primitives cannot express the logic
 - Kafka domain events emitted from Data Runtime
 - Builder test harness v1 per [ADR-010](./docs/adr/ADR-010-builder-test-harness.md): suites (fixtures → steps → assertions) over validations, formula/roll-up fields, and hook outcomes, run against a scratch tenant through the single write path — the concrete installment of ADR-008's "generated tests"
+- Detailed spec: [docs/specs/PHASE-3-BUSINESS-LOGIC.md](./docs/specs/PHASE-3-BUSINESS-LOGIC.md) — it pins the two landings the roadmap left implicit (Audit Service v1 rides the spine, the durable trail PHASE-2 §9 promised; Script Engine v0 arrives demand-sized at phase tail per ADR-008's after-the-flow-engine sequencing) plus ADR-010's deferred details (TestSuiteDefinition encoding, frozen per-run test clock)
 - **Exit:** order totals computed, inventory reserved via hook, no code — verified by a builder-authored suite
 
 ### Phase 4 — Workflow & Approvals (4–5 weeks)

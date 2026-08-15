@@ -112,7 +112,8 @@ fallback in runtime.
 `actions` entries follow the same `{type, props?}` shape from a closed declarative set
 (rung 2 of ADR-009's escape-hatch ladder) — no scripts. v1 action set: `save`,
 `cancel`, `delete`, `openPage` (`runFlow` from ADR-009's action ladder joins when the
-flow engine lands in Phase 3); the set grows only via versioned platform features
+flow engine lands in Phase 3 — PHASE-3-BUSINESS-LOGIC.md §8); the set grows only
+via versioned platform features
 (same policy as ADR-008's primitives). String-valued action props may interpolate the
 current record with `${path}` templates (`${record.id}` above) — the same `${…}`
 convention as ADR-008's `createRecord`/`updateRecord` record templates, resolved when
