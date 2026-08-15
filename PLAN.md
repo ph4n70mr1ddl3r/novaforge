@@ -70,7 +70,7 @@ Tenant
 | **Scheduler Service** | Cron-definitions, job orchestration, distributed locks |
 | **Audit Service** | Append-only event log (Kafka → store), who/what/when, field diffs |
 
-Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, `metadata-model`, `security-context`, `event-schemas`, `test-support`.
+Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, `metadata-model`, `security-context`, `event-schemas`, `test-support`, `expression-dsl` (JVM parser/evaluator for the shared expression language — PHASE-2 spec §7).
 
 ---
 
@@ -130,6 +130,7 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 ### Phase 4 — Workflow & Approvals (4–5 weeks)
 - Flowable integration; state-machine designer; approval chains (parallel/sequential, delegation)
 - Human task inbox; email notifications; timers/escalation
+- Scheduler Service (cron registry + distributed locks — ARCHITECTURE.md §2.8) lands here; scheduled jobs (this phase) and Phase 5's scheduled report delivery build on it
 - **Exit:** purchase order requires manager approval above threshold, with escalation
 
 ### Phase 5 — Reporting & Dashboards (3–4 weeks)

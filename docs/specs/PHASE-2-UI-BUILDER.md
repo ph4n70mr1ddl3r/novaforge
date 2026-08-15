@@ -46,6 +46,9 @@ component SDK (chartered in §6 item 4, built on demand), full record-level shar
 Repo placement (per ARCHITECTURE.md §7): `frontend/runtime-ui` (renderer + shell)
 and `frontend/builder-ui` (design-time), sharing a `frontend/shared` package
 (page-model types, expression runtime, component registry). pnpm workspace.
+Browser apps reach APIs via the gateway; the hosting model is Q5 (§13) — the
+recommended same-origin static serving keeps gateway CORS (deferred in PHASE-0
+§6.1) out of v1, with a Vite dev proxy covering local development.
 
 ## 3. UI Architecture Summary (binding: ADR-009)
 
@@ -121,9 +124,11 @@ Field type → widget mapping (v1):
 | file | `FileUpload` stub (File Service lands in Phase 6 — PLAN.md §5; stub disabled gracefully until then) |
 
 List view defaults: display field + next 4 visible-by-role fields, `RecordActions`
-column; detail view: sections grouped by field group metadata; navigation: entities
-grouped by module in app nav. Required/readonly flags flow from field metadata into
-form defaults. Role changes re-resolve defaults (L1 is role-parameterized).
+column; detail view: sections grouped by field `group` metadata (no group → a single
+default section); navigation: entities grouped by `module` metadata (no module → a
+default group, mirroring field groups — ARCHITECTURE.md §3). Required/readonly flags
+flow from field metadata into form defaults. Role changes re-resolve defaults
+(L1 is role-parameterized).
 
 ## 6. Component Catalog Contract (L3)
 
@@ -144,11 +149,14 @@ form defaults. Role changes re-resolve defaults (L1 is role-parameterized).
 - One grammar for validations, formulas, flow guards, UI `visibility`/`required`/
   `disabled` bindings (ADR-008 #3).
 - Phase 2 ships expression-DSL v1 as a shared asset: the TS evaluator for renderer
-  bindings plus a JVM reference parser/evaluator wired into the Metadata Service so
+  bindings plus a JVM reference parser/evaluator in a shared platform lib
+  (`platform/libs/expression-dsl`, ARCHITECTURE.md §7 — the same engine the Data
+  Runtime evaluates in the Phase 3 write path), wired into the Metadata Service so
   expressions are compile-checked at save/publish (like props schemas). Server-side
   evaluation of expression semantics in the write path (validation rules, formulas)
-  arrives in Phase 3 — until then the write path is enforced by field-level security
-  (§9) and static required/readonly flags from field metadata.
+  arrives in Phase 3 — until then the write path is enforced by the Phase 1 field
+  validations (required/type/uniqueness — PLAN.md §5 Phase 1 exit) plus field-level
+  security (§9); client-side expression bindings remain UX sugar (security note below).
 - Conformance fixtures run against both engines from day one (T4) to prevent dialect
   drift.
 - Security: browser evaluation is UX sugar, never trusted as enforcement.
@@ -235,3 +243,8 @@ T3 runs parallel throughout.
 - **Q4 — Nav/dashboard shell scope:** how minimal should the v1 app shell be?
   *Recommendation: keep v1 minimal (nav + list + form + detail); defer dashboard
   composition to Phase 5 (ECharts via catalog components).*
+- **Q5 — Frontend hosting:** serve `runtime-ui`/`builder-ui` as static bundles
+  behind the gateway (same origin) vs separate frontend hosting/ingress.
+  *Recommendation: static bundles routed through the gateway — same origin keeps
+  gateway CORS (deferred in PHASE-0 §6.1) out of v1; revisit for custom-component
+  iframes (§6 item 4).*

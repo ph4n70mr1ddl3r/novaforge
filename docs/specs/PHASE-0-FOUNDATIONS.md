@@ -63,9 +63,10 @@ spring_erp/
 └── docs/{adr,specs}/
 ```
 
-`platform/libs/metadata-model`, `security-context`, `event-schemas`, `test-support`
-(ARCHITECTURE.md §7) are chartered but intentionally **not created** until Phase 1 —
-empty modules rot. Charters are recorded in §5.4 so intent is not lost.
+`platform/libs/metadata-model`, `security-context`, `test-support` (Phase 1),
+`expression-dsl` (Phase 2), and `event-schemas` (Phase 3) — all chartered in
+ARCHITECTURE.md §7 — are intentionally **not created** in Phase 0; empty modules rot.
+Charters are recorded in §5.4 so intent is not lost.
 
 ## 4. Build Specification
 
@@ -139,6 +140,8 @@ ErrorCode uniqueness of `code`. AC: `mvn -pl platform/libs/common-core verify` g
 - `security-context` (Phase 1): tenant/actor propagation helpers on top of TenantContext
   (reactor context, Kafka headers, mock-test fixtures).
 - `event-schemas` (Phase 3): Kafka domain-event contracts.
+- `expression-dsl` (Phase 2): JVM parser/evaluator for the shared expression language
+  (ADR-008 #3); conformance fixtures shared with `frontend/shared` (PHASE-2 spec §7).
 - `test-support` (Phase 1): Testcontainers bases (Postgres + RLS fixtures).
 
 ## 6. Service Specifications
@@ -235,8 +238,10 @@ containers.
   (`health,info,prometheus`); build-info goal enabled.
 - Tracing: Micrometer tracing (bridge) with W3C traceparent propagated gateway →
   services; acceptance is the same trace id in both services' logs for one proxied
-  request. Phase 0 ships no tracing backend (the §7 stack has none) — OTLP export
-  activates when a backend lands (Q2; expected alongside Phase 3 Kafka tracing).
+  request. Phase 0 ships no tracing or log backend (the §7 stack has no such
+  backend — Prometheus + Grafana only) — OTLP export activates when a tracing
+  backend lands (Q2; expected alongside Phase 3 Kafka tracing), and Loki
+  (PLAN.md §4) joins the compose stack in that same expansion.
   Full OTel collector deferred (Q2).
 - Grafana dashboard v0: one row per service — availability (up), HTTP p95, JVM heap.
 
@@ -269,7 +274,7 @@ Each task is independently mergeable; tasks T1–T3 unblock everything else.
 
 | # | Task | Content | Acceptance criteria |
 |---|---|---|---|
-| T1 | Restore spike scaffold | Recreate structure from `spike/boot-4.1-scaffold` (POMs, TenantContext, gateway+metadata skeletons incl. YAML route + tests) | `./mvnw verify` green on Temurin 21 |
+| T1 | Restore spike scaffold | Recreate structure from `spike/boot-4.1-scaffold` (POMs, TenantContext, gateway+metadata skeletons incl. YAML route + tests) | `mvn verify` green on Temurin 21 (wrapper arrives in T2) |
 | T2 | Maven wrapper + README | `mvn wrapper:wrapper`; README quickstart (prereqs, verify, run compose) | Fresh clone builds with no local Maven |
 | T3 | common-core error model | `ErrorCode`, `PlatformErrorCode`, `ProblemErrors` + tests (§5.2) | Lib tests green; no Spring web deps (`mvn dependency:tree` check) |
 | T4 | Keycloak realm export | Realm `novaforge`, client `novaforge-api` with client scope `novaforge.api`, user `demo`; mounted into compose | `demo` login via CLI yields JWT carrying scope `novaforge.api` |

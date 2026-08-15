@@ -82,7 +82,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
   - CPU-time and heap caps, statement/loop watchdog
   - No host I/O; an explicit whitelisted API surface (`$record`, `$metadata.query`, `$http` only inside connector sandbox, `$log`)
   - Warm context pool per tenant app version
-- The **expression DSL** (formulas, validation rules, flow guards per ADR-008; UI bindings per ADR-009) is **not evaluated here**: it is a pure, deterministic language served by a small in-process library in the Data Runtime / Metadata Service (no sandbox needed). This service exists solely for GraalJS escape-hatch scripts.
+- The **expression DSL** (formulas, validation rules, flow guards per ADR-008; UI bindings per ADR-009) is **not evaluated here**: it is a pure, deterministic language served by the shared `expression-dsl` library (§7), used in-process by the Metadata Service (compile-checks, Phase 2) and the Data Runtime (write-path evaluation, Phase 3) — no sandbox needed. This service exists solely for GraalJS escape-hatch scripts.
 - Script failure policy: `beforeSave` failure = abort transaction; `afterSave` failure = retry via Kafka (idempotency required).
 
 ### 2.6 Workflow Service
@@ -226,6 +226,8 @@ spring_erp/
 │       ├── metadata-model/       # definition POJOs + JSON schema
 │       ├── security-context/     # tenant/actor propagation
 │       ├── event-schemas/        # Kafka event contracts
+│       ├── expression-dsl/       # expression DSL: JVM parser/evaluator +
+│       │                          #   conformance fixtures (TS twin in frontend/shared)
 │       └── test-support/         # Testcontainers bases
 ├── services/
 │   ├── gateway/
@@ -262,7 +264,7 @@ No `identity/` module exists: Identity is a *deployed* Keycloak (realm/client co
 |-----|-------|--------|
 | 001 | Storage strategy: hybrid JSONB + projections | Proposed |
 | 002 | AuthN in Keycloak, AuthZ in platform DB | Proposed |
-| 003 | Scripting: GraalVM JS sandbox | Proposed |
+| 003 | Scripting: GraalVM JS sandbox (escape hatch per ADR-008) | Proposed |
 | 004 | Workflow: Flowable embedded + native state machines | Proposed |
 | 005 | Monorepo, Maven, Java 21 (Boot/Cloud versions: ADR-007) | Proposed |
 | 006 | Multi-tenancy: shared schema + RLS | Proposed |
