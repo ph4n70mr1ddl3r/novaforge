@@ -58,13 +58,13 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 
 ### 2.2 Identity Service
 - Keycloak realms: one realm per tenant (or single realm + tenant claim — decide at Phase 0; single realm scales simpler, realm-per-tenant isolates better).
-- Roles: platform roles (`admin`, `builder`, `user`) + app-defined roles synced from Metadata Service via Keycloak Admin API or fine-grained authz (Authz Service inside Data Runtime).
+- Roles: platform roles (`admin`, `builder`, `user`) + app-defined roles. Two mechanisms were considered — syncing app-defined roles into Keycloak via its Admin API, or an Authz module inside Data Runtime backed by the platform DB; the recommendation below (and ADR-002's direction) picks the latter: authorization resolves in the platform, Keycloak stays authentication-only.
 - Recommendation: Keycloak handles *authentication only*; Data Runtime handles *authorization* (roles stored in platform DB) — simpler than syncing dynamic roles into Keycloak.
 
 ### 2.3 Metadata Service (design-time)
 - Owns: `AppDefinition`, `EntityDefinition`, `FieldDefinition`, `RelationshipDefinition`, `PageDefinition`, `RuleDefinition`, `WorkflowDefinition`, `ReportDefinition`, `PermissionSet`.
 - Validates definitions on save (schema validation + referential integrity, e.g., formula references exist).
-- On publish: bumps version, writes to `metadata_versions`, invalidates caches (Kafka `metadata.invalidated`), triggers storage materializer (see §4).
+- On publish: bumps version, writes to `metadata_versions`, invalidates caches (`metadata.invalidated` on the Kafka spine; until Kafka lands in Phase 3, an interim transport — Redis pub/sub or similar — is pinned by the Phase 1 spec, PLAN.md §5), triggers storage materializer (see §4).
 - API: REST + async import/export of app ZIP (JSON definitions) for promotion.
 
 ### 2.4 Data Runtime Service (the heart)
@@ -82,7 +82,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
   - CPU-time and heap caps, statement/loop watchdog
   - No host I/O; an explicit whitelisted API surface (`$record`, `$metadata.query`, `$http` only inside connector sandbox, `$log`)
   - Warm context pool per tenant app version
-- Also evaluates **formula fields** (pure expression DSL) and **validation rules**.
+- The **expression DSL** (formulas, validation rules, flow guards per ADR-008; UI bindings per ADR-009) is **not evaluated here**: it is a pure, deterministic language served by a small in-process library in the Data Runtime / Metadata Service (no sandbox needed). This service exists solely for GraalJS escape-hatch scripts.
 - Script failure policy: `beforeSave` failure = abort transaction; `afterSave` failure = retry via Kafka (idempotency required).
 
 ### 2.6 Workflow Service
@@ -102,7 +102,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 - **Notification Service:** templates (entity/field tokens), channel preferences, inbox + email via SMTP/SES.
 - **Integration Service:** connector runtime (outbound REST with mapping/retry/circuit-breaker, inbound webhook endpoints with HMAC validation), all deliveries idempotent with DLQ.
 - **Audit Service:** Kafka consumer → append-only store (Postgres partitioned by month; option to offload cold data to S3/Parquet later).
-- **Scheduler Service:** DB-backed cron registry + ShedLock-style distributed locks; triggers scripts, reports, workflow timers.
+- **Scheduler Service:** DB-backed cron registry + ShedLock-style distributed locks; triggers scheduled flows and scripts (ADR-008), reports, workflow timers.
 
 ---
 
@@ -137,6 +137,8 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 ```
 
 Field types (v1): text, longText, richText, enum, boolean, int, long, **decimal(p,s)**, date, datetime, time, uuid, email, phone, url, json, lookup, child, m2m, file, money(currency-aware).
+
+Fields may carry an optional `group` label; default detail pages section on it (no group → a single default section — see the Phase 2 spec's default-resolver rules).
 
 ---
 
@@ -266,7 +268,7 @@ spring_erp/
 | 008 | Declarative-first business logic; scripts as escape hatch | Accepted — [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md) |
 | 009 | Declarative UI: layered generation + component catalog, no codegen | Accepted — [ADR-009](./docs/adr/ADR-009-declarative-ui.md) |
 
-## 9. Performance Targets (storage/query targets validated by the Phase 1 load test — see §4; report and script targets validated as those services land in Phases 3–5)
+## 9. Performance Targets (storage/query targets: approach validated by the pre-Phase-1 storage spike — §4 / PLAN.md §8 — implementation by the Phase 1 load test; report and script targets validated as those services land in Phases 3–5)
 
 | Operation | Target |
 |-----------|--------|

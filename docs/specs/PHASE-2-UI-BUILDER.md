@@ -61,7 +61,7 @@ entity/field metadata ──► resolveDefaultPage(entity, role)   [L1, pure]
 ```
 
 - The resolver runs **client-side** (pure TS function) so the builder can preview
-  defaults instantly; the same output is snapshot-tested server-side in CI.
+  defaults instantly; the same output is snapshot-tested in CI (golden files, §11.1).
 - The renderer never branches on entity specifics — only on component types.
 
 ## 4. Page Model v0
@@ -93,7 +93,9 @@ must validate against the component's JSON Schema at save and publish time; a no
 save, and a missing `version` resolves to the catalog's current stable but is rejected
 at publish. Unknown component/version = build error in builder, safe fallback in runtime.
 `actions` entries follow the same `{type, props?}` shape from a closed declarative set
-(rung 2 of ADR-009's escape-hatch ladder) — no scripts. Per ADR-009 L2, the *persisted*
+(rung 2 of ADR-009's escape-hatch ladder) — no scripts. v1 action set: `save`,
+`cancel`, `delete`, `openPage`; the set grows only via versioned platform features
+(same policy as ADR-008's primitives). Per ADR-009 L2, the *persisted*
 artifact stores deltas against the L1 default; the concrete delta encoding is Q2 (§13),
 decided at T2 — the example above shows the overlay's logical content, not its storage
 format.
@@ -139,10 +141,16 @@ form defaults. Role changes re-resolve defaults (L1 is role-parameterized).
 ## 7. Expression DSL Sharing (with ADR-008)
 
 - One grammar for validations, formulas, flow guards, UI `visibility`/`required`/
-  `disabled` bindings. Compiled: server (authoritative, JVM) + browser (sugar).
-- Phase 2 needs only the pure-expression subset (no step graphs) but the conformance
-  test suite is shared from day one to prevent dialect drift.
-- Security: browser evaluation is never trusted; server re-evaluates on write/query.
+  `disabled` bindings (ADR-008 #3).
+- Phase 2 ships expression-DSL v1 as a shared asset: the TS evaluator for renderer
+  bindings plus a JVM reference parser/evaluator wired into the Metadata Service so
+  expressions are compile-checked at save/publish (like props schemas). Server-side
+  evaluation of expression semantics in the write path (validation rules, formulas)
+  arrives in Phase 3 — until then the write path is enforced by field-level security
+  (§9) and static required/readonly flags from field metadata.
+- Conformance fixtures run against both engines from day one (T4) to prevent dialect
+  drift.
+- Security: browser evaluation is UX sugar, never trusted as enforcement.
 
 ## 8. Builder UX
 
@@ -166,6 +174,9 @@ form defaults. Role changes re-resolve defaults (L1 is role-parameterized).
   (role × entity → CRUD flags); field security (visible/read-only/hidden per role).
 - Enforcement is **server-side only** (Data Runtime projections strip hidden fields;
   ARCHITECTURE.md §5) — the builder/resolver only *renders* the role-appropriate UI.
+- Record-level sharing: Phase 2 default is full visibility under the object CRUD
+  matrix; owner/role-hierarchy/criteria rules land Phase 3–4 (§1). Cross-tenant
+  isolation is already enforced (RLS + query filters, ARCHITECTURE.md §4–5).
 - Admin/builder/user capabilities: `builder` role gates design-time UI routes;
   permission changes emit audit events once the Phase 3 event spine lands
   (ARCHITECTURE.md §5); Phase 2 defines the audit event shapes so nothing is
@@ -197,9 +208,9 @@ terms for E2E tests.
 | T1 | FE workspace + stack pin | pnpm workspace, Vite, React 19.2.x, TS strict, CI lint/test, form-library decision (Q1) | Scaffold builds in CI; decision recorded |
 | T2 | Page model + registry core | TS types for §4, JSON Schema validation, lazy component registry, version pinning | Invalid props rejected at save; unknown version → fallback + warning |
 | T3 | v1 component catalog | §6.3 components with props schemas + Playwright stories | Storybook-style gallery green incl. axe |
-| T4 | Expression runtime (subset) | Parser/evaluator for pure expressions in TS; shared conformance fixtures with JVM suite | 100% shared-fixture parity |
+| T4 | Expression runtime v1 | Parser/evaluator for pure expressions in TS + JVM reference engine (compile-checks expressions at Metadata-Service save/publish); shared conformance fixtures across both | 100% shared-fixture parity; invalid expression rejected at save/publish |
 | T5 | Default resolver (L1) | §5 rules incl. role parameterization | Golden-file suite green |
-| T6 | Runtime renderer + shell | Interpreter, TanStack Query data layer against Phase 1 APIs, server-side paging/virtualization | 100k-row fixture list: p95 render smooth, paging server-side only |
+| T6 | Runtime renderer + shell | Interpreter, TanStack Query data layer against Phase 1 APIs, server-side paging/virtualization | 100k-row fixture list served via server-side paging only; virtualized scrolling responsive in Playwright smoke |
 | T7 | Entity builder UI | §8 wizard/grid over Metadata APIs | Create/modify entities incl. relationships without API calls by hand |
 | T8 | Page builder (L2 overlays) | Canvas, palette, property panel, preview, undo, optimistic locking | Customize order form per §4 example; 409 rebase prompt works |
 | T9 | RBAC + field security | §9 editors + server projection enforcement | Cross-role leakage tests fail closed; permission-change audit event shapes defined (§9; durable audit trail lands with the Phase 3 event spine) |
@@ -220,5 +231,6 @@ T3 runs parallel throughout.
 - **Q3 — i18n now or Phase 8:** label translations touch every metadata type.
   *Recommendation: ship metadata fields as translation-ready (`label_i18n` optional)
   but defer editor UI to Phase 8.*
-- **Q4 — Nav/dashboard shell scope:** keep v1 shell minimal (nav + list + form +
-  detail) and defer dashboard composition to Phase 5 (ECharts via catalog components).
+- **Q4 — Nav/dashboard shell scope:** how minimal should the v1 app shell be?
+  *Recommendation: keep v1 minimal (nav + list + form + detail); defer dashboard
+  composition to Phase 5 (ECharts via catalog components).*

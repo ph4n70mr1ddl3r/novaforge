@@ -216,7 +216,7 @@ Dependencies: `novaforge-common-core`, `spring-boot-starter-webmvc`,
 | Service | Image (pin tag at T5) | Port | Purpose |
 |---|---|---|---|
 | keycloak | `quay.io/keycloak/keycloak:26.x` | 8082 | realm `novaforge`, `start-dev`, pre-configured realm export |
-| postgres | `docker.io/library/postgres:16` | 5432 | shared instance, per-service databases |
+| postgres | `docker.io/library/postgres:16` | 5432 | shared instance — Keycloak persistence in Phase 0; per-service databases arrive in Phase 1 |
 | redis | `docker.io/library/redis:7` | 6379 | cache/locks (unused until Phase 1) |
 | kafka | `apache/kafka:4.x` (KRaft, single node) | 9092 | event spine (unused until Phase 3) |
 | prometheus | `prom/prometheus` | 9090 | scrapes actuator metrics |
@@ -242,8 +242,10 @@ containers.
 
 `build.yaml`: on PR + push to main.
 1. Job `build` (ubuntu-latest, Temurin 21, Maven cache): `./mvnw -B -ntp verify`.
-2. Job `native-check` later; Testcontainers-based jobs deferred to Phase 1, together
-   with wiring the `quay.io/podman/stable` Podman-socket runner label (PLAN.md §5).
+2. Testcontainers-based jobs deferred to Phase 1, together with wiring the
+   `quay.io/podman/stable` Podman-socket runner label (PLAN.md §5); a native-image
+   check job is added only if a service adopts native builds (none is chartered in
+   any phase).
 3. Concurrency cancel on superseded PRs; artifacts: surefire reports on failure.
 
 ## 10. Testing Standards (Boot 4 specifics)
@@ -255,6 +257,9 @@ containers.
   Podman socket env (`TESTCONTAINERS_*`) documented in README when first used (Phase 1).
 - Rule: a test asserting an exact managed version (e.g. Framework 7.0.8) must fail
   loudly on any dependency drift — intentional upgrades update the assertion.
+- ArchUnit module rules (PLAN.md §4) start in Phase 1, when there are real module
+  boundaries to guard; until then T3's `dependency:tree` check enforces the one rule
+  in effect (no Spring web deps in common-core).
 
 ## 11. Task Breakdown
 
@@ -277,7 +282,7 @@ Dependency order: T1 → T2 → (T3, T4) → T5 → T6 → T7 → T8 → T9; T10
 
 ## 12. Open Questions
 
-Q1–Q2 gate T5–T6; Q3–Q4 are scheduling calls to close by the end of Phase 0.
+Q1 gates T4–T5; Q2 gates T8; Q3–Q4 are scheduling calls to close by the end of Phase 0.
 
 - **Q1 — Keycloak realm strategy:** single realm + tenant claim vs realm-per-tenant
   (ARCHITECTURE.md §2.2 flags this as a Phase 0 decision). *Recommendation: single

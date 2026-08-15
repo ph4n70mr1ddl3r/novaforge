@@ -59,8 +59,8 @@ Tenant
 | **API Gateway** (Spring Cloud Gateway) | Routing, auth token relay, rate limiting, CORS |
 | **Identity Service** | OIDC (Keycloak), users, tenants, roles, SSO federation |
 | **Metadata Service** | CRUD of app definitions: entities, fields, pages, rules; validation of definitions; versioning & change-sets |
-| **Data Runtime Service** | Generic record APIs driven by metadata; permission enforcement; query engine (filter/sort/page/aggregate); sequences; audit emission |
-| **Script Engine Service** | Sandboxed execution of user scripts (escape hatch per ADR-008) plus expression-DSL evaluation for formulas/validations; resource limits, warm pools |
+| **Data Runtime Service** | Generic record APIs driven by metadata; permission enforcement; query engine (filter/sort/page/aggregate); sequences; audit emission; in-process expression & field-validation engine (ADR-008 #3) |
+| **Script Engine Service** | Sandboxed execution of user scripts (escape hatch per ADR-008); resource limits, warm pools — the expression DSL runs in-process in the Data Runtime, not here (ADR-008 #3) |
 | **Workflow Service** | Flowable (BPMN) runtime, approvals, state machines, timers/tasks |
 | **UI Builder Service** | Component catalog, builder sessions, preview/scaffolding (page/layout definitions persist as versioned metadata in the Metadata Service) |
 | **Reporting Service** | Report definitions, execution against Data Runtime query API, chart data shaping, scheduled delivery |
@@ -111,17 +111,18 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 - Storage strategy implementation (see ARCHITECTURE.md §4)
 - Generated REST API per entity; sequences; soft delete; optimistic locking
 - Detailed spec: not yet written — drafting the Phase 1 spec (`docs/specs/`) is the next documentation task (§8); it must pin, among other things, the metadata cache-invalidation transport used until the Kafka event spine lands in Phase 3 (ARCHITECTURE.md §2.3)
-- **Exit:** create entity via API → CRUD records via generic API with validations enforced
+- **Exit:** create entity via API → CRUD records via generic API with field validations (required/type/uniqueness) enforced
 
 ### Phase 2 — Builder UI & Security (4–6 weeks)
 - Entity builder UI; form/list page auto-generation; basic customization — detailed spec: [docs/specs/PHASE-2-UI-BUILDER.md](./docs/specs/PHASE-2-UI-BUILDER.md); UI layering decision: [ADR-009](./docs/adr/ADR-009-declarative-ui.md)
+- Expression DSL v1 (ADR-008 #3): TS evaluator + JVM reference engine; expressions compile-checked at save/publish via the Metadata Service; cross-engine conformance suite from day one (PHASE-2 spec §7)
 - RBAC: roles, object permissions, field-level security
 - Tenant onboarding flow
 - **Exit:** build a 3-entity app (e.g., customers/orders/lines) purely via UI
 
 ### Phase 3 — Business Logic Engine (4–5 weeks)
 - Declarative-first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md): flow IR + closed primitive set (setField, createRecord, updateRecord, publishEvent, callConnector, branch, iterate, requestApproval, transitionState); scripts demoted to escape hatch, script-ratio tracked
-- Validation rules, formula fields, roll-up summaries
+- Expression validation rules (extending Phase 1's field constraints), formula fields, roll-up summaries
 - Event hooks: flow-IR step graphs built from the primitive set (before/after save, on delete, on query); sandboxed scripts only where primitives cannot express the logic
 - Kafka domain events emitted from Data Runtime
 - **Exit:** order totals computed, inventory reserved via hook, no code
