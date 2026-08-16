@@ -55,7 +55,7 @@ pages (PHASE-2 deferral, unchanged).
 | `novaforge-notification-service` | Port 8088; gateway route `/api/v1/notifications/**` (inbox read + preferences). |
 | Compose | **Mailpit** joins the stack (SMTP 1025, UI 8025) as the local email sink. No other new infrastructure — the Postgres/Kafka/Redis instances are reused; each new service adds its own database on the shared Postgres (the PHASE-1 §6 pattern). |
 | `common-core` | Two error codes join the seed set: `STATE_TRANSITION("4010", 400)` and `SOD_VIOLATION("4011", 400)` (the PHASE-0 §5.2 set is a seed, not a ceiling). |
-| `event-schemas` | New contracts: `task.created/assigned/completed/escalated`, `sla.warn/breach`, `notification.delivered`, `scheduler.job.run` (§7). |
+| `event-schemas` | New contracts: `task.created/assigned/completed/escalated`, `sla.warn/breach`, `notification.delivered`, `scheduler.job.run` (§7) — the first families joining the spine's shared-topic convention (`novaforge.<family>.*`, PHASE-3 §4). |
 | `metadata-model` | New schemas: `StateMachineDefinition`, `SLADefinition`, `SharingRuleDefinition` (PermissionSet branch), `WorkflowDefinition` (BPMN process definitions, §9) — all four in ARCHITECTURE.md §2.3's owns-list (WorkflowDefinition since v0; the rest join it this phase). |
 
 ## 3. State Machines (first-class metadata, enforced on the write path)
@@ -309,7 +309,7 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 | T7 | Scheduler | Registry, locks, targets, misfire policy (§7) | §14.4 green; publish activates a job end-to-end |
 | T8 | Notification v1 | Consumer, templates, inbox + email, Mailpit (§8) | Email visible in Mailpit; preferences honored |
 | T9 | Sharing rules | Definitions, row-filter evaluation, editors (§10) | §14.5 matrix green; default behavior regression green |
-| T10 | UI | State-machine designer, approval/SLA config, sharing editor, task inbox (§11) | Exit journey operable purely via UI |
+| T10 | UI | State-machine designer, approval/SLA config, sharing editor, scheduled-job authoring + scheduler visibility, task & notification inboxes (§11) | Exit journey operable purely via UI |
 | T11 | Harness growth | `queryRecord`, `resolveTask`, task/SLA assertions (§12) | §1 exit suite authored and green through the runner |
 | T12 | Exit review | Walk PLAN §5 exit + dashboards | Demo: PO above threshold → approve → POSTED, escalation shown |
 

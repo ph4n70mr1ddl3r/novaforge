@@ -57,7 +57,7 @@ Tenant
 
 | Service | Responsibility |
 |---------|----------------|
-| **API Gateway** (Spring Cloud Gateway) | Routing, auth token relay, rate limiting, CORS |
+| **API Gateway** (Spring Cloud Gateway) | Routing, auth token relay, rate limiting (activates with Phase 6's first public route — ARCHITECTURE.md §2.1), CORS (deferred — same-origin static serving keeps it out of v1, PHASE-2 spec §2) |
 | **Identity Service** | OIDC via deployed Keycloak — no bespoke service module (ARCHITECTURE.md §7); authentication, MFA, SSO federation; tenant/role administration data lives in the platform DB (ADR-002) |
 | **Metadata Service** | CRUD of app definitions: entities, fields, pages, rules (full owns-list: ARCHITECTURE.md §2.3); validation of definitions; versioning & change-sets; builder test-suite runner (ADR-010) |
 | **Data Runtime Service** | Generic record APIs driven by metadata; permission enforcement; query engine (filter/sort/page/aggregate); sequences; audit emission; in-process expression & field-validation engine (ADR-008 #3); platform-admin API — tenant provisioning + user→role assignments over the platform-DB authorization data (PHASE-2 spec §10) |
@@ -66,7 +66,7 @@ Tenant
 | **UI Builder Service** | Component catalog, builder sessions, preview/scaffolding (page/layout definitions persist as versioned metadata in the Metadata Service); no separate module in v1 — extracted on demand only (ARCHITECTURE.md §2.8, PHASE-2 spec §8) |
 | **Reporting Service** | Report definitions, execution against Data Runtime query API, chart data shaping, scheduled delivery |
 | **File Service** | Attachments, images, presigned storage (S3/MinIO), virus-scan hook |
-| **Notification Service** | Email/SMS/push/websocket fan-out, templates, user preferences |
+| **Notification Service** | Email/SMS/push/websocket fan-out, templates, user preferences (v1: platform inbox + email via SMTP with built-in default templates — PHASE-4 spec §8; SMS/push/websocket stay deferred with demand) |
 | **Integration Service** | Connectors (REST first — the SOAP/DB/file types join the same frame on demand, §5 Phase 6), webhook dispatch, retry/DLQ, mapping engine |
 | **Scheduler Service** | Cron registry & orchestration of scheduled jobs (job definitions are versioned app metadata activated on publish — ARCHITECTURE.md §2.8), distributed locks |
 | **Audit Service** | Append-only event log (Kafka → store), who/what/when, field diffs |

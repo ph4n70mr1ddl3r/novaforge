@@ -127,8 +127,15 @@ here.
 - **Export:** entity or report datasets stream asynchronously to the File Service
   in chunks; **this activates PHASE-5 §6's designed handoff** — sync exports over
   the 10k cap return a job link instead of an error once this phase lands.
-- Progress events (`import.progress`) drive builder progress UI + completion
-  notifications; every job audited with per-item outcomes retained.
+- Job lifecycle: import runs and entity export jobs are created, inspected, and
+  resumed via the Integration Service's operational APIs under
+  `/api/v1/integrations/**` (§9's `builder` gate); the >10k *report* export needs no
+  separate builder call — it rides PHASE-5 §6's designed handoff, the reporting
+  export endpoint itself returning the job link.
+- Progress events (`import.progress`) drive the builder progress UI and completion
+  notifications — a built-in `job-completed` Notification category joining the v1
+  defaults per PHASE-4 §8's growth path (`report-delivery` was the first), delivered
+  to the job's initiating user; every job audited with per-item outcomes retained.
 
 ## 8. File Service v1
 

@@ -109,7 +109,12 @@ persist with optimistic locking → events (§4) → shaped projection.
   the Redis channel is retired.
 - **Topology (Q3, §13):** shared topics `novaforge.record.*` / `novaforge.metadata.*`,
   partition key `tenant_id:entity_id` (per-record ordering), consumer groups per
-  service, tenant filtering at the consumer.
+  service, tenant filtering at the consumer. The convention extends to every later
+  event family as its phase lands it — `task.*`/`sla.*`/`notification.*`/`scheduler.*`
+  (Phase 4), `connector.*`/`webhook.*`/`import.*` (Phase 6) — as
+  `novaforge.<family>.*` shared topics with the same consumer-group/tenant-filter
+  rules; a family's partition key is pinned when it lands (tenant-scoped at minimum,
+  record-scoped families keeping per-record ordering).
 - **`event-schemas` lib lands** (the PHASE-0 §5.4 charter): contracts for all of the
   above, with round-trip tests.
 - Trace context propagates in Kafka headers (ARCHITECTURE.md §6) via the

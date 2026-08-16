@@ -85,7 +85,9 @@ environment mechanism — one provisioning path, no second system:
 - Public API: `POST /api/v1/metadata/suites/{id}/runs` (single suite) and
   `POST /api/v1/metadata/apps/{appId}/suite-runs` (app-wide) returning a run
   handle; artifacts consumable via API — the builder UI is a client of the same
-  API, never a prerequisite.
+  API, never a prerequisite. Both endpoints are `builder`-gated like every
+  design-time metadata API (PHASE-1 §4) — the gate the pipeline-auth pin below
+  exists to satisfy.
 - CI wiring: the platform repo's pipeline runs the platform's own suites on PRs
   (dogfooding the harness); a per-app promotion pipeline pattern (green run →
   promote) ships as documentation + a GitHub Actions reusable workflow, not as
