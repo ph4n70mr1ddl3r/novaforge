@@ -130,8 +130,10 @@ so the consumer lands with the producer:
   identity-is-deployed stance), permission changes, definition publishes
   (ARCHITECTURE.md §5 item 5).
 - New service `novaforge-audit-service` (port 8085); read API for admins at
-  `/api/v1/audit/**` via the gateway. Audit *UI* is a later phase. Append-only is
-  enforced mechanically — the store's role has no UPDATE/DELETE grants.
+  `/api/v1/audit/**` via the gateway. Audit *UI* is deferred with demand — no
+  Phase 4–8 spec claims one; the admin read API above is the v1 surface.
+  Append-only is enforced mechanically — the store's role has no UPDATE/DELETE
+  grants.
 
 ## 6. Script Engine v0 (escape hatch — landing pinned)
 
@@ -193,9 +195,12 @@ The concrete `TestSuiteDefinition` encoding ADR-010 left illustrative, pinned:
   ADR-010 #5) through the generic APIs — no test mode in the write path. Side
   effects (events, audit, sequences) land in the scratch tenant only; synthetic
   actors have no notification channels.
-- **Controlled clock — pinned** (ADR-010's open question): a run freezes `now()` at
-  an explicit clock (default: run start, overridable per case); period-lock-style
-  tests advance it explicitly. Runs are deterministic by construction.
+- **Controlled clock — pinned** (ADR-010's open question): a run freezes the clock
+  at an explicit value (default: run start, overridable per case) — *every* time
+  function (`now()`, `today()`, …) resolves against it, which is what keeps
+  date-relative report buckets deterministic in suites (PHASE-5 §3);
+  period-lock-style tests advance it explicitly. Runs are deterministic by
+  construction.
 - Run artifacts (per-step traces, assertion results) retained last N per definition
   version, surfaced via API. Builder-UI surfacing is §8; CI/headless wiring is
   Phase 8 (ADR-010 #5).

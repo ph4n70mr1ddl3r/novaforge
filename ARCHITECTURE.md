@@ -76,7 +76,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
   - `GET /api/v1/runtime/{entity}?filter=...&sort=...&page=...` (structured query DSL, not raw SQL)
   - `POST /api/v1/runtime/{entity}/query` for complex queries (aggregations)
   - `POST /api/v1/runtime/batch` for bulk ops
-- Responsibilities per request: resolve metadata → authorize (object/field/record) → apply field defaults → evaluate formula/roll-up fields (§3) → run validation rules → apply hooks (flow-IR primitives first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md); sandboxed scripts only as escape hatch via Script Engine) → persist with optimistic locking → emit Kafka event (via transactional outbox — PHASE-3 spec §4) → return shaped projection (respecting field-level security).
+- Responsibilities per request: resolve metadata → authorize (object/field/record) → apply field defaults → evaluate formula/roll-up fields (§3) → run validation rules (state-machine transition guards join here in Phase 4 — PHASE-4 spec §3) → apply hooks (flow-IR primitives first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md); sandboxed scripts only as escape hatch via Script Engine) → persist with optimistic locking → emit Kafka event (via transactional outbox — PHASE-3 spec §4) → return shaped projection (respecting field-level security).
 - Record locking: `version` int, HTTP 409 on conflict; ERP posting documents get their immutability from Phase 7's `freezeOnTerminal` terminal-state write freeze (PHASE-7 spec §3) rather than bespoke lock machinery.
 
 ### 2.5 Script Engine
@@ -89,9 +89,9 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 - Hook failure policy (flow-IR graphs and escape-hatch scripts alike): `beforeSave`/`beforeDelete` failure = abort transaction; `afterSave`/`afterDelete` failure = retry via Kafka (idempotency required).
 
 ### 2.6 Workflow Service
-- Flowable 7 embedded; process definitions authored as BPMN XML by the designer UI.
+- Flowable 7 embedded; process definitions authored as BPMN XML (v1 is editor-agnostic XML metadata — the visual designer defers with demand, PHASE-4 spec §9/§16).
 - Subscriptions to domain events can start processes (`on record.updated where status='submitted'`).
-- **State machines** as first-class metadata (states, allowed transitions, guards in the platform expression DSL per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md)) — most ERP flows are state machines, not full BPMN.
+- **State machines** as first-class metadata (states, allowed transitions, guards in the platform expression DSL per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md)) — most ERP flows are state machines, not full BPMN. Enforcement sits on the Data Runtime write path, not here (PHASE-4 spec §3): this service consumes state-change events and never mutates records.
 - Human tasks exposed via task inbox API; approvals support parallel modes (`any`, unanimous `all`) — sequential chains arrive as a versioned mode on demand (PHASE-4 spec §1) — plus delegation, reassignment, escalation timers.
 
 ### 2.7 Reporting Service

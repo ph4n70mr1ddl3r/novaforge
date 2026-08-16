@@ -137,7 +137,11 @@ reporting and dedicated pivot mechanics (never a v1 goal); cross-app federation.
 ## 8. Security & Audit
 
 - Runs/export/schedules enforce object-level (`report: execute`) plus the underlying
-  entity access of the effective actor (§4, §7).
+  entity access of the effective actor (§4, §7). The grant's authoring home —
+  pinned: `report: execute` rides app role definitions (`PermissionSet`,
+  ARCHITECTURE.md §2.3) — the Phase 2 role editor grows the matrix beyond entity
+  CRUD in this phase — default deny until an app grants it; dashboard widgets run
+  under the same grant, their §5 role visibility governing composition only.
 - Dashboards are metadata: versioned, promoted, role-visible per §5.
 - Audited: scheduled deliveries, subscription changes; interactive runs are not
   audited (reads; consistent with ARCHITECTURE.md §5, which audits writes and

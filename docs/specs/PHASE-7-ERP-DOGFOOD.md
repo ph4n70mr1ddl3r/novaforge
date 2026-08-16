@@ -144,7 +144,7 @@ are pre-accepted pending confirmation; everything else earns its place.
 |---|---|---|---|
 | T1 | Tenant/app bootstrap + seed fixtures | App, roles, COA, rates, parties, opening balances | Fixtures load into a scratch tenant |
 | T2 | GL entities + posting machinery | §2 GL row + posting flows | §9.1 (partial: balanced posting) green |
-| T3 | `freezeOnTerminal` + `PeriodLock` harvests | §3 platform features + `PERIOD_LOCKED` code | §9.2–.3 green; features flag-gated |
+| T3 | `freezeOnTerminal` + `PeriodLock` harvests | §3 platform features + `RECORD_FROZEN`/`PERIOD_LOCKED` codes | §9.2–.3 green; features flag-gated |
 | T4 | AR/AP + allocation + dunning | §2 AR/AP row | §9.5–.6 green |
 | T5 | Inventory + weighted-average costing | §2 Inventory row + the one budgeted script | §9.4 green; script ratio within budget |
 | T6 | Period close workflows | §4 checklist + reopen approval | Close suite green with frozen clock |

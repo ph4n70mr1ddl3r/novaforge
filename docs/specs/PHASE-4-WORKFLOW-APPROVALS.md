@@ -237,6 +237,10 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 - **Approval & SLA configuration** in the flow editor: `requestApproval` step
   properties (approvers, mode, timeout, escalation) + SLA binding, compile-checked.
 - **Sharing-rule editor** (§10).
+- **Scheduled-job authoring:** the scheduled-job half of `RuleDefinition` (§7)
+  gets its builder form — cron, target, params, `enabled` — alongside the
+  Phase 3 rule editors; authoring is definition work like any other, and the
+  §2 status route stays read-only (administration is publish-driven, §7).
 - **Task inbox in `runtime-ui`**: my-tasks list (server-side paged), approve/reject
   with comment, delegate; notification inbox + preferences.
 - Scheduler visibility: job list + last-run status in the builder via the
