@@ -37,9 +37,11 @@ environment mechanism — one provisioning path, no second system:
 | `staging` | A promoted published version + its own isolated data | promotion only |
 | `prod` | A promoted published version + its own isolated data | promotion only |
 
-- An environment = tenant + pinned app version + data plane provisioning (the
-  scratch mechanism, without the per-run wipe). Scratch/test environments remain
-  available on demand alongside the three named ones.
+- An environment = tenant + app version state (`dev` is the mutable draft
+  workspace of the table above; `staging`/`prod` pin a promoted published version)
+  + data plane provisioning (the scratch mechanism, without the per-run wipe).
+  Scratch/test environments remain available on demand alongside the three named
+  ones.
 - The Metadata Service's async app-ZIP import/export (ARCHITECTURE.md §2.3 —
   deliberately dormant until now) is the promotion artifact format: a versioned ZIP
   of JSON definitions, content-hashed and signed.

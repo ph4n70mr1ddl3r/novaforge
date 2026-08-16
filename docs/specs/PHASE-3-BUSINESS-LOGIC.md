@@ -84,7 +84,10 @@ slots Phase 1 left inert:
   tests see it as `validation(rule)` (§7).
 - **Formula fields:** evaluated at write time and stored, never computed on read;
   formula fields are implicitly `readonly`, so app writes are rejected (the Phase 1
-  rule).
+  rule). Time-dependent functions (e.g. `today()`) are compile-rejected in formula
+  fields — a stored value would go stale between writes; run-time evaluation
+  contexts (report bucket expressions, PHASE-5 §3) may take them, resolved against
+  the governing clock.
 - **Roll-up summaries:** parent aggregates (`SUM/COUNT/MIN/MAX/AVG`) over child
   collections, recomputed in the child's write transaction — the sketch's
   `SUM(lines.debit)` is the canonical case. Strategy is Q2 (§13).

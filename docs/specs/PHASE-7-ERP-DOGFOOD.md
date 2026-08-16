@@ -63,14 +63,18 @@ enhancements"; the spec pre-proposes their shape so implementation can land them
 as versioned platform features (ADR-008 #2's growth path) mid-phase once the gap
 is confirmed in practice:
 
-1. **`freezeOnTerminal` (posting/immutability primitive):** an entity-level flag —
-   when a record's state machine sits in a terminal state, *all* writes to the
-   record are rejected with `RECORD_FROZEN("4014", 400)` (today's Phase 4 state
-   machines guard only the state field). This is what makes the journal
-   append-only in fact, not convention.
-2. **`PeriodLock` (period locking):** a settings-level lock per `AccountingPeriod`;
-   the Data Runtime write path rejects dated-into-closed-period writes
-   (`STATE_TRANSITION`-class error, new code `PERIOD_LOCKED("4013", 400)`).
+1. **`freezeOnTerminal` (posting/immutability primitive):** an `EntityDefinition`
+   attribute (requiring a bound state machine) — when a record's state machine sits
+   in a terminal state, *all* writes to the record are rejected with
+   `RECORD_FROZEN("4014", 400)` (today's Phase 4 state machines guard only the
+   state field). This is what makes the journal append-only in fact, not
+   convention.
+2. **`PeriodLock` (period locking):** activated when an `AccountingPeriod` record
+   reaches `CLOSED` (§4's state machine — the period is an app entity, §2, not a
+   Settings row); the Data Runtime write path rejects dated-into-closed-period
+   writes with the new code `PERIOD_LOCKED("4013", 400)`. How a write's period is
+   resolved (date-range lookup vs `periodId` reference) is spec'd in the feature's
+   harvest section per §8 before implementation.
 
 Both land behind the same publish/compile machinery as every other definition, with
 harness vocabulary to assert them (§9).

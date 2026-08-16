@@ -24,7 +24,11 @@ Out of scope: SOAP/DB/file connector types (they join the same frame only on dog
 demand — PLAN.md §3/§5, ARCHITECTURE.md §2.8); a connector marketplace (P8 concept);
 OAuth grants beyond client-credentials (Q1); streaming/outbound event connectors and
 tenant-facing message-bus topics (PLAN P7's remaining integration item — both
-post-1.0 demand work).
+post-1.0 demand work); **API-client definitions** (machine credentials against the
+public REST API — the Integrations-branch item of PLAN.md §2 / ARCHITECTURE.md §2.3
+that no phase has yet demanded): deferred with demand — v1's API surface
+authenticates users by JWT and inbound hooks by HMAC, so no API-client schema lands
+here.
 
 ## 2. Service & Infrastructure Additions
 
@@ -35,7 +39,7 @@ post-1.0 demand work).
 | Compose | **MinIO** joins the stack (API 9000, console 9001) with a persistent volume. |
 | `common-core` | `SIGNATURE_INVALID("4012", 401)` for webhook auth failures. |
 | `event-schemas` | `connector.delivered`, `webhook.dispatched`, `import.progress` contracts. |
-| `metadata-model` | `ConnectorDefinition`, `WebhookDefinition`, `CredentialDefinition` (references only — §8). |
+| `metadata-model` | `ConnectorDefinition`, `WebhookDefinition` (one schema, both directions — §5), `CredentialDefinition` (references only — §9), `ImportDefinition` (the §7 import mapping — versioned metadata like connectors; import *runs* are tenant data). |
 
 ## 3. Connector Framework (REST first)
 
@@ -77,7 +81,10 @@ post-1.0 demand work).
 ## 5. Webhook Dispatch (platform → outside)
 
 - `WebhookDefinition` metadata: `{ url, events (filter expression over spine
-  events), secretRef, enabled }` — versioned, promoted.
+  events), secretRef, enabled }` — versioned, promoted. One schema covers both
+  directions via a `direction` discriminator: `outbound` carries `url` + `events`;
+  `inbound` carries `entity` + `mapping` (§6) in their place; both carry
+  `secretRef`/`enabled`.
 - **Signing — pinned:** HMAC-SHA256 over the raw body with a timestamp header
   (`X-NovaForge-Timestamp`), signature in `X-NovaForge-Signature`; a ±5 minute
   window rejects replay. The same scheme protects inbound (§6) — one scheme, two
@@ -102,12 +109,13 @@ post-1.0 demand work).
 
 ## 7. Bulk Import / Export (async, resumable) + Async Report Export
 
-- **Import:** file lands via presigned upload (§8) → `ImportJob` metadata-scoped
-  definition `{ entity, mapping, mode: create | upsert, keyFields }` → chunked
-  processing through the batch API (per-item outcomes, PHASE-1 §5) → **checkpointed
-  for resume**: a killed job restarts from its last checkpoint with per-row
-  idempotency (upsert keys or generated keys recorded), so a row is applied
-  exactly once.
+- **Import:** file lands via presigned upload (§8) → an `ImportDefinition`
+  (versioned metadata — `{ entity, mapping, mode: create | upsert, keyFields }`,
+  promoted with the app like connectors, §2) → the import *run* (`ImportJob`,
+  tenant data) chunk-processes through the batch API (per-item outcomes,
+  PHASE-1 §5) → **checkpointed for resume**: a killed run restarts from its last
+  checkpoint with per-row idempotency (upsert keys or generated keys recorded), so
+  a row is applied exactly once.
 - **Export:** entity or report datasets stream asynchronously to the File Service
   in chunks; **this activates PHASE-5 §6's designed handoff** — sync exports over
   the 10k cap return a job link instead of an error once this phase lands.
