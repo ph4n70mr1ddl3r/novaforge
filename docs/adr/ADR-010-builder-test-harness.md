@@ -44,7 +44,7 @@ logic, pages, and permissions are all versioned JSON, the tests can be too.
          "fixtures": [ { "entity": "Customer", "template": { "name": "Acme" } } ],
          "steps": [
            { "op": "createRecord", "entity": "Order", "asRole": "order-clerk",
-             "template": { "customerId": "${Customer[0].id}", "amount": 5000 },
+             "template": { "customerId": "${Customer[0].id}", "amount": "5000.00" },
              "expect": "ok" }
          ],
          "assert": [ "${Order[0].status} == 'PENDING_APPROVAL'" ]

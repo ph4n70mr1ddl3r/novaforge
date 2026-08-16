@@ -42,7 +42,7 @@ Tenant
       ├── Workflows ── BPMN definitions, state machines, approvals
       ├── Reports & Dashboards
       ├── Permissions ── Roles, record rules, field security
-      ├── Integrations ── Connectors, webhooks, API clients, import mappings
+      ├── Integrations ── Connectors, webhooks, API clients (deferred with demand — PHASE-6 spec §1), import mappings
       ├── Tests ── Suites: fixtures, steps, assertions (ADR-010)
       └── Settings ── Sequences, currencies, localization, enums
 ```
@@ -60,7 +60,7 @@ Tenant
 | **API Gateway** (Spring Cloud Gateway) | Routing, auth token relay, rate limiting, CORS |
 | **Identity Service** | OIDC via deployed Keycloak — no bespoke service module (ARCHITECTURE.md §7); authentication, MFA, SSO federation; tenant/role administration data lives in the platform DB (ADR-002) |
 | **Metadata Service** | CRUD of app definitions: entities, fields, pages, rules (full owns-list: ARCHITECTURE.md §2.3); validation of definitions; versioning & change-sets; builder test-suite runner (ADR-010) |
-| **Data Runtime Service** | Generic record APIs driven by metadata; permission enforcement; query engine (filter/sort/page/aggregate); sequences; audit emission; in-process expression & field-validation engine (ADR-008 #3) |
+| **Data Runtime Service** | Generic record APIs driven by metadata; permission enforcement; query engine (filter/sort/page/aggregate); sequences; audit emission; in-process expression & field-validation engine (ADR-008 #3); platform-admin API — tenant provisioning + user→role assignments over the platform-DB authorization data (PHASE-2 spec §10) |
 | **Script Engine Service** | Sandboxed execution of user scripts (escape hatch per ADR-008); resource limits, warm pools — the expression DSL runs in-process in the Data Runtime, not here (ADR-008 #3) |
 | **Workflow Service** | Flowable (BPMN) runtime, approvals, timers/tasks; state machines are metadata enforced on the Data Runtime write path (PHASE-4 spec §3) — this service consumes state-change events, it never mutates records |
 | **UI Builder Service** | Component catalog, builder sessions, preview/scaffolding (page/layout definitions persist as versioned metadata in the Metadata Service); no separate module in v1 — extracted on demand only (ARCHITECTURE.md §2.8, PHASE-2 spec §8) |

@@ -56,7 +56,7 @@ pages (PHASE-2 deferral, unchanged).
 | Compose | **Mailpit** joins the stack (SMTP 1025, UI 8025) as the local email sink. No other new infrastructure — the Postgres/Kafka/Redis instances are reused; each new service adds its own database on the shared Postgres (the PHASE-1 §6 pattern). |
 | `common-core` | Two error codes join the seed set: `STATE_TRANSITION("4010", 400)` and `SOD_VIOLATION("4011", 400)` (the PHASE-0 §5.2 set is a seed, not a ceiling). |
 | `event-schemas` | New contracts: `task.created/assigned/completed/escalated`, `sla.warn/breach`, `notification.delivered`, `scheduler.job.run` (§7). |
-| `metadata-model` | New schemas: `StateMachineDefinition`, `SLADefinition`, `SharingRuleDefinition` (PermissionSet branch), `WorkflowDefinition` (BPMN process definitions, §9 — in ARCHITECTURE.md §2.3's owns-list since v0, landing here). |
+| `metadata-model` | New schemas: `StateMachineDefinition`, `SLADefinition`, `SharingRuleDefinition` (PermissionSet branch), `WorkflowDefinition` (BPMN process definitions, §9) — all four in ARCHITECTURE.md §2.3's owns-list (WorkflowDefinition since v0; the rest join it this phase). |
 
 ## 3. State Machines (first-class metadata, enforced on the write path)
 
@@ -188,8 +188,10 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 - Pure spine consumer (ARCHITECTURE.md §1): `task.*`, `sla.warn/breach` in v1.
 - **Templates — pinned:** v1 ships built-in platform default templates per category
   (no authoring surface — which is why §2 lists no template schema and §11 no
-  editor); app-authored templates arrive as versioned metadata via the gap-harvest
-  path when demanded (Phase 7 dunning letters are the expected first case).
+  editor); later phases add built-in categories as their features land — Phase 5's
+  `report-delivery` is the first (PHASE-5 §7) — while app-authored templates arrive
+  as versioned metadata via the gap-harvest path when demanded (Phase 7 dunning
+  letters are the expected first case).
   Subject/body use `${record.field}` / `${task.field}` tokens — the same `${…}`
   convention as ADR-008 templates and PHASE-2 §4 action props.
 - **Channels v1:** platform **inbox** (read via `/api/v1/notifications/**`) and

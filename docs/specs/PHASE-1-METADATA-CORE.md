@@ -29,7 +29,7 @@ metadata-publish transport, the K8s dev environment (if slipped from Phase 0), a
 Out of scope: expression validation rules, formula/roll-up fields, hooks, and the Kafka
 event spine (Phase 3 — ADR-008; the schema *slots* for expressions are accepted but
 inert until then, mirroring ADR-008's grammar-fixed-activates-later pattern); role
-editors, field-level security, record sharing (Phase 2 / Phase 3–4 — PHASE-2 spec §9);
+editors and field-level security (Phase 2), record sharing (Phase 4 — PHASE-2 spec §9);
 any UI (Phase 2); the builder test harness (Phase 3 — ADR-010); File Service (Phase 6).
 
 ## 2. Prerequisite: Storage Spike Closure (ADR-001)
@@ -67,7 +67,8 @@ Port 8081 (carried from Phase 0; the gateway route already exists). The per-serv
 database `novaforge-metadata` lands now — Phase 0's shared Postgres carried only
 Keycloak (PHASE-0 §7).
 
-APIs (draft workspace; OpenAPI generated per service, PLAN.md §4):
+APIs (draft workspace plus the runtime's published read below; OpenAPI generated
+per service, PLAN.md §4):
 
 - `POST/GET/PATCH/DELETE /api/v1/metadata/apps` — app definitions
 - `POST/GET/PATCH/DELETE /api/v1/metadata/apps/{appId}/entities` — entity definitions
@@ -76,6 +77,15 @@ APIs (draft workspace; OpenAPI generated per service, PLAN.md §4):
 - `GET /api/v1/metadata/apps/{appId}/versions` and `.../versions/{v}/export` — version
   list plus synchronous JSON bundle export (async ZIP import/export and change-set
   review are P8 machinery, ARCHITECTURE.md §2.3)
+- `GET /api/v1/metadata/apps/{appId}/published` — the currently published version's
+  definition bundle, response carrying its version number so clients cache by version
+  (the PHASE-2 §2 renderer-state key): the **runtime read path for rendering**. First
+  consumer is the Phase 2 renderer (entity/page definitions — PHASE-2 §3); Phase 5's
+  dashboard loading reuses it (PHASE-5 §2). Draft CRUD above stays `builder`-scoped
+  (PHASE-2 §9's design-time stance); the published read serves any authenticated
+  tenant user (`user`+) and carries rendering-relevant definitions only — escape-hatch
+  script artifacts and credential references are excluded (scripts execute server-side;
+  secrets never ride metadata — PHASE-6 §9).
 
 Save validation = JSON Schema (metadata-model) + referential integrity (§3 rules).
 Publish = validate all drafts, bump version, write `metadata_versions`, emit
@@ -162,6 +172,10 @@ the data-plane tables, so it owns their DDL, reacting to `metadata.published`
 
 - `rec_records` base table plus per-entity projections exactly per ADR-001's recorded
   variant (§2); the projection promotion policy is Q3 (§12).
+- Field `uniqueness` (§5) lowers to a DB unique index on the promoted column — or a
+  JSONB expression unique index on the base table, per ADR-001's variant — which is
+  what makes the §9.2 uniqueness race pass; the write-path check exists to shape the
+  friendly `VALIDATION_FAILED` error, not to be the enforcement.
 - Postgres **RLS** everywhere: `tenant_id = current_setting('app.tenant')` as
   defense-in-depth; `security-context` sets the session var per request from
   `TenantContext`. Cross-tenant access assertions are mandatory (ARCHITECTURE.md §5).
@@ -258,7 +272,8 @@ week-1 scheduling call.
   *Recommendation: offset, max page size 200; add keyset if the load test shows
   deep-offset pain.*
 - **Q3 — Projection promotion policy:** which fields become generated columns.
-  *Recommendation: explicit `indexed: true` and unique constraints, plus automatic
-  promotion of display and lookup fields; spike numbers confirm the cutoff.*
+  *Recommendation: fields named in explicit index declarations (the entity-level
+  `indexes` of ARCHITECTURE.md §3) and unique constraints, plus automatic promotion
+  of display and lookup fields; spike numbers confirm the cutoff.*
 - **Q4 — Kind cluster timing:** week-1 parallel track vs after exit criteria.
   *Recommendation: week 1 — it is also the Phase 2 preview path (Skaffold).*

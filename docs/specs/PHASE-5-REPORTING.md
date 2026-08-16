@@ -30,8 +30,8 @@ reporting and dedicated pivot mechanics (never a v1 goal); cross-app federation.
 
 | Addition | Detail |
 |---|---|
-| `novaforge-reporting-service` | Port 8089; gateway routes `/api/v1/reports/**` and `/api/v1/dashboards/**` — the dashboard prefix is *reserved*: v1 dashboard loading is a definition fetch via the Metadata Service plus client-issued report runs (§5), and any dashboard-scoped API arrives on demand (versioned growth, as everywhere). |
-| Compose | Nothing new — Postgres/Kafka/Redis reused; Mailpit (Phase 4) serves scheduled-delivery email. |
+| `novaforge-reporting-service` | Port 8089; gateway routes `/api/v1/reports/**` and `/api/v1/dashboards/**` — the dashboard prefix is *reserved*: v1 dashboard loading is a definition fetch via the Metadata Service's published read (PHASE-1 §4) plus client-issued report runs (§5), and any dashboard-scoped API arrives on demand (versioned growth, as everywhere). |
+| Compose | Nothing new — Postgres/Kafka/Redis reused; Mailpit (Phase 4) serves scheduled-delivery email. The service is stateless and takes no per-service database (definitions via the Metadata Service, result cache in Redis, scheduled delivery via Scheduler + Notification) — the PHASE-4 §2 per-service-DB pattern applies only to services with their own state. |
 | `metadata-model` | `ReportDefinition` and `DashboardDefinition` schemas (both already in the ARCHITECTURE.md §2.3 owns-list). |
 | Frontend | ECharts joins `frontend/` dependencies (ARCHITECTURE.md §2.7); chart rendering ships as versioned catalog components (§5), not bespoke report UI. |
 | `common-core` | No new codes — report errors reuse `VALIDATION_FAILED` / `NOT_FOUND` / `FORBIDDEN`. |

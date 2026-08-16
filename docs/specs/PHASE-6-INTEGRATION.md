@@ -68,7 +68,9 @@ here.
   schema/reference checking as the Phase 3 rule editors, with delivery logs and
   DLQ replay surfacing beside them (§5–§7). PHASE-7 §1's rule 1 binds
   integrations to the builder; nothing here is API-only.
-- Connector runs use the **per-app integration principal** — writes they produce go
+- Connector runs use the **per-app integration principal** — a distinct principal
+  from the engine's per-app *system* principal (PHASE-4 §4), so audit provenance
+  separates integration-sourced writes from engine actions. Writes they produce go
   through the Data Runtime single write path (§6), never direct SQL.
 
 ## 4. `callConnector` Activates (the last dormant primitive)

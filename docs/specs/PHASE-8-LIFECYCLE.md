@@ -90,6 +90,12 @@ environment mechanism — one provisioning path, no second system:
   (dogfooding the harness); a per-app promotion pipeline pattern (green run →
   promote) ships as documentation + a GitHub Actions reusable workflow, not as
   hosted CI (the platform does not run customer CI in v1).
+- **Pipeline authentication — pinned:** headless callers authenticate with a JWT
+  from a Keycloak service-account client (client-credentials grant — deployed
+  realm configuration under `deploy/`, per the identity-is-deployed stance,
+  ARCHITECTURE.md §7), granted `builder` for run-triggering scope. This is a realm
+  client, not platform metadata — API-client *definitions* stay deferred with
+  demand (PHASE-6 §1).
 
 ## 6. Templates & Marketplace (concept scope)
 

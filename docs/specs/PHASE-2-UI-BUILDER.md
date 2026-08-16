@@ -27,7 +27,7 @@ the builder UI*, including:
 
 Out of scope: dashboards/charts (Phase 5), script/flow designer (Phase 3), custom
 component SDK (chartered in §6 item 4, built on demand), full record-level sharing rules
-(owner/role-hierarchy/criteria rules land Phase 3–4 as needed by ERP flows — §9), and
+(owner/role-hierarchy/criteria rules land in Phase 4 as needed by ERP flows — §9), and
 wizard/tab composite pages plus mobile-specific layout tuning (PLAN.md P2 features —
 deferred until the v1 catalog and overlay model stabilize; backlog until ERP dogfood
 demands them).
@@ -68,6 +68,9 @@ entity/field metadata ──► resolveDefaultPage(entity, role)   [L1, pure]
 
 - The resolver runs **client-side** (pure TS function) so the builder can preview
   defaults instantly; the same output is snapshot-tested in CI (golden files, §11 item 1).
+  At runtime the renderer's metadata (entity/page definitions) comes from the
+  Metadata Service's published-definition read (PHASE-1 §4); the builder previews
+  against drafts through the draft APIs.
 - The renderer never branches on entity specifics — only on component types.
 
 ## 4. Page Model v0
@@ -228,6 +231,17 @@ realm/client assignment (Keycloak per the Phase 0 compose stack; realm strategy 
 Open Question Q1 in the PHASE-0 spec) → first admin user → create first app → land
 in entity builder. Target: < 5 minutes platform-admin time, fully scripted in API
 terms for E2E tests.
+
+**Admin API — pinned:** tenant provisioning and user→role assignment are
+platform-admin APIs on the Data Runtime — it owns the platform-DB authorization
+data per the ADR-002 direction (ARCHITECTURE.md §2.2) and already reads it at
+request time (§9): `POST /api/v1/admin/tenants` (tenant row + first-admin
+assignment in one flow, orchestrating the Keycloak side — user creation and tenant
+claim via Keycloak's Admin API, deployed configuration, not bespoke code,
+ARCHITECTURE.md §7) and `POST /api/v1/admin/tenants/{tenantId}/role-assignments`
+(gateway route `/api/v1/admin/**`, `admin`-gated). Both are audited per the §9
+event shapes — the durable trail lands with the Phase 3 event spine. App creation
+in the same journey rides the Phase 1 metadata APIs unchanged.
 
 ## 11. Testing Standards
 
