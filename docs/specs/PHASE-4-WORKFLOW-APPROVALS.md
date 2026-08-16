@@ -51,7 +51,7 @@ pages (PHASE-2 deferral, unchanged).
 | Addition | Detail |
 |---|---|
 | `novaforge-workflow-service` | Port 8086; gateway route `/api/v1/workflow/**` (already anticipated by ARCHITECTURE.md §2.1). Flowable 7 embedded. **ADR-004 moves Proposed → Accepted with a written file at phase start** (the ARCHITECTURE.md §8 convention). |
-| `novaforge-scheduler-service` | Port 8087; no gateway route for administration — the registry is publish-driven, never written over REST (§7). One read-only status route serves §11's builder visibility: `GET /api/v1/scheduler/jobs` (builder role). |
+| `novaforge-scheduler-service` | Port 8087; no gateway route for administration — the registry is publish-driven, never written over REST (§7). The gateway routes exactly one Scheduler path, the read-only status route serving §11's builder visibility: `GET /api/v1/scheduler/jobs` (builder role; browser apps reach APIs via the gateway — PHASE-2 §2) — no write or admin route exists. |
 | `novaforge-notification-service` | Port 8088; gateway route `/api/v1/notifications/**` (inbox read + preferences). |
 | Compose | **Mailpit** joins the stack (SMTP 1025, UI 8025) as the local email sink. No other new infrastructure — the Postgres/Kafka/Redis instances are reused; each new service adds its own database on the shared Postgres (the PHASE-1 §6 pattern). |
 | `common-core` | Two error codes join the seed set: `STATE_TRANSITION("4010", 400)` and `SOD_VIOLATION("4011", 400)` (the PHASE-0 §5.2 set is a seed, not a ceiling). |

@@ -145,7 +145,10 @@ dunning — ADR-008's known limit) have no outlet.
 
 - New service `novaforge-script-engine` (port 8084; internal — hooks invoke it, no
   gateway routes in v0). ADR-003 moves Proposed → Accepted with a written file at
-  landing (the ARCHITECTURE.md §8 convention).
+  landing (the ARCHITECTURE.md §8 convention). The service keeps no database of
+  its own — scripts are versioned artifacts in the Metadata Service (ADR-008 #4)
+  and executions are stateless; the PHASE-1 §6 per-service-DB pattern applies only
+  to services with their own state.
 - v0 scope: GraalVM JS, `Context` per execution, CPU-time and heap caps plus a loop
   watchdog, no host I/O, whitelisted surface `$record`, `$data.query` (the Data
   Runtime query API under the *calling user's* authorization — ARCHITECTURE.md §5

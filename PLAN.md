@@ -42,7 +42,7 @@ Tenant
       ├── Workflows ── BPMN definitions, state machines, approvals
       ├── Reports & Dashboards
       ├── Permissions ── Roles, record rules, field security
-      ├── Integrations ── Connectors, webhooks, API clients (deferred with demand — PHASE-6 spec §1), import mappings
+      ├── Integrations ── Connectors, webhooks, credential references (the reference only — secrets never ride metadata, PHASE-6 spec §9), API clients (deferred with demand — PHASE-6 spec §1), import mappings
       ├── Tests ── Suites: fixtures, steps, assertions (ADR-010)
       └── Settings ── Sequences, currencies, localization, enums
 ```
@@ -67,7 +67,7 @@ Tenant
 | **Reporting Service** | Report definitions, execution against Data Runtime query API, chart data shaping, scheduled delivery |
 | **File Service** | Attachments, images, presigned storage (S3/MinIO), virus-scan hook |
 | **Notification Service** | Email/SMS/push/websocket fan-out, templates, user preferences |
-| **Integration Service** | Connectors (REST/SOAP/DB/file), webhook dispatch, retry/DLQ, mapping engine |
+| **Integration Service** | Connectors (REST first — the SOAP/DB/file types join the same frame on demand, §5 Phase 6), webhook dispatch, retry/DLQ, mapping engine |
 | **Scheduler Service** | Cron registry & orchestration of scheduled jobs (job definitions are versioned app metadata activated on publish — ARCHITECTURE.md §2.8), distributed locks |
 | **Audit Service** | Append-only event log (Kafka → store), who/what/when, field diffs |
 

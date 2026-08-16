@@ -144,6 +144,12 @@ here.
 
 ## 9. Security
 
+- Object-level gates on the new routes (the PHASE-4 §13 pattern): `/api/v1/integrations/**`
+  = `builder`+ — definition authoring and the operational surfaces (delivery log,
+  DLQ replay, import progress) are builder tooling in v1; `/api/v1/files/**` =
+  `user`+, attachment access governed by the owning record's authorization —
+  presigned URLs are short-lived and attachment-scoped (§8); the inbound-webhook
+  prefix stays anonymous by design (§6), HMAC at the service.
 - **Credentials never live in metadata:** `CredentialDefinition` holds only a
   reference; the secret material sits in the secrets store, encrypted at rest
   AES-GCM with keys in KMS/Vault (ARCHITECTURE.md §5 item 6 — locally, a

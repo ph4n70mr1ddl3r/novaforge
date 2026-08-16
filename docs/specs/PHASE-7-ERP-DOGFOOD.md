@@ -98,7 +98,10 @@ harness vocabulary to assert them (§9).
   against the budget (rule 3).
 - Dunning = scheduled reports (Phase 5 scheduler target) + letter generation; the
   schedule logic is expressions over aging buckets.
-- Bank feed = the Phase 6 exit connector, reused as a Scheduler job (Phase 4 §7).
+- Bank feed = the Phase 6 exit connector driven by a scheduled flow (a
+  `callConnector` step inside it — the Scheduler's target set is
+  `flow | script | processStart | report`, PHASE-4 §7; there is no `connector`
+  target, so the connector always rides a flow).
 
 ## 6. UI Scope
 

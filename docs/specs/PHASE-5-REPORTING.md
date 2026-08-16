@@ -105,6 +105,12 @@ reporting and dedicated pivot mechanics (never a v1 goal); cross-app federation.
   schema), `KpiTile`, `ReportTable` (the `table` widget type), `DashboardGrid` —
   following the ADR-009 catalog contract (props JSON Schema, lazy, versioned). This
   is the composition PHASE-2 §13/Q4 deferred here.
+- Authoring surfaces (named): the **report builder** — a guided form over the §3
+  schema (filters/groupBy/buckets/aggregates/drill-through) with live compile-check,
+  the Phase 3 editor treatment — and the **dashboard composer** — a widget grid
+  binding report refs and role visibility. Both live in the Phase 2 builder shell
+  and save through the Metadata Service definition APIs like every other
+  definition; T6 lands them.
 - Dashboard load issues its report runs server-paged; auto-refresh is client-timer
   driven (configurable per widget, default off) — no server push in v1.
 - Drill-through links deep-link to record lists carrying the row's filters as a
@@ -124,11 +130,13 @@ reporting and dedicated pivot mechanics (never a v1 goal); cross-app federation.
 
 - The Scheduler's `report` target activates (registered dormant in Phase 4 §7):
   job params `{ reportId, params, runAsRole, recipients: roles|users, format }`.
-- Execution: run as a **system principal over an explicitly permissioned scope** —
-  scheduled reports declare a `runAsRole` (default: the app's `reporting` role; a
-  role that does not resolve against the app's definitions is a save-time
-  validation error), so row filters still bound the dataset; pinning this avoids
-  both leaks and system-principal-everything.
+- Execution: the Scheduler fires the job into the Reporting Service (internal
+  call — the consumer PHASE-4 §7 registered dormant, mirroring its `flow`-target
+  wiring); the run executes as a **system principal over an explicitly
+  permissioned scope** — scheduled reports declare a `runAsRole` (default: the
+  app's `reporting` role; a role that does not resolve against the app's
+  definitions is a save-time validation error), so row filters still bound the
+  dataset; pinning this avoids both leaks and system-principal-everything.
 - Delivery via the Notification Service (template + attachment — the built-in
   `report-delivery` template category joining Notification v1's defaults per
   PHASE-4 §8's growth path), Mailpit locally; delivery audited; failures visible in
@@ -143,7 +151,9 @@ reporting and dedicated pivot mechanics (never a v1 goal); cross-app federation.
   CRUD in this phase — default deny until an app grants it; dashboard widgets run
   under the same grant, their §5 role visibility governing composition only.
 - Dashboards are metadata: versioned, promoted, role-visible per §5.
-- Audited: scheduled deliveries, subscription changes; interactive runs are not
+- Audited: scheduled deliveries; schedule changes are definition publishes —
+  already audited per ARCHITECTURE.md §5 item 5 (self-serve subscriptions are
+  §13/Q1's deferral; no v1 surface exists to change). Interactive runs are not
   audited (reads; consistent with ARCHITECTURE.md §5, which audits writes and
   permission changes).
 
@@ -176,7 +186,7 @@ reporting and dedicated pivot mechanics (never a v1 goal); cross-app federation.
 | T3 | Execution engine | Run API, actor-scoped queries, caching, chart shaping (§4) | p95 < 2 s on the 1M-row fixture (§12) |
 | T4 | Export | CSV/XLSX sync stream, cap, formatting (§6) | §10.3 green |
 | T5 | Catalog components | `ChartWidget`, `KpiTile`, `ReportTable`, `DashboardGrid` + props schemas + stories (§5) | Catalog gallery green incl. axe |
-| T6 | Dashboard composer + report builder UI | Builders over metadata APIs (§5, §11) | A/R aging + dashboard authored without hand-written JSON |
+| T6 | Dashboard composer + report builder UI | Builders over metadata APIs (§3, §5) | A/R aging + dashboard authored without hand-written JSON |
 | T7 | Scheduled delivery | Scheduler `report` activation + Notification attachments (§7) | §10.4 green |
 | T8 | Harness | `runReport` op + suites (§9) | Aging-vs-ledger suite green |
 | T9 | Exit review | Walk PLAN §5 exit | Demo: A/R aging + executive dashboard |
