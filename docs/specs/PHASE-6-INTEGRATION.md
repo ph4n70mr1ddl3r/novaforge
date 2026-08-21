@@ -194,12 +194,12 @@ here.
 |---|---|---|---|
 | T1 | Integration skeleton + DLQ | Port 8090, routes, resilience defaults, audit wiring | Health behind gateway; DLQ store live |
 | T2 | Credential store + secrets | References, AES-GCM at rest, rotation support (§9) | Secrets absent from metadata JSON exports |
-| T3 | Connector framework | REST executor, mapping engine, circuit breaker, integration-definition editors (§3) | §11.3 mock journey green; connector authorable in the builder |
+| T3 | Connector framework | REST executor, mapping engine, circuit breaker, integration-definition editors (§3) | §11 item 3 mock journey green; connector authorable in the builder |
 | T4 | `callConnector` + `$http` sandbox | Primitive activation, timeout policy, script sandbox context (§4) | Before/after failure-policy tests green |
-| T5 | Outbound webhooks | Definitions, HMAC signing, retries, delivery log (§5) | §11.1–.2 green |
-| T6 | Inbound webhooks | Anonymous route, HMAC, mapping → write path, poison DLQ (§6) | §11.1 + §11.6 green |
-| T7 | File Service + MinIO | Presigned flow, attachment entity, checksum, ClamAV gate (§8) | §11.5 green; FileUpload stub active in runtime-ui |
-| T8 | Bulk import/export | Jobs, checkpoints, resume, async report export handoff (§7) | §11.4 green; >10k report export returns a job link |
+| T5 | Outbound webhooks | Definitions, HMAC signing, retries, delivery log (§5) | §11 items 1–2 green |
+| T6 | Inbound webhooks | Anonymous route, HMAC, mapping → write path, poison DLQ (§6) | §11 items 1 + 6 green |
+| T7 | File Service + MinIO | Presigned flow, attachment entity, checksum, ClamAV gate (§8) | §11 item 5 green; FileUpload stub active in runtime-ui |
+| T8 | Bulk import/export | Jobs, checkpoints, resume, async report export handoff (§7) | §11 item 4 green; >10k report export returns a job link |
 | T9 | Harness + mock connector | `postWebhook` op, stub server (§10) | Bank-feed suite green through the runner |
 | T10 | Exit review | Walk PLAN §5 exit | Demo: Stripe/bank feed → Payments, visible in reports |
 

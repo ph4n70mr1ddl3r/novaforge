@@ -96,7 +96,7 @@ previously published version: field/entity removals, renames, and type changes a
 *breaking* and require an explicit `acknowledgeDataImpact` flag recorded on the
 version — JSONB keeps removed-field data intact until a tenant-scoped prune, so
 nothing is destroyed silently (the full forward-compatibility policy lands with the
-change-set machinery: PHASE-8 §4.5). Drafts stay mutable; the runtime serves published versions only
+change-set machinery: PHASE-8 §4 item 5). Drafts stay mutable; the runtime serves published versions only
 (design-time/runtime split, ARCHITECTURE.md §6). Phase 1 has a single implicit change
 set per app (draft vs published); formal change sets arrive with P8.
 
@@ -211,7 +211,7 @@ the data-plane tables, so it owns their DDL, reacting to `metadata.published`
   constraint authored at two levels. Soft-deleted tombstones therefore never pin
   a unique value (delete → recreate with the same value works), and the index —
   not the write-path check — is the enforcement: the check exists to shape the
-  friendly `VALIDATION_FAILED` error, and the index is what makes the §9.2
+  friendly `VALIDATION_FAILED` error, and the index is what makes the §9 item 2
   uniqueness race pass.
 - Postgres **RLS** everywhere: `tenant_id = current_setting('app.tenant')` as
   defense-in-depth; `security-context` sets the session var per request from

@@ -222,7 +222,7 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
   channels are skipped — no inbox entry, no email, hence no
   `notification.delivered`. What stays observable is the triggering
   `task.*`/`sla.*` events on the spine, exactly the surface suites assert on
-  (§14.6).
+  (§14 item 6).
 
 ## 9. BPMN v1 (Flowable) & Event-Start Subscriptions
 
@@ -327,19 +327,19 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 |---|---|---|---|
 | T1 | Workflow skeleton + ADR-004 | Service, Flowable embedded, spine wiring, ADR-004 file | Health behind gateway; consumes one spine topic |
 | T2 | State-machine metadata | Schema in metadata-model, save/publish validation (§3) | Invalid machines rejected at save; compiled at publish |
-| T3 | Write-path enforcement | Transition checks + guards + `STATE_TRANSITION`; `transitionState` activation (§3) | §14.2 suite green; primitive rides the same check |
+| T3 | Write-path enforcement | Transition checks + guards + `STATE_TRANSITION`; `transitionState` activation (§3) | §14 item 2 suite green; primitive rides the same check |
 | T4 | Tasks + inbox API | Task model, lifecycle, events, REST (§5) | CRUD per §5; `task.*` on spine; access rules enforced |
-| T5 | `requestApproval` | Durable suspension/resume, SoD fail-closed (§4) | §14.3 suite green; `SOD_VIOLATION` case covered (§14.1's journey form rides T11's `resolveTask` vocabulary) |
+| T5 | `requestApproval` | Durable suspension/resume, SoD fail-closed (§4) | §14 item 3 suite green; `SOD_VIOLATION` case covered (§14 item 1's journey form rides T11's `resolveTask` vocabulary) |
 | T6 | SLAs + escalation | Definitions, Flowable timers, breach flow, metrics (§6) | Clock-advanced warn/breach/escalation suite green |
-| T7 | Scheduler | Registry, locks, targets, misfire policy (§7) | §14.4 green; publish activates a job end-to-end |
+| T7 | Scheduler | Registry, locks, targets, misfire policy (§7) | §14 item 4 green; publish activates a job end-to-end |
 | T8 | Notification v1 | Consumer, templates, inbox + email, Mailpit (§8) | Email visible in Mailpit; preferences honored |
-| T9 | Sharing rules | Definitions, row-filter evaluation, editors (§10) | §14.5 matrix green; default behavior regression green |
+| T9 | Sharing rules | Definitions, row-filter evaluation, editors (§10) | §14 item 5 matrix green; default behavior regression green |
 | T10 | UI | State-machine designer, approval/SLA config, sharing editor, scheduled-job authoring + scheduler visibility, task & notification inboxes (§11) | Exit journey operable purely via UI |
 | T11 | Harness growth | `queryRecord`, `resolveTask`, task/SLA assertions (§12) | §1 exit suite authored and green through the runner |
 | T12 | Exit review | Walk PLAN §5 exit + dashboards | Demo: PO above threshold → approve → POSTED, escalation shown |
 
 Dependency order: T1 → (T2, T4) → (T3, T5) → T6 → T11 → T12. Parallel tracks:
-T7 after T1; T8 after T4; T9 from Phase 2 substrate (its §14.5 visibility suites
+T7 after T1; T8 after T4; T9 from Phase 2 substrate (its §14 item 5 visibility suites
 ride T11's `queryRecord`); T10 staged as its engines land.
 
 ## 16. Resolved Questions (decided 2026-08-21, per the recommendations; both were non-blocking scope pins)

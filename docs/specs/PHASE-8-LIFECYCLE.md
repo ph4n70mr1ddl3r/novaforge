@@ -124,7 +124,7 @@ environment mechanism — one provisioning path, no second system:
   name, publisher, versions, screenshots) — no commerce, no third-party publishing
   pipeline in v1 (§11 Q2, resolved: catalog only).
 
-## 7. i18n / Localization Editor (the PHASE-2 Q3 deferral lands)
+## 7. i18n / Localization Editor (the PHASE-2 §13 Q3 deferral lands)
 
 - Metadata is already translation-ready (`label_i18n`); this phase ships the
   editor: a translation workspace per app × locale, side-by-side with the source
@@ -158,7 +158,7 @@ environment mechanism — one provisioning path, no second system:
 
 - No new step vocabulary; headless runs (§5) are the harness feature of this phase.
 - The **promotion-gate suite**: an app with a deliberately failing suite cannot
-  promote (negative test); override path audited; rollback suite exercises §4.4's
+  promote (negative test); override path audited; rollback suite exercises §4 item 4's
   compatible and incompatible branches.
 - i18n suite: missing-translation report correctness; fallback chain behavior.
 
@@ -169,7 +169,7 @@ environment mechanism — one provisioning path, no second system:
 | T1 | Environment provisioning | Named envs from the scratch mechanism; ZIP artifact import/export (§2) | Three envs provisioned; artifact hash+signature verified |
 | T2 | Change-set formalization + review UI | Diffs, suite results, ratio/gap attach (§3) | Review renders a real change set end-to-end |
 | T3 | Promotion gate + override + audit | §4 mechanics | Negative suite blocks promotion; override audited and visible |
-| T4 | Rollback | Compatible/incompatible branches, materializer downgrade (§4.4) | Rollback suite green both branches |
+| T4 | Rollback | Compatible/incompatible branches, materializer downgrade (§4 item 4) | Rollback suite green both branches |
 | T5 | Headless API + CI wiring | §5 | PR pipeline runs suites via API only |
 | T6 | Templates + catalog | §6 | ERP app exported/imported as a template |
 | T7 | i18n editor + fallback | §7 | Translation round-trip; fallback suite green |

@@ -35,7 +35,7 @@ every publish would fan out DDL per tenant.
 ## Consequences
 
 - Cross-tenant read/write/delete assertions are mandatory test standards
-  (ARCHITECTURE.md §5; PHASE-1 §9.3) — RLS failing closed is itself tested.
+  (ARCHITECTURE.md §5; PHASE-1 §9 item 3) — RLS failing closed is itself tested.
 - Per-tenant extraction (a tenant demanding a silo) stays possible behind the
   storage SPI — the strategy can evolve without touching `api/`/`engine/`
   (ARCHITECTURE.md §4).

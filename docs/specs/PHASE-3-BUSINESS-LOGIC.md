@@ -124,7 +124,7 @@ persist with optimistic locking → events (§4) → shaped projection.
 - **Topology (§13 Q3, resolved):** shared topics `novaforge.record.*` / `novaforge.metadata.*`,
   partition key `tenant_id:entity_id:record_id` — true per-record ordering: `entity_id`
   is the entity-*definition* id, so a key without the record id would order an
-  entity's whole stream per tenant rather than each record's events (the §10.3
+  entity's whole stream per tenant rather than each record's events (the §10 item 3
   ordering test pins this) — consumer groups per
   service, tenant filtering at the consumer. The convention extends to every later
   event family as its phase lands it — `task.*`/`sla.*`/`notification.*`/`scheduler.*`
@@ -315,7 +315,7 @@ closure point.
   grants. Scripts stay caller-context (ARCHITECTURE.md §5 item 4). Both audited.
   PHASE-4 §4's engine-action context builds on this pin.
 - **Q2 — Roll-up recompute: DECIDED — synchronous in-transaction** (consistent;
-  serializes on the parent). ARCHITECTURE §3 says evaluated at write time;
+  serializes on the parent). ARCHITECTURE.md §3 says evaluated at write time;
   revisit at dogfood scale.
 - **Q3 — Topic topology: DECIDED — shared topics** with
   `tenant_id:entity_id:record_id` partition key vs the rejected per-tenant topics

@@ -189,10 +189,10 @@ reporting and dedicated pivot mechanics (never a v1 goal); cross-app federation.
 | T1 | Service skeleton | Port 8089, routes, health, dashboards row in Grafana | Behind gateway with JWT |
 | T2 | Report metadata | Schema, save/publish validation, compile to query DSL (§3) | Invalid definitions rejected; compile artifacts versioned |
 | T3 | Execution engine | Run API, actor-scoped queries, caching, chart shaping (§4) | p95 < 2 s on the 1M-row fixture (§12) |
-| T4 | Export | CSV/XLSX sync stream, cap, formatting (§6) | §10.3 green |
+| T4 | Export | CSV/XLSX sync stream, cap, formatting (§6) | §10 item 3 green |
 | T5 | Catalog components | `ChartWidget`, `KpiTile`, `ReportTable`, `DashboardGrid` + props schemas + stories (§5) | Catalog gallery green incl. axe |
 | T6 | Dashboard composer + report builder UI | Builders over metadata APIs (§3, §5) | A/R aging + dashboard authored without hand-written JSON |
-| T7 | Scheduled delivery | Scheduler `report` activation + Notification attachments (§7) | §10.4 green |
+| T7 | Scheduled delivery | Scheduler `report` activation + Notification attachments (§7) | §10 item 4 green |
 | T8 | Harness | `runReport` op + suites (§9) | Aging-vs-ledger suite green |
 | T9 | Exit review | Walk PLAN §5 exit | Demo: A/R aging + executive dashboard |
 

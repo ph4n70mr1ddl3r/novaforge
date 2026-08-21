@@ -62,25 +62,27 @@ gain/loss posts on settlement. Revaluation/unrealized gain is a logged gap, not 
 Both are *expected harvests* — PLAN.md §5 says the GL "may require platform
 enhancements"; the spec pre-proposes their shape so implementation can land them
 as versioned platform features (ADR-008 #2's growth path) mid-phase once the gap
-is confirmed in practice:
+is confirmed in practice.
 
-1. **`freezeOnTerminal` (posting/immutability primitive):** an `EntityDefinition`
-   attribute (requiring a bound state machine) — when a record's state machine sits
-   in a terminal state, *all* writes to the record are rejected with
-   `RECORD_FROZEN("4013", 400)`: field updates and deletes on the record, and
-   master-detail child writes into it — children are independently addressable
-   records (PHASE-1 §5), but the freeze covers the parent's whole document, so a
-   direct child create or delete naming the frozen parent and an inline child
-   array on a PATCH reject identically, and the check runs before roll-up
-   evaluation so a child write never recomputes a frozen parent (PHASE-3 §3).
-   (Today's Phase 4 state machines guard only the state field.) This is what
-   makes the journal append-only in fact, not convention.
-2. **`PeriodLock` (period locking):** activated when an `AccountingPeriod` record
-   reaches `CLOSED` (§4's state machine — the period is an app entity, §2, not a
-   Settings row); the Data Runtime write path rejects dated-into-closed-period
-   writes with the new code `PERIOD_LOCKED("4014", 400)`. How a write's period is
-   resolved (date-range lookup vs `periodId` reference) is spec'd in the feature's
-   harvest section per §8 before implementation.
+### 3.1 `freezeOnTerminal` (posting/immutability primitive)
+
+An `EntityDefinition` attribute (requiring a bound state machine) — when a record's
+state machine sits in a terminal state, *all* writes to the record are rejected with
+`RECORD_FROZEN("4013", 400)`: field updates and deletes on the record, and
+master-detail child writes into it — children are independently addressable records
+(PHASE-1 §5), but the freeze covers the parent's whole document, so a direct child
+create or delete naming the frozen parent and an inline child array on a PATCH reject
+identically, and the check runs before roll-up evaluation so a child write never
+recomputes a frozen parent (PHASE-3 §3). (Today's Phase 4 state machines guard only
+the state field.) This is what makes the journal append-only in fact, not convention.
+
+### 3.2 `PeriodLock` (period locking)
+
+Activated when an `AccountingPeriod` record reaches `CLOSED` (§4's state machine — the
+period is an app entity, §2, not a Settings row); the Data Runtime write path rejects
+dated-into-closed-period writes with the new code `PERIOD_LOCKED("4014", 400)`. How a
+write's period is resolved (date-range lookup vs `periodId` reference) is spec'd in the
+feature's harvest section per §8 before implementation.
 
 Both land behind the same publish/compile machinery as every other definition, with
 harness vocabulary to assert them (§9).
@@ -163,10 +165,10 @@ are pre-accepted pending confirmation; everything else earns its place.
 | # | Task | Content | Acceptance criteria |
 |---|---|---|---|
 | T1 | Tenant/app bootstrap + seed fixtures | App, roles, COA, rates, parties, opening balances | Fixtures load into a scratch tenant |
-| T2 | GL entities + posting machinery | §2 GL row + posting flows | §9.1 (partial: balanced posting) green |
-| T3 | `freezeOnTerminal` + `PeriodLock` harvests | §3 platform features + `RECORD_FROZEN`/`PERIOD_LOCKED` codes | §9.2–.3 green; features flag-gated |
-| T4 | AR/AP + allocation + dunning | §2 AR/AP row | §9.5–.6 green |
-| T5 | Inventory + weighted-average costing | §2 Inventory row + the one budgeted script | §9.4 green; script ratio within budget |
+| T2 | GL entities + posting machinery | §2 GL row + posting flows | §9 item 1 (partial: balanced posting) green |
+| T3 | `freezeOnTerminal` + `PeriodLock` harvests | §3 platform features + `RECORD_FROZEN`/`PERIOD_LOCKED` codes | §9 items 2–3 green; features flag-gated |
+| T4 | AR/AP + allocation + dunning | §2 AR/AP row | §9 items 5–6 green |
+| T5 | Inventory + weighted-average costing | §2 Inventory row + the one budgeted script | §9 item 4 green; script ratio within budget |
 | T6 | Period close workflows | §4 checklist + reopen approval | Close suite green with frozen clock |
 | T7 | Financial reports + dashboard | Trial balance, aging, P&L sketch, dashboard | Reconciliation assertions green |
 | T8 | Bank-feed connector wiring | Reuse Phase 6 exit connector as scheduled job | Payments sync visible in aging |

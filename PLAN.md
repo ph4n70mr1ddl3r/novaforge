@@ -69,7 +69,7 @@ Tenant
 | **Reporting Service** | Report definitions, execution against Data Runtime query API, chart data shaping, scheduled delivery |
 | **File Service** | Attachments, images, presigned storage (S3/MinIO), virus-scan hook |
 | **Notification Service** | Email/SMS/push/websocket fan-out, templates, user preferences (v1: platform inbox + email via SMTP with built-in default templates — PHASE-4 spec §8; SMS/push/websocket stay deferred with demand) |
-| **Integration Service** | Connectors (REST first — the SOAP/DB/file types join the same frame on demand, §5 Phase 6), webhook dispatch, retry/DLQ, mapping engine; tenant-facing bus topics post-1.0 (PHASE-6 §1) |
+| **Integration Service** | Connectors (REST first — the SOAP/DB/file types join the same frame on demand, §5, Phase 6), webhook dispatch, retry/DLQ, mapping engine; tenant-facing bus topics post-1.0 (PHASE-6 §1) |
 | **Scheduler Service** | Cron registry & orchestration of scheduled jobs (job definitions are versioned app metadata activated on publish — ARCHITECTURE.md §2.8), distributed locks |
 | **Audit Service** | Append-only event log (Kafka → store), who/what/when, field diffs |
 
@@ -143,7 +143,7 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 ### Phase 5 — Reporting & Dashboards (3–4 weeks)
 - Report builder (filters, groups, aggregates, charts), dashboard composer
 - Scheduled report delivery; CSV/XLSX export (direct downloads in Phase 5; async large-export streaming via the File Service — ARCHITECTURE.md §2.7 — activates when it lands in Phase 6); drill-down
-- Detailed spec (spec-driven): [docs/specs/PHASE-5-REPORTING.md](./docs/specs/PHASE-5-REPORTING.md) — reports compile to the query DSL over promoted fields (actor-scoped: sharing-rule row filters apply; the ARCHITECTURE.md §9 "materialized path" = projection columns), dashboards ship as versioned catalog components (PHASE-2 Q4's deferral), sync export capped at 10k rows with the async handoff designed for Phase 6, and the Scheduler's dormant `report` target activates
+- Detailed spec (spec-driven): [docs/specs/PHASE-5-REPORTING.md](./docs/specs/PHASE-5-REPORTING.md) — reports compile to the query DSL over promoted fields (actor-scoped: sharing-rule row filters apply; the ARCHITECTURE.md §9 "materialized path" = projection columns), dashboards ship as versioned catalog components (PHASE-2 §13 Q4's deferral), sync export capped at 10k rows with the async handoff designed for Phase 6, and the Scheduler's dormant `report` target activates
 - **Exit:** A/R aging report + executive dashboard
 
 ### Phase 6 — Integration Layer (3–4 weeks)
@@ -165,7 +165,7 @@ Build on the platform itself:
 ### Phase 8 — App Lifecycle & Hardening (4–6 weeks)
 - App packaging/versioning, change-set promotion dev→staging→prod, rollback — promotion gated by recorded green suite runs, suite results shown in change-set review, headless runs for CI (ADR-010)
 - Templates & marketplace concept; performance & load testing (target: p95 < 300 ms list queries at 1M rows/tenant)
-- i18n/localization editor for translation-ready metadata (deferred from Phase 2 — PHASE-2 spec Q3)
+- i18n/localization editor for translation-ready metadata (deferred from Phase 2 — PHASE-2 spec §13 Q3)
 - Security review, pen test, DR/backup strategy
 - Detailed spec (spec-driven): [docs/specs/PHASE-8-LIFECYCLE.md](./docs/specs/PHASE-8-LIFECYCLE.md) — the scratch-tenant mechanism grows into dev/staging/prod environments (one provisioning path, per ADR-010), promotion-gate mechanics pinned (green run against exactly V, visible audited overrides, compatibility-scoped rollback), headless API + CI wiring, templates-as-artifacts with a catalog-only marketplace, the i18n editor with its fallback chain, and the pinned pen-test/DR scope
 
