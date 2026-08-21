@@ -6,6 +6,16 @@ spring:
       resourceserver:
         jwt:
           issuer-uri: ${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}
+  datasource:
+    url: jdbc:postgresql://${NOVAFORGE_POSTGRES_HOST:localhost}:${NOVAFORGE_POSTGRES_PORT:5432}/novaforge_metadata
+    username: novaforge
+    password: novaforge
+  flyway:
+    locations: classpath:db/migration
+  data:
+    redis:
+      host: ${NOVAFORGE_REDIS_HOST:localhost}
+      port: ${NOVAFORGE_REDIS_PORT:6379}
 
 server:
   port: 8081
@@ -24,3 +34,9 @@ logging:
   pattern:
     # W3C trace context in every line — the shared-trace-id acceptance check (PHASE-0 §8)
     level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
+
+novaforge:
+  metadata:
+    # redis (default) emits metadata.published on channel novaforge.metadata.events;
+    # noop disables emission for hermetic tests (PHASE-1 §4 transport note).
+    publish-transport: ${NOVAFORGE_METADATA_PUBLISH_TRANSPORT:redis}

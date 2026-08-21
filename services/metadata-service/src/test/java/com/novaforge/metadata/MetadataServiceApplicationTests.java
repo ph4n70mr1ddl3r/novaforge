@@ -5,18 +5,32 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.novaforge.metadata.store.MetadataStore;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-/** PHASE-0 §6.3 metadata-service test slice. */
-@SpringBootTest
+/** PHASE-0 §6.3 metadata-service test slice (hermetic: stores mocked, infra excluded). */
+@SpringBootTest(properties = {
+        "novaforge.metadata.publish-transport=noop",
+        "spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
+                + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration,"
+                + "org.springframework.boot.data.redis.autoconfigure.RedisAutoConfiguration,"
+                + "org.springframework.boot.data.redis.autoconfigure.RedisRepositoriesAutoConfiguration"
+})
 @AutoConfigureMockMvc
 class MetadataServiceApplicationTests {
+
+    @MockitoBean
+    MetadataStore metadataStore;
+
+    @MockitoBean
+    StringRedisTemplate stringRedisTemplate;
 
     @Autowired
     MockMvc mockMvc;
@@ -37,17 +51,16 @@ class MetadataServiceApplicationTests {
     }
 
     @Test
-    @DisplayName("ping with token lacking scope → 403")
-    void pingRequiresScope() throws Exception {
+    @DisplayName("ping with any authenticated token → ok (scope enforcement sits at the gateway)")
+    void pingAuthenticated() throws Exception {
         mockMvc.perform(get("/api/v1/metadata/ping").with(jwt()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk());
     }
 
     @Test
-    @DisplayName("ping with novaforge.api scope → ok, exact framework version 7.0.8")
+    @DisplayName("ping → ok, exact framework version 7.0.8 (drift rule, PHASE-0 §10)")
     void pingReportsExactFrameworkVersion() throws Exception {
-        mockMvc.perform(get("/api/v1/metadata/ping")
-                        .with(jwt().authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"))))
+        mockMvc.perform(get("/api/v1/metadata/ping").with(jwt()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.service").value("metadata-service"))
                 .andExpect(jsonPath("$.status").value("ok"))

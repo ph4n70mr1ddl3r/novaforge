@@ -1,0 +1,271 @@
+package com.novaforge.metadata;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.novaforge.testsupport.PostgresTestBase;
+import java.time.Duration;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.listener.ChannelTopic;
+import org.springframework.data.redis.listener.RedisMessageListenerContainer;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
+import tools.jackson.databind.json.JsonMapper;
+
+/**
+ * Definition lifecycle over the real stores (PHASE-1 §9 item 4): save-validation matrix
+ * through the API, publish immutability, version list/export round-trip, breaking-change
+ * acknowledgment, and the {@code metadata.published} envelope on Redis pub/sub (T4).
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+class DefinitionLifecycleTests extends PostgresTestBase {
+
+    private static final GenericContainer<?> REDIS = new GenericContainer<>("docker.io/library/redis:7.4.11")
+            .withExposedPorts(6379)
+            .waitingFor(Wait.forLogMessage(".*Ready to accept connections.*", 1));
+
+    static {
+        // Class-load order: subscription (@BeforeAll) and property registration
+        // (DynamicPropertySource) both need the container up first.
+        REDIS.start();
+    }
+
+    private static final String TENANT = "11111111-1111-4111-8111-111111111111";
+    private static final String ACTOR = "33333333-3333-4333-8333-333333333333";
+
+    private static final JsonMapper MAPPER = JsonMapper.builder().build();
+
+    private static final BlockingQueue<String> PUBLISHED_EVENTS = new LinkedBlockingQueue<>();
+
+    @Autowired
+    MockMvc mockMvc;
+
+    @DynamicPropertySource
+    static void infrastructure(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", PostgresTestBase::jdbcUrl);
+        registry.add("spring.datasource.username", PostgresTestBase::jdbcUsername);
+        registry.add("spring.datasource.password", PostgresTestBase::jdbcPassword);
+        registry.add("spring.data.redis.host", REDIS::getHost);
+        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+    }
+
+    @BeforeAll
+    static void subscribeToPublishChannel() {
+        LettuceConnectionFactory factory = new LettuceConnectionFactory(
+                new RedisStandaloneConfiguration(REDIS.getHost(), REDIS.getMappedPort(6379)));
+        factory.afterPropertiesSet();
+        RedisMessageListenerContainer container = new RedisMessageListenerContainer();
+        container.setConnectionFactory(factory);
+        container.addMessageListener(
+                (message, pattern) -> PUBLISHED_EVENTS.add(new String(message.getBody())),
+                new ChannelTopic(MetadataPublishEventPublisherFixtures.CHANNEL));
+        container.afterPropertiesSet();
+        container.start();
+    }
+
+    private static org.springframework.security.test.web.servlet.request
+            .SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor builderJwt() {
+        return jwt()
+                .jwt(token -> token.claim("tenant_id", TENANT).subject(ACTOR))
+                .authorities(new SimpleGrantedAuthority("ROLE_builder"));
+    }
+
+    private static org.springframework.security.test.web.servlet.request
+            .SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor userJwt() {
+        return jwt()
+                .jwt(token -> token.claim("tenant_id", TENANT).subject(ACTOR))
+                .authorities(new SimpleGrantedAuthority("ROLE_user"));
+    }
+
+    @Test
+    @DisplayName("full definition lifecycle: create → invalid save rejected → publish → versions → export → immutability")
+    void definitionLifecycle() throws Exception {
+        // 1. create the ERP draft app (ARCHITECTURE §3 example)
+        MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps")
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content(JournalAppFixtures.JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.apiName").value("Erp"))
+                .andExpect(jsonPath("$.id").isNotEmpty())
+                .andReturn();
+        String appId = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+
+        // 2. invalid entity save rejected as problem+json 4000 with field errors
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/entities")
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "apiName": "bad_name", "fields": [ { "apiName": "f", "type": "text" } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("4000"))
+                .andExpect(jsonPath("$.errors[0].field").isNotEmpty());
+
+        // 3. publish v1 (no prior version → no breaking changes)
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/publish")
+                        .with(builderJwt()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value(1))
+                .andExpect(jsonPath("$.breakingChanges").isEmpty());
+
+        // 4. published read carries the version for cache keys; user role suffices
+        mockMvc.perform(get("/api/v1/metadata/apps/" + appId + "/published")
+                        .with(userJwt()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value(1))
+                .andExpect(jsonPath("$.app.entities[0].apiName").value("AccountingPeriod"));
+
+        // 5. breaking change without acknowledgment → 400 with the change listed
+        mockMvc.perform(patch("/api/v1/metadata/apps/" + appId + "/entities/JournalEntry")
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "fields": [
+                                  { "apiName": "reference", "type": "text", "length": 32,
+                                    "default": { "sequence": "entryNumber" } },
+                                  { "apiName": "entryDate", "type": "date", "required": true },
+                                  { "apiName": "status", "type": "enum", "values": ["DRAFT", "POSTED"] },
+                                  { "apiName": "periodId", "type": "lookup", "target": "AccountingPeriod" }
+                                ] }
+                                """))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/publish").with(builderJwt()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.globalErrors[0].message").value(
+                        org.hamcrest.Matchers.containsString("totalDebit")));
+
+        // 6. publish with acknowledgeDataImpact → v2 acknowledged
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/publish")
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("{ \"acknowledgeDataImpact\": true }"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value(2))
+                .andExpect(jsonPath("$.acknowledged").value(true));
+
+        // 7. versions listed newest-first; export round-trips v1 immutably
+        mockMvc.perform(get("/api/v1/metadata/apps/" + appId + "/versions").with(builderJwt()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].version").value(2))
+                .andExpect(jsonPath("$[1].version").value(1));
+        mockMvc.perform(get("/api/v1/metadata/apps/" + appId + "/versions/1/export")
+                        .with(builderJwt()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entities[?(@.apiName=='JournalEntry')].fields[?(@.apiName=='totalDebit')]")
+                        .isNotEmpty());
+
+        // 8. drafts stay mutable without touching the published bundle
+        mockMvc.perform(patch("/api/v1/metadata/apps/" + appId)
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("{ \"label\": \"ERP draft edit\" }"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/metadata/apps/" + appId + "/published").with(userJwt()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value(2))
+                .andExpect(jsonPath("$.app.label").value("ERP"));
+
+        // 9. both publish envelopes rode the Redis channel (T4)
+        await().atMost(Duration.ofSeconds(5)).until(() -> PUBLISHED_EVENTS.size() >= 2);
+        String first = PUBLISHED_EVENTS.poll();
+        String second = PUBLISHED_EVENTS.poll();
+        assertThat(MAPPER.readTree(first).get("event").asString()).isEqualTo("metadata.published");
+        assertThat(MAPPER.readTree(first).get("appId").asString()).isEqualTo(appId);
+        assertThat(MAPPER.readTree(first).get("version").asInt()).isEqualTo(1);
+        assertThat(MAPPER.readTree(second).get("version").asInt()).isEqualTo(2);
+        assertThat(MAPPER.readTree(first).get("tenantId").asString()).isEqualTo(TENANT);
+    }
+
+    @Test
+    @DisplayName("draft CRUD is builder-scoped; user role is denied (PHASE-1 §4)")
+    void draftCrudIsBuilderScoped() throws Exception {
+        mockMvc.perform(get("/api/v1/metadata/apps").with(userJwt()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/metadata/apps").with(builderJwt()))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("app delete cascades (draft workspace) — publish history stays queryable per app row removal")
+    void deleteAppCascades() throws Exception {
+        MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps")
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "apiName": "Throwaway", "entities": [
+                                  { "apiName": "Thing",
+                                    "fields": [ { "apiName": "name", "type": "text" } ] } ] }
+                                """))
+                .andExpect(status().isOk()).andReturn();
+        String appId = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+        mockMvc.perform(delete("/api/v1/metadata/apps/" + appId).with(builderJwt()))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/v1/metadata/apps/" + appId).with(builderJwt()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("4004"));
+    }
+
+    // Small fixtures kept local to this suite.
+    static final class JournalAppFixtures {
+        static final String JSON = """
+                {
+                  "apiName": "Erp", "label": "ERP",
+                  "settings": { "sequences": [
+                    { "apiName": "entryNumber", "mode": "gapless", "start": 1,
+                      "prefix": "JE-", "padding": 6 } ] },
+                  "entities": [
+                    { "apiName": "JournalEntry", "label": "Journal Entry",
+                      "displayField": "reference",
+                      "fields": [
+                        { "apiName": "reference", "type": "text", "length": 32, "required": true,
+                          "default": { "sequence": "entryNumber" } },
+                        { "apiName": "entryDate", "type": "date", "required": true },
+                        { "apiName": "status", "type": "enum", "values": ["DRAFT", "POSTED"] },
+                        { "apiName": "periodId", "type": "lookup", "target": "AccountingPeriod" },
+                        { "apiName": "totalDebit", "type": "decimal", "precision": 18, "scale": 4,
+                          "rollup": "SUM(lines.debit)" },
+                        { "apiName": "totalCredit", "type": "decimal", "precision": 18, "scale": 4,
+                          "rollup": "SUM(lines.credit)" } ],
+                      "relationships": [
+                        { "apiName": "lines", "type": "child", "target": "JournalLine",
+                          "cascadeDelete": true } ],
+                      "indexes": [ { "fields": ["entryDate"], "unique": false } ] },
+                    { "apiName": "JournalLine",
+                      "fields": [
+                        { "apiName": "entryId", "type": "lookup", "target": "JournalEntry",
+                          "required": true },
+                        { "apiName": "debit", "type": "decimal", "precision": 18, "scale": 4 },
+                        { "apiName": "credit", "type": "decimal", "precision": 18, "scale": 4 } ] },
+                    { "apiName": "AccountingPeriod", "displayField": "name",
+                      "fields": [ { "apiName": "name", "type": "text" } ] } ]
+                }
+                """;
+    }
+
+    static final class MetadataPublishEventPublisherFixtures {
+        static final String CHANNEL = "novaforge.metadata.events";
+    }
+}
