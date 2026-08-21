@@ -84,14 +84,17 @@ harness vocabulary to assert them (§9).
 - Close checklist = a Phase 4 workflow whose tasks are the close steps; owners are
   roles (controller, AR clerk, AP clerk).
 - `AccountingPeriod.status: OPEN → CLOSING → CLOSED` (state machine); `CLOSING`
-  blocks new postings except close journals; `CLOSED` activates `PeriodLock` (§3.2).
+  blocks new postings except close journals — close journals are `JournalEntry`
+  records carrying an app-defined `closeJournal: true` flag, and the posting guard
+  rejects dated-into-`CLOSING` writes unless it is set (app metadata, no platform
+  special-casing); `CLOSED` activates `PeriodLock` (§3.2).
 - Reopen is an audited admin action that requires un-freezing reversals — modeled
   as its own approval flow (Phase 4), not a back door.
 
 ## 5. What Runs Where (no surprises)
 
 - Posting = a flow on `Invoice`/`JournalEntry` submit: branch → approval (Phase 4,
-  SoD: preparer ≠ approver ≠ poster) → `createRecord` journal lines from templates →
+  SoD: preparer, approver, and poster are pairwise distinct) → `createRecord` journal lines from templates →
   `transitionState` to POSTED. No scripts expected on this path.
 - Weighted-average costing = an `iterate` flow over receipt lots with rounding
   chains — the canonical ADR-008 escape-hatch case; one script, counted, reviewed

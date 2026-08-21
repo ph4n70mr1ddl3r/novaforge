@@ -84,7 +84,11 @@ slots Phase 1 left inert:
   tests see it as `validation(rule)` (§7).
 - **Formula fields:** evaluated at write time and stored, never computed on read;
   formula fields are implicitly `readonly`, so app writes are rejected (the Phase 1
-  rule). Time-dependent functions (e.g. `today()`) are compile-rejected in formula
+  rule). **Formulas are own-record expressions** — the record's fields, literals, and
+  pure functions; they cannot reference child collections (the scalar grammar has no
+  collection traversal, PHASE-2 Annex A): child aggregates are roll-up summaries
+  (below), authored in the distinct `rollup` slot (ARCHITECTURE.md §3). Time-dependent
+  functions (e.g. `today()`) are compile-rejected in formula
   fields — a stored value would go stale between writes; run-time evaluation
   contexts (report bucket expressions, PHASE-5 §3) may take them, resolved against
   the governing clock.
@@ -108,7 +112,10 @@ persist with optimistic locking → events (§4) → shaped projection.
   pub/sub to the spine — same envelope, consumer-side swap only (PHASE-1 spec §4);
   the Redis channel is retired.
 - **Topology (Q3, §13):** shared topics `novaforge.record.*` / `novaforge.metadata.*`,
-  partition key `tenant_id:entity_id` (per-record ordering), consumer groups per
+  partition key `tenant_id:entity_id:record_id` — true per-record ordering: `entity_id`
+  is the entity-*definition* id, so a key without the record id would order an
+  entity's whole stream per tenant rather than each record's events (the §10.3
+  ordering test pins this) — consumer groups per
   service, tenant filtering at the consumer. The convention extends to every later
   event family as its phase lands it — `task.*`/`sla.*`/`notification.*`/`scheduler.*`
   (Phase 4), `connector.*`/`webhook.*`/`import.*` (Phase 6) — as
@@ -198,7 +205,9 @@ The concrete `TestSuiteDefinition` encoding ADR-010 left illustrative, pinned:
 - Assertions are platform-expression predicates over step results
   (`${Entity[n].path}` references).
 - Runner in the Metadata Service (ARCHITECTURE.md §2.3): scratch tenant wiped per
-  run, pinned to a published draft version; steps replay as synthetic actors with
+  run, pinned to a *candidate* version (ADR-010 #3 — the immutable snapshot a
+  Phase 1 publish creates from the dev draft workspace; never a mutable draft, so
+  the runtime-never-serves-drafts rule is untouched); steps replay as synthetic actors with
   role impersonation (Phase 2 RBAC — permission-denial assertions ride it,
   ADR-010 #5) through the generic APIs — no test mode in the write path. Side
   effects (events, audit, sequences) land in the scratch tenant only; synthetic
@@ -290,7 +299,8 @@ Closure points: Q3 before T1, Q2 before T3, Q1 before T4, Q4 before T9.
 - **Q2 — Roll-up recompute:** synchronous in-transaction (consistent; serializes on
   the parent) vs async eventual. *Recommendation: synchronous v1 — ARCHITECTURE §3
   says evaluated at write time; revisit at dogfood scale.*
-- **Q3 — Topic topology:** shared topics with `tenant_id:entity_id` partition key vs
+- **Q3 — Topic topology:** shared topics with `tenant_id:entity_id:record_id`
+  partition key vs
   per-tenant topics. *Recommendation: shared — per-tenant topics explode (tenants ×
   event types).*
 - **Q4 — Tracing backend:** Grafana Tempo in compose vs full OTel collector now.

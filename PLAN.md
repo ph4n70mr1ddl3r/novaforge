@@ -19,6 +19,8 @@
 | P7 | **Integration** | Auto-exposed entity REST APIs (generic runtime — no per-entity codegen), webhooks, inbound/outbound connectors, message bus topics, import/export |
 | P8 | **App Lifecycle** | Apps as versioned artifacts (JSON), sandboxes, change sets, promotion (test-gated per [ADR-010](./docs/adr/ADR-010-builder-test-harness.md)), rollback, app templates/marketplace |
 
+> **Pillar deferrals** (so the table is not read as the v1 contract): wizards/tabs/mobile-responsive layouts — PHASE-2 §1 backlog until dogfood demand; tenant-facing message-bus topics — post-1.0 (PHASE-6 §1); MFA activation — a deployed-Keycloak capability whose realm configuration is deferred with demand (ARCHITECTURE.md §7); SMS/push/websocket notification channels — deferred with demand (PHASE-4 §8).
+
 **ERP-grade requirements that force platform quality (non-negotiables):**
 - Decimal-precision money handling (never floats), multi-currency
 - Immutable, auditable postings (append-only journal)
@@ -58,16 +60,16 @@ Tenant
 | Service | Responsibility |
 |---------|----------------|
 | **API Gateway** (Spring Cloud Gateway) | Routing, auth token relay, rate limiting (activates with Phase 6's first public route — ARCHITECTURE.md §2.1), CORS (deferred — same-origin static serving keeps it out of v1, PHASE-2 spec §2) |
-| **Identity Service** | OIDC via deployed Keycloak — no bespoke service module (ARCHITECTURE.md §7); authentication, MFA, SSO federation; tenant/role administration data lives in the platform DB (ADR-002) |
+| **Identity Service** | OIDC via deployed Keycloak — no bespoke service module (ARCHITECTURE.md §7); authentication, MFA, SSO federation (MFA/federation are deployed-Keycloak capabilities — realm activation deferred with demand); tenant/role administration data lives in the platform DB (ADR-002) |
 | **Metadata Service** | CRUD of app definitions: entities, fields, pages, rules (full owns-list: ARCHITECTURE.md §2.3); validation of definitions; versioning & change-sets; builder test-suite runner (ADR-010) |
 | **Data Runtime Service** | Generic record APIs driven by metadata; permission enforcement; query engine (filter/sort/page/aggregate); sequences; audit emission; in-process expression & field-validation engine (ADR-008 #3); platform-admin API — tenant provisioning + user→role assignments over the platform-DB authorization data (PHASE-2 spec §10) |
-| **Script Engine Service** | Sandboxed execution of user scripts (escape hatch per ADR-008); resource limits, warm pools — the expression DSL runs in-process in the Data Runtime, not here (ADR-008 #3) |
+| **Script Engine Service** | Sandboxed execution of user scripts (escape hatch per ADR-008); resource limits, warm pools — the expression DSL runs in-process in the Data Runtime, not here (ARCHITECTURE.md §2.5) |
 | **Workflow Service** | Flowable (BPMN) runtime, approvals, timers/tasks; state machines are metadata enforced on the Data Runtime write path (PHASE-4 spec §3) — this service consumes state-change events, it never mutates records |
 | **UI Builder Service** | Component catalog, builder sessions, preview/scaffolding (page/layout definitions persist as versioned metadata in the Metadata Service); no separate module in v1 — extracted on demand only (ARCHITECTURE.md §2.8, PHASE-2 spec §8) |
 | **Reporting Service** | Report definitions, execution against Data Runtime query API, chart data shaping, scheduled delivery |
 | **File Service** | Attachments, images, presigned storage (S3/MinIO), virus-scan hook |
 | **Notification Service** | Email/SMS/push/websocket fan-out, templates, user preferences (v1: platform inbox + email via SMTP with built-in default templates — PHASE-4 spec §8; SMS/push/websocket stay deferred with demand) |
-| **Integration Service** | Connectors (REST first — the SOAP/DB/file types join the same frame on demand, §5 Phase 6), webhook dispatch, retry/DLQ, mapping engine |
+| **Integration Service** | Connectors (REST first — the SOAP/DB/file types join the same frame on demand, §5 Phase 6), webhook dispatch, retry/DLQ, mapping engine; tenant-facing bus topics post-1.0 (PHASE-6 §1) |
 | **Scheduler Service** | Cron registry & orchestration of scheduled jobs (job definitions are versioned app metadata activated on publish — ARCHITECTURE.md §2.8), distributed locks |
 | **Audit Service** | Append-only event log (Kafka → store), who/what/when, field diffs |
 
@@ -195,6 +197,6 @@ Build on the platform itself:
 
 1. Approve stack & phase plan; stand up Phase 0 repo skeleton
 2. Run the storage spike: hybrid JSONB + projections (ARCHITECTURE.md §4) against a 1M-row dataset — 3-day timebox; confirm or adjust, and record the final call in ADR-001
-3. Review the drafted Phase 1 spec ([docs/specs/PHASE-1-METADATA-CORE.md](./docs/specs/PHASE-1-METADATA-CORE.md)); its T1 starts from Metadata JSON Schema v0 (app/entity/field/relationship/page) once the spike (item 2) closes ADR-001
+3. Review the drafted Phase 1 spec ([docs/specs/PHASE-1-METADATA-CORE.md](./docs/specs/PHASE-1-METADATA-CORE.md)); its T1 (Metadata JSON Schema v0 — app/entity/field/relationship/page) starts immediately — only the storage-dependent tasks (T5+) wait for the spike (item 2) to close ADR-001 (PHASE-1 §2)
 4. Stand up Keycloak + Gateway + one service end-to-end with CI
 5. Recruit/select team; set up project tracker with the phase backlog

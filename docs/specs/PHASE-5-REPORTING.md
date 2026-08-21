@@ -53,7 +53,7 @@ reporting and dedicated pivot mechanics (never a v1 goal); cross-app federation.
 
 - **Save/publish validation:** fields exist on the entity; aggregate fields are
   numeric (decimal sums as BigDecimal — PLAN.md §1 money rule); bucket expressions
-  compile (Phase 2 JVM engine); groupBy and aggregate fields are projection-promoted
+  compile (Phase 2 JVM engine; grammar: PHASE-2 Annex A); groupBy and aggregate fields are projection-promoted
   or the definition is rejected with guidance (reporting rides the §4 materialized
   path — sums execute on promoted columns; a bucketed groupBy rides its source
   field's promotion, the bucket itself computing in-pipeline).

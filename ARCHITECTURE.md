@@ -56,7 +56,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 
 ### 2.1 API Gateway
 - Spring Cloud Gateway; routes `/api/v1/runtime/**`, `/api/v1/metadata/**`, `/api/v1/workflow/**`, etc. (versioning rule: §6)
-- JWT validation (Keycloak JWKS), tenant header derivation (`X-Tenant-Id` from token claim), rate limiting via Redis — the limiter itself activates with Phase 6's first public route (PHASE-0 §6.1's deferral; PHASE-6 §6), not at Phase 0. The default JWT requirement has exactly one API-route exception — the anonymous inbound-webhook prefix that arrives with Phase 6 (PHASE-6 spec §2/§6), rate-limited from its first day.
+- JWT validation (Keycloak JWKS), tenant header derivation (`X-Tenant-Id` from token claim), rate limiting via Redis — the limiter itself activates with Phase 6's first public route (PHASE-0 §6.1's deferral; PHASE-6 §6), not at Phase 0. The default JWT requirement has exactly one API-route exception — the anonymous inbound-webhook prefix that arrives with Phase 6 (PHASE-6 spec §2/§6), rate-limited from its first day. Authenticated routes carry no per-user rate limits in v1 — a demand-driven backlog item, stated here so its absence is a decision, not an omission.
 
 ### 2.2 Identity Service
 - Keycloak realms: one realm per tenant (or single realm + tenant claim — decide at Phase 0; single realm scales simpler, realm-per-tenant isolates better).
@@ -123,9 +123,10 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
     { "apiName": "status",     "type": "enum", "values": ["DRAFT","POSTED","REVERSED"] },
     { "apiName": "periodId",   "type": "lookup", "target": "AccountingPeriod" },
     { "apiName": "totalDebit",  "type": "decimal", "precision": 18, "scale": 4,
-      "formula": "SUM(lines.debit)" },  // roll-up/formula evaluated at write time
+      "rollup": "SUM(lines.debit)" },   // roll-up summary: child aggregate recomputed
+                                        // in the child's write txn (PHASE-3 §3)
     { "apiName": "totalCredit", "type": "decimal", "precision": 18, "scale": 4,
-      "formula": "SUM(lines.credit)" }
+      "rollup": "SUM(lines.credit)" }
   ],
   "relationships": [
     { "apiName": "lines", "type": "child", "target": "JournalLine",
@@ -142,7 +143,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 
 Field types (v1): text, longText, richText, enum, boolean, int, long, **decimal(p,s)**, date, datetime, time, uuid, email, phone, url, json, lookup, child, m2m, file, money(currency-aware).
 
-Fields may carry an optional `group` label; default detail pages section on it (no group → a single default section — see the Phase 2 spec's default-resolver rules). Common field attributes: `required`, `readonly`, `default` (static values from Phase 1; expression defaults arrive with Phase 3 write-path evaluation — PHASE-1 spec §5), `length`, `precision`/`scale`, `group`, `formula` (evaluated at write time, §2.4). Entities may likewise carry an optional `module` label; app navigation groups entities by it (no module → a default group, mirroring field groups). Labels are translation-ready: every definition that carries a `label` (entity, field, report, …) also accepts an optional `label_i18n` per-locale map — the PHASE-2 spec Q3 stance (translation-ready from the start, editor deferred); the editor and the runtime fallback chain land in Phase 8 (PHASE-8 spec §7).
+Fields may carry an optional `group` label; default detail pages section on it (no group → a single default section — see the Phase 2 spec's default-resolver rules). Common field attributes: `required`, `readonly`, `default` (static values from Phase 1; expression defaults arrive with Phase 3 write-path evaluation — PHASE-1 spec §5), `length`, `precision`/`scale`, `group`, `formula` (own-record expression) and `rollup` (child-collection aggregate) — both evaluated at write time (§2.4); formulas cannot reference child collections (PHASE-3 §3). Entities may likewise carry an optional `module` label; app navigation groups entities by it (no module → a default group, mirroring field groups). Labels are translation-ready: every definition that carries a `label` (entity, field, report, …) also accepts an optional `label_i18n` per-locale map — the PHASE-2 spec Q3 stance (translation-ready from the start, editor deferred); the editor and the runtime fallback chain land in Phase 8 (PHASE-8 spec §7).
 
 ---
 
@@ -209,7 +210,7 @@ CREATE INDEX ON rec_journal_entry (tenant_id, entry_date DESC);
 ## 6. Cross-Cutting Concerns
 
 - **Tracing:** OpenTelemetry (W3C traceparent propagated; Kafka headers carry trace context).
-- **Idempotency:** all mutating APIs accept `Idempotency-Key`; event consumers dedupe on `(event_id, consumer)`.
+- **Idempotency:** all mutating APIs accept `Idempotency-Key` (phased: create and batch from Phase 1, PHASE-1 §5; extending to the full mutating surface is demand-driven backlog); event consumers dedupe on `(event_id, consumer)`.
 - **Versioning:** REST APIs versioned `/api/v1/...`; app definitions versioned independently; runtime executes the *published* version, builder edits drafts.
 - **Errors:** RFC 7807 problem+json with platform error codes.
 - **Config:** Spring Cloud Config / Kubernetes ConfigMaps; per-env Helm values.
@@ -281,7 +282,7 @@ No `identity/` module exists: Identity is a *deployed* Keycloak (realm/client co
 | 009 | Declarative UI: layered generation + component catalog, no codegen | Accepted — [ADR-009](./docs/adr/ADR-009-declarative-ui.md) |
 | 010 | Builder test harness: tests as versioned metadata, gating promotion | Accepted — [ADR-010](./docs/adr/ADR-010-builder-test-harness.md) |
 
-Entries marked *Proposed* live in this log only — an ADR file is written when the decision is accepted (e.g. ADR-001's file will record the storage-spike outcome, §4). Expected acceptance points: ADR-005 with the Phase 0 repo skeleton (PHASE-0 §4), ADR-001 at storage-spike closure (PHASE-1 §2), ADR-002/ADR-006 with the Phase 1 authorization gate and RLS implementation (PHASE-1 §6–§7), ADR-003 at the Phase 3 Script Engine landing (PHASE-3 §6), ADR-004 at Phase 4 start (PHASE-4 §2).
+Entries marked *Proposed* live in this log only — an ADR file is written when the decision is accepted (e.g. ADR-001's file will record the storage-spike outcome, §4). Expected acceptance points: ADR-005 with the Phase 0 repo skeleton (PHASE-0 §11/T1), ADR-001 at storage-spike closure (PHASE-1 §2), ADR-002/ADR-006 with the Phase 1 authorization gate and RLS implementation (PHASE-1 §6–§7; files tasked in §11 T5/T9), ADR-003 at the Phase 3 Script Engine landing (PHASE-3 §6), ADR-004 at Phase 4 start (PHASE-4 §2).
 
 ## 9. Performance Targets (storage/query targets: approach validated by the pre-Phase-1 storage spike — §4 / PLAN.md §8 — implementation by the Phase 1 load test (PHASE-1-METADATA-CORE.md §10); report and script targets validated as those services land in Phases 3–5)
 

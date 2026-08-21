@@ -105,10 +105,12 @@ human actions (approve, reject, delegate, reassign) run as the acting user. Both
 audited (ARCHITECTURE.md §5).
 
 - **`requestApproval` params (the grammar-fixed primitive, now executable):**
-  `{ approvers, mode, timeout, escalateTo }` — `approvers` is a role reference or an
+  `{ approvers, mode, timeout, escalateTo, onReject? }` — `approvers` is a role reference or an
   expression resolving to users; `mode`: `any` (parallel, first resolution wins) |
   `all` (sequential or parallel unanimity — v1: parallel unanimity); `timeout` is an
-  ISO-8601 duration; `escalateTo` a role.
+  ISO-8601 duration; `escalateTo` a role; `onReject?` an optional inline flow-IR
+  subgraph (same shape as `iterate`'s `body`) declared **on the step itself** — there
+  is no coupling to any enclosing `branch` node.
 - **Durable suspension — pinned:** a flow containing `requestApproval` *suspends* at
   that step. The Workflow Service persists the suspended instance (step pointer,
   context snapshot) and resumes it — system principal — when the approval resolves.
@@ -119,7 +121,7 @@ audited (ARCHITECTURE.md §5).
   approver set at task creation. Delegation to that actor is rejected. If the
   approver set becomes empty → the flow fails with `SOD_VIOLATION`, audited.
 - On resolution: `approve` resumes the flow after the step; `reject` routes the
-  branch's `onReject` path if declared, else fails the flow audibly (never silent).
+  step's own `onReject` subgraph (§4 params) if declared, else fails the flow audibly (never silent).
 
 ## 5. Human Tasks & Inbox API
 

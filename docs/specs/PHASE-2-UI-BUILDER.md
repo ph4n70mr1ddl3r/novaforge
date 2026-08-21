@@ -171,7 +171,8 @@ flow from field metadata into form defaults. Role changes re-resolve defaults
 - One grammar for validations, formulas, flow guards, and UI bindings — page-model
   slots `visibility`/`required`/`readonly` (§4; the slot name matches the
   field-metadata `readonly` flag, ARCHITECTURE.md §3 — ADR-008 #3 and ADR-009 #3
-  spell the concept `read-only`).
+  spell the concept `read-only`). The v1 grammar is pinned in Annex A (§14); T4
+  implements exactly that.
 - Phase 2 ships expression-DSL v1 as a shared asset: the TS evaluator for renderer
   bindings plus a JVM reference parser/evaluator in a shared platform lib
   (`platform/libs/expression-dsl`, ARCHITECTURE.md §7 — the same engine behind
@@ -227,8 +228,8 @@ flow from field metadata into form defaults. Role changes re-resolve defaults
 ## 10. Tenant Onboarding Flow
 
 Platform-admin driven (no self-serve billing in Phase 2): create tenant → bootstrap
-realm/client assignment (Keycloak per the Phase 0 compose stack; realm strategy =
-Open Question Q1 in the PHASE-0 spec) → first admin user → create first app → land
+realm/client assignment (Keycloak per the Phase 0 compose stack; realm strategy per
+the closed Phase 0 Q1 decision — PHASE-0 §12) → first admin user → create first app → land
 in entity builder. Target: < 5 minutes platform-admin time, fully scripted in API
 terms for E2E tests.
 
@@ -241,7 +242,9 @@ claim via Keycloak's Admin API, deployed configuration, not bespoke code,
 ARCHITECTURE.md §7) and `POST /api/v1/admin/tenants/{tenantId}/role-assignments`
 (gateway route `/api/v1/admin/**`, `admin`-gated). Both are audited per the §9
 event shapes — the durable trail lands with the Phase 3 event spine. App creation
-in the same journey rides the Phase 1 metadata APIs unchanged.
+in the same journey rides the Phase 1 metadata APIs unchanged. Tenant offboarding
+(deprovisioning, data export/retention, deletion) is deliberately unmodeled in v1 —
+a backlog item, not an omission; nothing in the platform assumes it exists.
 
 ## 11. Testing Standards
 
@@ -260,7 +263,7 @@ in the same journey rides the Phase 1 metadata APIs unchanged.
 | T1 | FE workspace + stack pin | pnpm workspace, Vite, React 19.2.x, TS strict, CI lint/test, form-library decision (Q1) | Scaffold builds in CI; decision recorded |
 | T2 | Page model + registry core | TS types for §4, JSON Schema validation, lazy component registry, version pinning, overlay-format decision (Q2, §13) | Invalid props rejected at save; unknown version → fallback + warning; Q2 decision recorded |
 | T3 | v1 component catalog | §6 item 3 components with props schemas + Playwright stories | Storybook-style gallery green incl. axe |
-| T4 | Expression runtime v1 | Parser/evaluator for pure expressions in TS + JVM reference engine (compile-checks expressions at Metadata-Service save/publish); shared conformance fixtures across both | 100% shared-fixture parity; invalid expression rejected at save/publish |
+| T4 | Expression runtime v1 | Parser/evaluator for pure expressions per Annex A in TS + JVM reference engine (compile-checks expressions at Metadata-Service save/publish); shared conformance fixtures across both | 100% shared-fixture parity; invalid expression rejected at save/publish |
 | T5 | Default resolver (L1) | §5 rules incl. role parameterization | Golden-file suite green |
 | T6 | Runtime renderer + shell | Interpreter, TanStack Query data layer against Phase 1 APIs, server-side paging/virtualization | 100k-row fixture list served via server-side paging only; virtualized scrolling responsive in Playwright smoke |
 | T7 | Entity builder UI | §8 wizard/grid over Metadata APIs | Create/modify entities incl. relationships without API calls by hand |
@@ -295,3 +298,49 @@ serving model land.
   *Recommendation: static bundles routed through the gateway — same origin keeps
   gateway CORS (deferred in PHASE-0 §6.1) out of v1; revisit for custom-component
   iframes (§6 item 4).*
+
+## 14. Annex A — Expression DSL v1 Grammar (pinned)
+
+The single grammar behind every expression slot this plan names — §7's validations,
+formulas, flow guards, and UI bindings — and every later consumer: state-machine
+guards (PHASE-4 §3), SLA `match` expressions (PHASE-4 §6), sharing-rule criteria
+(PHASE-4 §10), report bucket expressions (PHASE-5 §3), webhook event filters
+(PHASE-6 §5), and suite assertions (PHASE-3 §7). T4 implements exactly this;
+additions arrive as versioned platform features (the ADR-008 #2 policy) with
+conformance fixtures first.
+
+- **Literals:** single-quoted strings (`'POSTED'`); `true`/`false`; `null`; integers;
+  **decimals as exact literals** (`50.00` — arbitrary precision, never binary float;
+  the PLAN.md §1 money rule, which is why PHASE-3 §7 pins monetary step-template
+  values as strings); dates via `date('2026-08-16')`, timestamps via
+  `datetime('2026-08-16T12:00:00Z')`.
+- **References:** bare identifiers are host-bound values — field apiNames in record
+  contexts, plus slot-specific bindings (e.g. `entity`/`transition` in SLA match).
+  Relationship paths resolve as dot-chains (`customer.region.code`). `${…}` is **not**
+  part of the scalar grammar: it is the template/reference interpolation of ADR-008
+  record templates, §4's action props, and suite result references — resolved by the
+  host, independent of expression evaluation.
+- **Operators:** comparisons `== != < <= > >=` (null-aware: `==`/`!=` compare against
+  `null`; ordered comparisons with a `null` operand are `false`); logical
+  `&& || !` (a `null` predicate is `false`); arithmetic `+ - * /` on numerics
+  (BigDecimal semantics, banker's rounding context per ARCHITECTURE.md §4); date
+  arithmetic: `date - date` → integer days, `date ± integer` → date (the aging-bucket
+  forms, PHASE-5 §3); membership `x in ('A','B')`. No bitwise operators, no
+  assignment, no function definition.
+- **Functions v1 (closed set):** `today()`, `now()` — clock-governed: server clock in
+  production, the run's frozen clock in suites (PHASE-3 §7), compile-rejected in
+  stored formula fields (PHASE-3 §3); `size(collection)` and the method form
+  `collection.size()`; `abs(x)`, `round(x, scale)`, `min(a,b)`, `max(a,b)`; strings:
+  `upper(s)`, `lower(s)`, `trim(s)`, `length(s)`, `contains(s, sub)`,
+  `startsWith(s, prefix)`.
+- **Purity:** expressions are side-effect-free and deterministic given bindings +
+  clock; each slot declares its bindings, and compile-time reference resolution is
+  part of the save/publish compile-check (§7). Aggregate forms
+  (`SUM/COUNT/MIN/MAX/AVG` over a child collection) exist only in the `rollup` slot
+  (PHASE-3 §3) — the scalar grammar cannot traverse collections (`.size()`
+  excepted).
+- **Versioning:** the DSL carries its own version (`expr/v1`); definitions record the
+  DSL version they compiled against — the same pinning discipline as component
+  versions (ADR-009 #1). The grammar ships as JSON Schema in `expression-dsl`, and
+  the conformance corpus (valid/invalid/evaluation fixtures) is shared by the TS and
+  JVM engines and grows with every addition (§7).

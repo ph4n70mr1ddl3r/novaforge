@@ -34,9 +34,11 @@ any UI (Phase 2); the builder test harness (Phase 3 — ADR-010); File Service (
 
 ## 2. Prerequisite: Storage Spike Closure (ADR-001)
 
-The 3-day, 1M-row spike (PLAN.md §8 item 2) runs **before** implementation (T5): it
+The 3-day, 1M-row spike (PLAN.md §8 item 2) runs **before the storage work it
+gates** (T5; T1–T4 proceed in parallel — PLAN.md §8 item 3): it
 decides the projection variant — pure view vs generated table with `data` duplication —
-and the sync mechanics (trigger-maintained vs dual-write), per ARCHITECTURE.md §4.
+and the sync mechanics (trigger-maintained vs dual-write), per ARCHITECTURE.md §4,
+plus the partial-unique-index form for uniqueness-over-live-rows (§6).
 ADR-001 then moves Proposed → Accepted with the measured numbers.
 
 This spec assumes hybrid JSONB wins. If the spike overturns it, only the `storage/`
@@ -49,7 +51,7 @@ Charters were recorded in PHASE-0 §5.4 (empty modules rot, so they are created 
 
 | Lib | Contents | Notes |
 |---|---|---|
-| `metadata-model` | definition POJOs + JSON Schema v0: app, entity, field, relationship, **page** | Page schema is reserved now (PLAN.md §8 item 3) but authored only from Phase 2. `formula` and expression `validations` slots are schema-accepted, inert until Phase 3. |
+| `metadata-model` | definition POJOs + JSON Schema v0: app, entity, field, relationship, **page** | Page schema is reserved now (PLAN.md §8 item 3) but authored only from Phase 2. `formula`, `rollup`, and expression `validations` slots are schema-accepted, inert until Phase 3 (the formula/roll-up split: PHASE-3 §3). |
 | `security-context` | tenant/actor propagation: async-executor wrappers, Kafka header constants (producer/consumer arrive with the Phase 3 spine), mock-test fixtures | Builds on `common-core`'s `TenantContext` (PHASE-0 §5.2). |
 | `test-support` | Testcontainers 2 bases: Postgres with RLS fixtures, compose-stack clients | Podman-socket env documented in README on first use (PHASE-0 §10). |
 
@@ -89,7 +91,12 @@ per service, PLAN.md §4):
 
 Save validation = JSON Schema (metadata-model) + referential integrity (§3 rules).
 Publish = validate all drafts, bump version, write `metadata_versions`, emit
-`metadata.published`. Drafts stay mutable; the runtime serves published versions only
+`metadata.published`. Publish also runs a **compatibility check** against the
+previously published version: field/entity removals, renames, and type changes are
+*breaking* and require an explicit `acknowledgeDataImpact` flag recorded on the
+version — JSONB keeps removed-field data intact until a tenant-scoped prune, so
+nothing is destroyed silently (the full forward-compatibility policy lands with the
+change-set machinery: PHASE-8 §4.5). Drafts stay mutable; the runtime serves published versions only
 (design-time/runtime split, ARCHITECTURE.md §6). Phase 1 has a single implicit change
 set per app (draft vs published); formal change sets arrive with P8.
 
@@ -132,8 +139,10 @@ Query DSL v1 (JSON; golden-tested against generated SQL, §9):
 
 Operators v1: `and`/`or` nesting, `eq ne in gt gte lt lte contains isNull`
 (`contains` on text fields only). Aggregates: `count sum avg min max` with optional
-`groupBy`. Paging model is Q2 (§12). The GET list endpoint carries the same DSL
-URL-encoded in its `filter`/`sort`/`page` params; anything richer — deep nesting,
+`groupBy`. Paging model is Q2 (§12). The GET list endpoint carries the same DSL with
+**one canonical encoding, pinned**: each of `filter`/`sort`/`page` holds its DSL node
+as compact JSON, percent-encoded per RFC 3986 (`filter=%7B%22and%22%3A…%7D`) — no
+bespoke flattening; anything richer — deep nesting,
 aggregates — goes to `POST /{entity}/query`.
 
 Write path (the Phase 1 slice of the ARCHITECTURE.md §2.4 pipeline): resolve metadata →
@@ -141,9 +150,18 @@ authorize (§7) → apply static field `default`s (expression defaults arrive wi
 Phase 3 write-path evaluation — PHASE-2 §7) → field validations → persist with optimistic locking → event seam
 (below) → shaped projection. Field validations v1: `required`, type, `length`,
 `precision`/`scale` (BigDecimal, never doubles — ARCHITECTURE.md §4 money rule), enum
-membership, `uniqueness`, lookup-target existence, writes to `readonly` fields
+membership, `uniqueness` (tenant-scoped, live rows only — a soft-deleted tombstone
+never pins its value, §6), lookup-target existence, writes to `readonly` fields
 rejected. `GET` supports a sparse `fields` parameter — server-side stripping is the
 mechanism Phase 2 field security builds on (PHASE-2 spec §9).
+- **Child collections (master-detail, pinned):** `create`/`PATCH` accept inline child
+  arrays (`lines: [...]`); children apply atomically in the parent's transaction
+  (all-or-nothing, per-child field validations included). Children remain
+  independently addressable records — direct CRUD on a child entity rides the same
+  write path — and parent deletes cascade per `cascadeDelete` in the same transaction
+  (ARCHITECTURE.md §3). Inline child writes are capped at 100 per request; larger
+  sets use `POST /batch`. These semantics are what PHASE-2 §5's inline-editable
+  `RelatedList`, PHASE-3 §7's suite templates, and PHASE-7's posting flows build on.
 
 - **Optimistic locking:** `version` int; conflict → 409 with `CONFLICT_VERSION`
   ("4090", PHASE-0 §5.2).
@@ -172,10 +190,13 @@ the data-plane tables, so it owns their DDL, reacting to `metadata.published`
 
 - `rec_records` base table plus per-entity projections exactly per ADR-001's recorded
   variant (§2); the projection promotion policy is Q3 (§12).
-- Field `uniqueness` (§5) lowers to a DB unique index on the promoted column — or a
-  JSONB expression unique index on the base table, per ADR-001's variant — which is
-  what makes the §9.2 uniqueness race pass; the write-path check exists to shape the
-  friendly `VALIDATION_FAILED` error, not to be the enforcement.
+- Field `uniqueness` (§5) lowers to a **partial** unique index scoped `(tenant_id, …)`
+  over live rows only (`CREATE UNIQUE INDEX … WHERE NOT deleted`) — on the promoted
+  column, or a JSONB expression unique index on the base table, per ADR-001's
+  variant. Soft-deleted tombstones therefore never pin a unique value (delete →
+  recreate with the same value works), and the index — not the write-path check — is
+  the enforcement: the check exists to shape the friendly `VALIDATION_FAILED` error,
+  and the index is what makes the §9.2 uniqueness race pass.
 - Postgres **RLS** everywhere: `tenant_id = current_setting('app.tenant')` as
   defense-in-depth; `security-context` sets the session var per request from
   `TenantContext`. Cross-tenant access assertions are mandatory (ARCHITECTURE.md §5).
@@ -248,11 +269,11 @@ itself stays in ADR-001.
 | T2 | security-context + test-support | Propagation helpers; Postgres/RLS Testcontainers bases | Fixtures boot under the CI Podman runner |
 | T3 | Metadata APIs + publish | Draft CRUD, save validation, versioning, export (§4) | create → publish → versions listed; invalid save rejected problem+json |
 | T4 | Publish event + caches | `metadata.published` envelope on Redis pub/sub; version-keyed caches subscribe (§4) | Publishing invalidates a warm Data Runtime cache |
-| T5 | Storage SPI + materializer | `rec_records`, RLS, projections per the ADR-001 variant (§6) | Publish creates/refreshes projections; cross-tenant tests fail closed |
+| T5 | Storage SPI + materializer | `rec_records`, RLS, projections per the ADR-001 variant (§6) | Publish creates/refreshes projections; cross-tenant tests fail closed; ADR-001 file written per §2's closure |
 | T6 | Write path | CRUD + validations + defaults + optimistic lock + soft delete (§5) | Phase 1 exit demo passes |
 | T7 | Query path | List + aggregate + batch (§5) | Golden-SQL suite green; 100k fixture served via server-side paging only |
 | T8 | Sequences + idempotency | `cached`/`gapless` modes; `Idempotency-Key` (§5) | Concurrent allocation correct; key replay returns the original outcome |
-| T9 | Authorization gate | Object-level matrix + seeded roles + default policy (§7, Q1) | Denied role → 403 `FORBIDDEN`; matrix read from the platform DB |
+| T9 | Authorization gate | Object-level matrix + seeded roles + default policy (§7, Q1) | Denied role → 403 `FORBIDDEN`; matrix read from the platform DB; ADR-002 + ADR-006 files written (ARCHITECTURE.md §8) |
 | T10 | K8s + CI expansion | Kind/Helm/Skaffold; Testcontainers CI job; ArchUnit rules (§8) | Full stack on Kind; PR integration green on the Podman runner |
 | T11 | Load test + exit review | 1M-row run vs §10; walk the PLAN §5 exit criteria | Targets met, or ADR-001 adjusted with a re-run plan |
 

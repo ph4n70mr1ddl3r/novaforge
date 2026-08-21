@@ -55,9 +55,10 @@ logic, pages, and permissions are all versioned JSON, the tests can be too.
 
 3. **Execution goes through the single write path.** The Metadata Service hosts the
    runner; there is no test mode in the Data Runtime and no re-implemented engine. A
-   run targets a scratch tenant pinned to a *published* draft version (the
-   design-time/runtime split is preserved — the runtime never serves unpublished
-   definitions), replays fixtures and steps as synthetic actors with role
+   run targets a scratch tenant pinned to a *candidate* version — the immutable
+   snapshot a publish creates from the dev draft workspace (the
+   design-time/runtime split is preserved: the runtime never serves mutable
+   drafts) — replays fixtures and steps as synthetic actors with role
    impersonation, and records a run artifact bound to that exact definition version.
    The scratch tenant is wiped per run: side effects (events, audit, sequences) land
    there and nowhere else, and synthetic actors have no notification channels, so

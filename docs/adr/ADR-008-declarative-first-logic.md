@@ -56,7 +56,8 @@ unreadable; these justify the escape hatch.
   land (PLAN.md §5).
 - The expression language and flow IR become critical-path platform assets — they
   need their own JSON Schema, versioning, and conformance tests (shared with the
-  client, per ADR-009).
+  client, per ADR-009); the v1 expression grammar is pinned in PHASE-2 Annex A
+  (PHASE-2-UI-BUILDER.md §14).
 - The Metadata Service gains a compiler/validator role at publish time.
 - AI-assisted building gets a clean target: LLMs emit flow IR + expressions
   (structured, validatable) rather than code.

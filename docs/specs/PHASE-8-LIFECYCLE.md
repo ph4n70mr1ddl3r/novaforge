@@ -41,7 +41,9 @@ environment mechanism — one provisioning path, no second system:
   workspace of the table above; `staging`/`prod` pin a promoted published version)
   + data plane provisioning (the scratch mechanism, without the per-run wipe).
   Scratch/test environments remain available on demand alongside the three named
-  ones.
+  ones. Promotable units are **candidate versions** (the ADR-010 #3 / PHASE-3 §7
+  term): immutable snapshots created by publishing the dev draft workspace —
+  environments pin them; nothing promotes a mutable draft.
 - The Metadata Service's async app-ZIP import/export (ARCHITECTURE.md §2.3 —
   deliberately dormant until now) is the promotion artifact format: a versioned ZIP
   of JSON definitions, content-hashed and signed.
@@ -58,7 +60,9 @@ environment mechanism — one provisioning path, no second system:
   version (ADR-010 #4), the script-ratio delta, and the gap-log entries the
   version resolves (Phase 7 continuity).
 - Free when the app defines no suites; blocking when it does (opt-in is authoring
-  tests — ADR-010 #4 unchanged).
+  tests — ADR-010 #4 unchanged). v1 change sets are the **complete**
+  draft-vs-published diff; selective composition (promoting a subset of definitions,
+  Salesforce-style) is out of scope — a versioned feature if demand appears.
 
 ## 4. Promotion Gate (mechanics pinned)
 
@@ -79,6 +83,15 @@ environment mechanism — one provisioning path, no second system:
    (projection/field removals block one-click rollback); incompatible rollbacks
    require admin override with an explicit data-migration acknowledgment. The
    materializer handles version downgrades in the compatible case.
+5. **Forward compatibility — pinned (the flip side of rollback):** promoting a
+   version with breaking changes — field/entity removal, rename, or type change,
+   flagged by the Phase 1 publish compatibility check (PHASE-1 §4) — requires the
+   publishing actor's `acknowledgeDataImpact`, recorded on the version and rendered
+   in change-set review like an override (§3). Nothing is destroyed at publish:
+   JSONB keeps removed fields' values in `data` until a tenant-scoped, audited
+   prune drops them; projection columns and indexes drop lazily at publish. No
+   data-scanning migrations exist in v1 — transformations are app-authored flows
+   run deliberately, never implicit publish side effects.
 
 ## 5. Headless Runs & CI (ADR-010's third activation)
 

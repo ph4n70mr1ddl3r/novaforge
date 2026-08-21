@@ -288,7 +288,7 @@ Each task is independently mergeable; tasks T1–T3 unblock everything else.
 
 | # | Task | Content | Acceptance criteria |
 |---|---|---|---|
-| T1 | Restore spike scaffold | Recreate structure from `spike/boot-4.1-scaffold` (POMs, TenantContext, gateway+metadata skeletons incl. YAML route + tests) | `mvn verify` green on Temurin 21 (wrapper arrives in T2) |
+| T1 | Restore spike scaffold | Recreate structure from `spike/boot-4.1-scaffold` (POMs, TenantContext, gateway+metadata skeletons incl. YAML route + tests) | `mvn verify` green on Temurin 21 (wrapper arrives in T2); ADR-005 file written (ARCHITECTURE.md §8's acceptance point) |
 | T2 | Maven wrapper + README | `mvn wrapper:wrapper`; README quickstart (prereqs, verify, run compose) | Fresh clone builds with no local Maven |
 | T3 | common-core error model | `ErrorCode`, `PlatformErrorCode`, `ProblemErrors` + tests (§5.2) | Lib tests green; no Spring web deps (`mvn dependency:tree` check) |
 | T4 | Keycloak realm export | Realm `novaforge`, client `novaforge-api` with client scope `novaforge.api`, user `demo`; mounted into compose | `demo` login via CLI yields JWT carrying scope `novaforge.api` |
