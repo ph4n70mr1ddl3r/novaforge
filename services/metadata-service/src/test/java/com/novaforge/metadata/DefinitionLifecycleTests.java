@@ -260,6 +260,62 @@ class DefinitionLifecycleTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("flow compiler (§2): cycles, unknown ops, bad fields, dangling chains reject")
+    void flowCompilerRejections() throws Exception {
+        // cycle: s1 → s2 → s1
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "CycleApp", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "name", "type": "text" } ],
+                                  "hooks": [ { "name": "loop", "trigger": "beforeSave",
+                                    "flow": { "id": "s1", "op": "setField",
+                                      "params": { "field": "name", "expression": "upper(name)" },
+                                      "next": "s2" } } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("known step id")))
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("s2")));
+
+        // unknown op
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "OpApp", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "name", "type": "text" } ],
+                                  "hooks": [ { "name": "x", "trigger": "afterSave",
+                                    "flow": { "id": "s1", "op": "runSql", "params": {} } } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("unknown op")));
+
+        // setField to a field that does not exist
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "FieldApp", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "name", "type": "text" } ],
+                                  "hooks": [ { "name": "x", "trigger": "beforeSave",
+                                    "flow": { "id": "s1", "op": "setField",
+                                      "params": { "field": "ghost", "expression": "name" } } } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("existing field")));
+
+        // grammar-fixed ops compile fine (activation later)
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "FixedApp", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "name", "type": "text" } ],
+                                  "hooks": [ { "name": "x", "trigger": "afterSave",
+                                    "flow": { "id": "s1", "op": "transitionState",
+                                      "params": { "state": "POSTED" } } } ] } ] }
+                                """))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("app delete cascades (draft workspace) — publish history stays queryable per app row removal")
     void deleteAppCascades() throws Exception {
         MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps")

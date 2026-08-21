@@ -2,147 +2,480 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novaforge.dev/schema/v0/app-definition.schema.json",
   "title": "NovaForge app definition (schema v0)",
-  "description": "Wire contract for app definitions authored in the Metadata Service (PHASE-1 §3). Pages are reserved (authored from Phase 2); formula/rollup and expression validations are accepted but inert until Phase 3.",
+  "description": "Wire contract for app definitions authored in the Metadata Service (PHASE-1 \u00a73). Pages are reserved (authored from Phase 2); formula/rollup and expression validations are accepted but inert until Phase 3.",
   "type": "object",
-  "required": ["apiName"],
+  "required": [
+    "apiName"
+  ],
   "properties": {
-    "id": { "type": "string", "format": "uuid" },
-    "apiName": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*$" },
-    "label": { "type": "string" },
-    "label_i18n": { "$ref": "#/$defs/i18nMap" },
-    "description": { "type": "string" },
-    "entities": { "type": "array", "items": { "$ref": "#/$defs/entity" } },
-    "pages": { "type": "array", "items": { "$ref": "#/$defs/page" } },
-    "settings": { "$ref": "#/$defs/settings" }
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "apiName": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Za-z0-9]*$"
+    },
+    "label": {
+      "type": "string"
+    },
+    "label_i18n": {
+      "$ref": "#/$defs/i18nMap"
+    },
+    "description": {
+      "type": "string"
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/entity"
+      }
+    },
+    "pages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/page"
+      }
+    },
+    "settings": {
+      "$ref": "#/$defs/settings"
+    }
   },
   "additionalProperties": true,
   "$defs": {
     "i18nMap": {
       "type": "object",
-      "description": "Per-locale labels (translation-ready from the start — PHASE-2 §13 Q3; editor lands Phase 8)",
-      "additionalProperties": { "type": "string" }
+      "description": "Per-locale labels (translation-ready from the start \u2014 PHASE-2 \u00a713 Q3; editor lands Phase 8)",
+      "additionalProperties": {
+        "type": "string"
+      }
     },
     "entity": {
       "type": "object",
-      "required": ["apiName"],
+      "required": [
+        "apiName"
+      ],
       "properties": {
-        "id": { "type": "string", "format": "uuid" },
-        "apiName": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*$" },
-        "label": { "type": "string" },
-        "label_i18n": { "$ref": "#/$defs/i18nMap" },
-        "displayField": { "type": "string" },
-        "module": { "type": "string" },
-        "fields": { "type": "array", "items": { "$ref": "#/$defs/field" } },
-        "relationships": { "type": "array", "items": { "$ref": "#/$defs/relationship" } },
-        "validations": { "type": "array", "items": { "$ref": "#/$defs/validation" } },
-        "indexes": { "type": "array", "items": { "$ref": "#/$defs/index" } }
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "apiName": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Za-z0-9]*$"
+        },
+        "label": {
+          "type": "string"
+        },
+        "label_i18n": {
+          "$ref": "#/$defs/i18nMap"
+        },
+        "displayField": {
+          "type": "string"
+        },
+        "module": {
+          "type": "string"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/field"
+          }
+        },
+        "relationships": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/relationship"
+          }
+        },
+        "validations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/validation"
+          }
+        },
+        "indexes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/index"
+          }
+        },
+        "hooks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hook"
+          },
+          "description": "Event-hook flow rules (PHASE-3 \u00a72, ADR-008)"
+        }
       }
     },
     "field": {
       "type": "object",
-      "required": ["apiName", "type"],
+      "required": [
+        "apiName",
+        "type"
+      ],
       "properties": {
-        "apiName": { "type": "string", "pattern": "^[a-z][A-Za-z0-9]*$" },
-        "label": { "type": "string" },
-        "label_i18n": { "$ref": "#/$defs/i18nMap" },
+        "apiName": {
+          "type": "string",
+          "pattern": "^[a-z][A-Za-z0-9]*$"
+        },
+        "label": {
+          "type": "string"
+        },
+        "label_i18n": {
+          "$ref": "#/$defs/i18nMap"
+        },
         "type": {
           "type": "string",
-          "enum": ["text", "longText", "richText", "enum", "boolean", "int", "long", "decimal", "date", "datetime", "time", "uuid", "email", "phone", "url", "json", "lookup", "child", "m2m", "file", "money"]
-        },
-        "required": { "type": "boolean" },
-        "uniqueness": { "type": "boolean" },
-        "readonly": { "type": "boolean" },
-        "length": { "type": "integer", "minimum": 1 },
-        "precision": { "type": "integer", "minimum": 1, "maximum": 38 },
-        "scale": { "type": "integer", "minimum": 0 },
-        "group": { "type": "string" },
-        "default": {
-          "oneOf": [
-            { "type": "object", "required": ["value"], "properties": { "value": {} } },
-            { "type": "object", "required": ["sequence"], "properties": { "sequence": { "type": "string", "pattern": "^[a-z][A-Za-z0-9]*$" } } }
+          "enum": [
+            "text",
+            "longText",
+            "richText",
+            "enum",
+            "boolean",
+            "int",
+            "long",
+            "decimal",
+            "date",
+            "datetime",
+            "time",
+            "uuid",
+            "email",
+            "phone",
+            "url",
+            "json",
+            "lookup",
+            "child",
+            "m2m",
+            "file",
+            "money"
           ]
         },
-        "target": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*$" },
-        "values": { "type": "array", "minItems": 1, "items": { "type": "string" } },
-        "currency": { "type": "string" },
-        "formula": { "type": "string", "description": "Phase 3 activation — inert slot" },
-        "rollup": { "type": "string", "description": "Phase 3 activation — inert slot" }
+        "required": {
+          "type": "boolean"
+        },
+        "uniqueness": {
+          "type": "boolean"
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "precision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 38
+        },
+        "scale": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "group": {
+          "type": "string"
+        },
+        "default": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {}
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "sequence"
+              ],
+              "properties": {
+                "sequence": {
+                  "type": "string",
+                  "pattern": "^[a-z][A-Za-z0-9]*$"
+                }
+              }
+            }
+          ]
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Za-z0-9]*$"
+        },
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "currency": {
+          "type": "string"
+        },
+        "formula": {
+          "type": "string",
+          "description": "Phase 3 activation \u2014 inert slot"
+        },
+        "rollup": {
+          "type": "string",
+          "description": "Phase 3 activation \u2014 inert slot"
+        }
       }
     },
     "relationship": {
       "type": "object",
-      "required": ["apiName", "type", "target"],
+      "required": [
+        "apiName",
+        "type",
+        "target"
+      ],
       "properties": {
-        "apiName": { "type": "string", "pattern": "^[a-z][A-Za-z0-9]*$" },
-        "type": { "type": "string", "enum": ["child", "m2m"] },
-        "target": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*$" },
-        "cascadeDelete": { "type": "boolean" }
+        "apiName": {
+          "type": "string",
+          "pattern": "^[a-z][A-Za-z0-9]*$"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "child",
+            "m2m"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Za-z0-9]*$"
+        },
+        "cascadeDelete": {
+          "type": "boolean"
+        }
       }
     },
     "validation": {
       "type": "object",
-      "required": ["name", "expression"],
+      "required": [
+        "name",
+        "expression"
+      ],
       "properties": {
-        "name": { "type": "string" },
-        "scope": { "type": "string", "enum": ["record", "field"], "default": "record" },
-        "expression": { "type": "string" },
-        "message": { "type": "string" }
+        "name": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "record",
+            "field"
+          ],
+          "default": "record"
+        },
+        "expression": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
       },
-      "description": "Expression rules activate with Phase 3 write-path evaluation — inert slot in v0"
+      "description": "Expression rules activate with Phase 3 write-path evaluation \u2014 inert slot in v0"
     },
     "index": {
       "type": "object",
-      "required": ["fields"],
+      "required": [
+        "fields"
+      ],
       "properties": {
-        "fields": { "type": "array", "minItems": 1, "items": { "type": "string" } },
-        "unique": { "type": "boolean", "default": false }
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "unique": {
+          "type": "boolean",
+          "default": false
+        }
       }
     },
     "page": {
       "type": "object",
-      "required": ["apiName", "type"],
+      "required": [
+        "apiName",
+        "type"
+      ],
       "properties": {
-        "id": { "type": "string", "format": "uuid" },
-        "apiName": { "type": "string", "pattern": "^[a-z][A-Za-z0-9]*$" },
-        "label": { "type": "string" },
-        "label_i18n": { "$ref": "#/$defs/i18nMap" },
-        "type": { "type": "string", "enum": ["form", "list", "dashboard", "custom"] },
-        "entity": { "type": "string" },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "apiName": {
+          "type": "string",
+          "pattern": "^[a-z][A-Za-z0-9]*$"
+        },
+        "label": {
+          "type": "string"
+        },
+        "label_i18n": {
+          "$ref": "#/$defs/i18nMap"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "form",
+            "list",
+            "dashboard",
+            "custom"
+          ]
+        },
+        "entity": {
+          "type": "string"
+        },
         "layout": {}
       },
-      "description": "Reserved from v0; authored from Phase 2 (PHASE-2 §3)"
+      "description": "Reserved from v0; authored from Phase 2 (PHASE-2 \u00a73)"
     },
     "settings": {
       "type": "object",
       "properties": {
-        "sequences": { "type": "array", "items": { "$ref": "#/$defs/sequence" } },
+        "sequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sequence"
+          }
+        },
         "currencies": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["code"],
+            "required": [
+              "code"
+            ],
             "properties": {
-              "code": { "type": "string", "pattern": "^[A-Z]{3}$" },
-              "scale": { "type": "integer", "minimum": 0, "maximum": 6 }
+              "code": {
+                "type": "string",
+                "pattern": "^[A-Z]{3}$"
+              },
+              "scale": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 6
+              }
             }
           }
         },
         "enums": {
           "type": "object",
-          "additionalProperties": { "type": "array", "items": { "type": "string" } }
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         }
       }
     },
     "sequence": {
       "type": "object",
-      "required": ["apiName"],
+      "required": [
+        "apiName"
+      ],
       "properties": {
-        "apiName": { "type": "string", "pattern": "^[a-z][A-Za-z0-9]*$" },
-        "mode": { "type": "string", "enum": ["cached", "gapless"], "default": "cached" },
-        "start": { "type": "integer", "minimum": 1 },
-        "prefix": { "type": "string" },
-        "suffix": { "type": "string" },
-        "padding": { "type": "integer", "minimum": 0, "maximum": 18 }
+        "apiName": {
+          "type": "string",
+          "pattern": "^[a-z][A-Za-z0-9]*$"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "cached",
+            "gapless"
+          ],
+          "default": "cached"
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "suffix": {
+          "type": "string"
+        },
+        "padding": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18
+        }
+      }
+    },
+    "hook": {
+      "type": "object",
+      "required": [
+        "name",
+        "trigger",
+        "flow"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "trigger": {
+          "type": "string",
+          "enum": [
+            "beforeSave",
+            "afterSave",
+            "beforeDelete",
+            "afterDelete"
+          ]
+        },
+        "flow": {
+          "$ref": "#/$defs/flowStep"
+        }
+      }
+    },
+    "flowStep": {
+      "type": "object",
+      "required": [
+        "id",
+        "op"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "setField",
+            "createRecord",
+            "updateRecord",
+            "publishEvent",
+            "branch",
+            "iterate",
+            "requestApproval",
+            "transitionState",
+            "callConnector"
+          ]
+        },
+        "params": {
+          "type": "object"
+        },
+        "next": {
+          "type": "string"
+        },
+        "onTrue": {
+          "type": "string"
+        },
+        "onFalse": {
+          "type": "string"
+        },
+        "body": {
+          "$ref": "#/$defs/flowStep"
+        }
       }
     }
   }

@@ -35,6 +35,7 @@ public class DefinitionService {
     public AppDefinition createApp(UUID tenantId, UUID actorId, AppDefinition draft) {
         ProblemErrors errors = DefinitionValidator.validate(draft);
         compileCheckExpressions(draft, errors);
+        FlowCompiler.compile(draft);
         if (!errors.isEmpty()) {
             throw validationFailure("app definition failed save validation", errors);
         }
@@ -112,6 +113,7 @@ public class DefinitionService {
         if (!errors.isEmpty()) {
             throw validationFailure("publish rejected: drafts fail validation", errors);
         }
+        FlowCompiler.compile(draft);
         MetadataStore.PublishedBundle previous = store.latestPublished(tenantId, appId).orElse(null);
         List<String> breaking = previous == null ? List.of() : breakingChanges(previous.app(), draft);
         if (!breaking.isEmpty() && !acknowledgeDataImpact) {

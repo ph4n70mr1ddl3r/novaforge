@@ -113,9 +113,26 @@ persist → event seam → shaped projection):
   Prometheus scrape + Helm chart + umbrella entry; the durable trail PHASE-2 §9
   promised
 
-**Not implemented (Phase 3 remainder):** flow-IR hooks with the closed primitive set
-(§5/ADR-008), the builder test harness (ADR-010), the Script Engine v0, the
-Tempo/Loki observability expansion.
+**Implemented — §2 flow-IR hooks (ADR-008 #1–2):**
+- metadata: HookRule (`{trigger, flow}`) + FlowStep graphs on entities (schema v0
+  extended); the publish-time FlowCompiler reference/type-checks every step —
+  ops from the closed v1 set, DAG enforcement (cycles and dangling chains
+  reject), setField fields exist, guard/setField expressions compile, record
+  templates address existing fields on their target entity, iterate paths are
+  relationships; grammar-fixed ops (requestApproval/transitionState/callConnector)
+  compile and fail loudly only if executed before Phases 4/6
+- runtime: HookExecutor on the write path — setField (expression), createRecord/
+  updateRecord (${…} templates, nested engine writes as the per-app system
+  principal with a depth budget), publishEvent (rides the outbox spine),
+  branch (guard), iterate (relationship body over live children); failure policy
+  per ARCHITECTURE §2.5 (before-hooks abort the transaction, after-hook failures
+  are recorded, never lost, never block the write)
+- **exit scenario green**: order → beforeSave stamps the label, afterSave iterates
+  lines and reserves inventory stock via updateRecord — totals via roll-ups,
+  reservation via a hook, zero app code
+
+**Not implemented (Phase 3 remainder):** the builder test harness (ADR-010), the
+Script Engine v0, the Tempo/Loki observability expansion.
 
 ## Phases 4–8 ⬜
 

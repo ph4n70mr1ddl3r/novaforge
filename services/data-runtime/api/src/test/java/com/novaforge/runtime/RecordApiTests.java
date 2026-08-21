@@ -106,6 +106,35 @@ class RecordApiTests extends PostgresTestBase {
                     { "apiName": "debit", "type": "decimal", "precision": 18, "scale": 4 },
                     { "apiName": "credit", "type": "decimal", "precision": 18, "scale": 4 },
                     { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 } ] },
+                { "apiName": "InventoryItem",
+                  "displayField": "sku",
+                  "fields": [
+                    { "apiName": "sku", "type": "text", "required": true, "uniqueness": true },
+                    { "apiName": "onHand", "type": "decimal", "precision": 18, "scale": 4 },
+                    { "apiName": "reserved", "type": "decimal", "precision": 18, "scale": 4 } ] },
+                { "apiName": "Order",
+                  "displayField": "label",
+                  "fields": [
+                    { "apiName": "label", "type": "text", "required": true } ],
+                  "relationships": [
+                    { "apiName": "items", "type": "child", "target": "OrderLine",
+                      "cascadeDelete": true } ],
+                  "hooks": [
+                    { "name": "reserveStock", "trigger": "afterSave", "flow":
+                      { "id": "s1", "op": "iterate", "params": { "path": "items" },
+                        "body": { "id": "s2", "op": "updateRecord",
+                                  "params": { "entity": "InventoryItem",
+                                              "recordId": "${itemId}",
+                                              "template": { "reserved": "${qty}" } } },
+                        "next": null } },
+                    { "name": "stampTotal", "trigger": "beforeSave", "flow":
+                      { "id": "b1", "op": "setField",
+                        "params": { "field": "label", "expression": "upper(label)" } } } ] },
+                { "apiName": "OrderLine",
+                  "fields": [
+                    { "apiName": "orderId", "type": "lookup", "target": "Order", "required": true },
+                    { "apiName": "itemId", "type": "lookup", "target": "InventoryItem", "required": true },
+                    { "apiName": "qty", "type": "decimal", "precision": 18, "scale": 4 } ] },
                 { "apiName": "LedgerNote",
                   "fields": [
                     { "apiName": "note", "type": "text" },
@@ -313,6 +342,48 @@ class RecordApiTests extends PostgresTestBase {
                 .andExpect(jsonPath("$.memoUpper").value("STILL OK"))
                 .andExpect(jsonPath("$.totalLines").value(5))
                 .andExpect(jsonPath("$.lineCount").value(1));
+    }
+
+    @Test
+    @DisplayName("hooks (§2): beforeSave setField, afterSave iterate + updateRecord reserve stock — no code")
+    void flowHooks() throws Exception {
+        // two inventory items
+        String widget = createInventory("WIDGET-1", 100);
+        String gadget = createInventory("GADGET-1", 50);
+
+        // order with lines → afterSave iterates and reserves stock; beforeSave stamps the label
+        MvcResult order = mockMvc.perform(post("/api/v1/runtime/Order").with(jwtFor(TENANT))
+                        .contentType("application/json").content("""
+                                { "label": "web order",
+                                  "items": [
+                                    { "itemId": "%s", "qty": 3 },
+                                    { "itemId": "%s", "qty": 2 } ] }
+                                """.formatted(widget, gadget)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.label").value("WEB ORDER"))   // beforeSave setField
+                .andReturn();
+
+        // stock reserved via the hook — declaratively, zero app code (the §1 exit)
+        mockMvc.perform(get("/api/v1/runtime/InventoryItem/" + widget).with(jwtFor(TENANT)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reserved").value(3));
+        mockMvc.perform(get("/api/v1/runtime/InventoryItem/" + gadget).with(jwtFor(TENANT)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reserved").value(2));
+
+        // app event published? hook write events landed in the outbox (system principal)
+        Integer hookEvents = jdbc.queryForObject("""
+                SELECT count(*) FROM event_outbox WHERE entity_id = 'Erp.InventoryItem'
+                 AND event_type = 'record.updated'""", Integer.class);
+        assertThat(hookEvents).isGreaterThanOrEqualTo(2);
+    }
+
+    private String createInventory(String sku, double onHand) throws Exception {
+        MvcResult created = mockMvc.perform(post("/api/v1/runtime/InventoryItem").with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"sku\":\"" + sku + "\",\"onHand\":" + onHand + ",\"reserved\":0}"))
+                .andExpect(status().isOk()).andReturn();
+        return MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
     }
 
     @Test

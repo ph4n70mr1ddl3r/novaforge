@@ -11,7 +11,9 @@ import com.novaforge.metadata.FieldType;
 import com.novaforge.metadata.PermissionSet;
 import com.novaforge.metadata.RelationshipDefinition;
 import com.novaforge.metadata.RelationshipType;
+import com.novaforge.common.context.TenantContext;
 import com.novaforge.expression.Expression;
+import com.novaforge.runtime.engine.hook.HookExecutor;
 import com.novaforge.runtime.authorization.RoleMatrix;
 import com.novaforge.runtime.engine.event.DomainEventPublisher;
 import com.novaforge.runtime.engine.metadata.EntityResolver;
@@ -51,14 +53,19 @@ public class RecordEngine {
     private final RecordStore records;
     private final SequenceService sequences;
     private final DomainEventPublisher events;
+    private final HookExecutor hooks;
+    private final HookExecutor.HookSink hookSink;
 
     public RecordEngine(EntityResolver resolver, RoleMatrix roleMatrix, RecordStore records,
-                        SequenceService sequences, DomainEventPublisher events) {
+                        SequenceService sequences, DomainEventPublisher events,
+                        HookExecutor hooks) {
         this.resolver = resolver;
         this.roleMatrix = roleMatrix;
         this.records = records;
         this.sequences = sequences;
         this.events = events;
+        this.hooks = hooks;
+        this.hookSink = new EngineHookSink();
     }
 
     // --- write path ---
@@ -85,10 +92,12 @@ public class RecordEngine {
         reject(errors, "create " + entityApiName + " failed validation");
 
         UUID id = UUID.randomUUID();
+        runHooks(app, handle, tenantId, id, canonical, "beforeSave", appSystemPrincipal(handle));
         evaluateRollupsFromChildren(app, handle, children, canonical);
         persistWithChildren(tenantId, actorId, app, handle, id, canonical, children, errors);
 
         events.publish(event("record.created", tenantId, handle.entityKey(), id, actorId));
+        runHooks(app, handle, tenantId, id, canonical, "afterSave", appSystemPrincipal(handle));
         return shape(handle.entity(), records.find(tenantId, handle.entityKey(), id, false)
                 .orElseThrow(), strip(tenantId, actorId, handle, app));
     }
@@ -123,12 +132,14 @@ public class RecordEngine {
         evaluateFormulas(handle.entity(), merged);
         evaluateValidationRules(handle.entity(), merged, errors);
         reject(errors, "update " + entityApiName + "/" + id + " failed validation");
+        runHooks(app, handle, tenantId, id, merged, "beforeSave", appSystemPrincipal(handle));
 
         int newVersion = records.update(tenantId, handle.entityKey(), id, merged,
                 expectedVersion, actorId);
         replaceChildren(tenantId, actorId, app, handle, id, children);
         newVersion = recomputeRollupsIfChanged(tenantId, actorId, app, handle, id, merged, newVersion);
         events.publish(event("record.updated", tenantId, handle.entityKey(), id, actorId));
+        runHooks(app, handle, tenantId, id, merged, "afterSave", appSystemPrincipal(handle));
 
         Map<String, Object> shaped = shape(handle.entity(),
                 records.find(tenantId, handle.entityKey(), id, false).orElseThrow(),
@@ -145,9 +156,15 @@ public class RecordEngine {
         roleMatrix.require(tenantId, actorId, RoleMatrix.Action.DELETE, entityApiName,
                 handle.appApiName(), app.permissionSet());
 
+        Map<String, Object> existingData = records.find(tenantId, handle.entityKey(), id, false)
+                .orElseThrow(() -> notFound(entityApiName, id)).data();
+        runHooks(app, handle, tenantId, id, existingData, "beforeDelete",
+                appSystemPrincipal(handle));
         records.softDelete(tenantId, handle.entityKey(), id, expectedVersion, actorId);
         cascadeChildren(tenantId, actorId, app, handle, id);
         events.publish(event("record.deleted", tenantId, handle.entityKey(), id, actorId));
+        runHooks(app, handle, tenantId, id, existingData, "afterDelete",
+                appSystemPrincipal(handle));
     }
 
     // --- read path ---
@@ -236,6 +253,119 @@ public class RecordEngine {
             }
         }
         return outcomes;
+    }
+
+    // --- flow hooks (PHASE-3 §2) ---
+
+    /** The per-app system principal declarative flows run as (§13 Q1 — audited). */
+    private static UUID appSystemPrincipal(EntityHandle handle) {
+        return UUID.nameUUIDFromBytes(("system:" + handle.appApiName()).getBytes());
+    }
+
+    private void runHooks(AppDefinition app, EntityHandle handle, UUID tenantId, UUID recordId,
+                          Map<String, Object> data, String trigger, UUID systemPrincipal) {
+        if (handle.entity().hooks().isEmpty()) {
+            return;
+        }
+        hooks.runTrigger(app, handle, tenantId, recordId, data, trigger, systemPrincipal, hookSink);
+    }
+
+    /**
+     * The hook sink: nested engine writes as the flow's system principal (authorization
+     * is the flow's, not a user's — §13 Q1), app events ride the outbox, iterate reads
+     * children through the query path.
+     */
+    /** The engine as its own hook sink (plain adapter — no bean cycle). */
+    private class EngineHookSink implements HookExecutor.HookSink {
+
+        @Override
+        public Map<String, Object> writeRecord(String entityApiName, Map<String, Object> body,
+                                                String recordId, UUID systemPrincipal, int depth) {
+            if (depth > HookExecutor.MAX_DEPTH) {
+                throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                        "hook nesting exceeds depth " + HookExecutor.MAX_DEPTH);
+            }
+            if (recordId == null || "null".equals(recordId)) {
+                return createAsPrincipal(entityApiName, body, systemPrincipal, depth);
+            }
+            return updateAsPrincipal(entityApiName, recordId, body, systemPrincipal, depth);
+        }
+
+        @Override
+        public void publishAppEvent(String name, Map<String, Object> payload, UUID tenantId,
+                                     String entityKey, UUID recordId, UUID systemPrincipal) {
+            // App events ride the same spine as record events (family topic novaforge.<family>).
+            events.publish(new DomainEventPublisher.DomainEvent(name, tenantId, entityKey,
+                    recordId, systemPrincipal, Instant.now().toString()));
+        }
+
+        @Override
+        public List<Map<String, Object>> children(UUID tenantId, String appApiName,
+                                                  String parentEntityApiName, String relationship,
+                                                  UUID parentRecordId) {
+            EntityHandle parent = resolver.resolve(tenantId, parentEntityApiName);
+            AppDefinition app = resolver.bundle(tenantId, parent.appId());
+            EntityHandle childHandle = childHandle(tenantId, app, parent, relationship);
+            String bindingField = bindingLookupField(parent.entity(), childHandle.entity());
+            return currentChildren(tenantId, childHandle, bindingField, parentRecordId)
+                    .stream().map(stored -> {
+                        Map<String, Object> row = new LinkedHashMap<>(stored.data());
+                        row.put("id", stored.id().toString());
+                        return row;
+                    }).toList();
+        }
+    }
+
+    /** Nested create as the system principal: full write path, matrix bypassed (§13 Q1). */
+    Map<String, Object> createAsPrincipal(String entityApiName, Map<String, Object> body,
+                                           UUID systemPrincipal, int depth) {
+        var ctx = TenantContext.current().orElseThrow();
+        UUID tenantId = UUID.fromString(ctx.tenantId());
+        EntityHandle handle = resolver.resolve(tenantId, entityApiName);
+        AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        List<ProblemErrors.FieldError> errors = new ArrayList<>();
+        Map<String, Object> fields = new LinkedHashMap<>();
+        Map<String, List<Map<String, Object>>> children = new LinkedHashMap<>();
+        splitChildren(handle.entity(), body, children, fields, errors);
+        applyDefaults(tenantId, app, handle.entity(), fields, errors);
+        Map<String, Object> canonical = FieldCoercer.canonicalize(handle.entity(), fields,
+                externalChecks(tenantId, handle, app), null, errors);
+        FieldCoercer.checkRequired(handle.entity(), canonical, errors);
+        evaluateFormulas(handle.entity(), canonical);
+        evaluateValidationRules(handle.entity(), canonical, errors);
+        reject(errors, "hook create " + entityApiName + " failed validation");
+        UUID id = UUID.randomUUID();
+        persistWithChildren(tenantId, systemPrincipal, app, handle, id, canonical, children, errors);
+        events.publish(event("record.created", tenantId, handle.entityKey(), id, systemPrincipal));
+        return canonical;
+    }
+
+    /** Nested update as the system principal (flow-driven field writes). */
+    Map<String, Object> updateAsPrincipal(String entityApiName, String recordId,
+                                          Map<String, Object> body, UUID systemPrincipal,
+                                          int depth) {
+        var ctx = TenantContext.current().orElseThrow();
+        UUID tenantId = UUID.fromString(ctx.tenantId());
+        EntityHandle handle = resolver.resolve(tenantId, entityApiName);
+        AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        RecordStore.StoredRecord existing = records.find(tenantId, handle.entityKey(),
+                        UUID.fromString(recordId), false)
+                .orElseThrow(() -> new PlatformException(PlatformErrorCode.NOT_FOUND,
+                        entityApiName + "/" + recordId + " not found"));
+        Map<String, Object> merged = new LinkedHashMap<>(existing.data());
+        body.forEach((key, value) -> {
+            if (!key.equals("version") && handle.entity().field(key).isPresent()) {
+                merged.put(key, value);
+            }
+        });
+        evaluateFormulas(handle.entity(), merged);
+        int version = body.get("version") instanceof Number number ? number.intValue()
+                : existing.version();
+        records.update(tenantId, handle.entityKey(), UUID.fromString(recordId), merged,
+                version, systemPrincipal);
+        events.publish(event("record.updated", tenantId, handle.entityKey(),
+                UUID.fromString(recordId), systemPrincipal));
+        return merged;
     }
 
     // --- roll-up summaries (PHASE-3 §3) ---

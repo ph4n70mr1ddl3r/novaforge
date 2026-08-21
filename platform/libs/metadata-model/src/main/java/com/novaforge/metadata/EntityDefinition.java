@@ -26,14 +26,25 @@ public record EntityDefinition(
         List<FieldDefinition> fields,
         List<RelationshipDefinition> relationships,
         List<ValidationRule> validations,
+        List<HookRule> hooks,
         List<IndexDefinition> indexes) {
 
     public EntityDefinition {
         fields = fields == null ? List.of() : List.copyOf(fields);
         relationships = relationships == null ? List.of() : List.copyOf(relationships);
         validations = validations == null ? List.of() : List.copyOf(validations);
+        hooks = hooks == null ? List.of() : List.copyOf(hooks);
         indexes = indexes == null ? List.of() : List.copyOf(indexes);
         labelI18n = labelI18n == null ? Map.of() : Map.copyOf(labelI18n);
+    }
+
+    /** Pre-hook constructor (Phase 1 drafts authored no hooks). */
+    public EntityDefinition(String id, String apiName, String label, Map<String, String> labelI18n,
+                            String displayField, String module, List<FieldDefinition> fields,
+                            List<RelationshipDefinition> relationships,
+                            List<ValidationRule> validations, List<IndexDefinition> indexes) {
+        this(id, apiName, label, labelI18n, displayField, module, fields, relationships,
+                validations, List.of(), indexes);
     }
 
     public Optional<FieldDefinition> field(String name) {
