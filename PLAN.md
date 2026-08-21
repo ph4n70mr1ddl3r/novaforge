@@ -39,7 +39,7 @@ If the platform supports these, it supports almost any business app.
 Tenant
  └── App (versioned artifact)
       ├── Entities ── Fields, Relationships, Validations, Formulas
-      ├── Pages/Layouts ── Forms, Lists, Dashboards, Navigation
+      ├── Pages/Layouts ── Forms, Lists, Dashboards, Navigation, component catalog (registry entries; v1 platform-shipped — PHASE-2 §6)
       ├── Business Rules ── Event hooks (flow-IR step graphs; scripts as escape hatch per ADR-008), scheduled jobs
       ├── Workflows ── BPMN definitions, state machines, approvals, SLAs
       ├── Reports & Dashboards

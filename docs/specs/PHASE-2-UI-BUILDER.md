@@ -158,7 +158,9 @@ flow from field metadata into form defaults. Role changes re-resolve defaults
    data requirements declaration (fields/relationships it reads, and whether the
    component takes a `bind` slot — §4), and a version.
 2. Lifecycle: `draft → stable → deprecated`; pages pin versions; deprecation emits
-   migration guidance. Registry is metadata, deployable per app version.
+   migration guidance. Registry is metadata, deployable per app version, persisted
+   through the Metadata Service's definition store (ARCHITECTURE.md §2.3 — no
+   separate persistence path, §8).
 3. v1 catalog (18 components): AppShell, NavList, FormLayout, ListLayout,
    RecordHeader, FieldInput, FieldNumber, FieldSelect, FieldSwitch, FieldDate,
    FieldLookup, FieldMultiLookup, FieldRichText, FieldJson, FileUpload (stub,

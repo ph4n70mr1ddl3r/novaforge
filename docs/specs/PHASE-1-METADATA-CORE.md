@@ -59,7 +59,8 @@ Schema v0 validation rules (enforced on save, §4): entity `apiName` PascalCase 
 unique per app; field `apiName` camelCase and unique per entity; relationship targets
 resolve within the app; `displayField` exists; enum `values` non-empty;
 `precision`/`scale` valid for decimal; index fields exist; field types restricted to
-the v1 set of ARCHITECTURE.md §3. The `file` type is schema-valid from v0 but has no
+the v1 set of ARCHITECTURE.md §3; `default` sequence references resolve within the
+app (the §5 binding's save-time rule). The `file` type is schema-valid from v0 but has no
 upload path until the File Service lands (Phase 6 — PLAN.md §5); PHASE-2 §5's
 disabled stub is the matching UI state.
 

@@ -31,7 +31,7 @@ reporting and dedicated pivot mechanics (never a v1 goal); cross-app federation.
 
 | Addition | Detail |
 |---|---|
-| `novaforge-reporting-service` | Port 8089; gateway routes `/api/v1/reports/**` and `/api/v1/dashboards/**` — the dashboard prefix is *reserved*: v1 dashboard loading is a definition fetch via the Metadata Service's published read (PHASE-1 §4) plus client-issued report runs (§5), and any dashboard-scoped API arrives on demand (versioned growth, as everywhere). |
+| `novaforge-reporting-service` | Port 8089; gateway route `/api/v1/reports/**` — the `/api/v1/dashboards/**` prefix is *reserved but unrouted in v1*: no dashboard-scoped API exists to serve it, so it is absent from ARCHITECTURE.md §2.1's gateway route list; v1 dashboard loading is a definition fetch via the Metadata Service's published read (PHASE-1 §4) plus client-issued report runs (§5), and any dashboard-scoped API arrives on demand (versioned growth, as everywhere). |
 | Compose | Nothing new — Postgres/Kafka/Redis reused; Mailpit (Phase 4) serves scheduled-delivery email. The service is stateless and takes no per-service database (definitions via the Metadata Service, result cache in Redis, scheduled delivery via Scheduler + Notification) — the PHASE-4 §2 per-service-DB pattern applies only to services with their own state. |
 | `metadata-model` | `ReportDefinition` and `DashboardDefinition` schemas (both already in the ARCHITECTURE.md §2.3 owns-list). |
 | Frontend | ECharts joins `frontend/` dependencies (ARCHITECTURE.md §2.7); chart rendering ships as versioned catalog components (§5), not bespoke report UI. |
@@ -141,8 +141,10 @@ reporting and dedicated pivot mechanics (never a v1 goal); cross-app federation.
   dataset; pinning this avoids both leaks and system-principal-everything.
 - Delivery via the Notification Service (template + attachment — the built-in
   `report-delivery` template category joining Notification v1's defaults per
-  PHASE-4 §8's growth path), Mailpit locally; delivery audited; failures visible in
-  the scheduler job history.
+  PHASE-4 §8's growth path; the attachment streams inline from the run's export
+  render — no File Service dependency, whose Phase 6 landing serves async
+  large-export streaming, §1 / PHASE-6 §7), Mailpit locally; delivery audited;
+  failures visible in the scheduler job history.
 
 ## 8. Security & Audit
 
