@@ -64,8 +64,10 @@ pages (PHASE-2 deferral, unchanged).
 Runtime write path*, like validations — not a Workflow-Service concern. This keeps
 the single write path absolute (ARCHITECTURE.md §1): no service can transition a
 record around the engine, and the `transitionState` primitive compiles to a guarded
-write through the same check. The Workflow Service consumes state-change events; it
-never mutates records itself.
+write through the same check. The Workflow Service consumes state-change events —
+a state change is a `record.updated` event whose field diffs include the bound
+`stateField` (the PHASE-3 §4 record family carries the diffs; no separate event
+family exists) — and never mutates records itself.
 
 ```json
 { "id": "sm_purchase_order",
@@ -105,17 +107,23 @@ human actions (approve, reject, delegate, reassign) run as the acting user. Both
 audited (ARCHITECTURE.md §5).
 
 - **`requestApproval` params (the grammar-fixed primitive, now executable):**
-  `{ approvers, mode, timeout, escalateTo, onReject? }` — `approvers` is a role reference or an
+  `{ approvers, mode, timeout?, escalateTo?, onReject? }` — `approvers` is a role reference or an
   expression resolving to users; `mode`: `any` (parallel, first resolution wins) |
-  `all` (sequential or parallel unanimity — v1: parallel unanimity); `timeout` is an
-  ISO-8601 duration; `escalateTo` a role; `onReject?` an optional inline flow-IR
-  subgraph (same shape as `iterate`'s `body`) declared **on the step itself** — there
-  is no coupling to any enclosing `branch` node.
+  `all` (sequential or parallel unanimity — v1: parallel unanimity); `timeout`
+  (optional) is an ISO-8601 duration; `escalateTo` (optional) a role; `onReject?`
+  an optional inline flow-IR subgraph (same shape as `iterate`'s `body`) declared
+  **on the step itself** — there is no coupling to any enclosing `branch` node.
 - **Durable suspension — pinned:** a flow containing `requestApproval` *suspends* at
   that step. The Workflow Service persists the suspended instance (step pointer,
   context snapshot) and resumes it — system principal — when the approval resolves.
   Pure write-path flows (no suspension steps) keep executing in-process in the Data
-  Runtime; only suspension steps coordinate with the Workflow Service.
+  Runtime; only suspension steps coordinate with the Workflow Service. A suspension
+  step inside a write-path hook never holds the enclosing transaction: the
+  triggering write commits, the instance stays suspended, and resolution re-enters
+  the compiled-graph engine in the Data Runtime — the same internal,
+  system-principal path the Scheduler's `flow` target uses (§7) — afterward (the
+  exit scenario's submit hook, §3, and PHASE-7 §5's posting flow are exactly this
+  shape).
 - **Segregation of duties — pinned, fail closed (PLAN.md §1 non-negotiable):** the
   initiating actor of the record write that triggered the flow is removed from the
   approver set at task creation. Delegation to that actor is rejected. If the
@@ -159,7 +167,9 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
   `sla`/`dueAt` come from a matching `SLADefinition` when one matches the scope;
   otherwise the `requestApproval` step's own `timeout`/`escalateTo` apply (`warnAt`
   defaulting to 0.8). The dedicated definition wins — the governed overlay beats
-  the inline default, and both paths emit the same `sla.*` events.
+  the inline default, and both paths emit the same `sla.*` events. With neither an
+  SLA nor the step's `timeout` present, the task carries no `dueAt` — no timer, no
+  escalation — and stays open until resolved or cancelled (§5).
 - **Breach:** the open task becomes `ESCALATED`; a replacement task is created for
   `escalateTo`; `sla.breach` is emitted; both actions audited; a counter metric
   (`novaforge.sla.breach`) increments. Single-level escalation in v1 (a chain is a

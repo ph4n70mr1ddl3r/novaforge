@@ -36,7 +36,7 @@ here.
 |---|---|
 | `novaforge-integration-service` | Port 8090; gateway routes `/api/v1/integrations/**` and — the one deliberately **anonymous** route — `/api/v1/webhooks/inbound/**` (HMAC at the service, §6; the gateway's default JWT requirement is lifted for exactly this path prefix). |
 | `novaforge-file-service` | Port 8091; gateway route `/api/v1/files/**`; presigned upload/download. |
-| Compose | **MinIO** joins the stack (API 9000, console 9001) with a persistent volume. |
+| Compose | **MinIO** joins the stack (API 9000, console 9001) with a persistent volume. Both new services hold state — delivery log/DLQ and import checkpoints (integration), attachment metadata (file) — and add their own databases on the shared Postgres, the PHASE-4 §2 per-service pattern. |
 | `common-core` | `SIGNATURE_INVALID("4012", 401)` for webhook auth failures. |
 | `event-schemas` | `connector.delivered`, `webhook.dispatched`, `import.progress` contracts. |
 | `metadata-model` | `ConnectorDefinition`, `WebhookDefinition` (one schema, both directions — §5), `CredentialDefinition` (references only — §9), `ImportDefinition` (the §7 import mapping — versioned metadata like connectors; import *runs* are tenant data). |

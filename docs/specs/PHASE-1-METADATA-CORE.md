@@ -193,15 +193,25 @@ the data-plane tables, so it owns their DDL, reacting to `metadata.published`
 - Field `uniqueness` (§5) lowers to a **partial** unique index scoped `(tenant_id, …)`
   over live rows only (`CREATE UNIQUE INDEX … WHERE NOT deleted`) — on the promoted
   column, or a JSONB expression unique index on the base table, per ADR-001's
-  variant. Soft-deleted tombstones therefore never pin a unique value (delete →
-  recreate with the same value works), and the index — not the write-path check — is
-  the enforcement: the check exists to shape the friendly `VALIDATION_FAILED` error,
-  and the index is what makes the §9.2 uniqueness race pass.
+  variant. Entity-level unique indexes (the `indexes[].unique` entries of
+  ARCHITECTURE.md §3 — the multi-field form) lower to the same partial shape, and
+  a single-field unique index and the field's `uniqueness` flag are one
+  constraint authored at two levels. Soft-deleted tombstones therefore never pin
+  a unique value (delete → recreate with the same value works), and the index —
+  not the write-path check — is the enforcement: the check exists to shape the
+  friendly `VALIDATION_FAILED` error, and the index is what makes the §9.2
+  uniqueness race pass.
 - Postgres **RLS** everywhere: `tenant_id = current_setting('app.tenant')` as
   defense-in-depth; `security-context` sets the session var per request from
   `TenantContext`. Cross-tenant access assertions are mandatory (ARCHITECTURE.md §5).
 - Per-service databases land now: `novaforge-metadata` and `novaforge-data` in the
-  compose stack (PHASE-0 §7's shared instance remains for Keycloak only).
+  compose stack (PHASE-0 §7's shared instance remains for Keycloak only). The
+  **platform authorization store** — tenants, users, role assignments; the data
+  §7's matrix reads and PHASE-2 §10's admin API writes — is a dedicated platform
+  schema inside `novaforge-data` (the Data Runtime owns it, ARCHITECTURE.md §2.2),
+  kept apart from the RLS-guarded tenant record tables: it is cross-tenant by
+  design, so its tables carry no tenant-RLS policy — access is gated by the §7 role
+  matrix and the admin API, never by row filters.
 - Money: `decimal(18,4)` minimum storage, BigDecimal arithmetic, banker's rounding
   config per currency (ARCHITECTURE.md §4).
 

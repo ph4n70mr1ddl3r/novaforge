@@ -57,8 +57,10 @@ environment mechanism — one provisioning path, no second system:
   builder's review UI (page overlays reuse the PHASE-2 Q2 delta format; flow/state
   machine diffs reuse the graph editors' structural diffs).
 - Review surfaces: definition diffs, **attached suite results** for that exact
-  version (ADR-010 #4), the script-ratio delta, and the gap-log entries the
-  version resolves (Phase 7 continuity).
+  version (ADR-010 #4), the script-ratio delta, the gap-log entries the
+  version resolves (Phase 7 continuity), and any credential references stripped
+  from the artifact (PHASE-6 §9 — secrets never ride metadata) listed for
+  re-binding in the target environment before its connectors/webhooks can run.
 - Free when the app defines no suites; blocking when it does (opt-in is authoring
   tests — ADR-010 #4 unchanged). v1 change sets are the **complete**
   draft-vs-published diff; selective composition (promoting a subset of definitions,
