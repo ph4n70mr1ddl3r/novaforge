@@ -42,7 +42,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
                                    └───────────┘   └─────────────┘
 ```
 
-*Sketch — the File and Scheduler services (§2.8) are omitted for readability.*
+*Sketch — the File and Scheduler services (§2.8) are omitted for readability; the UI Builder box is landscape-only — v1 ships no separate module (§2.8), and the Script Engine is reached internally, not via the gateway (§2.5).*
 
 **Principles**
 1. **Single write path:** all record writes go through Data Runtime — it enforces metadata, permissions, validations, and emits events. Nothing writes to tenant tables directly.

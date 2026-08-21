@@ -41,7 +41,7 @@ Tenant
       ├── Entities ── Fields, Relationships, Validations, Formulas
       ├── Pages/Layouts ── Forms, Lists, Dashboards, Navigation
       ├── Business Rules ── Event hooks (flow-IR step graphs; scripts as escape hatch per ADR-008), scheduled jobs
-      ├── Workflows ── BPMN definitions, state machines, approvals
+      ├── Workflows ── BPMN definitions, state machines, approvals, SLAs
       ├── Reports & Dashboards
       ├── Permissions ── Roles, record rules, field security
       ├── Integrations ── Connectors, webhooks, credential references (the reference only — secrets never ride metadata, PHASE-6 spec §9), API clients (deferred with demand — PHASE-6 spec §1), import mappings
@@ -91,7 +91,7 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 | Resilience | Resilience4j (circuit breakers, retries, bulkheads) |
 | API docs | OpenAPI 3 generated per service, aggregated at gateway |
 | Frontend | React 19.2.x + TypeScript; metadata-driven renderer (layered per [ADR-009](./docs/adr/ADR-009-declarative-ui.md)); builder on React-Flow/agnostic-dnd |
-| Observability | Micrometer + Prometheus + Grafana, OpenTelemetry traces, Loki logs |
+| Observability | Micrometer + Prometheus + Grafana, OpenTelemetry traces (Grafana Tempo backend — decided PHASE-0 §12 Q2, lands with Phase 3), Loki logs (same expansion, PHASE-3 §9) |
 | Build/CI | Maven multi-module, GitHub Actions, Testcontainers 2 |
 | Containers | Podman + Buildah (rootless, daemonless), OCI images |
 | Orchestration | Kubernetes + Helm; local clusters via Kind-on-Podman; Skaffold (podman runner) for inner-loop dev |

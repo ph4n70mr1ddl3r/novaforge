@@ -43,7 +43,7 @@ Most no-code tools handle forms and lists well but collapse under ERP-grade requ
 | Workflow | Flowable 7 |
 | Scripting | GraalVM JS sandbox (CPU/memory caps, no host I/O by default) |
 | Frontend | React 19 + TypeScript, metadata-driven renderer |
-| Observability | Micrometer, Prometheus, Grafana, OpenTelemetry, Loki |
+| Observability | Micrometer, Prometheus, Grafana, Tempo (traces, from Phase 3), OpenTelemetry, Loki |
 | Build/CI | Maven multi-module monorepo, GitHub Actions, Testcontainers 2 |
 | Containers | Podman + Buildah; Kubernetes + Helm (Kind-on-Podman for local dev) |
 
@@ -56,8 +56,11 @@ Browser ──► API Gateway ──┬─► Identity (Keycloak)
                           ├─► Data Runtime Service ──► PostgreSQL / Redis
                           │       └─ domain events ─► Kafka ──► Workflow / Audit /
                           │                                           Notification / Integration
-                          └─► Reporting, UI Builder, File, Scheduler, Script Engine
+                          └─► Workflow, Reporting, File, Integration, Audit,
+                              Notification, Scheduler (read-only job status)
 ```
+
+*Two landscape services are deliberately absent from the gateway line: the Script Engine is internal (hooks invoke it — no gateway route, ARCHITECTURE.md §2.5), and the UI Builder ships as versioned metadata with no separate v1 service module (client-side preview — ARCHITECTURE.md §2.8).*
 
 Full service landscape, data strategy (JSONB hybrid + projections), and security model: [ARCHITECTURE.md](ARCHITECTURE.md).
 
