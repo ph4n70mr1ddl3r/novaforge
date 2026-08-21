@@ -6,7 +6,7 @@
 >
 | | |
 |---|---|
-| Status | Draft for review |
+| Status | Decided (open questions resolved 2026-08-21) |
 | Date | 2026-08-15 |
 | Owner | Platform team |
 | Estimate | 2–3 weeks (per PLAN.md §5) |
@@ -44,7 +44,7 @@ Patch upgrades (4.1.x, 2025.1.x) are allowed any time; minors are decision point
 ## 3. Target Repository Structure (end of Phase 0)
 
 ```
-spring_erp/
+novaforge/
 ├── PLAN.md, ARCHITECTURE.md
 ├── pom.xml                        # root: parent + aggregator (§4.1)
 ├── platform/

@@ -225,7 +225,7 @@ CREATE INDEX ON rec_journal_entry (tenant_id, entry_date DESC);
 ## 7. Suggested Repo Layout (monorepo)
 
 ```
-spring_erp/
+novaforge/
 ├── PLAN.md, ARCHITECTURE.md
 ├── platform/                     # shared libs (versions managed by root pom.xml)
 │   └── libs/                     # shared libraries

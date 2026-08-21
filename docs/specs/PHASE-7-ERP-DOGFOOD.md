@@ -9,7 +9,7 @@
 >
 > | | |
 > |---|---|
-> | Status | Draft for review |
+> | Status | Decided (open questions resolved 2026-08-21) |
 > | Date | 2026-08-16 |
 > | Owner | Platform team + product owner |
 > | Estimate | 6–8 weeks (per PLAN.md §5) |
@@ -67,13 +67,13 @@ is confirmed in practice:
 1. **`freezeOnTerminal` (posting/immutability primitive):** an `EntityDefinition`
    attribute (requiring a bound state machine) — when a record's state machine sits
    in a terminal state, *all* writes to the record are rejected with
-   `RECORD_FROZEN("4014", 400)` (today's Phase 4 state machines guard only the
+   `RECORD_FROZEN("4013", 400)` (today's Phase 4 state machines guard only the
    state field). This is what makes the journal append-only in fact, not
    convention.
 2. **`PeriodLock` (period locking):** activated when an `AccountingPeriod` record
    reaches `CLOSED` (§4's state machine — the period is an app entity, §2, not a
    Settings row); the Data Runtime write path rejects dated-into-closed-period
-   writes with the new code `PERIOD_LOCKED("4013", 400)`. How a write's period is
+   writes with the new code `PERIOD_LOCKED("4014", 400)`. How a write's period is
    resolved (date-range lookup vs `periodId` reference) is spec'd in the feature's
    harvest section per §8 before implementation.
 

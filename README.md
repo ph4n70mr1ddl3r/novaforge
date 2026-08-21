@@ -87,6 +87,7 @@ Timeline estimate: ~8–10 months with a small senior team; Phases 1–3 are the
 
 ```
 novaforge/
+├── README.md         # This file — project entry point
 ├── PLAN.md            # Product & delivery plan
 ├── ARCHITECTURE.md    # Technical architecture
 └── docs/

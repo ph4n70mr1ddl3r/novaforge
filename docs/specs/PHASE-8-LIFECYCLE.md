@@ -8,7 +8,7 @@
 >
 > | | |
 > |---|---|
-> | Status | Draft for review |
+> | Status | Decided (open questions resolved 2026-08-21) |
 > | Date | 2026-08-16 |
 > | Owner | Platform team |
 > | Estimate | 4–6 weeks (per PLAN.md §5) |

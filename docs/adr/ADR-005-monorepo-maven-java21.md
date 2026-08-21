@@ -15,7 +15,7 @@ bootstrap problem) vs a monorepo (atomic cross-cutting changes, one CI). The tea
 
 ## Decision
 
-1. **Single monorepo** (`spring_erp/`): `platform/libs/*` shared libs,
+1. **Single monorepo** (`novaforge/`): `platform/libs/*` shared libs,
    `services/*` Boot services, `frontend/*` pnpm workspace (PHASE-2 §2),
    `deploy/compose` + Helm, `docs/{adr,specs}`. Trunk-based development, PR
    previews via Skaffold.
