@@ -28,8 +28,9 @@ journey:
    all-must-approve, SLA + escalation).
 3. The submitting clerk is excluded from approval (segregation of duties).
 4. A manager resolves the task (inbox + email); approval transitions the record.
-5. With no resolution inside the SLA target, escalation reassigns to the senior
-   manager role.
+5. With no resolution inside the SLA target, escalation creates a replacement task
+   for the senior manager role (§6 — not the §5 `reassign` operation; the original
+   task goes `ESCALATED`).
 
 **Spec-driven development agreement:** this document is the implementation
 contract. Work proceeds task by task (§15); a task is done when its acceptance

@@ -51,7 +51,7 @@ Charters were recorded in PHASE-0 §5.4 (empty modules rot, so they are created 
 
 | Lib | Contents | Notes |
 |---|---|---|
-| `metadata-model` | definition POJOs + JSON Schema v0: app, entity, field, relationship, **page** | Page schema is reserved now (PLAN.md §8 item 3) but authored only from Phase 2. `formula`, `rollup`, expression `default`, and expression `validations` slots are schema-accepted, inert until Phase 3 (the formula/roll-up split: PHASE-3 §3). |
+| `metadata-model` | definition POJOs + JSON Schema v0: app, entity, field, relationship, **page** | Page schema is reserved now (PLAN.md §8 item 3) but authored only from Phase 2. `formula`, `rollup`, expression `default`, and expression `validations` slots are schema-accepted, inert until Phase 3 (the formula/roll-up split: PHASE-3 §3); the sequence-reference form of `default` is active from Phase 1 (§5). |
 | `security-context` | tenant/actor propagation: async-executor wrappers, Kafka header constants (producer/consumer arrive with the Phase 3 spine), mock-test fixtures | Builds on `common-core`'s `TenantContext` (PHASE-0 §5.2). |
 | `test-support` | Testcontainers 2 bases: Postgres with RLS fixtures, compose-stack clients | Podman-socket env documented in README on first use (PHASE-0 §10). |
 
@@ -148,8 +148,9 @@ bespoke flattening; anything richer — deep nesting,
 aggregates — goes to `POST /{entity}/query`.
 
 Write path (the Phase 1 slice of the ARCHITECTURE.md §2.4 pipeline): resolve metadata →
-authorize (§7) → apply static field `default`s (expression defaults arrive with
-Phase 3 write-path evaluation — PHASE-2 §7; landing: PHASE-3 §3) → field validations → persist with optimistic locking → event seam
+authorize (§7) → apply field `default`s — static values, plus sequence references drawn
+once at create (§5 Sequences below; expression defaults arrive with Phase 3 write-path
+evaluation — PHASE-2 §7; landing: PHASE-3 §3) → field validations → persist with optimistic locking → event seam
 (below) → shaped projection. Field validations v1: `required`, type, `length`,
 `precision`/`scale` (BigDecimal, never doubles — ARCHITECTURE.md §4 money rule), enum
 membership, `uniqueness` (tenant-scoped, live rows only — a soft-deleted tombstone
@@ -179,6 +180,15 @@ mechanism Phase 2 field security builds on (PHASE-2 spec §9).
   (default — Redis block allocation, gaps allowed) and `gapless` (allocated inside the
   record transaction via a locked counter row; serializes writes on that sequence —
   acceptable for document numbering, and required by PLAN.md §1 non-negotiables).
+  **Binding — pinned:** the authored surface that consumes a sequence is the field
+  `default` — `{ "sequence": "<definition>" }` — drawn once at create in the write
+  path's defaults step, before validations; it is the *only* such surface (expressions
+  are pure and deterministic given bindings + clock — PHASE-2 Annex A — so neither an
+  expression default nor a `setField` step can draw one, and no primitive exists for
+  it). `gapless` allocation rides the creating record's transaction; an
+  `Idempotency-Key` replay returns the original outcome and never re-draws. The
+  referenced sequence must resolve within the app (save-time referential integrity,
+  §3) — this is the mechanism behind PHASE-7's gapless entry and invoice numbering.
 - **Event seam:** an internal `DomainEventPublisher` port; the Phase 1 binding is a
   no-op recorder (asserted in tests, §9). Phase 3 binds the Kafka producer for
   `record.created/updated/deleted` (ARCHITECTURE.md §1) and audit emission
@@ -286,7 +296,7 @@ itself stays in ADR-001.
 | T5 | Storage SPI + materializer | `rec_records`, RLS, projections per the ADR-001 variant (§6) | Publish creates/refreshes projections; cross-tenant tests fail closed; ADR-001 file written per §2's closure |
 | T6 | Write path | CRUD + validations + defaults + optimistic lock + soft delete (§5) | Phase 1 exit demo passes |
 | T7 | Query path | List + aggregate + batch (§5) | Golden-SQL suite green; 100k fixture served via server-side paging only |
-| T8 | Sequences + idempotency | `cached`/`gapless` modes; `Idempotency-Key` (§5) | Concurrent allocation correct; key replay returns the original outcome |
+| T8 | Sequences + idempotency | `cached`/`gapless` modes, field-`default` sequence binding (§5); `Idempotency-Key` (§5) | Concurrent allocation correct; a bound field draws once per create and never on replay; key replay returns the original outcome |
 | T9 | Authorization gate | Object-level matrix + seeded roles + fail-closed default policy (§7) | Denied role → 403 `FORBIDDEN`; matrix read from the platform DB; implementation conforms to ADR-002 + ADR-006 (both accepted ahead — ARCHITECTURE.md §8) |
 | T10 | K8s + CI expansion | Kind/Helm/Skaffold; Testcontainers CI job; ArchUnit rules (§8) | Full stack on Kind; PR integration green on the Podman runner |
 | T11 | Load test + exit review | 1M-row run vs §10; walk the PLAN §5 exit criteria | Targets met, or ADR-001 adjusted with a re-run plan |

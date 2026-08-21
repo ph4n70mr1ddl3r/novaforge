@@ -101,7 +101,9 @@ slots Phase 1 left inert:
   revisit at dogfood scale.
 - **Expression defaults:** the field `default` attribute accepts shared-DSL
   expressions, evaluated at the write path's `defaults` step before validations —
-  the PHASE-1 §5 / ARCHITECTURE.md §3 pin (static values are the Phase 1 form),
+  the PHASE-1 §5 / ARCHITECTURE.md §3 pin (static values and sequence references are
+  the Phase 1 forms — a sequence reference is not an expression: allocation is a
+  side effect, which PHASE-2 Annex A's purity rule forbids),
   same JVM engine, compile-checked at save/publish like every other slot.
 
 The write path becomes the full ARCHITECTURE.md §2.4 chain: resolve metadata →
