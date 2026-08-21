@@ -178,6 +178,13 @@ CREATE TABLE rec_journal_entry (
   id uuid PRIMARY KEY,
   tenant_id uuid NOT NULL,
   data jsonb NOT NULL,
+  deleted boolean NOT NULL DEFAULT false,  -- duplicated lifecycle column (like
+                                           -- data, kept current): default list
+                                           -- filtering and the partial unique
+                                           -- indexes (WHERE NOT deleted) of the
+                                           -- Phase 1 spec §6 lower onto promoted
+                                           -- columns *here*, so the projection
+                                           -- carries the flag too
   -- generated columns promoted from JSONB for filter/sort/index:
   reference text GENERATED ALWAYS AS (data->>'reference') STORED,
   entry_date date GENERATED ALWAYS AS ((data->>'entryDate')::date) STORED

@@ -39,7 +39,9 @@ No design decisions are deferred to implementation time; the former §16 open
 items are resolved scope pins (both non-blocking).
 
 Out of scope: BPMN *visual* designer (deferred until demand — §16 Q1, resolved;
-execution and event-starts ship); scheduled report delivery (Phase 5 registers consumers);
+execution and event-starts ship); scheduled report delivery (the Scheduler's
+`report` target is registered dormant in §7; Phase 5's Reporting Service is its
+consumer, PHASE-5 §7);
 multi-level escalation chains (v1 is single-level, §6); sequential approval chains
 (v1 modes are `any` and parallel-unanimous `all`, §4 — sequential arrives as a
 versioned mode when a flow demands it, the same policy as every primitive growth);
@@ -55,7 +57,7 @@ pages (PHASE-2 deferral, unchanged).
 | `novaforge-notification-service` | Port 8088; gateway route `/api/v1/notifications/**` (inbox read + preferences). |
 | Compose | **Mailpit** joins the stack (SMTP 1025, UI 8025) as the local email sink. No other new infrastructure — the Postgres/Kafka/Redis instances are reused; each new service adds its own database on the shared Postgres (the PHASE-1 §6 pattern). |
 | `common-core` | Two error codes join the seed set: `STATE_TRANSITION("4010", 400)` and `SOD_VIOLATION("4011", 400)` (the PHASE-0 §5.2 set is a seed, not a ceiling). |
-| `event-schemas` | New contracts: `task.created/assigned/completed/escalated`, `sla.warn/breach`, `notification.delivered`, `scheduler.job.run` (§7) — the first families joining the spine's shared-topic convention (`novaforge.<family>.*`, PHASE-3 §4). |
+| `event-schemas` | New contracts: the `task.*` lifecycle — `task.created/assigned` plus one event per §5 terminal status (`task.approved/rejected/delegated/escalated/cancelled`; there is no `completed` status to event), so delegation chains and record-delete cancellation are observable — plus `sla.warn/breach`, `notification.delivered`, `scheduler.job.run` (§7) — the first families joining the spine's shared-topic convention (`novaforge.<family>.*`, PHASE-3 §4). |
 | `metadata-model` | New schemas: `StateMachineDefinition`, `SLADefinition`, `SharingRuleDefinition` (PermissionSet branch), `WorkflowDefinition` (BPMN process definitions, §9) — all four in ARCHITECTURE.md §2.3's owns-list (WorkflowDefinition since v0; the rest join it this phase). |
 
 ## 3. State Machines (first-class metadata, enforced on the write path)
@@ -212,8 +214,11 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
   list) stay deferred until demand — the same versioned-growth policy.
 - **Preferences:** per-user channel toggles per category (`task-assignment`,
   `sla-warning`) — coarse v1, refined on demand.
-- **Synthetic actors (test harness) have no channels** (ADR-010 #3): delivery is
-  skipped, events remain — so suites can still assert on them.
+- **Synthetic actors (test harness) have no channels** (ADR-010 #3): both
+  channels are skipped — no inbox entry, no email, hence no
+  `notification.delivered`. What stays observable is the triggering
+  `task.*`/`sla.*` events on the spine, exactly the surface suites assert on
+  (§14.6).
 
 ## 9. BPMN v1 (Flowable) & Event-Start Subscriptions
 
@@ -305,8 +310,10 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 5. Sharing: visibility matrix per role (owner/hierarchy/criteria) via
    `queryRecord`-based suites; write/delete governed by the same evaluation; no
    rule → Phase 2 default preserved (regression).
-6. Notification: template token resolution; preference filtering; synthetic actors
-   skip delivery but emit events.
+6. Notification: template token resolution; preference filtering (real actors,
+   Mailpit); synthetic-actor runs skip both channels with no
+   `notification.delivered` — the triggering `task.*`/`sla.*` events remain the
+   assertable surface (§8).
 
 ## 15. Task Breakdown
 

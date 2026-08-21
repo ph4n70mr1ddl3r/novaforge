@@ -31,6 +31,8 @@ Most no-code tools handle forms and lists well but collapse under ERP-grade requ
 | P7 | Integration | Auto-exposed entity REST APIs, webhooks, connectors, import/export |
 | P8 | App Lifecycle | Apps as versioned artifacts, sandboxes, test-gated promotion, rollback |
 
+> v1 scope deferrals against this table are pinned in [PLAN.md](PLAN.md) §1.
+
 ## Technology Stack
 
 | Concern | Choice |
@@ -97,4 +99,4 @@ novaforge/
 
 ## Status
 
-**Planning phase.** All phase-spec open questions are resolved; ADR-002–ADR-006 are accepted with files. The remaining decision gate is the storage spike (hybrid JSONB + projections against a 1M-row dataset) that will close ADR-001. Next up: stand up the Phase 0 repo skeleton, gateway, Keycloak, and CI. See [PLAN.md §8](PLAN.md) for the immediate next steps.
+**Planning phase.** All phase-spec open questions are resolved; ADR-002–ADR-006 now join ADR-007–ADR-010 as accepted with files. The remaining decision gate is the storage spike (hybrid JSONB + projections against a 1M-row dataset) that will close ADR-001. Next up: stand up the Phase 0 repo skeleton, gateway, Keycloak, and CI. See [PLAN.md §8](PLAN.md) for the immediate next steps.
