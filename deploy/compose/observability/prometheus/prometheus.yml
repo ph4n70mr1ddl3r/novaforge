@@ -1,0 +1,21 @@
+# Prometheus scrape config (PHASE-0 §7/T8). Services run on the host, so the container
+# reaches them through host.docker.internal (extra_hosts: host-gateway in compose).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: novaforge-gateway
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+
+  - job_name: novaforge-metadata-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8081"]
+
+  - job_name: novaforge-data-runtime
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8083"]

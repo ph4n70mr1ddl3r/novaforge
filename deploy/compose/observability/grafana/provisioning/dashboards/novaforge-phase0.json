@@ -1,0 +1,93 @@
+{
+  "title": "NovaForge / Phase 0",
+  "uid": "novaforge-phase0",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "DS",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "prometheus" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "API Gateway",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Availability (up)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "up{job=\"novaforge-gateway\"}", "refId": "A" }],
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 1 }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "HTTP server requests p95 (s)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"novaforge-gateway\"}[5m])) by (le))",
+        "refId": "A"
+      }],
+      "gridPos": { "h": 6, "w": 9, "x": 6, "y": 1 }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "JVM heap used (B)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{
+        "expr": "sum(jvm_memory_used_bytes{job=\"novaforge-gateway\", area=\"heap\"}) by (id)",
+        "refId": "A"
+      }],
+      "gridPos": { "h": 6, "w": 9, "x": 15, "y": 1 }
+    },
+    {
+      "id": 5,
+      "type": "row",
+      "title": "Metadata Service",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Availability (up)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "up{job=\"novaforge-metadata-service\"}", "refId": "A" }],
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 8 }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "HTTP server requests p95 (s)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"novaforge-metadata-service\"}[5m])) by (le))",
+        "refId": "A"
+      }],
+      "gridPos": { "h": 6, "w": 9, "x": 6, "y": 8 }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "JVM heap used (B)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{
+        "expr": "sum(jvm_memory_used_bytes{job=\"novaforge-metadata-service\", area=\"heap\"}) by (id)",
+        "refId": "A"
+      }],
+      "gridPos": { "h": 6, "w": 9, "x": 15, "y": 8 }
+    }
+  ]
+}

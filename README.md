@@ -100,6 +100,42 @@ novaforge/
     └── adr/           # Architecture Decision Records (ADR-002 … ADR-010)
 ```
 
+## Development
+
+**Prerequisites:** Temurin 21, Podman ≥ 4.9 (rootless), and `podman-compose` (or another
+`podman compose` provider). The Maven wrapper (`./mvnw`) needs no local Maven install.
+
+```bash
+# 1. Build + test everything (hermetic: no containers required for the default suite)
+./mvnw -B -ntp verify
+
+# 2. Local infrastructure (Keycloak, Postgres, Redis, Kafka, Prometheus, Grafana)
+cd deploy/compose
+podman compose -f novaforge.yaml up -d          # add NOVAFORGE_POSTGRES_PORT=5433 if 5432 is taken
+podman ps                                      # wait until all six report (healthy)
+
+# 3. Demo login yields a JWT carrying scope novaforge.api + the tenant claim
+curl -s -X POST http://localhost:8082/realms/novaforge/protocol/openid-connect/token \
+  -d 'grant_type=password&client_id=novaforge-api&username=demo&password=demo'
+
+# 4. Run services on the host, then go through the gateway
+java -jar services/metadata-service/target/novaforge-metadata-service-*.jar &
+TOKEN=…   # from step 3
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/metadata/ping
+```
+
+Grafana (admin/admin) at http://localhost:3000 ships the seeded "NovaForge / Phase 0"
+dashboard; Prometheus scrapes every service's `/actuator/prometheus`.
+
+Integration tests that need the compose stack (real Keycloak tokens) are tagged
+`integration` and excluded from the default verify run — run them with
+`./mvnw -B -ntp verify -Dgroups=integration` while the stack is up.
+
 ## Status
 
-**Planning phase.** All phase-spec open questions are resolved; ADR-002–ADR-006 now join ADR-007–ADR-010 as accepted with files. The remaining decision gate is the storage spike (hybrid JSONB + projections against a 1M-row dataset) that will close ADR-001. Next up: stand up the Phase 0 repo skeleton, gateway, Keycloak, and CI. See [PLAN.md §8](PLAN.md) for the immediate next steps.
+**Implementing.** Phase 0 (foundations) is built: monorepo skeleton, gateway +
+metadata-service behind JWT auth, compose stack, observability baseline, CI. All
+phase-spec open questions are resolved; ADR-002–ADR-006 join ADR-007–ADR-010 as accepted
+with files. The remaining decision gate is the storage spike (hybrid JSONB + projections
+against a 1M-row dataset) that will close ADR-001. See [PLAN.md §8](PLAN.md) for the
+immediate next steps.

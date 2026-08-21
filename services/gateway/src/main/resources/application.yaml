@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: novaforge-gateway
+  cloud:
+    gateway:
+      server:
+        webmvc:
+          routes:
+            - id: metadata-service
+              uri: ${novaforge.upstreams.metadata-service:http://localhost:8081}
+              predicates:
+                - Path=/api/v1/metadata/**
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  pattern:
+    # W3C trace context in every line — the shared-trace-id acceptance check (PHASE-0 §8)
+    level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
+
+novaforge:
+  upstreams:
+    metadata-service: http://localhost:8081
