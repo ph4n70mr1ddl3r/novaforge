@@ -6,14 +6,15 @@
 
   <parent>
     <groupId>com.novaforge</groupId>
-    <artifactId>novaforge-data-runtime-parent</artifactId>
+    <artifactId>novaforge-parent</artifactId>
     <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../../pom.xml</relativePath>
   </parent>
 
-  <artifactId>novaforge-data-runtime</artifactId>
-  <name>NovaForge Data Runtime :: api</name>
-  <description>Generic record/query REST surface (ARCHITECTURE.md §2.4, PHASE-1 §5) —
-    the Spring Boot application module.</description>
+  <artifactId>novaforge-audit-service</artifactId>
+  <name>NovaForge Audit Service</name>
+  <description>Append-only event trail on the Kafka spine (PHASE-3 §5): who/what/when with
+    field-level diffs riding record events; Postgres partitioned by month.</description>
 
   <dependencies>
     <dependency>
@@ -21,17 +22,8 @@
       <artifactId>novaforge-common-core</artifactId>
     </dependency>
     <dependency>
-      <groupId>com.novaforge</groupId>
-      <artifactId>novaforge-security-context</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>com.novaforge</groupId>
-      <artifactId>novaforge-data-runtime-engine</artifactId>
-      <version>${project.version}</version>
-    </dependency>
-    <dependency>
       <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-kafka</artifactId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -39,20 +31,34 @@
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-validation</artifactId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-actuator</artifactId>
+      <artifactId>spring-boot-starter-kafka</artifactId>
     </dependency>
     <dependency>
       <groupId>io.micrometer</groupId>
       <artifactId>micrometer-registry-prometheus</artifactId>
     </dependency>
     <dependency>
-      <groupId>io.micrometer</groupId>
-      <artifactId>micrometer-tracing-bridge-otel</artifactId>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
     </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jdbc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-flyway</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-webmvc-test</artifactId>
@@ -83,29 +89,6 @@
           </execution>
         </executions>
       </plugin>
-        <plugin>
-          <groupId>com.google.cloud.tools</groupId>
-          <artifactId>jib-maven-plugin</artifactId>
-          <version>3.5.2</version>
-          <configuration>
-            <from>
-              <image>eclipse-temurin:21-jre</image>
-            </from>
-            <to>
-              <image>ghcr.io/novaforge/novaforge-data-runtime</image>
-              <tags><tag>${project.version}</tag></tags>
-            </to>
-            <container>
-              <creationTime>USE_CURRENT_TIMESTAMP</creationTime>
-              <jvmFlags>
-                <jvmFlag>-XX:MaxRAMPercentage=75.0</jvmFlag>
-              </jvmFlags>
-            </container>
-            <!-- OCI images for the Helm charts / Skaffold podman runner (ARCHITECTURE §6);
-                 no per-entity codegen anywhere — same fat jars as the Boot plugin. -->
-            <skip>true</skip>
-          </configuration>
-        </plugin>
     </plugins>
   </build>
 </project>

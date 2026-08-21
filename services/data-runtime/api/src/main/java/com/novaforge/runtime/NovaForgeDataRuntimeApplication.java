@@ -8,6 +8,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * the module split: engine → storage/authorization, api on top (ARCHITECTURE.md §7).
  */
 @SpringBootApplication(scanBasePackages = "com.novaforge")
+@org.springframework.scheduling.annotation.EnableScheduling
 public class NovaForgeDataRuntimeApplication {
 
     public static void main(String[] args) {

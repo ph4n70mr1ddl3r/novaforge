@@ -14,6 +14,10 @@ spring:
               uri: ${novaforge.upstreams.data-runtime:http://localhost:8083}
               predicates:
                 - Path=/api/v1/runtime/**,/api/v1/admin/**
+            - id: audit-service
+              uri: ${novaforge.upstreams.audit-service:http://localhost:8085}
+              predicates:
+                - Path=/api/v1/audit/**
   security:
     oauth2:
       resourceserver:

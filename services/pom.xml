@@ -18,5 +18,6 @@
     <module>gateway</module>
     <module>metadata-service</module>
     <module>data-runtime</module>
+    <module>audit-service</module>
   </modules>
 </project>

@@ -12,7 +12,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.DefinitionParser;
-import com.novaforge.runtime.engine.event.DomainEventPublisher;
 import com.novaforge.runtime.engine.metadata.EntityResolver;
 import com.novaforge.runtime.engine.metadata.MetadataClient;
 import com.novaforge.runtime.storage.materializer.Materializer;
@@ -134,9 +133,6 @@ class RecordApiTests extends PostgresTestBase {
     StringRedisTemplate redis;
 
     @Autowired
-    DomainEventPublisher events;
-
-    @Autowired
     EntityResolver resolver;
 
     static final List<String> PUBLISHED_APP_INDEX = new CopyOnWriteArrayList<>();
@@ -169,8 +165,15 @@ class RecordApiTests extends PostgresTestBase {
             .withExposedPorts(6379)
             .waitingFor(Wait.forLogMessage(".*Ready to accept connections.*", 1));
 
+    private static final org.testcontainers.kafka.KafkaContainer KAFKA =
+            new org.testcontainers.kafka.KafkaContainer("apache/kafka:4.3.1");
+
+    static String kafkaBootstrap;
+
     static {
         REDIS.start();
+        KAFKA.start();
+        kafkaBootstrap = KAFKA.getBootstrapServers();
     }
 
     @DynamicPropertySource
@@ -180,6 +183,8 @@ class RecordApiTests extends PostgresTestBase {
         registry.add("spring.datasource.password", PostgresTestBase::jdbcPassword);
         registry.add("spring.data.redis.host", REDIS::getHost);
         registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+        registry.add("spring.kafka.bootstrap-servers", () -> kafkaBootstrap);
+        registry.add("novaforge.events.relay-interval-ms", () -> "200");
     }
 
     @BeforeAll
@@ -263,10 +268,11 @@ class RecordApiTests extends PostgresTestBase {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("4090"));
 
-        // the event seam captured created + updated (§9 item 5)
-        assertThat(((DomainEventPublisher.Recording) events).events())
-                .extracting(DomainEventPublisher.DomainEvent::event)
-                .contains("record.created", "record.updated");
+        // the event seam wrote the transactional outbox (§4): created + updated for this record
+        Integer outboxCount = jdbc.queryForObject(
+                "SELECT count(*) FROM event_outbox WHERE record_id = ?::uuid AND event_type LIKE 'record.%'",
+                Integer.class, id);
+        assertThat(outboxCount).isGreaterThanOrEqualTo(2);
     }
 
     @Test
@@ -629,6 +635,43 @@ class RecordApiTests extends PostgresTestBase {
                         .content("{\"userId\":\"" + ACTOR + "\",\"role\":\"Erp.clerk\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ok"));
+    }
+
+    @Test
+    @DisplayName("Kafka spine (§4): outbox rows relay to novaforge.record keyed tenant:record")
+    void kafkaSpineRelay() throws Exception {
+        MvcResult created = mockMvc.perform(post("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
+                        .contentType("application/json").content("{\"title\":\"spine\"}"))
+                .andExpect(status().isOk()).andReturn();
+        String recordId = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+
+        try (org.apache.kafka.clients.consumer.KafkaConsumer<String, String> consumer =
+                     new org.apache.kafka.clients.consumer.KafkaConsumer<>(java.util.Map.of(
+                             "bootstrap.servers", kafkaBootstrap,
+                             "group.id", "test-" + System.nanoTime(),
+                             "auto.offset.reset", "earliest",
+                             "enable.auto.commit", "true",
+                             "key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer",
+                             "value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer"))) {
+            consumer.subscribe(java.util.List.of("novaforge.record"));
+            long deadline = System.currentTimeMillis() + 30_000;
+            boolean seen = false;
+            while (System.currentTimeMillis() < deadline && !seen) {
+                for (var record : consumer.poll(java.time.Duration.ofSeconds(1))) {
+                    if (record.key().equals(TENANT + ":" + recordId)
+                            && record.value().contains("\"record.created\"")
+                            && record.value().contains(recordId)) {
+                        seen = true;
+                    }
+                }
+            }
+            assertThat(seen).as("record.created relayed to novaforge.record").isTrue();
+        }
+        // the relay marked the published rows
+        await().atMost(java.time.Duration.ofSeconds(10))
+                .until(() -> jdbc.queryForObject(
+                        "SELECT count(*) FROM event_outbox WHERE record_id = ?::uuid AND published_at IS NOT NULL",
+                        Integer.class, recordId) >= 1);
     }
 
     @Test

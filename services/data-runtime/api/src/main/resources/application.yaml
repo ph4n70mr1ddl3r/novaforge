@@ -16,6 +16,12 @@ spring:
     redis:
       host: ${NOVAFORGE_REDIS_HOST:localhost}
       port: ${NOVAFORGE_REDIS_PORT:6379}
+  kafka:
+    bootstrap-servers: ${NOVAFORGE_KAFKA:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
 
 server:
   port: 8083
@@ -35,6 +41,9 @@ logging:
     level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
 
 novaforge:
+  events:
+    relay-interval-ms: ${NOVAFORGE_RELAY_INTERVAL_MS:500}
+    relay-batch: 100
   metadata-service:
     url: ${NOVAFORGE_METADATA_URL:http://localhost:8081}
   metadata:

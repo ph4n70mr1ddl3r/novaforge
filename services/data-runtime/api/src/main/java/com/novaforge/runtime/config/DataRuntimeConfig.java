@@ -1,6 +1,5 @@
 package com.novaforge.runtime.config;
 
-import com.novaforge.runtime.engine.event.DomainEventPublisher;
 import com.novaforge.security.TenantRlsDataSource;
 import javax.sql.DataSource;
 import org.springframework.beans.factory.config.BeanPostProcessor;
@@ -8,10 +7,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Data Runtime edge wiring: the RLS DataSource bridge and the Phase 1 event-seam
- * binding. The metadata.published subscriber lives in the engine (it bridges the
- * resolver cache and the storage materializer — both engine-reachable); the REST
- * metadata client lives here at the api layer.
+ * Data Runtime edge wiring: the RLS DataSource bridge. The event seam binds to the
+ * transactional outbox (Phase 3 — the relay publishes to Kafka); the metadata.published
+ * subscriber lives in the engine; the REST metadata client lives here at the api layer.
  */
 @Configuration
 public class DataRuntimeConfig {
@@ -40,9 +38,13 @@ public class DataRuntimeConfig {
     public interface DecoratingDataSourceMarker {
     }
 
-    /** Phase 1 event-seam binding: the no-op recorder (Kafka producer arrives Phase 3). */
+    /** String-keyed template for the outbox relay (serializers pinned in yaml). */
     @Bean
-    public DomainEventPublisher domainEventPublisher() {
-        return new DomainEventPublisher.Recording();
+    @SuppressWarnings("unchecked")
+    public org.springframework.kafka.core.KafkaTemplate<String, String> stringKafkaTemplate(
+            org.springframework.kafka.core.ProducerFactory<Object, Object> producerFactory) {
+        return new org.springframework.kafka.core.KafkaTemplate<>(
+                (org.springframework.kafka.core.ProducerFactory<String, String>) (Object) producerFactory);
     }
+
 }

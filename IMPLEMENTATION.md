@@ -96,10 +96,21 @@ persist → event seam → shaped projection):
   aggregate the in-memory child set; updates recompute in the child's write
   transaction and only rewrite the parent when a value moved)
 
-**Not implemented (Phase 3 remainder):** the Kafka event spine + transactional
-outbox (§4 — the no-op event recorder still stands), flow-IR hooks with the closed
-primitive set (§5/ADR-008), the builder test harness (ADR-010), the Script Engine
-v0, Audit/Telemetry/Loki expansions.
+**Implemented — §4 event spine + §5 audit:**
+- transactional outbox (`event_outbox`): record events ride the creating transaction;
+  the KafkaOutboxRelay publishes committed rows at-least-once to family topics
+  (`novaforge.record`), keyed `tenantId:recordId` for per-record ordering, event id +
+  type + tenant in headers, then marks rows published (stop-on-failure preserves order)
+- Audit Service v1 (`novaforge-audit-service`, port 8085): consumes `novaforge.record`
+  into an append-only, monthly-partitioned Postgres trail (`audit_events`, PK
+  `(event_id, occurred_at)` — identical redeliveries collapse); tenant-scoped reads
+  through the gateway (`/api/v1/audit/records/{id}`, `/api/v1/audit/entities/{id}`);
+  Prometheus scrape + Helm chart + umbrella entry; the durable trail PHASE-2 §9
+  promised
+
+**Not implemented (Phase 3 remainder):** flow-IR hooks with the closed primitive set
+(§5/ADR-008), the builder test harness (ADR-010), the Script Engine v0, the
+Tempo/Loki observability expansion.
 
 ## Phases 4–8 ⬜
 
