@@ -35,14 +35,14 @@ public class AuditStore {
 
     public List<Map<String, Object>> forRecord(UUID tenantId, UUID recordId) {
         return jdbc.queryForList("""
-                SELECT event_id, entity_id, record_id, event_type, actor_id, occurred_at, payload
+                SELECT event_id, entity_id, record_id, event_type, actor_id, occurred_at, payload::text AS payload
                   FROM audit_events WHERE tenant_id = ? AND record_id = ?
                  ORDER BY occurred_at DESC""", tenantId, recordId);
     }
 
     public List<Map<String, Object>> forEntity(UUID tenantId, String entityId, int limit) {
         return jdbc.queryForList("""
-                SELECT event_id, entity_id, record_id, event_type, actor_id, occurred_at, payload
+                SELECT event_id, entity_id, record_id, event_type, actor_id, occurred_at, payload::text AS payload
                   FROM audit_events WHERE tenant_id = ? AND entity_id = ?
                  ORDER BY occurred_at DESC LIMIT ?""", tenantId, entityId, limit);
     }

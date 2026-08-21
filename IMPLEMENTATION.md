@@ -50,8 +50,13 @@ the ledger.
   Skaffold (jib) — written; live cluster bring-up is the remaining operational check
   (validated declaratively; not yet exercised against a running Kind cluster).
 
-Suites: 162 tests, `./mvnw verify` green (Testcontainers: Postgres + Redis; rootless
-Podman socket env documented in the README).
+Suites: 176 tests, `./mvnw verify` green (Testcontainers: Postgres + Redis + Kafka;
+rootless Podman socket env documented in the README).
+
+**Live verification:** the full spine runs on the compose stack — Keycloak → gateway →
+metadata → runtime with the outbox → Kafka → audit trail all observed live (create with
+inline children → 4 outbox rows published → `novaforge.record` carries the events →
+`GET /api/v1/audit/records/{id}` serves the trail through the gateway).
 
 ## Phase 2 — Builder UI & Security ◐ (spec: PHASE-2-UI-BUILDER.md)
 
