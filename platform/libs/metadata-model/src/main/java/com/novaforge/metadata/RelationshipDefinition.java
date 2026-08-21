@@ -17,8 +17,7 @@ public record RelationshipDefinition(
         String target,
         Boolean cascadeDelete) {
 
-    @JsonIgnore
-    public boolean cascadesDelete() {
+    public boolean cascadeOn() {
         return Boolean.TRUE.equals(cascadeDelete);
     }
 }

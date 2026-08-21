@@ -35,6 +35,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/**").permitAll()
                         .requestMatchers("/api/v1/metadata/ping").authenticated()
+                        .requestMatchers("/api/v1/metadata/published-apps").authenticated()
                         .requestMatchers("/api/v1/metadata/apps/*/published/**").authenticated()
                         .requestMatchers("/api/v1/metadata/**").hasAnyRole("builder", "admin")
                         .anyRequest().authenticated())

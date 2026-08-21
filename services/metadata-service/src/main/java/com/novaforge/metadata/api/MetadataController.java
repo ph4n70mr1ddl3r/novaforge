@@ -118,6 +118,26 @@ public class MetadataController {
         return Map.of("version", bundle.version(), "app", bundle.app());
     }
 
+    /**
+     * The published-apps index the Data Runtime's entity resolver consumes: every app
+     * with at least one published version, carrying the current version for
+     * version-keyed caching (PHASE-1 §4/§5).
+     */
+    @GetMapping("/published-apps")
+    public List<Map<String, Object>> publishedApps() {
+        String tenantId = requireContext().tenantId();
+        return definitions.listApps(UUID.fromString(tenantId)).stream()
+                .filter(app -> app.id() != null)
+                .map(app -> Map.entry(app,
+                        definitions.versions(UUID.fromString(tenantId), UUID.fromString(app.id()))))
+                .filter(entry -> !entry.getValue().isEmpty())
+                .map(entry -> Map.<String, Object>of(
+                        "appId", entry.getKey().id(),
+                        "apiName", entry.getKey().apiName(),
+                        "version", entry.getValue().getFirst().version()))
+                .toList();
+    }
+
     private static TenantContext.Context requireContext() {
         return TenantContext.current().orElseThrow(() ->
                 new PlatformException(PlatformErrorCode.TENANT_MISSING,

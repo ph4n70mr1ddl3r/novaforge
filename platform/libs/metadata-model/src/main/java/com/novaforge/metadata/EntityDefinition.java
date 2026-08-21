@@ -86,8 +86,7 @@ public record EntityDefinition(
             fields = fields == null ? List.of() : List.copyOf(fields);
         }
 
-        @JsonIgnore
-        public boolean isUnique() {
+        public boolean uniqueOn() {
             return Boolean.TRUE.equals(unique);
         }
     }

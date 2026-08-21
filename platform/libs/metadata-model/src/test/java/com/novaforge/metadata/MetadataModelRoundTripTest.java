@@ -90,7 +90,7 @@ class MetadataModelRoundTripTest {
         assertThat(reference.defaultValue())
                 .isEqualTo(new DefaultValue.SequenceReference("entryNumber"));
         assertThat(reference.length()).isEqualTo(32);
-        assertThat(entry.relationship("lines").orElseThrow().cascadesDelete()).isTrue();
+        assertThat(entry.relationship("lines").orElseThrow().cascadeOn()).isTrue();
         assertThat(entry.validations()).hasSize(1);
         assertThat(entry.indexes()).hasSize(1);
     }

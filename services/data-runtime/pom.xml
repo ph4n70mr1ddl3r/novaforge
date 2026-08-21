@@ -8,15 +8,18 @@
     <groupId>com.novaforge</groupId>
     <artifactId>novaforge-parent</artifactId>
     <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../../pom.xml</relativePath>
   </parent>
 
-  <artifactId>novaforge-services</artifactId>
+  <artifactId>novaforge-data-runtime-parent</artifactId>
   <packaging>pom</packaging>
-  <name>NovaForge Services (aggregator)</name>
+  <name>NovaForge Data Runtime (aggregator)</name>
+  <description>Largest service — module split per ARCHITECTURE.md §7: engine → storage/authorization, api on top.</description>
 
   <modules>
-    <module>gateway</module>
-    <module>metadata-service</module>
-    <module>data-runtime</module>
+    <module>storage</module>
+    <module>authorization</module>
+    <module>engine</module>
+    <module>api</module>
   </modules>
 </project>

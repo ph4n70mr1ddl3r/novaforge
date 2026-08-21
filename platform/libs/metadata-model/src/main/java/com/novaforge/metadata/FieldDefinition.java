@@ -38,18 +38,15 @@ public record FieldDefinition(
         labelI18n = labelI18n == null ? java.util.Map.of() : java.util.Map.copyOf(labelI18n);
     }
 
-    @JsonIgnore
-    public boolean isRequired() {
+    public boolean requiredOn() {
         return Boolean.TRUE.equals(required);
     }
 
-    @JsonIgnore
-    public boolean isUnique() {
+    public boolean uniqueOn() {
         return Boolean.TRUE.equals(uniqueness);
     }
 
-    @JsonIgnore
-    public boolean isReadonly() {
+    public boolean readonlyOn() {
         return Boolean.TRUE.equals(readonly);
     }
 
