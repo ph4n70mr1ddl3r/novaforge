@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.novaforge</groupId>
+    <artifactId>novaforge-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>novaforge-expression-dsl</artifactId>
+  <name>NovaForge Expression DSL</name>
+  <description>expr/v1 — the single grammar behind validations, formulas, flow guards,
+    and UI bindings (PHASE-2 §7/Annex A, ADR-008 #3): JVM parser/evaluator with an
+    injectable clock, compile-time reference resolution, and the conformance corpus
+    shared with the TS twin.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-common-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>tools.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

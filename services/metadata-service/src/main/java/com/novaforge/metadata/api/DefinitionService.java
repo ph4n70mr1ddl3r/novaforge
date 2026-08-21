@@ -6,6 +6,8 @@ import com.novaforge.common.error.ProblemErrors;
 import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.DefinitionValidator;
 import com.novaforge.metadata.EntityDefinition;
+import com.novaforge.expression.Expression;
+import com.novaforge.expression.ExpressionException;
 import com.novaforge.metadata.events.MetadataPublishEventPublisher;
 import com.novaforge.metadata.store.MetadataStore;
 import java.util.ArrayList;
@@ -32,6 +34,7 @@ public class DefinitionService {
 
     public AppDefinition createApp(UUID tenantId, UUID actorId, AppDefinition draft) {
         ProblemErrors errors = DefinitionValidator.validate(draft);
+        compileCheckExpressions(draft, errors);
         if (!errors.isEmpty()) {
             throw validationFailure("app definition failed save validation", errors);
         }
@@ -67,6 +70,7 @@ public class DefinitionService {
         entities.add(entity);
         AppDefinition candidate = withEntities(current, entities);
         ProblemErrors errors = DefinitionValidator.validate(candidate);
+        compileCheckExpressions(candidate, errors);
         if (!errors.isEmpty()) {
             throw validationFailure("entity definition failed save validation", errors);
         }
@@ -104,6 +108,7 @@ public class DefinitionService {
                                              boolean acknowledgeDataImpact) {
         AppDefinition draft = store.requireApp(tenantId, appId);
         ProblemErrors errors = DefinitionValidator.validate(draft);
+        compileCheckExpressions(draft, errors);
         if (!errors.isEmpty()) {
             throw validationFailure("publish rejected: drafts fail validation", errors);
         }
@@ -137,6 +142,44 @@ public class DefinitionService {
         return store.latestPublished(tenantId, appId).orElseThrow(() ->
                 new PlatformException(PlatformErrorCode.NOT_FOUND,
                         "app " + appId + " has no published version"));
+    }
+
+    /**
+     * Expression compile-check (PHASE-2 §7): every expression slot is parsed and its
+     * references resolved against the entity's field apiNames. Validation rules may
+     * read the clock; formula fields may not (PHASE-3 §3 — determinism of stored
+     * values). Slots stay inert until Phase 3 activates write-path evaluation.
+     */
+    private static void compileCheckExpressions(AppDefinition app, ProblemErrors errors) {
+        List<ProblemErrors.FieldError> found = new ArrayList<>(errors.errors());
+        for (EntityDefinition entity : app.entities()) {
+            java.util.Set<String> fields = new java.util.LinkedHashSet<>();
+            entity.fields().forEach(f -> fields.add(f.apiName()));
+            entity.relationships().forEach(r -> fields.add(r.apiName()));
+            for (EntityDefinition.ValidationRule rule : entity.validations()) {
+                check(rule.expression(), entity, fields, true, found);
+            }
+            for (com.novaforge.metadata.FieldDefinition field : entity.fields()) {
+                if (field.formula() != null) {
+                    check(field.formula(), entity, fields, false, found);
+                }
+            }
+        }
+        if (!found.isEmpty()) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "expression compile-check failed", new ProblemErrors(found, List.of()));
+        }
+    }
+
+    private static void check(String source, EntityDefinition entity, java.util.Set<String> fields,
+                              boolean allowClock, List<ProblemErrors.FieldError> errors) {
+        try {
+            Expression.parse(source)
+                    .compileCheck(Expression.CompilePolicy.recordContext(fields, allowClock));
+        } catch (ExpressionException e) {
+            errors.add(new ProblemErrors.FieldError(
+                    entity.apiName() + ".expressions", source + " — " + e.getMessage(), source));
+        }
     }
 
     // --- compatibility check (§4) ---

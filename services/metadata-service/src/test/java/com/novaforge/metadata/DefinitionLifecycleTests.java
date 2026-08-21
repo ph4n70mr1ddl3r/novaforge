@@ -209,6 +209,57 @@ class DefinitionLifecycleTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("expression slots compile-check at save: unresolved references and clock-in-formulas reject")
+    void expressionCompileCheck() throws Exception {
+        // validation rule referencing an unknown field → 4000 with the expression error
+        mockMvc.perform(post("/api/v1/metadata/apps")
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "apiName": "ExprApp", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 } ],
+                                  "validations": [
+                                    { "name": "cap", "expression": "amount < ceilling",
+                                      "message": "too much" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("4000"))
+                .andExpect(jsonPath("$.errors[0].field").value(
+                        org.hamcrest.Matchers.containsString("expressions")));
+
+        // formula with a clock function → rejected (PHASE-3 §3 determinism)
+        mockMvc.perform(post("/api/v1/metadata/apps")
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "apiName": "ExprApp2", "entities": [ { "apiName": "Thing",
+                                  "fields": [
+                                    { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 },
+                                    { "apiName": "stale", "type": "boolean",
+                                      "formula": "today() - opened > 365" },
+                                    { "apiName": "opened", "type": "date" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("clock")));
+
+        // clean validation rule (clock allowed in the validations slot) saves
+        mockMvc.perform(post("/api/v1/metadata/apps")
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "apiName": "ExprApp3", "entities": [ { "apiName": "Thing",
+                                  "fields": [
+                                    { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 },
+                                    { "apiName": "opened", "type": "date" } ],
+                                  "validations": [
+                                    { "name": "stale", "expression": "today() - opened > 365",
+                                      "message": "stale entry" } ] } ] }
+                                """))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("app delete cascades (draft workspace) — publish history stays queryable per app row removal")
     void deleteAppCascades() throws Exception {
         MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps")
