@@ -26,7 +26,7 @@ SPI (ARCHITECTURE.md §4), sequences, soft delete, optimistic locking, the inter
 metadata-publish transport, the K8s dev environment (if slipped from Phase 0), and the
 1M-row load test (PLAN.md §6: load-test now, not in Phase 7).
 
-Out of scope: expression validation rules, formula/roll-up fields, hooks, and the Kafka
+Out of scope: expression defaults and validation rules, formula/roll-up fields, hooks, and the Kafka
 event spine (Phase 3 — ADR-008; the schema *slots* for expressions are accepted but
 inert until then, mirroring ADR-008's grammar-fixed-activates-later pattern); role
 editors and field-level security (Phase 2), record sharing (Phase 4 — PHASE-2 spec §9);
@@ -51,7 +51,7 @@ Charters were recorded in PHASE-0 §5.4 (empty modules rot, so they are created 
 
 | Lib | Contents | Notes |
 |---|---|---|
-| `metadata-model` | definition POJOs + JSON Schema v0: app, entity, field, relationship, **page** | Page schema is reserved now (PLAN.md §8 item 3) but authored only from Phase 2. `formula`, `rollup`, and expression `validations` slots are schema-accepted, inert until Phase 3 (the formula/roll-up split: PHASE-3 §3). |
+| `metadata-model` | definition POJOs + JSON Schema v0: app, entity, field, relationship, **page** | Page schema is reserved now (PLAN.md §8 item 3) but authored only from Phase 2. `formula`, `rollup`, expression `default`, and expression `validations` slots are schema-accepted, inert until Phase 3 (the formula/roll-up split: PHASE-3 §3). |
 | `security-context` | tenant/actor propagation: async-executor wrappers, Kafka header constants (producer/consumer arrive with the Phase 3 spine), mock-test fixtures | Builds on `common-core`'s `TenantContext` (PHASE-0 §5.2). |
 | `test-support` | Testcontainers 2 bases: Postgres with RLS fixtures, compose-stack clients | Podman-socket env documented in README on first use (PHASE-0 §10). |
 
@@ -139,7 +139,9 @@ Query DSL v1 (JSON; golden-tested against generated SQL, §9):
 
 Operators v1: `and`/`or` nesting, `eq ne in gt gte lt lte contains isNull`
 (`contains` on text fields only). Aggregates: `count sum avg min max` with optional
-`groupBy`. Paging: offset + total count, max page size 200 (§12 Q2, resolved) — keyset joins only if the §10 load test shows deep-offset pain. The GET list endpoint carries the same DSL with
+`groupBy`. Paging: offset + total count, max page size 200 — over-limit requests reject
+(`VALIDATION_FAILED`), never silently clamp, and the sibling caps (batch 500,
+inline children 100) read the same way (§12 Q2, resolved) — keyset joins only if the §10 load test shows deep-offset pain. The GET list endpoint carries the same DSL with
 **one canonical encoding, pinned**: each of `filter`/`sort`/`page` holds its DSL node
 as compact JSON, percent-encoded per RFC 3986 (`filter=%7B%22and%22%3A…%7D`) — no
 bespoke flattening; anything richer — deep nesting,
@@ -147,7 +149,7 @@ aggregates — goes to `POST /{entity}/query`.
 
 Write path (the Phase 1 slice of the ARCHITECTURE.md §2.4 pipeline): resolve metadata →
 authorize (§7) → apply static field `default`s (expression defaults arrive with
-Phase 3 write-path evaluation — PHASE-2 §7) → field validations → persist with optimistic locking → event seam
+Phase 3 write-path evaluation — PHASE-2 §7; landing: PHASE-3 §3) → field validations → persist with optimistic locking → event seam
 (below) → shaped projection. Field validations v1: `required`, type, `length`,
 `precision`/`scale` (BigDecimal, never doubles — ARCHITECTURE.md §4 money rule), enum
 membership, `uniqueness` (tenant-scoped, live rows only — a soft-deleted tombstone

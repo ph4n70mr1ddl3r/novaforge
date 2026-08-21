@@ -21,7 +21,7 @@ Deliver the Phase 3 exit: *order totals computed, inventory reserved via a hook,
 code — verified by a builder-authored suite* (PLAN.md §5).
 
 In scope: the flow-IR engine with the closed primitive set (ADR-008); expression
-validation rules, formula fields, and roll-up summaries evaluated on the write path;
+defaults, validation rules, formula fields, and roll-up summaries evaluated on the write path;
 the Kafka event spine (record events, audit emission, `metadata.published` rebind);
 the `event-schemas` lib; **Audit Service v1** and **Script Engine v0** — the two
 landings the roadmap left implicit, pinned in §5/§6; the builder test harness v1
@@ -99,6 +99,10 @@ slots Phase 1 left inert:
   `SUM(lines.debit)` is the canonical case. Strategy: synchronous in-transaction
   recompute — the parent serializes, consistency wins in v1 (§13 Q2, resolved);
   revisit at dogfood scale.
+- **Expression defaults:** the field `default` attribute accepts shared-DSL
+  expressions, evaluated at the write path's `defaults` step before validations —
+  the PHASE-1 §5 / ARCHITECTURE.md §3 pin (static values are the Phase 1 form),
+  same JVM engine, compile-checked at save/publish like every other slot.
 
 The write path becomes the full ARCHITECTURE.md §2.4 chain: resolve metadata →
 authorize → defaults → formula/roll-up evaluation → validation rules → hooks →
@@ -125,7 +129,13 @@ persist with optimistic locking → events (§4) → shaped projection.
   (Phase 4), `connector.*`/`webhook.*`/`import.*` (Phase 6) — as
   `novaforge.<family>.*` shared topics with the same consumer-group/tenant-filter
   rules; a family's partition key is pinned when it lands (tenant-scoped at minimum,
-  record-scoped families keeping per-record ordering).
+  record-scoped families keeping per-record ordering). The Phase 3 base topology
+  also carries the audit-side families of §5: `novaforge.auth.*` (producer: the
+  deployed Keycloak event listener) and `novaforge.permission.*` (the Phase 2
+  permission-change shapes — role-assignment writes via the platform-admin API,
+  PHASE-2 §10; definition-publish permission changes already surface via
+  `metadata.published`), both tenant-scoped (`tenant_id`) under the same
+  consumer-group/tenant-filter rules.
 - **`event-schemas` lib lands** (the PHASE-0 §5.4 charter): contracts for all of the
   above, with round-trip tests.
 - Trace context propagates in Kafka headers (ARCHITECTURE.md §6) via the
@@ -279,7 +289,7 @@ spine consumer lag under the load-test write rate.
 | # | Task | Content | Acceptance criteria |
 |---|---|---|---|
 | T1 | Spine bootstrap + event-schemas | Outbox + relay + Kafka producer, `metadata.published` rebind, header propagation, contracts lib (§4) | Redis channel retired; relay-restart test loses nothing |
-| T2 | Write-path expressions | Validation rules + formula fields via the JVM engine (§3) | Formula stored at write; rule failure renders problem+json and `validation(rule)` |
+| T2 | Write-path expressions | Expression defaults, validation rules + formula fields via the JVM engine (§3) | Formula stored at write; defaults evaluated before validations; rule failure renders problem+json and `validation(rule)` |
 | T3 | Roll-up summaries | Child-write recompute, synchronous in-transaction (§3) | Exit-scenario totals correct in-transaction |
 | T4 | Flow engine + compiler | IR schema, publish-time compiler, executable primitives, triggers, failure policy (§2) | Compiled-graph execution; rejection matrix green |
 | T5 | Audit Service v1 | Consumer, partitioned store, read API (§5) | Field diffs queryable; append-only enforced |

@@ -63,7 +63,7 @@ Tenant
 | **Identity Service** | OIDC via deployed Keycloak — no bespoke service module (ARCHITECTURE.md §7); authentication, MFA, SSO federation (MFA/federation are deployed-Keycloak capabilities — realm activation deferred with demand); tenant/role administration data lives in the platform DB (ADR-002) |
 | **Metadata Service** | CRUD of app definitions: entities, fields, pages, rules (full owns-list: ARCHITECTURE.md §2.3); validation of definitions; versioning & change-sets; builder test-suite runner (ADR-010) |
 | **Data Runtime Service** | Generic record APIs driven by metadata; permission enforcement; query engine (filter/sort/page/aggregate); sequences; audit emission; in-process expression & field-validation engine (ADR-008 #3); platform-admin API — tenant provisioning + user→role assignments over the platform-DB authorization data (PHASE-2 spec §10) |
-| **Script Engine Service** | Sandboxed execution of user scripts (escape hatch per ADR-008); resource limits, warm pools — the expression DSL runs in-process in the Data Runtime, not here (ARCHITECTURE.md §2.5) |
+| **Script Engine Service** | Sandboxed execution of user scripts (escape hatch per ADR-008); resource limits, warm pools (deferred with demand — ADR-003 #4, PHASE-3 §6) — the expression DSL runs in-process in the Data Runtime, not here (ARCHITECTURE.md §2.5) |
 | **Workflow Service** | Flowable (BPMN) runtime, approvals, timers/tasks; state machines are metadata enforced on the Data Runtime write path (PHASE-4 spec §3) — this service consumes state-change events, it never mutates records |
 | **UI Builder Service** | Component catalog, builder sessions, preview/scaffolding (page/layout definitions persist as versioned metadata in the Metadata Service); no separate module in v1 — extracted on demand only (ARCHITECTURE.md §2.8, PHASE-2 spec §8) |
 | **Reporting Service** | Report definitions, execution against Data Runtime query API, chart data shaping, scheduled delivery |
@@ -125,7 +125,7 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 
 ### Phase 3 — Business Logic Engine (4–5 weeks)
 - Declarative-first per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md): flow IR + closed primitive set (setField, createRecord, updateRecord, publishEvent, callConnector, branch, iterate, requestApproval, transitionState); scripts demoted to escape hatch, script-ratio tracked (primitives backed by later-phase services — `requestApproval`/`transitionState` → Workflow in Phase 4, `callConnector` → Integration in Phase 6 — are fixed in the v1 grammar and activate as those services land)
-- Expression validation rules (extending Phase 1's field constraints), formula fields, roll-up summaries
+- Expression defaults, validation rules (extending Phase 1's field constraints), formula fields, roll-up summaries
 - Event hooks: flow-IR step graphs built from the primitive set (before/after save, on delete — v1 hooks run on the write path only, ARCHITECTURE.md §2.4; query-path hooks are deferred until a concrete need); sandboxed scripts only where primitives cannot express the logic
 - Kafka domain events emitted from Data Runtime
 - Builder test harness v1 per [ADR-010](./docs/adr/ADR-010-builder-test-harness.md): suites (fixtures → steps → assertions) over validations, formula/roll-up fields, and hook outcomes, run against a scratch tenant through the single write path — the concrete installment of ADR-008's "generated tests"

@@ -23,26 +23,26 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
            │   ┌──────────┐    ┌──────────────┐  ┌────────┐ ┌─────────┐  │
            │   │Identity  │    │Metadata Svc  │  │UI      │ │Reporting│  │
            │   │(Keycloak)│    │(design-time) │  │Builder │ │Service  │  │
-           │   └──────────┘    └──────┬───────┘  └────────┘ └─────────┘  │
+           │   └──────────┘    └───────┬──────┘  └────────┘ └─────────┘  │
            │                           │ applies versions                │
            │                           ▼                                 │
            │                   ┌───────────────┐     ┌──────────────┐    │
            │                   │Data Runtime   │◄───►│Script Engine │    │
-           │                   │Service (CRUD, │    │(GraalVM JS)  │     │
-           │                   │query DSL,     │    └──────────────┘     │
+           │                   │Service (CRUD, │     │(GraalVM JS)  │    │
+           │                   │query DSL,     │     └──────────────┘    │
            │                   │permissions)   │                         │
            │                   └───┬───────┬───┘                         │
            │         ┌─────────────┘       └─────────────┐               │
-           │         ▼                                     ▼             │
+           │         ▼                                   ▼               │
            │  ┌────────────┐                        ┌───────────┐        │
            │  │ PostgreSQL │                        │   Kafka   │        │
            │  │ (JSONB     │                        │ domain    │        │
            │  │  hybrid)   │                        │ events,   │        │
            │  └────────────┘                        │ audit     │        │
            │  ┌────────────┐                        └──┬──┬─────┘        │
-           │  │Redis (meta│              ┌────────────┘  │               │
-           │  │cache,seq) │              │               │               │
-           │  └────────────┘        ┌─────┴─────┐   ┌──────┴──────┐      │
+           │  │Redis (meta │              ┌────────────┘  │              │
+           │  │cache,seq)  │              │               │              │
+           │  └────────────┘        ┌─────┴─────┐   ┌─────┴───────┐      │
            │                        │Workflow   │   │Audit/Notify/│      │
            │                        │(Flowable) │   │Integration  │      │
            │                        └───────────┘   └─────────────┘      │
@@ -92,13 +92,13 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 - GraalVM polyglot (JS), `Context` per execution with:
   - CPU-time and heap caps, statement/loop watchdog
   - No host I/O; an explicit whitelisted API surface (`$record`, `$data.query` (the Data Runtime query API under the caller's authorization, §5 item 4 — scripts cannot bypass the single data path), `$http` only inside connector sandbox, `$log`)
-  - Warm context pool per tenant app version
-- The **expression DSL** (formulas, validation rules, flow guards per ADR-008; UI bindings per ADR-009) is **not evaluated here**: it is a pure, deterministic language served by the shared `expression-dsl` library (§7), used in-process by the Metadata Service (compile-checks, Phase 2) and the Data Runtime (write-path evaluation, Phase 3) — no sandbox needed. This service exists solely for GraalJS escape-hatch scripts.
+  - Warm context pool per tenant app version (deferred with demand — ADR-003 #4, PHASE-3 §6; v0 is `Context` per execution, and the §9 p95 < 20 ms warm target applies only once pools land)
+- The **expression DSL** (formulas, validation rules, flow guards per ADR-008; UI bindings per ADR-009) is **not evaluated here**: it is a pure, deterministic language served by the shared `expression-dsl` library (§7), used in-process by the Metadata Service (compile-checks, Phase 2) and the Data Runtime (write-path evaluation, Phase 3) — no sandbox needed. This service exists solely for GraalJS escape-hatch scripts — internal, no gateway route in v1: invoked by the Data Runtime's hooks and the Scheduler's `script` target (PHASE-3 §6, PHASE-4 §7).
 - Hook failure policy (flow-IR graphs and escape-hatch scripts alike): `beforeSave`/`beforeDelete` failure = abort transaction; `afterSave`/`afterDelete` failure = retry via Kafka (idempotency required).
 
 ### 2.6 Workflow Service
 - Flowable 7 embedded; process definitions authored as BPMN XML (v1 is editor-agnostic XML metadata — the visual designer defers with demand, PHASE-4 spec §9/§16).
-- Subscriptions to domain events can start processes (`on record.updated where status='submitted'`).
+- Subscriptions to domain events can start processes (`on record.updated where status='SUBMITTED'`).
 - **State machines** as first-class metadata (states, allowed transitions, guards in the platform expression DSL per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md)) — most ERP flows are state machines, not full BPMN. Enforcement sits on the Data Runtime write path, not here (PHASE-4 spec §3): this service consumes state-change events and never mutates records.
 - Human tasks exposed via task inbox API; approvals support parallel modes (`any`, unanimous `all`) — sequential chains arrive as a versioned mode on demand (PHASE-4 spec §1) — plus delegation, reassignment, escalation timers.
 
@@ -152,7 +152,7 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 
 Field types (v1): text, longText, richText, enum, boolean, int, long, **decimal(p,s)**, date, datetime, time, uuid, email, phone, url, json, lookup, child, m2m, file, money(currency-aware).
 
-Fields may carry an optional `group` label; default detail pages section on it (no group → a single default section — see the Phase 2 spec's default-resolver rules). Common field attributes: `required`, `uniqueness` (tenant-scoped over live rows only, lowered to a partial unique index — PHASE-1 spec §6), `readonly`, `default` (static values from Phase 1; expression defaults arrive with Phase 3 write-path evaluation — PHASE-1 spec §5), `length`, `precision`/`scale`, `group`, `formula` (own-record expression) and `rollup` (child-collection aggregate) — both evaluated at write time (§2.4); formulas cannot reference child collections (PHASE-3 §3). Entities may likewise carry an optional `module` label; app navigation groups entities by it (no module → a default group, mirroring field groups). Labels are translation-ready: every definition that carries a `label` (entity, field, report, …) also accepts an optional `label_i18n` per-locale map — the PHASE-2 §13 Q3 decision (translation-ready from the start, editor deferred); the editor and the runtime fallback chain land in Phase 8 (PHASE-8 spec §7).
+Fields may carry an optional `group` label; default detail pages section on it (no group → a single default section — see the Phase 2 spec's default-resolver rules). Common field attributes: `required`, `uniqueness` (tenant-scoped over live rows only, lowered to a partial unique index — PHASE-1 spec §6), `readonly`, `default` (static values from Phase 1; expression defaults arrive with Phase 3 write-path evaluation — PHASE-1 spec §5, PHASE-3 §3), `length`, `precision`/`scale`, `group`, `formula` (own-record expression) and `rollup` (child-collection aggregate) — both evaluated at write time (§2.4); formulas cannot reference child collections (PHASE-3 §3). Entities may likewise carry an optional `module` label; app navigation groups entities by it (no module → a default group, mirroring field groups). Labels are translation-ready: every definition that carries a `label` (entity, field, report, …) also accepts an optional `label_i18n` per-locale map — the PHASE-2 §13 Q3 decision (translation-ready from the start, editor deferred); the editor and the runtime fallback chain land in Phase 8 (PHASE-8 spec §7).
 
 ---
 

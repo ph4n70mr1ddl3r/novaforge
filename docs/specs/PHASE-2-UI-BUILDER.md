@@ -179,7 +179,8 @@ flow from field metadata into form defaults. Role changes re-resolve defaults
   (`platform/libs/expression-dsl`, ARCHITECTURE.md §7 — the same engine behind
   the Data Runtime's Phase 3 write-path evaluation), wired into the Metadata Service so
   expressions are compile-checked at save/publish (like props schemas). Server-side
-  evaluation of expression semantics in the write path (validation rules, formulas)
+  evaluation of expression semantics in the write path (expression defaults,
+  validation rules, formulas)
   arrives in Phase 3 — until then the write path is enforced by the Phase 1 field
   validations (required/type/uniqueness — PLAN.md §5 Phase 1 exit) plus field-level
   security (§9); client-side expression bindings remain UX sugar (security note below).

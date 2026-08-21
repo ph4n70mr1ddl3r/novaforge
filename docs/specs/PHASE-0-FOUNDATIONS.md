@@ -161,7 +161,7 @@ observability per §8 adds `io.micrometer:micrometer-registry-prometheus` and
 exporter joins when the tracing backend lands — Tempo, per §12 Q2's decision,
 alongside Phase 3 Kafka tracing — PHASE-3 §13/Q4).
 
-Routes (YAML only — ADR-007 #5; verified syntax for Gateway 5.0.x):
+Routes (YAML only — ADR-007 Consequences #5; verified syntax for Gateway 5.0.x):
 
 ```yaml
 spring:
@@ -275,7 +275,9 @@ containers.
 
 - JUnit 6; AssertJ; no JUnit 4 vintage anywhere.
 - Web slice tests use `spring-boot-starter-webmvc-test`; remember the relocated
-  `@AutoConfigureMockMvc` package (ADR-007 #3).
+  `@AutoConfigureMockMvc` package (ADR-007 Consequences #3 — the verified-changes
+  list, not the Decision list, whose item 3 is the upgrade-cadence rule; §6.3
+  carries the same package).
 - Testcontainers 2 coordinates `org.testcontainers:testcontainers-junit-jupiter`;
   Podman socket env (`TESTCONTAINERS_*`) documented in README when first used (Phase 1).
 - Rule: a test asserting an exact managed version (e.g. Framework 7.0.8) must fail

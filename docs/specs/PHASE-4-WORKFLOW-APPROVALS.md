@@ -58,7 +58,7 @@ pages (PHASE-2 deferral, unchanged).
 | `novaforge-notification-service` | Port 8088; gateway route `/api/v1/notifications/**` (inbox read + preferences). |
 | Compose | **Mailpit** joins the stack (SMTP 1025, UI 8025) as the local email sink. No other new infrastructure — the Postgres/Kafka/Redis instances are reused; each new service adds its own database on the shared Postgres (the PHASE-1 §6 pattern). |
 | `common-core` | Two error codes join the seed set: `STATE_TRANSITION("4010", 400)` and `SOD_VIOLATION("4011", 400)` (the PHASE-0 §5.2 set is a seed, not a ceiling). |
-| `event-schemas` | New contracts: the `task.*` lifecycle — `task.created/assigned` plus one event per §5 terminal status (`task.approved/rejected/delegated/escalated/cancelled`; there is no `completed` status to event), so delegation chains and record-delete cancellation are observable — plus `sla.warn/breach`, `notification.delivered`, `scheduler.job.run` (§7) — the first families joining the spine's shared-topic convention (`novaforge.<family>.*`, PHASE-3 §4). |
+| `event-schemas` | New contracts: the `task.*` lifecycle — `task.created/assigned` plus one event per §5 terminal status (`task.approved/rejected/delegated/escalated/cancelled`; there is no `completed` status to event), so delegation chains and record-delete cancellation are observable — plus `sla.warn/breach`, `notification.delivered`, `scheduler.job.run` (§7) — the first families joining the spine's shared-topic convention (`novaforge.<family>.*`, PHASE-3 §4), their partition keys pinned at landing per that section: `task.*`/`sla.*` keyed `tenant_id:task_id` (per-task ordering — a task's assigned → warn/breach → terminal transitions serialize, and a delegation chain rides each delegate task's own key, `contextRef`-linked), `notification.*`/`scheduler.*` tenant-scoped (`tenant_id`). |
 | `metadata-model` | New schemas: `StateMachineDefinition`, `SLADefinition`, `SharingRuleDefinition` (PermissionSet branch), `WorkflowDefinition` (BPMN process definitions, §9) — all four in ARCHITECTURE.md §2.3's owns-list (WorkflowDefinition since v0; the rest join it this phase). |
 
 ## 3. State Machines (first-class metadata, enforced on the write path)
@@ -168,8 +168,10 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
   §2.8 keeps escalation timers with embedded Flowable, not the Scheduler).
 - **Precedence over the primitive's own `timeout` — pinned:** a task's
   `sla`/`dueAt` come from a matching `SLADefinition` when one matches the scope;
-  otherwise the `requestApproval` step's own `timeout`/`escalateTo` apply (`warnAt`
-  defaulting to 0.8). The dedicated definition wins — the governed overlay beats
+  otherwise the `requestApproval` step's own `timeout`/`escalateTo` apply. `warnAt`
+  is optional on both paths and defaults to 0.8 — a matching `SLADefinition`
+  overrides it, and `warnAt: null` disables the warn timer outright. The
+  dedicated definition wins — the governed overlay beats
   the inline default, and both paths emit the same `sla.*` events. With neither an
   SLA nor the step's `timeout` present, the task carries no `dueAt` — no timer, no
   escalation — and stays open until resolved or cancelled (§5).
@@ -226,7 +228,7 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 - Flowable 7 embedded (ADR-004); process definitions are `WorkflowDefinition`
   metadata (versioned, promoted — ARCHITECTURE.md §2.3).
 - **Event-start subscriptions** per ARCHITECTURE.md §2.6:
-  `on record.updated where status='submitted'` — the subscription filter is a
+  `on record.updated where status='SUBMITTED'` — the subscription filter is a
   platform expression compiled at publish; matching spine events start the process
   (system principal).
 - v1 authors BPMN as XML metadata (import/editor-agnostic); the *visual* designer is
@@ -283,7 +285,7 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 
 ## 13. Security & Audit
 
-- AuthN/authZ as Phase 0–2: JWT at every service, tenant from claims, object-level
+- AuthN/authZ as Phase 0–2: JWT at every service, tenant from claims, route
   gate on new APIs (`/api/v1/workflow/**` = `user`+; reassign = admin/builder;
   `/api/v1/notifications/**` = `user`+, own inbox/preferences only;
   `GET /api/v1/scheduler/jobs` = `builder`+).

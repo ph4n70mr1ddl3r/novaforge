@@ -43,11 +43,11 @@ demands it, per PHASE-2 §1).
 
 ## 2. ERP App Scope (the metadata to author)
 
-| Module | Entities (all with state machines where noted) | Key mechanics |
+| Module | Entities (state machines where noted — here or §4) | Key mechanics |
 |---|---|---|
 | GL | `Account` (hierarchical lookup), `JournalEntry`/`JournalLine` (child), `AccountingPeriod` | Balanced validation (Phase 3); `DRAFT → POSTED` terminal state machine; **append-only**: posted entries never edited — corrections are reversal entries (PLAN.md §1 non-negotiable); gapless sequences for entry numbers |
-| AR/AP | `Customer`, `Vendor`, `Invoice`+lines, `CreditNote`, `Payment`, `DunningLetter` | Invoice numbering gapless; allocation flows (payment → invoice/credit memo); dunning as scheduled reports + letters (§11 Q2) |
-| Inventory | `Item`, `Receipt`, `Issue`, `StockLedger` (append-only movements) | **Weighted-average costing** (PLAN.md §5; §11 Q1); stock ledger = child movements with running cost roll-ups (Phase 3 roll-ups) |
+| AR/AP | `Customer`, `Vendor`, `Invoice`+lines, `CreditNote`, `Payment`, `DunningLetter` | Invoice machine `DRAFT → SUBMITTED → POSTED` (POSTED terminal — the §5 posting flow's `transitionState` target; `freezeOnTerminal` binds the journal entry, not the invoice — §2 GL / §3.1 — so settlement decrements `amountOutstanding` on the POSTED invoice, and aging selects rows by `status == 'POSTED' && amountOutstanding > 0`, the Phase 5 definition's filters — PHASE-5 §3); invoice numbering gapless; allocation flows (payment → invoice/credit memo); dunning as scheduled reports + letters (§11 Q2) |
+| Inventory | `Item`, `Receipt`, `Issue`, `StockLedger` (append-only movements — a terminal machine with `freezeOnTerminal`, §3.1) | **Weighted-average costing** (PLAN.md §5; §11 Q1); stock ledger = child movements with running cost roll-ups (Phase 3 roll-ups) |
 | Period close | Checklist driven by Phase 4 workflows | Tasks per close step (reconciliations, accruals); `AccountingPeriod` locking (§4) |
 | Financial reports | Trial balance, A/R aging (the Phase 5 exit artifact), P&L sketch, executive dashboard | All Phase 5 definitions |
 | Settings | Currencies, sequences, chart-of-accounts structure (the FX rate table is an app entity per the multi-currency pin below) | Settings metadata (ARCHITECTURE.md §2.3) |
@@ -67,9 +67,14 @@ is confirmed in practice:
 1. **`freezeOnTerminal` (posting/immutability primitive):** an `EntityDefinition`
    attribute (requiring a bound state machine) — when a record's state machine sits
    in a terminal state, *all* writes to the record are rejected with
-   `RECORD_FROZEN("4013", 400)` (today's Phase 4 state machines guard only the
-   state field). This is what makes the journal append-only in fact, not
-   convention.
+   `RECORD_FROZEN("4013", 400)`: field updates and deletes on the record, and
+   master-detail child writes into it — children are independently addressable
+   records (PHASE-1 §5), but the freeze covers the parent's whole document, so a
+   direct child create or delete naming the frozen parent and an inline child
+   array on a PATCH reject identically, and the check runs before roll-up
+   evaluation so a child write never recomputes a frozen parent (PHASE-3 §3).
+   (Today's Phase 4 state machines guard only the state field.) This is what
+   makes the journal append-only in fact, not convention.
 2. **`PeriodLock` (period locking):** activated when an `AccountingPeriod` record
    reaches `CLOSED` (§4's state machine — the period is an app entity, §2, not a
    Settings row); the Data Runtime write path rejects dated-into-closed-period
@@ -84,13 +89,19 @@ harness vocabulary to assert them (§9).
 
 - Close checklist = a Phase 4 workflow whose tasks are the close steps; owners are
   roles (controller, AR clerk, AP clerk).
-- `AccountingPeriod.status: OPEN → CLOSING → CLOSED` (state machine); `CLOSING`
+- `AccountingPeriod.status: OPEN → CLOSING → CLOSED` (state machine — `CLOSED`
+  deliberately non-terminal: the reopen transition below is a listed transition,
+  satisfying the write-path check of PHASE-4 §3); `CLOSING`
   blocks new postings except close journals — close journals are `JournalEntry`
   records carrying an app-defined `closeJournal: true` flag, and the posting guard
   rejects dated-into-`CLOSING` writes unless it is set (app metadata, no platform
   special-casing); `CLOSED` activates `PeriodLock` (§3.2).
-- Reopen is an audited admin action that requires un-freezing reversals — modeled
-  as its own approval flow (Phase 4), not a back door.
+- Reopen is an audited `CLOSED → OPEN` transition that resolves only through its
+  own Phase 4 approval flow (no back door). `PeriodLock` deactivates as its
+  activation condition ceases to hold — the status is no longer `CLOSED` (§3.2) —
+  and nothing is ever un-frozen: corrections inside a reopened period are still
+  reversal entries (append-only, §2 GL; `freezeOnTerminal` binds the journal
+  entry, not the period — §3.1).
 
 ## 5. What Runs Where (no surprises)
 
@@ -134,8 +145,10 @@ are pre-accepted pending confirmation; everything else earns its place.
 1. **Reconciliation suite (the exit):** book invoice → journal auto-created and
    balanced → approval → POSTED → trial balance nets to zero; A/R aging totals
    equal the GL control account (via `runReport` assertions, PHASE-5 §9).
-2. Immutability: PATCH on a posted entry rejected (`error(RECORD_FROZEN)`);
-   reversal entry posts and nets the original to zero.
+2. Immutability: PATCH on a posted entry rejected (`error(RECORD_FROZEN)`); a
+   direct `JournalLine` child create or delete naming the posted entry rejects
+   identically (document scope, §3.1); reversal entry posts and nets the
+   original to zero.
 3. `PeriodLock`: posting into a closed period rejected (`error(PERIOD_LOCKED)`);
    close checklist completes only with all tasks resolved.
 4. Costing: receipt → issue at weighted average, decimal-exact through the rounding

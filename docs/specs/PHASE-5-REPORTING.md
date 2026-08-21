@@ -42,7 +42,8 @@ reporting and dedicated pivot mechanics (never a v1 goal); cross-app federation.
 ```json
 { "id": "rep_ar_aging",
   "entity": "Invoice", "label": "A/R Aging",
-  "filters": [ { "field": "status", "op": "eq", "value": "OPEN" } ],
+  "filters": [ { "field": "status", "op": "eq", "value": "POSTED" },
+               { "field": "amountOutstanding", "op": "gt", "value": "0.00" } ],
   "groupBy": [ { "field": "customerName" }, { "field": "dueDate",
                  "buckets": [ { "label": "current", "expression": "today() - dueDate < 0" },
                               { "label": "0-30", "expression": "today() - dueDate >= 0 && today() - dueDate <= 30" },
