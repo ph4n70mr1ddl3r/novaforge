@@ -21,8 +21,9 @@ Deliver the Phase 4 exit: *purchase order requires manager approval above thresh
 with escalation* (PLAN.md §5), decomposed as a builder-authored, suite-verified
 journey:
 
-1. A `PurchaseOrder` entity carries a state machine
-   (`DRAFT → SUBMITTED → APPROVED | REJECTED → POSTED`) and a threshold field.
+1. A `PurchaseOrder` entity carries a state machine (`DRAFT → SUBMITTED →
+   APPROVED | REJECTED`; `APPROVED → POSTED`; REJECTED and POSTED terminal — the
+   §3 machine) and a threshold field.
 2. A submit flow branches on `total > threshold` → `requestApproval` (managers,
    all-must-approve, SLA + escalation).
 3. The submitting clerk is excluded from approval (segregation of duties).

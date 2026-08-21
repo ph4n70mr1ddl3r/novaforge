@@ -120,7 +120,9 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
   "fields": [
     { "apiName": "reference",  "type": "text", "length": 32, "required": true },
     { "apiName": "entryDate",  "type": "date", "required": true },
-    { "apiName": "status",     "type": "enum", "values": ["DRAFT","POSTED","REVERSED"] },
+    { "apiName": "status",     "type": "enum",
+      "values": ["DRAFT","POSTED"] },       // no REVERSED status: corrections are
+                                            // separate reversal entries (PHASE-7 §2)
     { "apiName": "periodId",   "type": "lookup", "target": "AccountingPeriod" },
     { "apiName": "totalDebit",  "type": "decimal", "precision": 18, "scale": 4,
       "rollup": "SUM(lines.debit)" },   // roll-up summary: child aggregate recomputed

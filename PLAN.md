@@ -143,7 +143,7 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 ### Phase 5 — Reporting & Dashboards (3–4 weeks)
 - Report builder (filters, groups, aggregates, charts), dashboard composer
 - Scheduled report delivery; CSV/XLSX export (direct downloads in Phase 5; async large-export streaming via the File Service — ARCHITECTURE.md §2.7 — activates when it lands in Phase 6); drill-down
-- Detailed spec (spec-driven): [docs/specs/PHASE-5-REPORTING.md](./docs/specs/PHASE-5-REPORTING.md) — reports compile to the query DSL over promoted fields (actor-scoped: sharing-rule row filters apply; the §9 "materialized path" = projection columns), dashboards ship as versioned catalog components (PHASE-2 Q4's deferral), sync export capped at 10k rows with the async handoff designed for Phase 6, and the Scheduler's dormant `report` target activates
+- Detailed spec (spec-driven): [docs/specs/PHASE-5-REPORTING.md](./docs/specs/PHASE-5-REPORTING.md) — reports compile to the query DSL over promoted fields (actor-scoped: sharing-rule row filters apply; the ARCHITECTURE.md §9 "materialized path" = projection columns), dashboards ship as versioned catalog components (PHASE-2 Q4's deferral), sync export capped at 10k rows with the async handoff designed for Phase 6, and the Scheduler's dormant `report` target activates
 - **Exit:** A/R aging report + executive dashboard
 
 ### Phase 6 — Integration Layer (3–4 weeks)
