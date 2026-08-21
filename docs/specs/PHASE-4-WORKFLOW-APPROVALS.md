@@ -301,8 +301,10 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
    breach → escalation to senior role; `error(SOD_VIOLATION)` when only the
    requester qualifies as approver.
 2. State machine: invalid transition rejected (`STATE_TRANSITION`); guard failure
-   rejected; terminal states immutable; `transitionState` respects the same checks;
-   create-with-noninitial rejected.
+   rejected; terminal states admit no transitions (the *state field* is what is
+   frozen — rejecting *all* writes to a terminal record is Phase 7's
+   `freezeOnTerminal` harvest, PHASE-7 §3.1); `transitionState` respects the same
+   checks; create-with-noninitial rejected.
 3. Suspension: flow resumes exactly once per resolution (idempotent replay of the
    completion event); cancel-on-record-delete cancels open tasks.
 4. Scheduler: ShedLock single-fire under concurrent leaders; misfire skips (§7);
