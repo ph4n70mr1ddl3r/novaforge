@@ -36,8 +36,9 @@ prioritized backlog item, not worked around silently.
    not done.
 
 Out of scope: platform features not demanded by the ERP (PLAN.md §6's scope rule
-runs in reverse here — the dogfood *is* the filter); FIFO costing (Q1); full dunning
-automation (Q2); the wizard/tab/mobile UI backlog (pulled only if this phase
+runs in reverse here — the dogfood *is* the filter); FIFO costing (deferred — §11 Q1,
+resolved; a logged gap); full dunning
+automation (deferred — §11 Q2, resolved); the wizard/tab/mobile UI backlog (pulled only if this phase
 demands it, per PHASE-2 §1).
 
 ## 2. ERP App Scope (the metadata to author)
@@ -45,8 +46,8 @@ demands it, per PHASE-2 §1).
 | Module | Entities (all with state machines where noted) | Key mechanics |
 |---|---|---|
 | GL | `Account` (hierarchical lookup), `JournalEntry`/`JournalLine` (child), `AccountingPeriod` | Balanced validation (Phase 3); `DRAFT → POSTED` terminal state machine; **append-only**: posted entries never edited — corrections are reversal entries (PLAN.md §1 non-negotiable); gapless sequences for entry numbers |
-| AR/AP | `Customer`, `Vendor`, `Invoice`+lines, `CreditNote`, `Payment`, `DunningLetter` | Invoice numbering gapless; allocation flows (payment → invoice/credit memo); dunning as scheduled reports + letters (Q2) |
-| Inventory | `Item`, `Receipt`, `Issue`, `StockLedger` (append-only movements) | **Weighted-average costing** (PLAN.md §5; Q1); stock ledger = child movements with running cost roll-ups (Phase 3 roll-ups) |
+| AR/AP | `Customer`, `Vendor`, `Invoice`+lines, `CreditNote`, `Payment`, `DunningLetter` | Invoice numbering gapless; allocation flows (payment → invoice/credit memo); dunning as scheduled reports + letters (§11 Q2) |
+| Inventory | `Item`, `Receipt`, `Issue`, `StockLedger` (append-only movements) | **Weighted-average costing** (PLAN.md §5; §11 Q1); stock ledger = child movements with running cost roll-ups (Phase 3 roll-ups) |
 | Period close | Checklist driven by Phase 4 workflows | Tasks per close step (reconciliations, accruals); `AccountingPeriod` locking (§4) |
 | Financial reports | Trial balance, A/R aging (the Phase 5 exit artifact), P&L sketch, executive dashboard | All Phase 5 definitions |
 | Settings | Currencies, sequences, chart-of-accounts structure (the FX rate table is an app entity per the multi-currency pin below) | Settings metadata (ARCHITECTURE.md §2.3) |
@@ -161,10 +162,10 @@ are pre-accepted pending confirmation; everything else earns its place.
 Dependency order: T1 → T2 → (T3, T4) → T5 → T6 → T7 → (T8, T9); T3 can start as
 soon as T2 confirms the gaps.
 
-## 11. Open Questions (both non-blocking)
+## 11. Resolved Questions (decided 2026-08-21, per the recommendations; both were non-blocking scope pins)
 
-- **Q1 — Costing method first:** weighted-average only (PLAN.md names it) vs FIFO
-  alongside. *Recommendation: weighted-average; FIFO is a logged gap with the lot
-  machinery already half-present (StockLedger).*
-- **Q2 — Dunning scope:** letters only vs full escalation chains. *Recommendation:
-  letters + scheduler; chains are a Phase 4 escalation reuse if demanded.*
+- **Q1 — Costing method first: DECIDED — weighted-average only.** FIFO is a
+  logged gap — the lot machinery is already half-present (StockLedger) — and joins
+  as a versioned feature when the gap log demands it.
+- **Q2 — Dunning scope: DECIDED — letters + scheduler.** Full escalation chains
+  are a Phase 4 escalation reuse if the dogfood demands them.

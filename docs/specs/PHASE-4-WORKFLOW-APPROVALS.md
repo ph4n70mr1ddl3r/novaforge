@@ -13,7 +13,7 @@
 > | Date | 2026-08-16 |
 > | Owner | Platform team |
 > | Estimate | 4–5 weeks (per PLAN.md §5) |
-> | Depends on | Phase 3 (flow engine + spine + harness, system-principal direction Q1) + Phase 2 (RBAC roles for approver/sharing semantics) |
+> | Depends on | Phase 3 (flow engine + spine + harness, system-principal decision — PHASE-3 §13 Q1, resolved) + Phase 2 (RBAC roles for approver/sharing semantics) |
 
 ## 1. Objective & Exit Criteria — and the SDD Working Agreement
 
@@ -35,11 +35,11 @@ contract. Work proceeds task by task (§15); a task is done when its acceptance
 criteria pass — and wherever the behavior is expressible as an ADR-010 suite, the
 acceptance criteria *are* suites run through the Phase 3 harness. If implementation
 discovers a design change, the spec changes first (its own commit), then the code.
-No design decisions are deferred to implementation time; the only open items are
-§16, both non-blocking.
+No design decisions are deferred to implementation time; the former §16 open
+items are resolved scope pins (both non-blocking).
 
-Out of scope: BPMN *visual* designer (Q1 — execution and event-starts ship, the
-canvas waits for demand); scheduled report delivery (Phase 5 registers consumers);
+Out of scope: BPMN *visual* designer (deferred until demand — §16 Q1, resolved;
+execution and event-starts ship); scheduled report delivery (Phase 5 registers consumers);
 multi-level escalation chains (v1 is single-level, §6); sequential approval chains
 (v1 modes are `any` and parallel-unanimous `all`, §4 — sequential arrives as a
 versioned mode when a flow demands it, the same policy as every primitive growth);
@@ -50,7 +50,7 @@ pages (PHASE-2 deferral, unchanged).
 
 | Addition | Detail |
 |---|---|
-| `novaforge-workflow-service` | Port 8086; gateway route `/api/v1/workflow/**` (already anticipated by ARCHITECTURE.md §2.1). Flowable 7 embedded. **ADR-004 moves Proposed → Accepted with a written file at phase start** (the ARCHITECTURE.md §8 convention). |
+| `novaforge-workflow-service` | Port 8086; gateway route `/api/v1/workflow/**` (already anticipated by ARCHITECTURE.md §2.1). Flowable 7 embedded. **ADR-004 is accepted ahead of implementation (file written, ARCHITECTURE.md §8); this phase's landing confirms its pins.** |
 | `novaforge-scheduler-service` | Port 8087; no gateway route for administration — the registry is publish-driven, never written over REST (§7). The gateway routes exactly one Scheduler path, the read-only status route serving §11's builder visibility: `GET /api/v1/scheduler/jobs` (builder role; browser apps reach APIs via the gateway — PHASE-2 §2) — no write or admin route exists. |
 | `novaforge-notification-service` | Port 8088; gateway route `/api/v1/notifications/**` (inbox read + preferences). |
 | Compose | **Mailpit** joins the stack (SMTP 1025, UI 8025) as the local email sink. No other new infrastructure — the Postgres/Kafka/Redis instances are reused; each new service adds its own database on the shared Postgres (the PHASE-1 §6 pattern). |
@@ -102,7 +102,7 @@ family exists) — and never mutates records itself.
 ## 4. Approvals & Durable Flow Suspension (`requestApproval` activates)
 
 **Execution context — pinned:** engine-driven actions (flows, transitions,
-escalations) run as the per-app **system principal** (PHASE-3 §13/Q1's direction);
+escalations) run as the per-app **system principal** (the PHASE-3 §13 Q1 decision);
 human actions (approve, reject, delegate, reassign) run as the acting user. Both are
 audited (ARCHITECTURE.md §5).
 
@@ -224,7 +224,7 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
   platform expression compiled at publish; matching spine events start the process
   (system principal).
 - v1 authors BPMN as XML metadata (import/editor-agnostic); the *visual* designer is
-  Q1 (§16). State machines + approvals (§3–§6) cover the ERP-standard flows; full
+  deferred until demand (§16 Q1, resolved). State machines + approvals (§3–§6) cover the ERP-standard flows; full
   BPMN is the long tail.
 - In-process BPMN timers (escalation-style) stay inside Flowable (ARCHITECTURE
   §2.8) — the Scheduler never fires BPMN timers.
@@ -235,7 +235,7 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
   `{ entity, type: owner | roleHierarchy | criteria, roles[], criteria? }`.
 - **Role hierarchy — pinned:** roles carry an optional numeric `level` (lower =
   more senior); a user sees records owned by users holding *less* senior roles.
-  Single numeric level in v1 (Q2, §16); an arbitrary hierarchy graph is backlog.
+  Single numeric level in v1 (§16 Q2, resolved); an arbitrary hierarchy graph is backlog.
 - `owner`: creator (or an explicit owner field) plus named roles; `criteria`: records
   matching a compiled expression shared with the named roles.
 - **Enforcement:** rules are evaluated into row filters appended to every query, and
@@ -329,11 +329,11 @@ Dependency order: T1 → (T2, T4) → (T3, T5) → T6 → T11 → T12. Parallel 
 T7 after T1; T8 after T4; T9 from Phase 2 substrate (its §14.5 visibility suites
 ride T11's `queryRecord`); T10 staged as its engines land.
 
-## 16. Open Questions (both non-blocking)
+## 16. Resolved Questions (decided 2026-08-21, per the recommendations; both were non-blocking scope pins)
 
-- **Q1 — BPMN visual designer:** ship a minimal canvas now or wait for demand.
-  *Recommendation: wait — state machines + approvals cover the ERP standard; the
-  XML-metadata path keeps BPMN usable meanwhile.*
-- **Q2 — Role-hierarchy model:** single numeric `level` (v1 pin, §10) vs an
-  arbitrary hierarchy graph. *Recommendation: numeric level now; the graph is a
-  metadata-only upgrade later if dogfooded reporting lines demand it.*
+- **Q1 — BPMN visual designer: DECIDED — wait for demand.** State machines +
+  approvals cover the ERP standard; the XML-metadata path keeps BPMN usable
+  meanwhile. A canvas is a backlog item pulled when a dogfooded flow demands it.
+- **Q2 — Role-hierarchy model: DECIDED — single numeric `level`** (the §10 pin).
+  An arbitrary hierarchy graph is a metadata-only upgrade later if dogfooded
+  reporting lines demand it.

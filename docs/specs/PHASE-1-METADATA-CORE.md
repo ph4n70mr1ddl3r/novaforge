@@ -139,7 +139,7 @@ Query DSL v1 (JSON; golden-tested against generated SQL, §9):
 
 Operators v1: `and`/`or` nesting, `eq ne in gt gte lt lte contains isNull`
 (`contains` on text fields only). Aggregates: `count sum avg min max` with optional
-`groupBy`. Paging model is Q2 (§12). The GET list endpoint carries the same DSL with
+`groupBy`. Paging: offset + total count, max page size 200 (§12 Q2, resolved) — keyset joins only if the §10 load test shows deep-offset pain. The GET list endpoint carries the same DSL with
 **one canonical encoding, pinned**: each of `filter`/`sort`/`page` holds its DSL node
 as compact JSON, percent-encoded per RFC 3986 (`filter=%7B%22and%22%3A…%7D`) — no
 bespoke flattening; anything richer — deep nesting,
@@ -189,7 +189,7 @@ the data-plane tables, so it owns their DDL, reacting to `metadata.published`
 (ARCHITECTURE.md §2.3/§4). DDL happens at publish time only, never on the hot path.
 
 - `rec_records` base table plus per-entity projections exactly per ADR-001's recorded
-  variant (§2); the projection promotion policy is Q3 (§12).
+  variant (§2); the projection promotion policy is Q3's decision (§12): fields named in entity-level index declarations and unique constraints, plus display and lookup fields, promote — the spike's numbers confirm the cutoff, not the policy.
 - Field `uniqueness` (§5) lowers to a **partial** unique index scoped `(tenant_id, …)`
   over live rows only (`CREATE UNIQUE INDEX … WHERE NOT deleted`) — on the promoted
   column, or a JSONB expression unique index on the base table, per ADR-001's
@@ -225,7 +225,8 @@ the data-plane tables, so it owns their DDL, reacting to `metadata.published`
   (`admin`, `builder`, `user`) as a bootstrap matrix in the platform DB — not yet
   metadata; Phase 2's app-defined roles arrive as versioned `PermissionSet` metadata
   (ARCHITECTURE.md §2.3) with user→role assignments as tenant data (PHASE-2 spec §9).
-  The default policy is Q1 (§12); the gate exists so Phase 2 tightens policy rather
+  The default policy fails closed (§12 Q1, resolved): `admin`/`builder` full CRUD on
+  app entities, `user` denied until Phase 2 grants are authorable; the gate exists so Phase 2 tightens policy rather
   than reworking the write path.
 - Errors: per-service `@RestControllerAdvice` rendering `ProblemErrors` (RFC 7807 with
   common-core codes — the PHASE-0 §5.2 deferral lands here).
@@ -234,10 +235,11 @@ the data-plane tables, so it owns their DDL, reacting to `metadata.published`
 
 ## 8. Environments & CI
 
-- **Kind-on-Podman + Helm** lands now if not landed as the Phase 0 stretch goal
-  (PHASE-0 Q3 recommendation; PLAN.md §5): the full stack (gateway, both services,
+- **Kind-on-Podman + Helm** lands now — the PHASE-0 §12 Q3 decision slipped the
+  cluster here (PLAN.md §5): the full stack (gateway, both services,
   compose infra equivalents) deploys to the cluster; Skaffold's Podman runner covers
-  the inner loop (ARCHITECTURE.md §6). Timing is Q4 (§12).
+  the inner loop (ARCHITECTURE.md §6). Timing: week-1 parallel track (§12 Q4,
+  resolved) — it is also the Phase 2 preview path.
 - **CI:** Testcontainers jobs land now, wiring the `quay.io/podman/stable`
   Podman-socket runner label (the PHASE-0 §9 deferral); the README documents the
   Podman socket env on first use (PHASE-0 §10).
@@ -283,28 +285,28 @@ itself stays in ADR-001.
 | T6 | Write path | CRUD + validations + defaults + optimistic lock + soft delete (§5) | Phase 1 exit demo passes |
 | T7 | Query path | List + aggregate + batch (§5) | Golden-SQL suite green; 100k fixture served via server-side paging only |
 | T8 | Sequences + idempotency | `cached`/`gapless` modes; `Idempotency-Key` (§5) | Concurrent allocation correct; key replay returns the original outcome |
-| T9 | Authorization gate | Object-level matrix + seeded roles + default policy (§7, Q1) | Denied role → 403 `FORBIDDEN`; matrix read from the platform DB; ADR-002 + ADR-006 files written (ARCHITECTURE.md §8) |
+| T9 | Authorization gate | Object-level matrix + seeded roles + fail-closed default policy (§7) | Denied role → 403 `FORBIDDEN`; matrix read from the platform DB; implementation conforms to ADR-002 + ADR-006 (both accepted ahead — ARCHITECTURE.md §8) |
 | T10 | K8s + CI expansion | Kind/Helm/Skaffold; Testcontainers CI job; ArchUnit rules (§8) | Full stack on Kind; PR integration green on the Podman runner |
 | T11 | Load test + exit review | 1M-row run vs §10; walk the PLAN §5 exit criteria | Targets met, or ADR-001 adjusted with a re-run plan |
 
 Dependency order: T1 → (T2, T3) → T4 → T5 → T6 → (T7, T8, T9) → T11; T10 runs as a
 parallel track from week 1 (environment work blocks nothing above).
 
-## 12. Open Questions
+## 12. Resolved Questions (decided 2026-08-21, per the recommendations)
 
-Closure points: Q3 before T5 (post-spike), Q2 before T7, Q1 before T9; Q4 is a
-week-1 scheduling call.
+Q1–Q4 carried recommendations; all are decided. Q3's cutoff confirmation remains a
+spike deliverable (§2) — the policy is fixed, the numbers validate it.
 
-- **Q1 — Default authorization policy** until Phase 2 role editors exist.
-  *Recommendation: fail closed — `admin`/`builder` full CRUD on app entities, `user`
-  denied until grants are authorable (consistent with PHASE-2 §9's fail-closed
-  testing).*
-- **Q2 — Paging model:** offset + total count (builder lists need totals) vs cursor.
-  *Recommendation: offset, max page size 200; add keyset if the load test shows
-  deep-offset pain.*
-- **Q3 — Projection promotion policy:** which fields become generated columns.
-  *Recommendation: fields named in explicit index declarations (the entity-level
-  `indexes` of ARCHITECTURE.md §3) and unique constraints, plus automatic promotion
-  of display and lookup fields; spike numbers confirm the cutoff.*
-- **Q4 — Kind cluster timing:** week-1 parallel track vs after exit criteria.
-  *Recommendation: week 1 — it is also the Phase 2 preview path (Skaffold).*
+- **Q1 — Default authorization policy: DECIDED — fail closed.** `admin`/`builder`
+  hold full CRUD on app entities; `user` is denied until Phase 2's role editors
+  make grants authorable (consistent with PHASE-2 §9's fail-closed testing).
+- **Q2 — Paging model: DECIDED — offset + total count**, max page size 200 (builder
+  lists need totals). Keyset paging joins only if the §10 load test shows
+  deep-offset pain.
+- **Q3 — Projection promotion policy: DECIDED —** fields named in entity-level
+  `indexes` declarations (ARCHITECTURE.md §3) and unique constraints promote,
+  plus automatic promotion of display and lookup fields; the spike's measurements
+  confirm the cutoff, not the policy.
+- **Q4 — Kind cluster timing: DECIDED — week-1 parallel track** (also the Phase 2
+  preview path, Skaffold); environment work blocks nothing in the dependency
+  order (§11).

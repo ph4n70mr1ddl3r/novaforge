@@ -70,7 +70,9 @@ and headless CI runs (Phase 8 — ADR-010 #5); report targets (Phase 5).
 - **Failure policy** (ARCHITECTURE.md §2.5), uniform for flows and scripts:
   `beforeSave`/`beforeDelete` failure aborts the transaction; `afterSave`/
   `afterDelete` failures retry via the spine with idempotent consumers.
-- Hooks v1 run on the write path only (PLAN.md §5). Execution context is Q1 (§13).
+- Hooks v1 run on the write path only (PLAN.md §5). Execution context: the per-app
+  system principal for declarative flows, the calling user for scripts — both
+  audited (§13 Q1, resolved; ARCHITECTURE.md §5 item 4).
 
 ## 3. Expressions on the Write Path
 
@@ -94,7 +96,9 @@ slots Phase 1 left inert:
   the governing clock.
 - **Roll-up summaries:** parent aggregates (`SUM/COUNT/MIN/MAX/AVG`) over child
   collections, recomputed in the child's write transaction — the sketch's
-  `SUM(lines.debit)` is the canonical case. Strategy is Q2 (§13).
+  `SUM(lines.debit)` is the canonical case. Strategy: synchronous in-transaction
+  recompute — the parent serializes, consistency wins in v1 (§13 Q2, resolved);
+  revisit at dogfood scale.
 
 The write path becomes the full ARCHITECTURE.md §2.4 chain: resolve metadata →
 authorize → defaults → formula/roll-up evaluation → validation rules → hooks →
@@ -111,7 +115,7 @@ persist with optimistic locking → events (§4) → shaped projection.
   diffs for audit) and audit events (§5). `metadata.published` rebinds from Redis
   pub/sub to the spine — same envelope, consumer-side swap only (PHASE-1 spec §4);
   the Redis channel is retired.
-- **Topology (Q3, §13):** shared topics `novaforge.record.*` / `novaforge.metadata.*`,
+- **Topology (§13 Q3, resolved):** shared topics `novaforge.record.*` / `novaforge.metadata.*`,
   partition key `tenant_id:entity_id:record_id` — true per-record ordering: `entity_id`
   is the entity-*definition* id, so a key without the record id would order an
   entity's whole stream per tenant rather than each record's events (the §10.3
@@ -156,8 +160,8 @@ the Phase 7 dogfood's procedural cases (weighted-average costing, FIFO lots,
 dunning — ADR-008's known limit) have no outlet.
 
 - New service `novaforge-script-engine` (port 8084; internal — hooks invoke it, no
-  gateway routes in v0). ADR-003 moves Proposed → Accepted with a written file at
-  landing (the ARCHITECTURE.md §8 convention). The service keeps no database of
+  gateway routes in v0). ADR-003 is accepted ahead of implementation (file written,
+  ARCHITECTURE.md §8); this landing confirms its caps and surface pins. The service keeps no database of
   its own — scripts are versioned artifacts in the Metadata Service (ADR-008 #4)
   and executions are stateless; the PHASE-1 §6 per-service-DB pattern applies only
   to services with their own state.
@@ -237,9 +241,10 @@ The flow/script designer was explicitly deferred out of Phase 2 into Phase 3
 
 ## 9. Observability Expansion (closes the PHASE-0 §8 deferral)
 
-Kafka tracing demands the backend (PHASE-0 §8/Q2): **Grafana Tempo (OTLP)** joins
-the compose stack, the OTLP exporter activates on all services, and **Loki** joins in
-the same expansion (PLAN.md §4). The full OTel collector stays deferred (Q4, §13).
+Kafka tracing demands the backend (the PHASE-0 §12 Q2 decision): **Grafana Tempo
+(OTLP)** joins the compose stack, the OTLP exporter activates on all services, and **Loki** joins in
+the same expansion (PLAN.md §4). The full OTel collector stays deferred (§13 Q4,
+resolved — Tempo direct-to, no collector).
 New dashboards: Kafka consumer lag, hook-duration histograms, script ratio per app
 version, suite pass rates.
 
@@ -275,10 +280,10 @@ spine consumer lag under the load-test write rate.
 |---|---|---|---|
 | T1 | Spine bootstrap + event-schemas | Outbox + relay + Kafka producer, `metadata.published` rebind, header propagation, contracts lib (§4) | Redis channel retired; relay-restart test loses nothing |
 | T2 | Write-path expressions | Validation rules + formula fields via the JVM engine (§3) | Formula stored at write; rule failure renders problem+json and `validation(rule)` |
-| T3 | Roll-up summaries | Child-write recompute (§3, Q2) | Exit-scenario totals correct in-transaction |
+| T3 | Roll-up summaries | Child-write recompute, synchronous in-transaction (§3) | Exit-scenario totals correct in-transaction |
 | T4 | Flow engine + compiler | IR schema, publish-time compiler, executable primitives, triggers, failure policy (§2) | Compiled-graph execution; rejection matrix green |
 | T5 | Audit Service v1 | Consumer, partitioned store, read API (§5) | Field diffs queryable; append-only enforced |
-| T6 | Script Engine v0 | Sandbox service, whitelisted surface, versioned artifacts, ratio telemetry (§6) | Capped script survives an infinite loop; ADR-003 file written |
+| T6 | Script Engine v0 | Sandbox service, whitelisted surface, versioned artifacts, ratio telemetry (§6) | Capped script survives an infinite loop; implementation conforms to ADR-003 (accepted ahead) |
 | T7 | Test harness | `TestSuiteDefinition` encoding, runner, scratch tenant, frozen clock (§7) | Exit suite green through the runner |
 | T8 | Authoring UI v1 | Rule/formula/suite editors with compile-check; `runFlow` activation (§8) | The exit suite is authored without hand-written JSON |
 | T9 | Observability expansion | Tempo + Loki + dashboards (§9) | Cross-service trace renders in Tempo; logs in Loki |
@@ -287,21 +292,21 @@ spine consumer lag under the load-test write rate.
 Dependency order: (T1, T2) → (T3, T4, T5) → (T6, T7) → T8 → T10; T9 runs parallel
 from the moment T1 lands.
 
-## 13. Open Questions
+## 13. Resolved Questions (decided 2026-08-21, per the recommendations)
 
-Closure points: Q3 before T1, Q2 before T3, Q1 before T4, Q4 before T9.
+Q1–Q4 carried recommendations; all are decided, each ahead of its former task
+closure point.
 
-- **Q1 — Flow execution context:** initiating actor vs per-app system principal.
-  *Recommendation: system principal for declarative flows — they are reviewed,
-  promoted artifacts (ADR-008's trust gradient) and the inventory-reservation exit
-  must not depend on the clerk's grants; scripts stay caller-context
-  (ARCHITECTURE.md §5 item 4). Both audited.*
-- **Q2 — Roll-up recompute:** synchronous in-transaction (consistent; serializes on
-  the parent) vs async eventual. *Recommendation: synchronous v1 — ARCHITECTURE §3
-  says evaluated at write time; revisit at dogfood scale.*
-- **Q3 — Topic topology:** shared topics with `tenant_id:entity_id:record_id`
-  partition key vs
-  per-tenant topics. *Recommendation: shared — per-tenant topics explode (tenants ×
-  event types).*
-- **Q4 — Tracing backend:** Grafana Tempo in compose vs full OTel collector now.
-  *Recommendation: Tempo (PHASE-0 Q2's leaning); the collector stays deferred.*
+- **Q1 — Flow execution context: DECIDED — per-app system principal** for
+  declarative flows: they are reviewed, promoted artifacts (ADR-008's trust
+  gradient) and the inventory-reservation exit must not depend on the clerk's
+  grants. Scripts stay caller-context (ARCHITECTURE.md §5 item 4). Both audited.
+  PHASE-4 §4's engine-action context builds on this pin.
+- **Q2 — Roll-up recompute: DECIDED — synchronous in-transaction** (consistent;
+  serializes on the parent). ARCHITECTURE §3 says evaluated at write time;
+  revisit at dogfood scale.
+- **Q3 — Topic topology: DECIDED — shared topics** with
+  `tenant_id:entity_id:record_id` partition key vs the rejected per-tenant topics
+  (tenants × event types explode).
+- **Q4 — Tracing backend: DECIDED — Grafana Tempo in compose**; the full OTel
+  collector stays deferred (aligns with PHASE-0 §12 Q2).

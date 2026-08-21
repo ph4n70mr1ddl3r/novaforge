@@ -20,8 +20,8 @@ builds on. No product features. No database schema work (that is Phase 1).
 In scope: monorepo + parent build, shared-lib skeleton, gateway + one backing service,
 local infrastructure (Podman compose), JWT auth at the edge, observability baseline, CI.
 
-Out of scope: metadata model, Data Runtime, React frontends, Helm/K8s (Kind cluster is a
-stretch goal — Open Question Q3 recommends slipping it to Phase 1).
+Out of scope: metadata model, Data Runtime, React frontends, Helm/K8s (the Kind
+cluster is decided to slip to Phase 1 — §12 Q3, resolved; compose is the lean path).
 
 ## 2. Locked Version Matrix
 
@@ -158,7 +158,8 @@ Dependencies: `spring-cloud-starter-gateway-server-webmvc`,
 `spring-boot-starter-actuator`, test: `spring-boot-starter-webmvc-test`;
 observability per §8 adds `io.micrometer:micrometer-registry-prometheus` and
 `io.micrometer:micrometer-tracing-bridge-otel` (Boot-BOM versions; the OTLP
-exporter joins only when a tracing backend lands — Q2).
+exporter joins when the tracing backend lands — Tempo, per §12 Q2's decision,
+alongside Phase 3 Kafka tracing — PHASE-3 §13/Q4).
 
 Routes (YAML only — ADR-007 #5; verified syntax for Gateway 5.0.x):
 
@@ -212,7 +213,8 @@ Dependencies: `novaforge-common-core`, `spring-boot-starter-webmvc`,
 `spring-boot-starter-actuator`, test: `spring-boot-starter-webmvc-test`;
 observability per §8 adds `io.micrometer:micrometer-registry-prometheus` and
 `io.micrometer:micrometer-tracing-bridge-otel` (Boot-BOM versions; the OTLP
-exporter joins only when a tracing backend lands — Q2).
+exporter joins when the tracing backend lands — Tempo, per §12 Q2's decision,
+alongside Phase 3 Kafka tracing — PHASE-3 §13/Q4).
 
 ### 6.3 Test specifications (both services)
 
@@ -252,11 +254,11 @@ containers.
 - Tracing: Micrometer tracing (otel bridge — the §6.1/§6.2 dependency lists) with
   W3C traceparent propagated gateway → services; acceptance is the same trace id in
   both services' logs for one proxied request. Phase 0 ships no tracing or log backend (the §7 stack has no such
-  backend — Prometheus + Grafana only) — OTLP export activates when a tracing
-  backend lands (Q2; expected alongside Phase 3 Kafka tracing — the choice closes
-  with the Phase 3 spec, PHASE-3-BUSINESS-LOGIC.md §13/Q4), and Loki
+  backend — Prometheus + Grafana only) — OTLP export activates when the tracing
+  backend lands (decided: Grafana Tempo, §12 Q2 — it joins alongside Phase 3 Kafka
+  tracing per PHASE-3-BUSINESS-LOGIC.md §13/Q4 and §9), and Loki
   (PLAN.md §4) joins the compose stack in that same expansion.
-  Full OTel collector deferred (Q2).
+  The full OTel collector stays deferred (§12 Q2 — Tempo is served direct-to, no collector hop).
 - Grafana dashboard v0: one row per service — availability (up), HTTP p95, JVM heap.
 
 ## 9. CI (GitHub Actions)
@@ -288,7 +290,7 @@ Each task is independently mergeable; tasks T1–T3 unblock everything else.
 
 | # | Task | Content | Acceptance criteria |
 |---|---|---|---|
-| T1 | Restore spike scaffold | Recreate structure from `spike/boot-4.1-scaffold` (POMs, TenantContext, gateway+metadata skeletons incl. YAML route + tests) | `mvn verify` green on Temurin 21 (wrapper arrives in T2); ADR-005 file written (ARCHITECTURE.md §8's acceptance point) |
+| T1 | Restore spike scaffold | Recreate structure from `spike/boot-4.1-scaffold` (POMs, TenantContext, gateway+metadata skeletons incl. YAML route + tests) | `mvn verify` green on Temurin 21 (wrapper arrives in T2); restored structure conforms to ADR-005 (accepted ahead — ARCHITECTURE.md §8) |
 | T2 | Maven wrapper + README | `mvn wrapper:wrapper`; README quickstart (prereqs, verify, run compose) | Fresh clone builds with no local Maven |
 | T3 | common-core error model | `ErrorCode`, `PlatformErrorCode`, `ProblemErrors` + tests (§5.2) | Lib tests green; no Spring web deps (`mvn dependency:tree` check) |
 | T4 | Keycloak realm export | Realm `novaforge`, client `novaforge-api` with client scope `novaforge.api`, user `demo`; mounted into compose | `demo` login via CLI yields JWT carrying scope `novaforge.api` |
@@ -301,19 +303,26 @@ Each task is independently mergeable; tasks T1–T3 unblock everything else.
 
 Dependency order: T1 → T2 → (T3, T4) → T5 → T6 → T7 → T8 → T9; T10 last.
 
-## 12. Open Questions
+## 12. Resolved Questions (decided 2026-08-21, per the recommendations)
 
-Q1 gates T4–T5; Q2 gates T8; Q3–Q4 are scheduling calls to close by the end of Phase 0.
+All four were open questions carrying written recommendations; each is now decided
+and cross-referenced from where it gated work. Reversal is a versioned ADR edit,
+not a silent drift.
 
-- **Q1 — Keycloak realm strategy:** single realm + tenant claim vs realm-per-tenant
-  (ARCHITECTURE.md §2.2 flags this as a Phase 0 decision). *Recommendation: single
-  realm — simpler at our scale; revisit at true tenant isolation requirements.*
-- **Q2 — Tracing backend:** Grafana Tempo (OTLP) in the compose stack now vs full OTel
-  collector later — either way Phase 0 verifies tracing via log trace-id correlation
-  only (§8). *Recommendation: bridge + log correlation now; choose the backend when
-  Kafka tracing (Phase 3) demands header propagation.*
-- **Q3 — Kind-on-Podman cluster in Phase 0 or Phase 1:** compose covers the exit
-  criteria; cluster work could slip if time-pressed. *Recommendation: slip to Phase 1
-  start; keep compose as the lean path.*
-- **Q4 — Java 25 toolchain:** adopt now (supported by Boot 4) or after CI has
-  multi-JDK matrix. *Recommendation: after; not on the Phase 0 critical path.*
+- **Q1 — Keycloak realm strategy: DECIDED — single realm + tenant claim.** One
+  realm `novaforge`, tenant derived from the token claim; simpler at our scale —
+  realm-per-tenant isolates better but explodes the admin surface, so it is
+  revisited only at true tenant-isolation requirements. Recorded in
+  [ADR-002](../adr/ADR-002-authn-keycloak-authz-platform.md); T4's realm export and
+  PHASE-2 §10's onboarding build on it.
+- **Q2 — Tracing backend: DECIDED — Grafana Tempo (OTLP), landing with Phase 3.**
+  Phase 0 ships the bridge + log trace-id correlation only (§8); Tempo joins the
+  compose stack when Phase 3's Kafka tracing demands header propagation
+  (PHASE-3 §9, its Q4's confirmation). The full OTel collector stays deferred —
+  Tempo is served direct-to, no collector hop.
+- **Q3 — Kind-on-Podman cluster: DECIDED — slips to Phase 1.** Compose covers the
+  Phase 0 exit criteria and stays the lean path; the cluster lands as Phase 1's
+  week-1 parallel track (PHASE-1 §8, its Q4), which is also the Phase 2 preview
+  path (Skaffold).
+- **Q4 — Java 25 toolchain: DECIDED — after a CI multi-JDK matrix exists.** Not on
+  the Phase 0 critical path; Java 21 remains the build LTS (ADR-005, ADR-007 #2).

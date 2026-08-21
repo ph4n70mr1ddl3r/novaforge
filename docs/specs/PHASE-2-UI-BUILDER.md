@@ -40,7 +40,7 @@ demands them).
 | Build | Vite | |
 | Renderer state | TanStack Query | server cache keyed by metadata version |
 | Lists | TanStack Table + TanStack Virtual | server-side paging/sort/filter via query DSL |
-| Forms | **Q1** — react-hook-form + JSON Schema mapping vs Uniforms | decide at T1 (§13) |
+| Forms | react-hook-form + thin JSON Schema binder | §13 Q1, resolved — widget mapping stays ours via L1 rules |
 | Builder canvas | React-Flow + agnostic-dnd | per PLAN.md §4 |
 | Styling/theming | design tokens (W3C DTCG JSON) → CSS variables | single source for light/dark/tenant branding |
 | A11y | WCAG 2.2 AA; axe automated checks in CI | builder and generated UI |
@@ -49,8 +49,8 @@ demands them).
 Repo placement (per ARCHITECTURE.md §7): `frontend/runtime-ui` (renderer + shell)
 and `frontend/builder-ui` (design-time), sharing a `frontend/shared` package
 (page-model types, expression runtime, component registry). pnpm workspace.
-Browser apps reach APIs via the gateway; the hosting model is Q5 (§13) — the
-recommended same-origin static serving keeps gateway CORS (deferred in PHASE-0
+Browser apps reach APIs via the gateway; the hosting model is same-origin static
+bundles behind the gateway (§13 Q5, resolved) — it keeps gateway CORS (deferred in PHASE-0
 §6.1) out of v1, with a Vite dev proxy covering local development.
 
 ## 3. UI Architecture Summary (binding: ADR-009)
@@ -121,8 +121,9 @@ via versioned platform features
 current record with `${path}` templates (`${record.id}` above) — the same `${…}`
 convention as ADR-008's `createRecord`/`updateRecord` record templates, resolved when
 the action dispatches. Per ADR-009 L2, the *persisted*
-artifact stores deltas against the L1 default; the concrete delta encoding is Q2 (§13),
-decided at T2 — the example above shows the overlay's logical content, not its storage
+artifact stores deltas against the L1 default; the concrete delta encoding is custom
+structural deltas, with JSON Patch kept as the export/interchange format (§13 Q2,
+resolved) — the example above shows the overlay's logical content, not its storage
 format.
 
 ## 5. Default Resolver Rules (L1)
@@ -260,8 +261,8 @@ a backlog item, not an omission; nothing in the platform assumes it exists.
 
 | # | Task | Content | Acceptance criteria |
 |---|---|---|---|
-| T1 | FE workspace + stack pin | pnpm workspace, Vite, React 19.2.x, TS strict, CI lint/test, form-library decision (Q1) | Scaffold builds in CI; decision recorded |
-| T2 | Page model + registry core | TS types for §4, JSON Schema validation, lazy component registry, version pinning, overlay-format decision (Q2, §13) | Invalid props rejected at save; unknown version → fallback + warning; Q2 decision recorded |
+| T1 | FE workspace + stack pin | pnpm workspace, Vite, React 19.2.x, TS strict, CI lint/test, react-hook-form + thin schema binder (§13 Q1) | Scaffold builds in CI; form layer wired per the resolved decision |
+| T2 | Page model + registry core | TS types for §4, JSON Schema validation, lazy component registry, version pinning, custom structural delta encoding (§13 Q2) | Invalid props rejected at save; unknown version → fallback + warning; delta apply/merge round-trips |
 | T3 | v1 component catalog | §6 item 3 components with props schemas + Playwright stories | Storybook-style gallery green incl. axe |
 | T4 | Expression runtime v1 | Parser/evaluator for pure expressions per Annex A in TS + JVM reference engine (compile-checks expressions at Metadata-Service save/publish); shared conformance fixtures across both | 100% shared-fixture parity; invalid expression rejected at save/publish |
 | T5 | Default resolver (L1) | §5 rules incl. role parameterization | Golden-file suite green |
@@ -275,29 +276,26 @@ Dependency order: T1 → T2 → (T3, T4, T5) → T6 → T7 → T8 → T9 → T10
 Note: T5/T6 can start against Phase 1 APIs as soon as Phase 1 exit criteria pass;
 T3 runs parallel throughout.
 
-## 13. Open Questions
+## 13. Resolved Questions (decided 2026-08-21, per the recommendations)
 
-Closure points: Q1 at T1 (§2) and Q2 at T2 (§4) as noted above; Q3 before T5 — the
-golden files pin label handling — and Q4–Q5 by T6, when the app shell and its
-serving model land.
+Q1–Q5 carried recommendations; all are decided. Q3's Phase 8 landing and Q4's
+Phase 5 landing are scope decisions, unchanged.
 
-- **Q1 — Form layer:** react-hook-form + own JSON Schema mapping (control, size) vs
-  Uniforms (batteries included, opinionated themes). *Recommendation: react-hook-form
-  core with a thin schema binder — we already own widget mapping via L1 rules.*
-- **Q2 — Overlay format:** custom delta JSON vs RFC 6902 JSON Patch. *Recommendation:
-  custom structural deltas (readable diffs in change-set reviews); JSON Patch kept as
-  export/interchange format.*
-- **Q3 — i18n now or Phase 8:** label translations touch every metadata type.
-  *Recommendation: ship metadata fields as translation-ready (`label_i18n` optional)
-  but defer editor UI to Phase 8.*
-- **Q4 — Nav/dashboard shell scope:** how minimal should the v1 app shell be?
-  *Recommendation: keep v1 minimal (nav + list + form + detail); defer dashboard
-  composition to Phase 5 (ECharts via catalog components).*
-- **Q5 — Frontend hosting:** serve `runtime-ui`/`builder-ui` as static bundles
-  behind the gateway (same origin) vs separate frontend hosting/ingress.
-  *Recommendation: static bundles routed through the gateway — same origin keeps
-  gateway CORS (deferred in PHASE-0 §6.1) out of v1; revisit for custom-component
-  iframes (§6 item 4).*
+- **Q1 — Form layer: DECIDED — react-hook-form + a thin JSON Schema binder**
+  (control, size); Uniforms' opinionated themes are not worth ceding widget mapping
+  already owned via the L1 rules.
+- **Q2 — Overlay format: DECIDED — custom structural deltas** (readable diffs in
+  change-set reviews); RFC 6902 JSON Patch is kept as the export/interchange
+  format.
+- **Q3 — i18n: DECIDED — translation-ready now, editor in Phase 8.** Metadata ships
+  the optional `label_i18n` map on every labeled definition (ARCHITECTURE.md §3);
+  the editor UI and runtime fallback chain land in Phase 8 (PHASE-8 §7).
+- **Q4 — App shell scope: DECIDED — minimal v1** (nav + list + form + detail);
+  dashboard composition lands in Phase 5 as versioned catalog components
+  (ECharts — PHASE-5 §5).
+- **Q5 — Frontend hosting: DECIDED — static bundles behind the gateway** (same
+  origin; gateway CORS stays deferred per PHASE-0 §6.1); revisit only if
+  custom-component iframes (§6 item 4) demand separate origins.
 
 ## 14. Annex A — Expression DSL v1 Grammar (pinned)
 

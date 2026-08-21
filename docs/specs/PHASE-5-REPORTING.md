@@ -23,7 +23,8 @@ journey verifiable by a builder-authored suite.
 
 Out of scope: async large-export streaming via the File Service (activates when it
 lands in Phase 6 — PLAN.md §5; direct downloads only here, §6); ad-hoc free-form
-query UI (Q2); end-user self-serve subscriptions (Q1); pixel-perfect/BI-grade
+query UI (deferred — §13 Q2, resolved); end-user self-serve subscriptions (deferred
+— §13 Q1, resolved); pixel-perfect/BI-grade
 reporting and dedicated pivot mechanics (never a v1 goal); cross-app federation.
 
 ## 2. Service & Infrastructure Additions
@@ -153,7 +154,7 @@ reporting and dedicated pivot mechanics (never a v1 goal); cross-app federation.
 - Dashboards are metadata: versioned, promoted, role-visible per §5.
 - Audited: scheduled deliveries; schedule changes are definition publishes —
   already audited per ARCHITECTURE.md §5 item 5 (self-serve subscriptions are
-  §13/Q1's deferral; no v1 surface exists to change). Interactive runs are not
+  §13 Q1's decided deferral; no v1 surface exists to change). Interactive runs are not
   audited (reads; consistent with ARCHITECTURE.md §5, which audits writes and
   permission changes).
 
@@ -201,11 +202,9 @@ promoted fields) p95 < 2 s** — measured on the Phase 1 load fixture with the
 reporting cache cold and warm (both must pass; the cache may not be load-bearing).
 Dashboard initial load = N report runs; measured and reported, not gated.
 
-## 13. Open Questions (both non-blocking)
+## 13. Resolved Questions (decided 2026-08-21, per the recommendations; both were non-blocking scope pins)
 
-- **Q1 — End-user subscriptions:** self-serve "schedule this report" UI vs admin
-  -authored schedules only. *Recommendation: admin-authored v1; self-serve when the
-  dogfood asks for it.*
-- **Q2 — Ad-hoc query UI:** saved-report building only, or a free-form explorer.
-  *Recommendation: saved reports only — the explorer is a UX project that doesn't
-  block the ERP dogfood.*
+- **Q1 — End-user subscriptions: DECIDED — admin-authored schedules only** in v1;
+  self-serve "schedule this report" joins when the dogfood asks for it.
+- **Q2 — Ad-hoc query UI: DECIDED — saved reports only.** The free-form explorer
+  is a UX project that does not block the ERP dogfood; backlog until demanded.

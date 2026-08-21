@@ -22,7 +22,7 @@ disabled `FileUpload` stub before the ERP dogfood.
 
 Out of scope: SOAP/DB/file connector types (they join the same frame only on dogfood
 demand — PLAN.md §3/§5, ARCHITECTURE.md §2.8); a connector marketplace (P8 concept);
-OAuth grants beyond client-credentials (Q1); streaming/outbound event connectors and
+OAuth grants beyond client-credentials (deferred — §13 Q1, resolved); streaming/outbound event connectors and
 tenant-facing message-bus topics (PLAN P7's remaining integration item — both
 post-1.0 demand work); **API-client definitions** (machine credentials against the
 public REST API — the Integrations-branch item of PLAN.md §2 / ARCHITECTURE.md §2.3
@@ -61,7 +61,7 @@ here.
   exponential backoff; every delivery idempotent (dedupe key from
   provider response/event id) with a DLQ after terminal failure — deliveries land
   in audit (ARCHITECTURE.md §2.8).
-- Auth set v1: API-key header, HTTP basic, OAuth2 client-credentials (Q1 for more).
+- Auth set v1: API-key header, HTTP basic, OAuth2 client-credentials (user-context grants deferred — §13 Q1).
 - **Builder authoring:** every Integration-branch definition of §2 — connectors,
   webhooks (both directions), credential references, import mappings — is
   builder-authored metadata: guided forms with the same save-time
@@ -144,7 +144,7 @@ here.
   virusScan: pending | clean | infected | skipped`).
 - The `file` field type gets its upload path (the PHASE-1 §3 pin resolves): values
   are attachment ids; runtime-ui's `FileUpload` stub activates (PHASE-2 §5/§6).
-- Optional ClamAV hook is config-gated (Q2 — off locally, on in staging/prod);
+- Optional ClamAV hook is config-gated (§13 Q2, resolved — off locally, on in staging/prod; CI runs one config-on job);
   infected files quarantine (download blocked) and raise an audit event.
 - Checksums verified server-side on upload completion; presigned URLs expire
   (pinned: 15 minutes).
@@ -206,10 +206,10 @@ here.
 Dependency order: T1 → (T2, T7) → T3 → (T4, T5, T6) → T8 → T9 → T10; T7 can start
 at phase start.
 
-## 13. Open Questions (both non-blocking)
+## 13. Resolved Questions (decided 2026-08-21, per the recommendations; both were non-blocking scope pins)
 
-- **Q1 — OAuth grant coverage:** client-credentials only (v1 pin) vs authorization
-  code + refresh for user-context APIs. *Recommendation: client-credentials now;
-  user-context OAuth only when a dogfooded connector needs it.*
-- **Q2 — ClamAV in local compose:** bundled service vs config-gated off.
-  *Recommendation: config-gated, off locally — CI runs one config-on job.*
+- **Q1 — OAuth grant coverage: DECIDED — client-credentials only** in v1;
+  authorization-code + refresh for user-context APIs join only when a dogfooded
+  connector needs them.
+- **Q2 — ClamAV in local compose: DECIDED — config-gated, off locally**; CI runs
+  one config-on job so the scanning path stays tested.

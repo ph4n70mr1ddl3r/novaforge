@@ -22,8 +22,8 @@ demonstrated rollback; the full-scale load target passes; the i18n editor ships;
 the security review and DR drill close.* Every missing capability found here still
 becomes a backlog item (the PHASE-7 §1 discipline never stops).
 
-Out of scope: marketplace commerce (Q2 — templates import/export ship, buying and
-selling do not); multi-region; self-serve tenant billing; environment auto-scaling
+Out of scope: marketplace commerce (§11 Q2, resolved — catalog only; templates
+import/export ship, buying and selling do not); multi-region; self-serve tenant billing; environment auto-scaling
 tuning.
 
 ## 2. Environment Model (the scratch tenant grows up)
@@ -54,7 +54,7 @@ environment mechanism — one provisioning path, no second system:
 
 - A **change set** = the diff between an environment's published version and the
   draft version being promoted: per-definition add/modify/remove, rendered in the
-  builder's review UI (page overlays reuse the PHASE-2 Q2 delta format; flow/state
+  builder's review UI (page overlays reuse the PHASE-2 §13 Q2 delta format; flow/state
   machine diffs reuse the graph editors' structural diffs).
 - Review surfaces: definition diffs, **attached suite results** for that exact
   version (ADR-010 #4), the script-ratio delta, the gap-log entries the
@@ -75,8 +75,9 @@ environment mechanism — one provisioning path, no second system:
    hop's green-run evidence is the same version-bound artifact set that admitted V
    to staging — run artifacts attach to V, never to an environment (suites always
    execute on scratch tenants, ADR-010 #3; there is no "run inside staging") — plus
-   explicit platform-admin approval (Q1 settles whether anything more is required;
-   recommendation: no timed burn-in in v1).
+   explicit platform-admin approval (no timed burn-in in v1 — §11 Q1, resolved;
+   the bar is green run + approval, and burn-in joins only when operating data
+   justifies it).
 3. **Override:** platform-admin only, reason recorded, audited, and *shown in the
    change-set review forever* — an override is a visible artifact, not a secret.
 4. **Rollback:** redeploying a prior version through the same gate machinery.
@@ -121,7 +122,7 @@ environment mechanism — one provisioning path, no second system:
   the first template.
 - **Marketplace** = a catalog listing of templates in the builder (metadata:
   name, publisher, versions, screenshots) — no commerce, no third-party publishing
-  pipeline in v1 (Q2).
+  pipeline in v1 (§11 Q2, resolved: catalog only).
 
 ## 7. i18n / Localization Editor (the PHASE-2 Q3 deferral lands)
 
@@ -179,11 +180,9 @@ environment mechanism — one provisioning path, no second system:
 Dependency order: T1 → (T2, T5) → T3 → T4 → T6; T7, T8, T9, T10 parallel tracks;
 exit review last (all green).
 
-## 11. Open Questions (both non-blocking)
+## 11. Resolved Questions (decided 2026-08-21, per the recommendations; both were non-blocking scope pins)
 
-- **Q1 — Prod promotion bar:** green staging run + admin approval (v1 pin) vs an
-  additional timed burn-in. *Recommendation: no burn-in v1 — suites + approval; add
-  burn-in when operating data justifies it.*
-- **Q2 — Marketplace scope:** catalog only (v1 pin) vs third-party publishing.
-  *Recommendation: catalog only; third-party publishing is a post-1.0 program
-  (review pipeline, signing, legal).*
+- **Q1 — Prod promotion bar: DECIDED — green staging run + admin approval** (the
+  §4 v1 pin); no timed burn-in — it joins only when operating data justifies it.
+- **Q2 — Marketplace scope: DECIDED — catalog only.** Third-party publishing is a
+  post-1.0 program (review pipeline, signing, legal).
