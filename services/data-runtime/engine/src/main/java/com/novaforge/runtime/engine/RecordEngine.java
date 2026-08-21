@@ -11,6 +11,7 @@ import com.novaforge.metadata.FieldType;
 import com.novaforge.metadata.PermissionSet;
 import com.novaforge.metadata.RelationshipDefinition;
 import com.novaforge.metadata.RelationshipType;
+import com.novaforge.expression.Expression;
 import com.novaforge.runtime.authorization.RoleMatrix;
 import com.novaforge.runtime.engine.event.DomainEventPublisher;
 import com.novaforge.runtime.engine.metadata.EntityResolver;
@@ -21,6 +22,7 @@ import com.novaforge.runtime.engine.query.QueryLowering;
 import com.novaforge.runtime.engine.query.QueryModel;
 import com.novaforge.runtime.engine.query.QueryParser;
 import com.novaforge.runtime.storage.record.RecordStore;
+import com.novaforge.runtime.storage.schema.Snake;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -78,9 +80,12 @@ public class RecordEngine {
         Map<String, Object> canonical = FieldCoercer.canonicalize(handle.entity(), fields,
                 externalChecks(tenantId, handle, app), null, errors);
         FieldCoercer.checkRequired(handle.entity(), canonical, errors);
+        evaluateFormulas(handle.entity(), canonical);
+        evaluateValidationRules(handle.entity(), canonical, errors);
         reject(errors, "create " + entityApiName + " failed validation");
 
         UUID id = UUID.randomUUID();
+        evaluateRollupsFromChildren(app, handle, children, canonical);
         persistWithChildren(tenantId, actorId, app, handle, id, canonical, children, errors);
 
         events.publish(event("record.created", tenantId, handle.entityKey(), id, actorId));
@@ -115,11 +120,14 @@ public class RecordEngine {
                 externalChecks(tenantId, handle, app), id, errors);
         canonical.forEach(merged::put);
         FieldCoercer.checkRequired(handle.entity(), merged, errors);
+        evaluateFormulas(handle.entity(), merged);
+        evaluateValidationRules(handle.entity(), merged, errors);
         reject(errors, "update " + entityApiName + "/" + id + " failed validation");
 
         int newVersion = records.update(tenantId, handle.entityKey(), id, merged,
                 expectedVersion, actorId);
         replaceChildren(tenantId, actorId, app, handle, id, children);
+        newVersion = recomputeRollupsIfChanged(tenantId, actorId, app, handle, id, merged, newVersion);
         events.publish(event("record.updated", tenantId, handle.entityKey(), id, actorId));
 
         Map<String, Object> shaped = shape(handle.entity(),
@@ -230,6 +238,177 @@ public class RecordEngine {
         return outcomes;
     }
 
+    // --- roll-up summaries (PHASE-3 §3) ---
+
+    /**
+     * Roll-up summaries (PHASE-3 §3): parent aggregates over child collections,
+     * recomputed in the child's write transaction — synchronous, in-transaction,
+     * consistency wins in v1 (§13 Q2). Creates aggregate the in-memory child set
+     * before the insert (no extra write); updates recompute from the store and only
+     * rewrite the parent when a roll-up value actually moved (no version churn).
+     */
+    private void evaluateRollupsFromChildren(AppDefinition app, EntityHandle parent,
+                                             Map<String, List<Map<String, Object>>> children,
+                                             Map<String, Object> parentData) {
+        for (FieldDefinition field : parent.entity().fields()) {
+            if (field.rollup() == null) {
+                continue;
+            }
+            Rollup rollup = Rollup.parse(field.rollup());
+            List<Map<String, Object>> childRows = children.getOrDefault(rollup.relationship(),
+                    List.of());
+            parentData.put(field.apiName(), rollup.aggregateInMemory(childRows));
+        }
+    }
+
+    private int recomputeRollupsIfChanged(UUID tenantId, UUID actorId, AppDefinition app,
+                                          EntityHandle parent, UUID parentId,
+                                          Map<String, Object> parentData, int currentVersion) {
+        boolean changed = false;
+        for (FieldDefinition field : parent.entity().fields()) {
+            if (field.rollup() == null) {
+                continue;
+            }
+            Rollup rollup = Rollup.parse(field.rollup());
+            EntityHandle childHandle = childHandle(tenantId, app, parent, rollup.relationship());
+            String bindingField = bindingLookupField(parent.entity(), childHandle.entity());
+            Object aggregate = rollup.aggregate(records, tenantId, childHandle, bindingField,
+                    parentId, rollup.field());
+            if (!java.util.Objects.equals(aggregate, parentData.get(field.apiName()))) {
+                parentData.put(field.apiName(), aggregate);
+                changed = true;
+            }
+        }
+        if (changed) {
+            return records.update(tenantId, parent.entityKey(), parentId, parentData,
+                    currentVersion, actorId);
+        }
+        return currentVersion;
+    }
+
+    /** {@code SUM(lines.debit)} — aggregate op, relationship, child field. */
+    record Rollup(String op, String relationship, String field) {
+
+        static Rollup parse(String source) {
+            java.util.regex.Matcher matcher = java.util.regex.Pattern
+                    .compile("^(SUM|COUNT|MIN|MAX|AVG)\\(([a-zA-Z]+)(?:\\.([a-zA-Z]+))?\\)$")
+                    .matcher(source.trim());
+            if (!matcher.matches() || ("COUNT".equals(matcher.group(1)) == false
+                    ? matcher.group(3) == null : false)) {
+                throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                        "rollup must be OP(relationship.field) — COUNT(relationship) also allowed: " + source);
+            }
+            return new Rollup(matcher.group(1), matcher.group(2), matcher.group(3));
+        }
+
+        /** Aggregates the in-memory inline child set (create path — no store round-trip). */
+        Object aggregateInMemory(List<Map<String, Object>> childRows) {
+            if (op.equals("COUNT")) {
+                return java.math.BigDecimal.valueOf(childRows.size());
+            }
+            java.math.BigDecimal result = op.equals("SUM") ? java.math.BigDecimal.ZERO : null;
+            java.math.BigDecimal min = null;
+            java.math.BigDecimal max = null;
+            long count = 0;
+            for (Map<String, Object> row : childRows) {
+                Object value = row.get(field);
+                java.math.BigDecimal decimal = value instanceof java.math.BigDecimal big
+                        ? big : value instanceof Number number
+                        ? new java.math.BigDecimal(number.toString()) : null;
+                if (decimal == null) {
+                    continue;
+                }
+                count++;
+                result = result == null ? decimal : result.add(decimal);
+                min = min == null ? decimal : min.min(decimal);
+                max = max == null ? decimal : max.max(decimal);
+            }
+            return switch (op) {
+                case "SUM" -> result;
+                case "AVG" -> count == 0 ? null
+                        : result.divide(java.math.BigDecimal.valueOf(count), Expression.MATH);
+                case "MIN" -> min;
+                case "MAX" -> max;
+                default -> null;
+            };
+        }
+
+        Object aggregate(RecordStore records, UUID tenantId, EntityHandle childHandle,
+                         String bindingField, UUID parentId, String field) {
+            String queryJson = "{\"filter\":{\"field\":\"" + bindingField + "\",\"op\":\"eq\","
+                    + "\"value\":\"" + parentId + "\"}"
+                    + (op.equals("COUNT") ? "" : ",\"aggregates\":[{\"op\":\"" + op.toLowerCase()
+                    + "\",\"field\":\"" + field + "\"}]") + "}";
+            if (op.equals("COUNT")) {
+                QueryModel.ListQuery query = QueryParser.parseList(queryJson, childHandle.entity());
+                QueryLowering lowering = new QueryLowering(childHandle.entity());
+                QueryLowering.Lowered count = lowering.count(childHandle.entity().apiName(),
+                        tenantId, query.filter());
+                Long total = records.countValue(count.sql(), count.params());
+                return java.math.BigDecimal.valueOf(total == null ? 0 : total);
+            }
+            QueryModel.AggregateQuery query = QueryParser.parseAggregate(queryJson, childHandle.entity());
+            QueryLowering.Lowered lowered = new QueryLowering(childHandle.entity())
+                    .aggregate(childHandle.entity().apiName(), tenantId, query);
+            Object outcome = records.aggregateValue(lowered.sql(), lowered.params(),
+                    query.aggregates().getFirst().op().name().toLowerCase()
+                            + "_" + Snake.caseName(field));
+            if (outcome == null) {
+                // SUM over an empty set is its identity (0); AVG/MIN/MAX stay null.
+                return op.equals("SUM") ? java.math.BigDecimal.ZERO : null;
+            }
+            return outcome instanceof java.math.BigDecimal decimal ? decimal
+                    : new java.math.BigDecimal(String.valueOf(outcome));
+        }
+    }
+
+    // --- Phase 3 expression evaluation (§3) ---
+
+    /**
+     * Formula fields: own-record expressions evaluated at write time and stored, never
+     * computed on read; implicitly readonly (Phase 1 rule rejects app writes).
+     */
+    private void evaluateFormulas(EntityDefinition entity, Map<String, Object> data) {
+        for (FieldDefinition field : entity.fields()) {
+            if (field.formula() == null) {
+                continue;
+            }
+            Object value = evaluate(entity, field.formula(), data);
+            data.put(field.apiName(), canonicalizeValue(value));
+        }
+    }
+
+    /**
+     * Validation rules: record-scope expressions extending the Phase 1 field
+     * constraints; a false (or null) predicate fails with the rule's message.
+     */
+    private void evaluateValidationRules(EntityDefinition entity, Map<String, Object> data,
+                                         List<ProblemErrors.FieldError> errors) {
+        for (EntityDefinition.ValidationRule rule : entity.validations()) {
+            Object outcome = evaluate(entity, rule.expression(), data);
+            if (!(outcome instanceof Boolean b) || !b) {
+                errors.add(new ProblemErrors.FieldError(
+                        entity.apiName() + ".validations",
+                        rule.message() != null ? rule.message()
+                                : "validation rule failed: " + rule.name(),
+                        rule.expression()));
+            }
+        }
+    }
+
+    private Object evaluate(EntityDefinition entity, String source, Map<String, Object> data) {
+        Expression expression = Expression.parse(source);
+        Object outcome = expression.evaluate(Expression.Bindings.of(data), clock);
+        return outcome;
+    }
+
+    /** Storage-canonical BigDecimal for numeric expression outcomes. */
+    private static Object canonicalizeValue(Object value) {
+        return value instanceof java.math.BigDecimal decimal ? decimal : value;
+    }
+
+    private final java.time.Clock clock = java.time.Clock.systemUTC();
+
     // --- defaults + children ---
 
     private void applyDefaults(UUID tenantId, AppDefinition app, EntityDefinition entity,
@@ -254,6 +433,10 @@ public class RecordEngine {
                 if (value != null) {
                     fields.put(field.apiName(), value);
                 }
+            } else if (defaultValue instanceof DefaultValue.ExpressionDefault expression) {
+                // Evaluated at the defaults step, before validations (PHASE-3 §3) —
+                // clock functions are compile-rejected here (a stored value goes stale).
+                fields.put(field.apiName(), evaluate(entity, expression.expression(), fields));
             }
         }
     }

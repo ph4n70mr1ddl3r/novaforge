@@ -379,14 +379,31 @@ public final class Expression {
                 case "date" -> dateLiteral(call);
                 case "datetime" -> datetimeLiteral(call);
                 case "size" -> size(eval(single(call, "size")));
-                case "abs" -> numeric(eval(single(call, "abs"))).abs(MATH);
+                case "abs" -> {
+                    Object value = eval(single(call, "abs"));
+                    yield value == null ? null : numeric(value).abs(MATH);
+                }
                 case "round" -> round(call);
                 case "min" -> minMax(call, true);
                 case "max" -> minMax(call, false);
-                case "upper" -> string(eval(single(call, "upper"))).toUpperCase();
-                case "lower" -> string(eval(single(call, "lower"))).toLowerCase();
-                case "trim" -> string(eval(single(call, "trim"))).trim();
-                case "length" -> BigDecimal.valueOf(string(eval(single(call, "length"))).length());
+                // Null-propagation for single-argument shaping functions: a stored
+                // formula stays total when its input is absent.
+                case "upper" -> {
+                    Object value = eval(single(call, "upper"));
+                    yield value == null ? null : string(value).toUpperCase();
+                }
+                case "lower" -> {
+                    Object value = eval(single(call, "lower"));
+                    yield value == null ? null : string(value).toLowerCase();
+                }
+                case "trim" -> {
+                    Object value = eval(single(call, "trim"));
+                    yield value == null ? null : string(value).trim();
+                }
+                case "length" -> {
+                    Object value = eval(single(call, "length"));
+                    yield value == null ? null : BigDecimal.valueOf(string(value).length());
+                }
                 case "contains" -> {
                     Object[] pair = two(call, "contains");
                     yield string(pair[0]).contains(string(pair[1]));

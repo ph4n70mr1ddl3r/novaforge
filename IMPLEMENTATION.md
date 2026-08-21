@@ -80,9 +80,27 @@ Phase 2 surface: page model, component catalog, renderer, entity/page builders) 
 the TS evaluator twin for the conformance corpus. Backend surfaces are ready for it:
 published reads, expression bindings compile-checked, field security stripping.
 
-## Phases 3–8 ⬜
+## Phase 3 — Business Logic ◐ (spec: PHASE-3-BUSINESS-LOGIC.md)
 
-Not started. Slots reserved in code: expression/formula/rollup fields and validation
-rules are schema-accepted but inert; the DomainEventPublisher seam is the no-op
-recorder (Kafka producer lands Phase 3); `requestApproval`/`transitionState` grammar
-notes live in the specs.
+**Implemented — §3 write-path evaluation** (the ARCHITECTURE §2.4 chain is now:
+resolve → authorize → defaults → formula/roll-up evaluation → validation rules →
+persist → event seam → shaped projection):
+- expression defaults (`{"expression": "…"}` — clock-free, compile-checked, evaluated
+  at the defaults step before validations)
+- validation rules (record-scope expressions extending Phase 1 field constraints,
+  failing with the authored message)
+- formula fields (own-record expressions stored at write time, never computed on
+  read; implicitly readonly; null-propagating string/numeric functions keep stored
+  formulas total)
+- roll-up summaries (`SUM/COUNT/MIN/MAX/AVG(relationship[.field])` — creates
+  aggregate the in-memory child set; updates recompute in the child's write
+  transaction and only rewrite the parent when a value moved)
+
+**Not implemented (Phase 3 remainder):** the Kafka event spine + transactional
+outbox (§4 — the no-op event recorder still stands), flow-IR hooks with the closed
+primitive set (§5/ADR-008), the builder test harness (ADR-010), the Script Engine
+v0, Audit/Telemetry/Loki expansions.
+
+## Phases 4–8 ⬜
+
+Not started. `requestApproval`/`transitionState` grammar notes live in the specs.

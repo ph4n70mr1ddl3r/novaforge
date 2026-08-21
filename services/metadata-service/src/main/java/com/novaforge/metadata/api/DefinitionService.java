@@ -163,6 +163,9 @@ public class DefinitionService {
                 if (field.formula() != null) {
                     check(field.formula(), entity, fields, false, found);
                 }
+                if (field.defaultValue() instanceof com.novaforge.metadata.DefaultValue.ExpressionDefault expression) {
+                    check(expression.expression(), entity, fields, false, found);
+                }
             }
         }
         if (!found.isEmpty()) {

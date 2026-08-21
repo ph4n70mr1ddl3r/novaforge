@@ -85,17 +85,35 @@ class RecordApiTests extends PostgresTestBase {
                     { "apiName": "entryDate", "type": "date", "required": true },
                     { "apiName": "status", "type": "enum", "values": ["DRAFT", "POSTED"] },
                     { "apiName": "memo", "type": "text", "length": 32 },
-                    { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 } ],
+                    { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 },
+                    { "apiName": "totalLines", "type": "decimal", "precision": 18, "scale": 4,
+                      "rollup": "SUM(lines.amount)" },
+                    { "apiName": "lineCount", "type": "int",
+                      "rollup": "COUNT(lines)" },
+                    { "apiName": "memoUpper", "type": "text",
+                      "formula": "upper(memo)" } ],
                   "relationships": [
                     { "apiName": "lines", "type": "child", "target": "JournalLine",
                       "cascadeDelete": true } ],
+                  "validations": [
+                    { "name": "memoBalanced", "scope": "record",
+                      "expression": "memo == null || contains(memo, 'ok')",
+                      "message": "memo must contain 'ok'" } ],
                   "indexes": [ { "fields": ["entryDate"] } ] },
                 { "apiName": "JournalLine",
                   "fields": [
                     { "apiName": "entryId", "type": "lookup", "target": "JournalEntry",
                       "required": true },
                     { "apiName": "debit", "type": "decimal", "precision": 18, "scale": 4 },
-                    { "apiName": "credit", "type": "decimal", "precision": 18, "scale": 4 } ] },
+                    { "apiName": "credit", "type": "decimal", "precision": 18, "scale": 4 },
+                    { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 } ] },
+                { "apiName": "LedgerNote",
+                  "fields": [
+                    { "apiName": "note", "type": "text" },
+                    { "apiName": "shouty", "type": "text",
+                      "default": { "expression": "upper(note)" } },
+                    { "apiName": "noteLength", "type": "int",
+                      "default": { "expression": "length(note)" } } ] },
                 { "apiName": "Ticket",
                   "fields": [
                     { "apiName": "number", "type": "text",
@@ -191,7 +209,6 @@ class RecordApiTests extends PostgresTestBase {
         // missing required entryDate → 4000 with field errors
         mockMvc.perform(post("/api/v1/runtime/JournalEntry").with(jwtFor(TENANT))
                         .contentType("application/json").content("{}"))
-                .andDo(org.springframework.test.web.servlet.result.MockMvcResultHandlers.print())
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("4000"))
                 .andExpect(jsonPath("$.errors[?(@.field=='entryDate')]").isNotEmpty());
@@ -250,6 +267,46 @@ class RecordApiTests extends PostgresTestBase {
         assertThat(((DomainEventPublisher.Recording) events).events())
                 .extracting(DomainEventPublisher.DomainEvent::event)
                 .contains("record.created", "record.updated");
+    }
+
+    @Test
+    @DisplayName("write-path evaluation (PHASE-3 §3): expression defaults, validation rules, formulas, roll-ups")
+    void writePathEvaluation() throws Exception {
+        // expression defaults evaluated before validations
+        mockMvc.perform(post("/api/v1/runtime/LedgerNote").with(jwtFor(TENANT))
+                        .contentType("application/json").content("{\"note\":\"quiet\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.shouty").value("QUIET"))
+                .andExpect(jsonPath("$.noteLength").value(5));
+
+        // validation rule (record-scope expression) rejects with its message
+        mockMvc.perform(post("/api/v1/runtime/JournalEntry").with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"entryDate\":\"2026-08-21\",\"memo\":\"bad memo\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value("memo must contain 'ok'"));
+
+        // formula field computed at write + roll-ups recomputed in the same transaction
+        MvcResult created = mockMvc.perform(post("/api/v1/runtime/JournalEntry").with(jwtFor(TENANT))
+                        .contentType("application/json").content("""
+                                { "entryDate": "2026-08-21", "memo": "all ok",
+                                  "lines": [ { "amount": 10.5 }, { "amount": 20 } ] }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.memoUpper").value("ALL OK"))
+                .andExpect(jsonPath("$.totalLines").value(30.5))
+                .andExpect(jsonPath("$.lineCount").value(2))
+                .andReturn();
+        String id = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+
+        // roll-ups recompute on update (children replaced) and formula recomputes with memo
+        mockMvc.perform(patch("/api/v1/runtime/JournalEntry/" + id).with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"version\":1,\"memo\":\"still ok\",\"lines\":[{\"amount\":5}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.memoUpper").value("STILL OK"))
+                .andExpect(jsonPath("$.totalLines").value(5))
+                .andExpect(jsonPath("$.lineCount").value(1));
     }
 
     @Test

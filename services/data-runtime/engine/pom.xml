@@ -31,6 +31,10 @@
     </dependency>
     <dependency>
       <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-expression-dsl</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.novaforge</groupId>
       <artifactId>novaforge-data-runtime-storage</artifactId>
       <version>${project.version}</version>
     </dependency>

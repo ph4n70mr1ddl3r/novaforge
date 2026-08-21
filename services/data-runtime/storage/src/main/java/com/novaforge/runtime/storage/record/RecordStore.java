@@ -132,6 +132,17 @@ public class RecordStore {
         return new PageResult(rows, total == null ? 0 : total);
     }
 
+    /** Scalar count for roll-ups. */
+    public Long countValue(String sql, List<Object> params) {
+        return jdbc.queryForObject(sql, Long.class, params.toArray());
+    }
+
+    /** Scalar aggregate value by result column label. */
+    public Object aggregateValue(String sql, List<Object> params, String label) {
+        return jdbc.query(sql, (org.springframework.jdbc.core.ResultSetExtractor<Object>) rs ->
+                rs.next() ? rs.getObject(label) : null, params.toArray());
+    }
+
     public GroupedResult aggregate(String sql, List<Object> params) {
         List<Map<String, Object>> rows = new ArrayList<>();
         jdbc.query(sql, (org.springframework.jdbc.core.ResultSetExtractor<Void>) rs -> {
