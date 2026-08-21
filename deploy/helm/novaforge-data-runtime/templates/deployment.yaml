@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-novaforge-data-runtime
+  labels: {{ include "novaforge-data-runtime.labels" . | indent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels: {{ include "novaforge-data-runtime.selectorLabels" . | indent 6 }}
+  template:
+    metadata:
+      labels: {{ include "novaforge-data-runtime.selectorLabels" . | indent 8 }}
+    spec:
+      containers:
+        - name: novaforge-data-runtime
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8083
+              name: http
+          env: {{ toYaml .Values.env | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+          resources: {{ toYaml .Values.resources | nindent 12 }}

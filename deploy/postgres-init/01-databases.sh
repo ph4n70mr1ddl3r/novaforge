@@ -11,4 +11,8 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" <<-EOSQL
   CREATE USER novaforge WITH PASSWORD 'novaforge';
   CREATE DATABASE novaforge_metadata OWNER novaforge;
   CREATE DATABASE novaforge_data OWNER novaforge;
+  -- The data runtime's system paths (storage materializer backfill, restart catch-up)
+  -- must read across tenants; user paths stay tenant-parameterized in the engine and
+  -- RLS remains the backstop for every other role (ADR-006 defense-in-depth).
+  ALTER ROLE novaforge BYPASSRLS;
 EOSQL

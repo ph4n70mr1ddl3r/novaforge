@@ -1,4 +1,4 @@
-package com.novaforge.runtime.storage.query;
+package com.novaforge.runtime.storage.schema;
 
 import com.novaforge.metadata.EntityDefinition;
 import com.novaforge.metadata.FieldDefinition;

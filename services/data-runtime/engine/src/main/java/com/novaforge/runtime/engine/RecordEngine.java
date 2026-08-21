@@ -16,9 +16,9 @@ import com.novaforge.runtime.engine.metadata.EntityResolver;
 import com.novaforge.runtime.engine.metadata.EntityResolver.EntityHandle;
 import com.novaforge.runtime.engine.sequence.SequenceService;
 import com.novaforge.runtime.engine.write.FieldCoercer;
-import com.novaforge.runtime.storage.query.QueryLowering;
-import com.novaforge.runtime.storage.query.QueryModel;
-import com.novaforge.runtime.storage.query.QueryParser;
+import com.novaforge.runtime.engine.query.QueryLowering;
+import com.novaforge.runtime.engine.query.QueryModel;
+import com.novaforge.runtime.engine.query.QueryParser;
 import com.novaforge.runtime.storage.record.RecordStore;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -142,6 +142,9 @@ public class RecordEngine {
                                    boolean includeDeleted) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, entityApiName);
+        if (includeDeleted) {
+            roleMatrix.requireAdmin(tenantId, actorId);   // admin-only (PHASE-1 §5)
+        }
         RecordStore.StoredRecord record = records.find(tenantId, handle.entityKey(), id,
                         includeDeleted)
                 .orElseThrow(() -> notFound(entityApiName, id));
@@ -153,8 +156,13 @@ public class RecordEngine {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, entityApiName);
         QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
-        return records.list(tenantId, handle.entity().apiName(),
-                new QueryLowering(handle.entity()), query);
+        QueryLowering lowering = new QueryLowering(handle.entity());
+        QueryLowering.Lowered countSql = lowering.count(handle.entity().apiName(), tenantId,
+                query.filter());
+        QueryLowering.Lowered listSql = lowering.list(handle.entity().apiName(), tenantId, query);
+        RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
+                listSql.sql(), listSql.params());
+        return new QueryModel.QueryResult(page.rows(), page.total());
     }
 
     public QueryModel.AggregateResult aggregate(UUID tenantId, UUID actorId, String entityApiName,
@@ -162,8 +170,10 @@ public class RecordEngine {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, entityApiName);
         QueryModel.AggregateQuery query = QueryParser.parseAggregate(queryJson, handle.entity());
-        return records.aggregate(tenantId, handle.entity().apiName(),
-                new QueryLowering(handle.entity()), query);
+        QueryLowering.Lowered lowered = new QueryLowering(handle.entity())
+                .aggregate(handle.entity().apiName(), tenantId, query);
+        return new QueryModel.AggregateResult(query.groupBy(),
+                records.aggregate(lowered.sql(), lowered.params()).rows());
     }
 
     /** Bulk ops with per-item outcomes, max 500 (PHASE-1 §5). */
@@ -352,10 +362,14 @@ public class RecordEngine {
         String queryJson = "{\"filter\":{\"field\":\"" + bindingField + "\",\"op\":\"eq\","
                 + "\"value\":\"" + parentId + "\"}}";
         QueryModel.ListQuery query = QueryParser.parseList(queryJson, childHandle.entity());
-        QueryModel.QueryResult result = records.list(tenantId, childHandle.entity().apiName(),
-                new QueryLowering(childHandle.entity()), query);
+        QueryLowering lowering = new QueryLowering(childHandle.entity());
+        QueryLowering.Lowered countSql = lowering.count(childHandle.entity().apiName(), tenantId,
+                query.filter());
+        QueryLowering.Lowered listSql = lowering.list(childHandle.entity().apiName(), tenantId, query);
+        RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
+                listSql.sql(), listSql.params());
         List<RecordStore.StoredRecord> children = new ArrayList<>();
-        for (Map<String, Object> row : result.rows()) {
+        for (Map<String, Object> row : page.rows()) {
             records.find(tenantId, childHandle.entityKey(), (UUID) row.get("id"), false)
                     .ifPresent(children::add);
         }

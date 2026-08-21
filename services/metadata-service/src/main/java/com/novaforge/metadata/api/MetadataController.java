@@ -29,9 +29,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class MetadataController {
 
     private final DefinitionService definitions;
+    private final com.novaforge.metadata.store.MetadataStore store;
 
-    public MetadataController(DefinitionService definitions) {
+    public MetadataController(DefinitionService definitions,
+                              com.novaforge.metadata.store.MetadataStore store) {
         this.definitions = definitions;
+        this.store = store;
     }
 
     // --- apps ---
@@ -110,11 +113,17 @@ public class MetadataController {
         return definitions.exportVersion(UUID.fromString(requireContext().tenantId()), appId, version);
     }
 
-    /** The runtime read path for rendering: bundle + version for cache keys (§4). */
+    /** The runtime read path for rendering: bundle + version for cache keys (§4).
+     * User callers are tenant-scoped by their claim; the service client (no tenant
+     * claim) resolves the owning tenant server-side — same service path as the index. */
     @GetMapping("/apps/{appId}/published")
     public Map<String, Object> published(@PathVariable UUID appId) {
-        MetadataStore.PublishedBundle bundle =
-                definitions.published(UUID.fromString(requireContext().tenantId()), appId);
+        UUID tenantId = TenantContext.current()
+                .map(ctx -> UUID.fromString(ctx.tenantId()))
+                .or(() -> store.tenantOfApp(appId))
+                .orElseThrow(() -> new PlatformException(PlatformErrorCode.TENANT_MISSING,
+                        "no tenant context bound (missing tenant_id claim?)"));
+        MetadataStore.PublishedBundle bundle = definitions.published(tenantId, appId);
         return Map.of("version", bundle.version(), "app", bundle.app());
     }
 
@@ -125,17 +134,34 @@ public class MetadataController {
      */
     @GetMapping("/published-apps")
     public List<Map<String, Object>> publishedApps() {
-        String tenantId = requireContext().tenantId();
-        return definitions.listApps(UUID.fromString(tenantId)).stream()
-                .filter(app -> app.id() != null)
-                .map(app -> Map.entry(app,
-                        definitions.versions(UUID.fromString(tenantId), UUID.fromString(app.id()))))
-                .filter(entry -> !entry.getValue().isEmpty())
-                .map(entry -> Map.<String, Object>of(
-                        "appId", entry.getKey().id(),
-                        "apiName", entry.getKey().apiName(),
-                        "version", entry.getValue().getFirst().version()))
-                .toList();
+        var context = TenantContext.current();
+        if (context.isPresent()) {
+            String tenantId = context.get().tenantId();
+            return definitions.listApps(UUID.fromString(tenantId)).stream()
+                    .filter(app -> app.id() != null)
+                    .map(app -> Map.entry(app,
+                            definitions.versions(UUID.fromString(tenantId), UUID.fromString(app.id()))))
+                    .filter(entry -> !entry.getValue().isEmpty())
+                    .map(entry -> Map.<String, Object>of(
+                            "appId", entry.getKey().id(),
+                            "apiName", entry.getKey().apiName(),
+                            "version", entry.getValue().getFirst().version()))
+                    .toList();
+        }
+        // Service-caller fallback (the Data Runtime's restart catch-up): the projection
+        // DDL is tenant-shared, so the materializer needs every tenant's published apps.
+        // Only the trusted service client reaches here (users always carry tenant_id).
+        List<Map<String, Object>> index = new java.util.ArrayList<>();
+        for (UUID[] pair : store.allTenantAppIds()) {
+            UUID tenantId = pair[0];
+            UUID appId = pair[1];
+            definitions.versions(tenantId, appId).stream().findFirst().ifPresent(latest ->
+                    index.add(Map.of(
+                            "tenantId", tenantId.toString(),
+                            "appId", appId.toString(),
+                            "version", latest.version())));
+        }
+        return index;
     }
 
     private static TenantContext.Context requireContext() {

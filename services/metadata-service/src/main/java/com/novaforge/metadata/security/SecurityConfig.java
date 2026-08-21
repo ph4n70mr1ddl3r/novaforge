@@ -45,14 +45,22 @@ public class SecurityConfig {
                 .build();
     }
 
-    /** Maps Keycloak {@code realm_access.roles} → {@code ROLE_<role>} authorities. */
+    /**
+     * Maps platform roles from the token: the {@code platform_roles} claim (the
+     * novaforge.api client scope's user-attribute mapper — same mechanism as the
+     * tenant claim) with {@code realm_access.roles} accepted as a fallback shape.
+     */
     static Converter<Jwt, ? extends AbstractAuthenticationToken> realmRolesConverter() {
         return jwt -> {
-            Collection<String> roles = List.of();
+            Collection<String> roles = new java.util.ArrayList<>();
+            Object platformRoles = jwt.getClaim("platform_roles");
+            if (platformRoles instanceof Collection<?> platform) {
+                platform.stream().map(String::valueOf).forEach(roles::add);
+            }
             Object realmAccess = jwt.getClaim("realm_access");
             if (realmAccess instanceof java.util.Map<?, ?> access
                     && access.get("roles") instanceof Collection<?> collection) {
-                roles = collection.stream().map(String::valueOf).toList();
+                collection.stream().map(String::valueOf).forEach(roles::add);
             }
             var authorities = roles.stream()
                     .map(role -> new org.springframework.security.core.authority.SimpleGrantedAuthority(

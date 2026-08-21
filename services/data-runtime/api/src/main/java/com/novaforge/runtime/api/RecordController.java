@@ -5,7 +5,7 @@ import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
 import com.novaforge.runtime.engine.RecordEngine;
 import com.novaforge.runtime.engine.idempotency.IdempotencyRecorder;
-import com.novaforge.runtime.storage.query.QueryModel;
+import com.novaforge.runtime.engine.query.QueryModel;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -39,13 +39,10 @@ public class RecordController {
 
     private final RecordEngine engine;
     private final IdempotencyRecorder idempotency;
-    private final com.novaforge.runtime.authorization.RoleMatrix roleMatrix;
 
-    public RecordController(RecordEngine engine, IdempotencyRecorder idempotency,
-                            com.novaforge.runtime.authorization.RoleMatrix roleMatrix) {
+    public RecordController(RecordEngine engine, IdempotencyRecorder idempotency) {
         this.engine = engine;
         this.idempotency = idempotency;
-        this.roleMatrix = roleMatrix;
     }
 
     // --- writes ---
@@ -105,9 +102,6 @@ public class RecordController {
                                    @RequestParam(value = "fields", required = false) String fields,
                                    @RequestParam(value = "includeDeleted", required = false, defaultValue = "false") boolean includeDeleted) {
         var ctx = requireContext();
-        if (includeDeleted) {
-            roleMatrix.requireAdmin(tenant(ctx), actor(ctx));
-        }
         Map<String, Object> shaped = engine.get(tenant(ctx), actor(ctx), entity, id, includeDeleted);
         if (fields != null && !fields.isBlank()) {
             shaped = sparse(shaped, fields);

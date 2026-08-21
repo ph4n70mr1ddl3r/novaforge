@@ -61,6 +61,18 @@ public class MetadataStore {
                 }, tenantId);
     }
 
+    /** Owning tenant of an app — the service-caller path (no tenant claim to derive from). */
+    public Optional<UUID> tenantOfApp(UUID appId) {
+        return jdbc.query("SELECT tenant_id FROM md_apps WHERE id = ?",
+                (rs, i) -> rs.getObject("tenant_id", UUID.class), appId).stream().findFirst();
+    }
+
+    /** Every (tenant, app) pair with a draft workspace — the service-caller index base. */
+    public java.util.List<UUID[]> allTenantAppIds() {
+        return jdbc.query("SELECT tenant_id, id FROM md_apps", (rs, i) ->
+                new UUID[] {rs.getObject("tenant_id", UUID.class), rs.getObject("id", UUID.class)});
+    }
+
     public Optional<AppDefinition> findApp(UUID tenantId, UUID appId) {
         return jdbc.query("""
                 SELECT api_name, label, label_i18n, description, current_version

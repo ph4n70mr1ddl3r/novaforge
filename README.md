@@ -86,56 +86,81 @@ Timeline estimate: ~8–10 months with a small senior team; Phases 1–3 are the
 - [ARCHITECTURE.md](ARCHITECTURE.md) — system design, data strategy, security model, hard problems
 - [Phase specs](docs/specs/) — detailed, decision-resolved specifications per phase
 - [Architecture Decision Records](docs/adr/):
-  - ADR-001 storage spike *(pending closure — no file yet)* · [ADR-002](docs/adr/ADR-002-authn-keycloak-authz-platform.md) Keycloak authn / platform authz · [ADR-003](docs/adr/ADR-003-graalvm-script-sandbox.md) GraalVM script sandbox · [ADR-004](docs/adr/ADR-004-flowable-embedded-state-machines.md) Flowable + state machines · [ADR-005](docs/adr/ADR-005-monorepo-maven-java21.md) monorepo, Maven, Java 21 · [ADR-006](docs/adr/ADR-006-shared-schema-rls.md) shared schema + RLS · [ADR-007](docs/adr/ADR-007-adopt-spring-boot-4.md) Spring Boot 4 · [ADR-008](docs/adr/ADR-008-declarative-first-logic.md) declarative-first logic · [ADR-009](docs/adr/ADR-009-declarative-ui.md) declarative UI · [ADR-010](docs/adr/ADR-010-builder-test-harness.md) builder test harness
+  - [ADR-001](docs/adr/ADR-001-hybrid-jsonb-projections.md) hybrid JSONB + generated projections (spike closed) · [ADR-002](docs/adr/ADR-002-authn-keycloak-authz-platform.md) Keycloak authn / platform authz · [ADR-003](docs/adr/ADR-003-graalvm-script-sandbox.md) GraalVM script sandbox · [ADR-004](docs/adr/ADR-004-flowable-embedded-state-machines.md) Flowable + state machines · [ADR-005](docs/adr/ADR-005-monorepo-maven-java21.md) monorepo, Maven, Java 21 · [ADR-006](docs/adr/ADR-006-shared-schema-rls.md) shared schema + RLS · [ADR-007](docs/adr/ADR-007-adopt-spring-boot-4.md) Spring Boot 4 · [ADR-008](docs/adr/ADR-008-declarative-first-logic.md) declarative-first logic · [ADR-009](docs/adr/ADR-009-declarative-ui.md) declarative UI · [ADR-010](docs/adr/ADR-010-builder-test-harness.md) builder test harness
 
 ## Repository Layout
 
 ```
 novaforge/
-├── README.md         # This file — project entry point
-├── PLAN.md            # Product & delivery plan
-├── ARCHITECTURE.md    # Technical architecture
-└── docs/
-    ├── specs/         # Phase specifications (PHASE-0 … PHASE-8)
-    └── adr/           # Architecture Decision Records (ADR-002 … ADR-010)
+├── README.md            # This file — project entry point
+├── PLAN.md              # Product & delivery plan
+├── ARCHITECTURE.md      # Technical architecture
+├── IMPLEMENTATION.md    # Phase-by-phase implementation ledger
+├── platform/libs/       # shared libraries (common-core, metadata-model,
+│                        #   security-context, expression-dsl*, test-support)
+├── services/            # gateway, metadata-service,
+│                        #   data-runtime (api/engine/storage/authorization)
+├── deploy/              # compose (Keycloak/PG/Redis/Kafka/Prometheus/Grafana),
+│                        #   postgres-init, kind/, helm/
+├── docs/
+│   ├── specs/           # Phase specifications (PHASE-0 … PHASE-8)
+│   ├── adr/             # ADR-001 … ADR-010
+│   ├── spikes/          # storage spike (ADR-001's evidence)
+│   └── loadtests/       # Phase 1 §10 measurements
+└── .github/workflows/   # CI (build + Podman-socket integration)
 ```
+
+*expression-dsl lands with Phase 2 (PHASE-0 §5.4 — empty modules rot).*
 
 ## Development
 
 **Prerequisites:** Temurin 21, Podman ≥ 4.9 (rootless), and `podman-compose` (or another
 `podman compose` provider). The Maven wrapper (`./mvnw`) needs no local Maven install.
 
+**Testcontainers (rootless Podman):** expose the API socket and point the suite at it —
+
 ```bash
-# 1. Build + test everything (hermetic: no containers required for the default suite)
+podman system service --time=0 unix:///run/user/$UID/podman/podman.sock &
+export DOCKER_HOST=unix:///run/user/$UID/podman/podman.sock
+export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/run/user/$UID/podman/podman.sock
 ./mvnw -B -ntp verify
-
-# 2. Local infrastructure (Keycloak, Postgres, Redis, Kafka, Prometheus, Grafana)
-cd deploy/compose
-podman compose -f novaforge.yaml up -d          # add NOVAFORGE_POSTGRES_PORT=5433 if 5432 is taken
-podman ps                                      # wait until all six report (healthy)
-
-# 3. Demo login yields a JWT carrying scope novaforge.api + the tenant claim
-curl -s -X POST http://localhost:8082/realms/novaforge/protocol/openid-connect/token \
-  -d 'grant_type=password&client_id=novaforge-api&username=demo&password=demo'
-
-# 4. Run services on the host, then go through the gateway
-java -jar services/metadata-service/target/novaforge-metadata-service-*.jar &
-TOKEN=…   # from step 3
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/metadata/ping
 ```
 
-Grafana (admin/admin) at http://localhost:3000 ships the seeded "NovaForge / Phase 0"
-dashboard; Prometheus scrapes every service's `/actuator/prometheus`.
+**Full local stack:**
 
-Integration tests that need the compose stack (real Keycloak tokens) are tagged
-`integration` and excluded from the default verify run — run them with
-`./mvnw -B -ntp verify -Dgroups=integration` while the stack is up.
+```bash
+# 1. Infrastructure (Keycloak, Postgres, Redis, Kafka, Prometheus, Grafana)
+cd deploy/compose
+PODMAN_COMPOSE_PROVIDER=podman-compose \
+NOVAFORGE_POSTGRES_PORT=5433 podman compose -f novaforge.yaml up -d
+podman ps                                       # wait until all six report (healthy)
+
+# 2. Services (host JVMs)
+cd ../..
+NOVAFORGE_POSTGRES_PORT=5433 java -jar services/metadata-service/target/novaforge-metadata-service-*.jar &
+NOVAFORGE_POSTGRES_PORT=5433 java -jar services/data-runtime/api/target/novaforge-data-runtime-*.jar &
+java -jar services/gateway/target/novaforge-gateway-*.jar &
+
+# 3. Token (scope novaforge.api + tenant/actor/platform-roles claims)
+TOKEN=$(curl -s -X POST http://localhost:8082/realms/novaforge/protocol/openid-connect/token \
+  -d 'grant_type=password&client_id=novaforge-api&username=demo&password=demo' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+```
+
+Grafana (admin/admin) at http://localhost:3000 ships the seeded "NovaForge" dashboards;
+Prometheus scrapes every service's `/actuator/prometheus`.
+
+The **Phase 1 exit demo** (create an app via the API, publish, then CRUD records with
+validations enforced) runs against that stack — see IMPLEMENTATION.md for the verified
+transcript and `docs/loadtests/` for the measured read/list/write targets.
 
 ## Status
 
-**Implementing.** Phase 0 (foundations) is built: monorepo skeleton, gateway +
-metadata-service behind JWT auth, compose stack, observability baseline, CI. All
-phase-spec open questions are resolved; ADR-002–ADR-006 join ADR-007–ADR-010 as accepted
-with files. The remaining decision gate is the storage spike (hybrid JSONB + projections
-against a 1M-row dataset) that will close ADR-001. See [PLAN.md §8](PLAN.md) for the
-immediate next steps.
+**Phases 0–1 implemented and verified live; ADR-001 closed with measured numbers.**
+The platform core exists: gateway, Metadata Service (definition lifecycle, publish,
+versions, export, the Redis `metadata.published` spine), and the Data Runtime (generic
+record/query APIs, field validations, sequences, inline master-detail children,
+optimistic locking, soft delete, idempotency, hybrid-JSONB storage with ADR-001
+generated projections + RLS, the fail-closed role matrix) — 162 tests green, exit demo
+and load targets verified on the compose stack. Next: Phase 2 (builder UI, expression
+DSL, RBAC editors) per [PLAN.md §5](PLAN.md). Progress ledger: [IMPLEMENTATION.md](IMPLEMENTATION.md).

@@ -1,0 +1,16 @@
+apiVersion: v2
+name: novaforge
+description: NovaForge umbrella chart — the full stack (gateway, metadata-service, data-runtime) on the shared compose-infra equivalents (PHASE-1 §8, ARCHITECTURE.md §7)
+type: application
+version: 0.1.0
+appVersion: "0.1.0-SNAPSHOT"
+dependencies:
+  - name: novaforge-gateway
+    version: 0.1.0
+    repository: file://../novaforge-gateway
+  - name: novaforge-metadata-service
+    version: 0.1.0
+    repository: file://../novaforge-metadata-service
+  - name: novaforge-data-runtime
+    version: 0.1.0
+    repository: file://../novaforge-data-runtime

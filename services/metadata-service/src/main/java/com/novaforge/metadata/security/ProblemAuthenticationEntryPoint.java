@@ -17,8 +17,8 @@ public class ProblemAuthenticationEntryPoint implements AuthenticationEntryPoint
                          AuthenticationException authException) throws IOException {
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
-        response.getWriter().write("""
-                {"title":"Unauthorized","status":401,"detail":"A valid bearer token \\
-                with scope novaforge.api is required"}""");
+                response.getWriter().write("{\"title\":\"Unauthorized\",\"status\":401,"
+                + "\"detail\":\"A valid bearer token with scope novaforge.api is required\"}");
+
     }
 }

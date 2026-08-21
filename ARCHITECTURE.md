@@ -287,7 +287,7 @@ No `identity/` module exists: Identity is a *deployed* Keycloak (realm/client co
 
 | ADR | Topic | Status |
 |-----|-------|--------|
-| 001 | Storage strategy: hybrid JSONB + projections | Proposed |
+| 001 | Storage strategy: hybrid JSONB + projections | Accepted (spike closed 2026-08-21) — [ADR-001](./docs/adr/ADR-001-hybrid-jsonb-projections.md) |
 | 002 | AuthN in Keycloak, AuthZ in platform DB | Accepted — [ADR-002](./docs/adr/ADR-002-authn-keycloak-authz-platform.md) |
 | 003 | Scripting: GraalVM JS sandbox (escape hatch per ADR-008) | Accepted — [ADR-003](./docs/adr/ADR-003-graalvm-script-sandbox.md) |
 | 004 | Workflow: Flowable embedded + native state machines | Accepted — [ADR-004](./docs/adr/ADR-004-flowable-embedded-state-machines.md) |
@@ -298,7 +298,7 @@ No `identity/` module exists: Identity is a *deployed* Keycloak (realm/client co
 | 009 | Declarative UI: layered generation + component catalog, no codegen | Accepted — [ADR-009](./docs/adr/ADR-009-declarative-ui.md) |
 | 010 | Builder test harness: tests as versioned metadata, gating promotion | Accepted — [ADR-010](./docs/adr/ADR-010-builder-test-harness.md) |
 
-Entries marked *Proposed* live in this log only — an ADR file is written when the decision is accepted. ADR-002–ADR-006 were accepted ahead of implementation on 2026-08-21, docs-only like ADR-007–010, when their open questions were resolved per recommendation; each landing confirms its pins — ADR-005 with the Phase 0 repo skeleton (PHASE-0 §11/T1), ADR-002/ADR-006 with the Phase 1 authorization gate and RLS implementation (PHASE-1 §6–§7, §11 T5/T9), ADR-003 at the Phase 3 Script Engine landing (PHASE-3 §6), ADR-004 at Phase 4 (PHASE-4 §2). The one remaining *Proposed* entry is ADR-001: its file records the storage-spike outcome (§4; PHASE-1 §2) — measured numbers, not a recommendation, are its acceptance vehicle. Every phase spec's former Open Questions section is now a Resolved Questions section, each decided per its written recommendation.
+Entries marked *Proposed* live in this log only — an ADR file is written when the decision is accepted. ADR-002–ADR-006 were accepted ahead of implementation on 2026-08-21, docs-only like ADR-007–010, when their open questions were resolved per recommendation; each landing confirms its pins — ADR-005 with the Phase 0 repo skeleton (PHASE-0 §11/T1), ADR-002/ADR-006 with the Phase 1 authorization gate and RLS implementation (PHASE-1 §6–§7, §11 T5/T9), ADR-003 at the Phase 3 Script Engine landing (PHASE-3 §6), ADR-004 at Phase 4 (PHASE-4 §2). ADR-001 closed 2026-08-21 with measured numbers from the 1M-row spike (variant B — generated projection tables, trigger-maintained; see the file for the table and revisit triggers). Every phase spec's former Open Questions section is now a Resolved Questions section, each decided per its written recommendation.
 
 ## 9. Performance Targets (storage/query targets: approach validated by the pre-Phase-1 storage spike — §4 / PLAN.md §8 — implementation by the Phase 1 load test (PHASE-1-METADATA-CORE.md §10); report and script targets validated as those services land in Phases 3–5)
 

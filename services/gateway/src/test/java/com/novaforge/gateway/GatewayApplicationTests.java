@@ -19,8 +19,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.client.ResourceAccessException;
 
 /** PHASE-0 §6.3 gateway test slice (default, hermetic — Keycloak-backed tests are the
- * {@code integration} profile/tag suite). */
-@SpringBootTest
+ * {@code integration} profile/tag suite). The route proof pins a dead upstream port so
+ * the proxy attempt is observable even when a real service happens to run locally. */
+@SpringBootTest(properties = "novaforge.upstreams.metadata-service=http://localhost:8099")
 @AutoConfigureMockMvc
 class GatewayApplicationTests {
 

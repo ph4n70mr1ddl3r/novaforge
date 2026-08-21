@@ -11,6 +11,8 @@ concurrency:
 
 jobs:
   build:
+    # Full verify incl. the Testcontainers suites (GitHub runners ship Docker;
+    # Postgres/Redis containers start per JVM via test-support).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +32,36 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: surefire-reports
+          path: "**/target/surefire-reports/"
+          if-no-files-found: ignore
+          retention-days: 7
+
+  integration-podman:
+    # The PHASE-1 §8 Podman-socket runner (quay.io/podman/stable labels): the same
+    # suites against rootless Podman — TESTCONTAINERS_* wiring documented in the README.
+    runs-on: [self-hosted, podman]
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Temurin 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Verify against the Podman socket
+        env:
+          DOCKER_HOST: unix:///run/podman/podman.sock
+          TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: /run/podman/podman.sock
+        run: ./mvnw -B -ntp verify
+
+      - name: Upload Surefire reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-podman
           path: "**/target/surefire-reports/"
           if-no-files-found: ignore
           retention-days: 7

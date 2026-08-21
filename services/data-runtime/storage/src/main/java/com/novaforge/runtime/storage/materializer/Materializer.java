@@ -4,9 +4,9 @@ import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.EntityDefinition;
 import com.novaforge.metadata.FieldDefinition;
 import com.novaforge.metadata.FieldType;
-import com.novaforge.runtime.storage.query.PromotionPolicy;
-import com.novaforge.runtime.storage.query.QueryLowering;
-import com.novaforge.runtime.storage.query.Snake;
+import com.novaforge.runtime.storage.schema.PromotionPolicy;
+import com.novaforge.runtime.storage.schema.Snake;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +28,11 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 public class Materializer {
 
+    /** The projection table name for an entity (schema contract, ADR-001). */
+    public static String projectionTable(String entityApiName) {
+        return "rec_" + Snake.caseName(entityApiName);
+    }
+
     private static final Logger LOG = LoggerFactory.getLogger(Materializer.class);
 
     private final JdbcTemplate jdbc;
@@ -46,7 +51,7 @@ public class Materializer {
     }
 
     private void applyEntity(AppDefinition app, EntityDefinition entity) {
-        String table = QueryLowering.projectionTable(entity.apiName());
+        String table = projectionTable(entity.apiName());
         String entityKey = app.apiName() + "." + entity.apiName();
 
         Map<String, String> promoted = PromotionPolicy.promotedColumns(entity);

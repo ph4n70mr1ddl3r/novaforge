@@ -1,12 +1,14 @@
-package com.novaforge.runtime.storage.query;
+package com.novaforge.runtime.engine.query;
 
 import com.novaforge.metadata.EntityDefinition;
+import com.novaforge.runtime.storage.schema.PromotionPolicy;
+import com.novaforge.runtime.storage.schema.Snake;
 import com.novaforge.metadata.FieldDefinition;
-import com.novaforge.runtime.storage.query.QueryModel.Aggregate;
-import com.novaforge.runtime.storage.query.QueryModel.AggregateQuery;
-import com.novaforge.runtime.storage.query.QueryModel.Filter;
-import com.novaforge.runtime.storage.query.QueryModel.ListQuery;
-import com.novaforge.runtime.storage.query.QueryModel.Sort;
+import com.novaforge.runtime.engine.query.QueryModel.Aggregate;
+import com.novaforge.runtime.engine.query.QueryModel.AggregateQuery;
+import com.novaforge.runtime.engine.query.QueryModel.Filter;
+import com.novaforge.runtime.engine.query.QueryModel.ListQuery;
+import com.novaforge.runtime.engine.query.QueryModel.Sort;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;

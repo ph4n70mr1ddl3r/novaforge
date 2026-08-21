@@ -2,8 +2,6 @@ package com.novaforge.runtime.storage.record;
 
 import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
-import com.novaforge.runtime.storage.query.QueryLowering;
-import com.novaforge.runtime.storage.query.QueryModel;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -100,8 +98,8 @@ public class RecordStore {
     public boolean valueExists(UUID tenantId, String entityId, String field, Object value, UUID excludeId) {
         String exclude = excludeId == null ? "" : " AND id <> ?";
         Object[] args = excludeId == null
-                ? new Object[] {tenantId, entityId, String.valueOf(value)}
-                : new Object[] {tenantId, entityId, String.valueOf(value), excludeId};
+                ? new Object[] {tenantId, entityId, field, String.valueOf(value)}
+                : new Object[] {tenantId, entityId, field, String.valueOf(value), excludeId};
         Integer count = jdbc.queryForObject("""
                 SELECT count(*) FROM rec_records
                  WHERE tenant_id = ? AND entity_id = ? AND data->>? = ? AND NOT deleted""" + exclude,
@@ -118,22 +116,25 @@ public class RecordStore {
         return count != null && count > 0;
     }
 
-    public QueryModel.QueryResult list(UUID tenantId, String entityApiName, QueryLowering lowering,
-                                       QueryModel.ListQuery query) {
-        QueryLowering.Lowered countSql = lowering.count(entityApiName, tenantId, query.filter());
-        Long total = jdbc.queryForObject(countSql.sql(), Long.class, countSql.params().toArray());
-        QueryLowering.Lowered listSql = lowering.list(entityApiName, tenantId, query);
-        List<Map<String, Object>> rows = jdbc.query(listSql.sql(),
-                (rs, i) -> rowShape(rs), listSql.params().toArray());
-        return new QueryModel.QueryResult(rows, total == null ? 0 : total);
+    public record PageResult(List<Map<String, Object>> rows, long total) {
     }
 
-    public QueryModel.AggregateResult aggregate(UUID tenantId, String entityApiName,
-                                                QueryLowering lowering,
-                                                QueryModel.AggregateQuery query) {
-        QueryLowering.Lowered lowered = lowering.aggregate(entityApiName, tenantId, query);
+    public record GroupedResult(List<Map<String, Object>> rows) {
+    }
+
+    /** Executes the lowered statements — the storage SPI stays engine-type-free. */
+    public PageResult list(String countSql, List<Object> countParams,
+                           String listSql, List<Object> listParams) {
+        Long total = jdbc.queryForObject(countSql, Long.class, countParams.toArray());
         List<Map<String, Object>> rows = new ArrayList<>();
-        jdbc.query(lowered.sql(), (org.springframework.jdbc.core.ResultSetExtractor<Void>) rs -> {
+        jdbc.query(listSql, (org.springframework.jdbc.core.RowCallbackHandler) rs ->
+                rows.add(rowShape(rs)), listParams.toArray());
+        return new PageResult(rows, total == null ? 0 : total);
+    }
+
+    public GroupedResult aggregate(String sql, List<Object> params) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        jdbc.query(sql, (org.springframework.jdbc.core.ResultSetExtractor<Void>) rs -> {
             while (rs.next()) {
                 Map<String, Object> row = new LinkedHashMap<>();
                 for (int i = 1; i <= rs.getMetaData().getColumnCount(); i++) {
@@ -142,10 +143,11 @@ public class RecordStore {
                 rows.add(row);
             }
             return null;
-        }, lowered.params().toArray());
-        return new QueryModel.AggregateResult(query.groupBy(), rows);
+        }, params.toArray());
+        return new GroupedResult(rows);
     }
 
+    /** List-row shape matches the single-record shape: system fields + flattened data. */
     private static Map<String, Object> rowShape(ResultSet rs) throws SQLException {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("id", rs.getObject("id", UUID.class));
@@ -156,11 +158,9 @@ public class RecordStore {
         row.put("updatedBy", rs.getObject("updated_by", UUID.class));
         row.put("deleted", rs.getBoolean("deleted"));
         JsonNode data = MAPPER.readTree(rs.getString("data"));
-        Map<String, Object> fields = new LinkedHashMap<>();
-        data.properties().forEach(p -> fields.put(p.getKey(), p.getValue().isNumber()
+        data.properties().forEach(p -> row.put(p.getKey(), p.getValue().isNumber()
                 ? p.getValue().decimalValue() : p.getValue().isBoolean()
                 ? p.getValue().asBoolean() : p.getValue().asString()));
-        row.put("fields", fields);
         return row;
     }
 

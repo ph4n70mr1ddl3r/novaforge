@@ -33,7 +33,12 @@ public class TenantBindingFilter extends OncePerRequestFilter {
             if (authentication instanceof JwtAuthenticationToken jwtAuth
                     && jwtAuth.getToken() instanceof Jwt jwt) {
                 String tenantId = jwt.getClaimAsString(TENANT_CLAIM);
-                String actorId = jwt.getSubject();
+                // Keycloak 26 lightweight access tokens may omit `sub`; the novaforge.api
+                // scope maps the user id explicitly as actor_id.
+                String actorId = jwt.getClaimAsString("actor_id");
+                if (actorId == null || actorId.isBlank()) {
+                    actorId = jwt.getSubject();
+                }
                 if (tenantId != null && !tenantId.isBlank() && actorId != null && !actorId.isBlank()) {
                     TenantContext.set(new TenantContext.Context(tenantId, actorId));
                 }

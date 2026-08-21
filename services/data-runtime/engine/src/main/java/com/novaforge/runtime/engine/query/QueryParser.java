@@ -1,4 +1,4 @@
-package com.novaforge.runtime.storage.query;
+package com.novaforge.runtime.engine.query;
 
 import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;

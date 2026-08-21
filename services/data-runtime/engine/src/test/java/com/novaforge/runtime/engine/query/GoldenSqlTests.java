@@ -1,4 +1,4 @@
-package com.novaforge.runtime.storage.query;
+package com.novaforge.runtime.engine.query;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -6,7 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.novaforge.common.error.PlatformException;
 import com.novaforge.metadata.DefinitionParser;
 import com.novaforge.metadata.EntityDefinition;
-import com.novaforge.runtime.storage.query.QueryLowering.Lowered;
+import com.novaforge.runtime.storage.schema.PromotionPolicy;
+import com.novaforge.runtime.engine.query.QueryLowering.Lowered;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;

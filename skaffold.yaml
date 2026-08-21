@@ -1,0 +1,39 @@
+# Skaffold inner-loop (podman runner — ARCHITECTURE.md §6, PHASE-1 §8): build → kind load → helm upgrade.
+# Usage:  skaffold dev --platform=podman
+apiVersion: skaffold/v4beta11
+kind: Config
+metadata:
+  name: novaforge
+build:
+  tagPolicy:
+    gitCommit: {}
+  local:
+    push: false
+    useDockerCLI: false
+  artifacts:
+    - image: ghcr.io/novaforge/novaforge-gateway
+      jib:
+        project: services/gateway
+    - image: ghcr.io/novaforge/novaforge-metadata-service
+      jib:
+        project: services/metadata-service
+    - image: ghcr.io/novaforge/novaforge-data-runtime
+      jib:
+        project: services/data-runtime/api
+deploy:
+  helm:
+    releases:
+      - name: novaforge
+        chartPath: deploy/helm/novaforge
+        artifactOverrides:
+          novaforge-gateway:
+            image:
+              repository: ghcr.io/novaforge/novaforge-gateway
+          novaforge-metadata-service:
+            image:
+              repository: ghcr.io/novaforge/novaforge-metadata-service
+          novaforge-data-runtime:
+            image:
+              repository: ghcr.io/novaforge/novaforge-data-runtime
+        imageStrategy:
+          helm: {}
