@@ -7,7 +7,8 @@
 
 ## Context
 
-Fourteen-plus services, shared libs, two frontends, and deploy assets need one
+Thirteen-plus services (PLAN.md §3's landscape, extraction only on demand), shared
+libs, two frontends, and deploy assets need one
 reviewable, atomic-change home. Alternatives: per-service repos (independent
 versioning, but cross-service contract changes split across PRs and the shared-lib
 bootstrap problem) vs a monorepo (atomic cross-cutting changes, one CI). The team is

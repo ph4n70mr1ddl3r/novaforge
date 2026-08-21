@@ -34,10 +34,11 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
              │ (JSONB     │                        │ domain    │
              │  hybrid)   │                        │ events,   │
              └────────────┘                        │ audit     │
-             ┌────────────┐                        └─────┬─────┘
-             │Redis (meta│                              │
-             │cache,seq) │        ┌───────────┐   ┌──────┴──────┐
-             └────────────┘        │Workflow   │◄──┤Audit/Notify/│
+             ┌────────────┐                        └──┬──┬─────┘
+             │Redis (meta│              ┌────────────┘  │
+             │cache,seq) │              │               │
+             └────────────┘        ┌─────┴─────┐   ┌──────┴──────┐
+                                   │Workflow   │   │Audit/Notify/│
                                    │(Flowable) │   │Integration  │
                                    └───────────┘   └─────────────┘
 ```

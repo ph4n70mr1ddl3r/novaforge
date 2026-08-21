@@ -145,7 +145,10 @@ reporting and dedicated pivot mechanics (never a v1 goal); cross-app federation.
 
 ## 8. Security & Audit
 
-- Runs/export/schedules enforce object-level (`report: execute`) plus the underlying
+- Route gate follows the PHASE-4 §13 pattern: `/api/v1/reports/**` = `user`+
+  (the §2 dashboards prefix is reserved; any future dashboard-scoped API gates
+  the same way when it lands). Runs/export/schedules additionally enforce
+  object-level (`report: execute`) plus the underlying
   entity access of the effective actor (§4, §7). The grant's authoring home —
   pinned: `report: execute` rides app role definitions (`PermissionSet`,
   ARCHITECTURE.md §2.3) — the Phase 2 role editor grows the matrix beyond entity

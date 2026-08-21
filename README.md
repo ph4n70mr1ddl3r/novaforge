@@ -43,7 +43,7 @@ Most no-code tools handle forms and lists well but collapse under ERP-grade requ
 | Workflow | Flowable 7 |
 | Scripting | GraalVM JS sandbox (CPU/memory caps, no host I/O by default) |
 | Frontend | React 19 + TypeScript, metadata-driven renderer |
-| Observability | Micrometer, Prometheus, Grafana, Tempo (traces, from Phase 3), OpenTelemetry, Loki |
+| Observability | Micrometer, Prometheus, Grafana, Tempo (traces, from Phase 3), OpenTelemetry, Loki (logs — same Phase 3 expansion) |
 | Build/CI | Maven multi-module monorepo, GitHub Actions, Testcontainers 2 |
 | Containers | Podman + Buildah; Kubernetes + Helm (Kind-on-Podman for local dev) |
 
