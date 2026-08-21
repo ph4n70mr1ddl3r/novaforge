@@ -1,0 +1,94 @@
+package com.novaforge.metadata;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * An entity definition as one document (fields, relationships, indexes, validations —
+ * ARCHITECTURE.md §3). Entities are authored per app; {@code id} is assigned by the
+ * Metadata Service on create.
+ *
+ * <p>Validation scope for record-level rules is a Phase 3 activation; the slots are
+ * schema-accepted now (inert per PHASE-1 §1 out-of-scope).</p>
+ */
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public record EntityDefinition(
+        String id,
+        String apiName,
+        String label,
+        @JsonProperty("label_i18n") Map<String, String> labelI18n,
+        String displayField,
+        String module,
+        List<FieldDefinition> fields,
+        List<RelationshipDefinition> relationships,
+        List<ValidationRule> validations,
+        List<IndexDefinition> indexes) {
+
+    public EntityDefinition {
+        fields = fields == null ? List.of() : List.copyOf(fields);
+        relationships = relationships == null ? List.of() : List.copyOf(relationships);
+        validations = validations == null ? List.of() : List.copyOf(validations);
+        indexes = indexes == null ? List.of() : List.copyOf(indexes);
+        labelI18n = labelI18n == null ? Map.of() : Map.copyOf(labelI18n);
+    }
+
+    public Optional<FieldDefinition> field(String name) {
+        return fields.stream().filter(f -> f.apiName().equals(name)).findFirst();
+    }
+
+    public Optional<RelationshipDefinition> relationship(String name) {
+        return relationships.stream().filter(r -> r.apiName().equals(name)).findFirst();
+    }
+
+    /** Copy helpers for immutable edits (builder-style; used by tests and PATCH handling). */
+    public static EntityDefinition copyWithApiName(EntityDefinition e, String apiName) {
+        return new EntityDefinition(e.id(), apiName, e.label(), e.labelI18n(), e.displayField(),
+                e.module(), e.fields(), e.relationships(), e.validations(), e.indexes());
+    }
+
+    public static EntityDefinition copyWithField(EntityDefinition e, int index, FieldDefinition field) {
+        java.util.ArrayList<FieldDefinition> fields = new java.util.ArrayList<>(e.fields());
+        fields.set(index, field);
+        return new EntityDefinition(e.id(), e.apiName(), e.label(), e.labelI18n(), e.displayField(),
+                e.module(), List.copyOf(fields), e.relationships(), e.validations(), e.indexes());
+    }
+
+    public static EntityDefinition copyWithRelationship(EntityDefinition e, int index,
+                                                        RelationshipDefinition relationship) {
+        java.util.ArrayList<RelationshipDefinition> relationships = new java.util.ArrayList<>(e.relationships());
+        relationships.set(index, relationship);
+        return new EntityDefinition(e.id(), e.apiName(), e.label(), e.labelI18n(), e.displayField(),
+                e.module(), e.fields(), List.copyOf(relationships), e.validations(), e.indexes());
+    }
+
+    public interface Edit {
+        EntityDefinition apply(EntityDefinition e);
+    }
+
+    public static EntityDefinition copyWith(EntityDefinition e, Edit edit) {
+        return edit.apply(e);
+    }
+
+    /** Inert until Phase 3: a validation rule slot (expression + message). */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record ValidationRule(String name, String scope, String expression, String message) {
+    }
+
+    /** Entity-level index declaration; promoted fields lower to projection columns (§12 Q3). */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record IndexDefinition(List<String> fields, Boolean unique) {
+
+        public IndexDefinition {
+            fields = fields == null ? List.of() : List.copyOf(fields);
+        }
+
+        @JsonIgnore
+        public boolean isUnique() {
+            return Boolean.TRUE.equals(unique);
+        }
+    }
+}

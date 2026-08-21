@@ -16,5 +16,8 @@
 
   <modules>
     <module>libs/common-core</module>
+    <module>libs/metadata-model</module>
+    <module>libs/security-context</module>
+    <module>libs/test-support</module>
   </modules>
 </project>

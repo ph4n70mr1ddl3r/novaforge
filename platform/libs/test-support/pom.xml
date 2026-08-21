@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.novaforge</groupId>
+    <artifactId>novaforge-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>novaforge-test-support</artifactId>
+  <name>NovaForge Test Support</name>
+  <description>Testcontainers 2 bases: Postgres with RLS fixtures, Redis client base
+    (PHASE-1 §3/T2). Consumed as a test-scope dependency by the services.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-common-core</artifactId>
+    </dependency>
+    <!-- This lib's "main" code is test infrastructure: JUnit/Testcontainers are
+         compile-scope here so service modules inherit them via the test-scope
+         dependency on novaforge-test-support. -->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-postgresql</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>
