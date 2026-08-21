@@ -20,11 +20,30 @@ public class PlatformStore {
         this.jdbc = jdbc;
     }
 
-    /** Roles held by {@code user} in {@code tenant}, read at request time (§7). */
+    /** Roles held by {@code user} in {@code tenant}, read at request time (§7/PHASE-2 §9):
+     * platform roles plus app-scoped roles ({@code app.role}) from the same table. */
     public List<String> roles(UUID tenantId, UUID userId) {
         return jdbc.queryForList(
                 "SELECT role FROM platform.role_assignments WHERE tenant_id = ? AND user_id = ?",
                 String.class, tenantId, userId);
+    }
+
+    public UUID createUser(UUID userId, String username) {
+        jdbc.update("INSERT INTO platform.users (id, username) VALUES (?, ?) ON CONFLICT (id) DO NOTHING",
+                userId, username);
+        return userId;
+    }
+
+    public UUID createTenant(UUID tenantId, String apiName, String displayName) {
+        jdbc.update("INSERT INTO platform.tenants (id, api_name, display_name) VALUES (?, ?, ?)",
+                tenantId, apiName, displayName);
+        return tenantId;
+    }
+
+    public void assignRole(UUID tenantId, UUID userId, String role) {
+        jdbc.update("""
+                INSERT INTO platform.role_assignments (tenant_id, user_id, role) VALUES (?, ?, ?)
+                ON CONFLICT DO NOTHING""", tenantId, userId, role);
     }
 
     public boolean tenantExists(UUID tenantId) {

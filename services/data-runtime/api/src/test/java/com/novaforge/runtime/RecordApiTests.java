@@ -63,6 +63,14 @@ class RecordApiTests extends PostgresTestBase {
 
     static final String APP_JSON = """
             { "apiName": "Erp",
+              "permissionSet": {
+                "roles": [ { "name": "clerk", "description": "Front-desk clerk" } ],
+                "objectPermissions": [
+                  { "role": "clerk", "entity": "Ticket",
+                    "create": true, "read": true, "update": false, "delete": false } ],
+                "fieldSecurity": [
+                  { "role": "clerk", "entity": "Ticket", "field": "title", "access": "hidden" },
+                  { "role": "clerk", "entity": "Ticket", "field": "number", "access": "readonly" } ] },
               "settings": { "sequences": [
                 { "apiName": "entryNumber", "mode": "gapless", "start": 1,
                   "prefix": "JE-", "padding": 6 },
@@ -497,6 +505,73 @@ class RecordApiTests extends PostgresTestBase {
             }
         });
         appV2 = null;   // restore v1 for other suites
+    }
+
+    @Test
+    @DisplayName("PermissionSet matrix grants app roles server-side; hidden fields strip; readonly rejects (PHASE-2 §9)")
+    void permissionSetEnforcement() throws Exception {
+        // the demo actor already holds platform admin — grant a second, clerk-only actor
+        UUID clerkUser = UUID.randomUUID();
+        jdbc.update("INSERT INTO platform.users (id, username) VALUES (?, ?) ON CONFLICT DO NOTHING",
+                clerkUser, "clerk-" + clerkUser);
+        jdbc.update("INSERT INTO platform.role_assignments (tenant_id, user_id, role) VALUES (?, ?, 'Erp.clerk') "
+                + "ON CONFLICT DO NOTHING", TENANT, clerkUser);
+
+        var clerkJwt = jwt()
+                .jwt(token -> token.claim("tenant_id", TENANT.toString()).subject(clerkUser.toString()))
+                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
+
+        // create allowed by the matrix; the shaped response strips the hidden title
+        MvcResult created = mockMvc.perform(post("/api/v1/runtime/Ticket").with(clerkJwt)
+                        .contentType("application/json").content("{\"title\":\"clerk ticket\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").doesNotExist())
+                .andExpect(jsonPath("$.number").isNotEmpty())
+                .andReturn();
+        String id = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+
+        // list strips the hidden field server-side for the clerk too
+        MvcResult listed = mockMvc.perform(get("/api/v1/runtime/Ticket").with(clerkJwt)
+                        .param("page", java.net.URLEncoder.encode(
+                                "{\"size\":50}", java.nio.charset.StandardCharsets.UTF_8)))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(MAPPER.readTree(listed.getResponse().getContentAsString()).get("rows").toString())
+                .doesNotContain("\"title\"");
+
+        // update denied by the matrix; the platform admin still writes freely
+        mockMvc.perform(patch("/api/v1/runtime/Ticket/" + id).with(clerkJwt)
+                        .contentType("application/json").content("{\"version\":1,\"title\":\"x\"}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/api/v1/runtime/Ticket/" + id).with(clerkJwt).param("version", "1"))
+                .andExpect(status().isForbidden());
+
+        // a clerk cannot see records of an entity the matrix denies (JournalEntry has no grant)
+        mockMvc.perform(get("/api/v1/runtime/JournalEntry").with(clerkJwt).param("page",
+                        java.net.URLEncoder.encode("{\"size\":1}", java.nio.charset.StandardCharsets.UTF_8)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("platform-admin API: admin-gated tenant provisioning path and role assignment (PHASE-2 §10)")
+    void adminApiGating() throws Exception {
+        // non-admin (plain authenticated) → 403
+        mockMvc.perform(post("/api/v1/admin/tenants/" + TENANT + "/role-assignments")
+                        .with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"userId\":\"" + ACTOR + "\",\"role\":\"Erp.clerk\"}"))
+                .andExpect(status().isForbidden());
+
+        // platform admin (demo carries platform_roles via the claim) assigns an app role
+        var adminJwt = jwt()
+                .jwt(token -> token.claim("tenant_id", TENANT.toString()).subject(ACTOR.toString())
+                        .claim("platform_roles", List.of("admin")))
+                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
+        mockMvc.perform(post("/api/v1/admin/tenants/" + TENANT + "/role-assignments")
+                        .with(adminJwt)
+                        .contentType("application/json")
+                        .content("{\"userId\":\"" + ACTOR + "\",\"role\":\"Erp.clerk\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ok"));
     }
 
     @Test

@@ -57,7 +57,54 @@ public final class DefinitionValidator {
         for (EntityDefinition entity : app.entities()) {
             validateEntity(app, entity, errors);
         }
+        validatePermissionSet(app, errors);
         return new ProblemErrors(errors, globals);
+    }
+
+    /** PermissionSet rules (PHASE-2 §9): roles unique, entities/fields resolve, access ∈ {readonly, hidden}. */
+    private static void validatePermissionSet(AppDefinition app, List<ProblemErrors.FieldError> errors) {
+        PermissionSet permissions = app.permissionSet();
+        Set<String> roleNames = new HashSet<>();
+        for (PermissionSet.RoleDefinition role : permissions.roles()) {
+            if (role.name() == null || !CAMEL_CASE.matcher(role.name()).matches()) {
+                errors.add(field("permissionSet.roles", "role names must be camelCase", role.name()));
+                continue;
+            }
+            if (!roleNames.add(role.name())) {
+                errors.add(field("permissionSet.roles", "role names must be unique: " + role.name(), role.name()));
+            }
+        }
+        for (PermissionSet.ObjectPermission permission : permissions.objectPermissions()) {
+            if (!roleNames.contains(permission.role())) {
+                errors.add(field("permissionSet.objectPermissions",
+                        "role must be declared: " + permission.role(), permission.role()));
+            }
+            if (!appEntityExists(app, permission.entity())) {
+                errors.add(field("permissionSet.objectPermissions",
+                        "entity must resolve within the app: " + permission.entity(), permission.entity()));
+            }
+        }
+        for (PermissionSet.FieldSecurity security : permissions.fieldSecurity()) {
+            if (!roleNames.contains(security.role())) {
+                errors.add(field("permissionSet.fieldSecurity",
+                        "role must be declared: " + security.role(), security.role()));
+            }
+            Optional<EntityDefinition> entity = app.entity(security.entity());
+            if (entity.isEmpty()) {
+                errors.add(field("permissionSet.fieldSecurity",
+                        "entity must resolve within the app: " + security.entity(), security.entity()));
+                continue;
+            }
+            if (entity.get().field(security.field()).isEmpty()) {
+                errors.add(field("permissionSet.fieldSecurity",
+                        "field must exist on " + security.entity() + ": " + security.field(), security.field()));
+            }
+            if (!PermissionSet.FieldSecurity.READONLY.equals(security.access())
+                    && !PermissionSet.FieldSecurity.HIDDEN.equals(security.access())) {
+                errors.add(field("permissionSet.fieldSecurity",
+                        "access must be readonly|hidden: " + security.access(), security.access()));
+            }
+        }
     }
 
     private static void validateEntity(AppDefinition app, EntityDefinition entity,

@@ -8,6 +8,7 @@ import com.novaforge.metadata.DefaultValue;
 import com.novaforge.metadata.EntityDefinition;
 import com.novaforge.metadata.FieldDefinition;
 import com.novaforge.metadata.FieldType;
+import com.novaforge.metadata.PermissionSet;
 import com.novaforge.metadata.RelationshipDefinition;
 import com.novaforge.metadata.RelationshipType;
 import com.novaforge.runtime.authorization.RoleMatrix;
@@ -64,8 +65,9 @@ public class RecordEngine {
     public Map<String, Object> create(UUID tenantId, UUID actorId, String entityApiName,
                                       Map<String, Object> body) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
-        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.CREATE, entityApiName);
         AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.CREATE, entityApiName,
+                handle.appApiName(), app.permissionSet());
 
         List<ProblemErrors.FieldError> errors = new ArrayList<>();
         Map<String, Object> fields = new LinkedHashMap<>();
@@ -83,19 +85,21 @@ public class RecordEngine {
 
         events.publish(event("record.created", tenantId, handle.entityKey(), id, actorId));
         return shape(handle.entity(), records.find(tenantId, handle.entityKey(), id, false)
-                .orElseThrow());
+                .orElseThrow(), strip(tenantId, actorId, handle, app));
     }
 
     @Transactional
     public Map<String, Object> update(UUID tenantId, UUID actorId, String entityApiName,
                                       UUID id, int expectedVersion, Map<String, Object> body) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
-        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.UPDATE, entityApiName);
         AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.UPDATE, entityApiName,
+                handle.appApiName(), app.permissionSet());
 
         RecordStore.StoredRecord existing = records.find(tenantId, handle.entityKey(), id, false)
                 .orElseThrow(() -> notFound(entityApiName, id));
         rejectReadonlyWrites(handle.entity(), body);
+        rejectFieldSecurityWrites(tenantId, actorId, handle, app, body);
 
         List<ProblemErrors.FieldError> errors = new ArrayList<>();
         Map<String, Object> fields = new LinkedHashMap<>();
@@ -119,7 +123,8 @@ public class RecordEngine {
         events.publish(event("record.updated", tenantId, handle.entityKey(), id, actorId));
 
         Map<String, Object> shaped = shape(handle.entity(),
-                records.find(tenantId, handle.entityKey(), id, false).orElseThrow());
+                records.find(tenantId, handle.entityKey(), id, false).orElseThrow(),
+                strip(tenantId, actorId, handle, app));
         shaped.put("version", newVersion);
         return shaped;
     }
@@ -128,8 +133,9 @@ public class RecordEngine {
     public void delete(UUID tenantId, UUID actorId, String entityApiName, UUID id,
                        int expectedVersion) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
-        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.DELETE, entityApiName);
         AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.DELETE, entityApiName,
+                handle.appApiName(), app.permissionSet());
 
         records.softDelete(tenantId, handle.entityKey(), id, expectedVersion, actorId);
         cascadeChildren(tenantId, actorId, app, handle, id);
@@ -141,20 +147,24 @@ public class RecordEngine {
     public Map<String, Object> get(UUID tenantId, UUID actorId, String entityApiName, UUID id,
                                    boolean includeDeleted) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
-        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, entityApiName);
+        AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, entityApiName,
+                handle.appApiName(), app.permissionSet());
         if (includeDeleted) {
             roleMatrix.requireAdmin(tenantId, actorId);   // admin-only (PHASE-1 §5)
         }
         RecordStore.StoredRecord record = records.find(tenantId, handle.entityKey(), id,
                         includeDeleted)
                 .orElseThrow(() -> notFound(entityApiName, id));
-        return shape(handle.entity(), record);
+        return shape(handle.entity(), record, strip(tenantId, actorId, handle, app));
     }
 
     public QueryModel.QueryResult list(UUID tenantId, UUID actorId, String entityApiName,
                                        String queryJson) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
-        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, entityApiName);
+        AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, entityApiName,
+                handle.appApiName(), app.permissionSet());
         QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
         QueryLowering lowering = new QueryLowering(handle.entity());
         QueryLowering.Lowered countSql = lowering.count(handle.entity().apiName(), tenantId,
@@ -162,13 +172,19 @@ public class RecordEngine {
         QueryLowering.Lowered listSql = lowering.list(handle.entity().apiName(), tenantId, query);
         RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
                 listSql.sql(), listSql.params());
-        return new QueryModel.QueryResult(page.rows(), page.total());
+        java.util.function.Predicate<String> strip = strip(tenantId, actorId, handle, app);
+        List<Map<String, Object>> rows = page.rows().stream()
+                .map(row -> stripHidden(row, strip))
+                .toList();
+        return new QueryModel.QueryResult(rows, page.total());
     }
 
     public QueryModel.AggregateResult aggregate(UUID tenantId, UUID actorId, String entityApiName,
                                                 String queryJson) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
-        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, entityApiName);
+        AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, entityApiName,
+                handle.appApiName(), app.permissionSet());
         QueryModel.AggregateQuery query = QueryParser.parseAggregate(queryJson, handle.entity());
         QueryLowering.Lowered lowered = new QueryLowering(handle.entity())
                 .aggregate(handle.entity().apiName(), tenantId, query);
@@ -442,8 +458,46 @@ public class RecordEngine {
                 Instant.now().toString());
     }
 
-    /** Shaped projection: system fields + entity fields (sparse fields strip, §5). */
-    private static Map<String, Object> shape(EntityDefinition entity, RecordStore.StoredRecord record) {
+    /**
+     * Field security (PHASE-2 §9): the predicate reports fields hidden for this actor —
+     * projections strip them server-side (enforcement; the UI only renders).
+     */
+    private java.util.function.Predicate<String> strip(UUID tenantId, UUID actorId,
+                                                       EntityHandle handle, AppDefinition app) {
+        return field -> com.novaforge.metadata.PermissionSet.FieldSecurity.HIDDEN.equals(
+                roleMatrix.fieldAccess(tenantId, actorId, handle.appApiName(),
+                        app.permissionSet(), handle.entity().apiName(), field));
+    }
+
+    private static Map<String, Object> stripHidden(Map<String, Object> row,
+                                                   java.util.function.Predicate<String> hidden) {
+        Map<String, Object> shaped = new LinkedHashMap<>();
+        row.forEach((key, value) -> {
+            if (!hidden.test(key)) {
+                shaped.put(key, value);
+            }
+        });
+        return shaped;
+    }
+
+    /** Writes to PermissionSet-hidden or readonly fields reject (server-side, §9). */
+    private void rejectFieldSecurityWrites(UUID tenantId, UUID actorId, EntityHandle handle,
+                                           AppDefinition app, Map<String, Object> body) {
+        for (String key : body.keySet()) {
+            String access = roleMatrix.fieldAccess(tenantId, actorId, handle.appApiName(),
+                    app.permissionSet(), handle.entity().apiName(), key);
+            if (PermissionSet.FieldSecurity.HIDDEN.equals(access)
+                    || PermissionSet.FieldSecurity.READONLY.equals(access)) {
+                throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                        "field is " + access + " for this role: " + key, ProblemErrors.of(
+                                new ProblemErrors.FieldError(key, "field is " + access, key)));
+            }
+        }
+    }
+
+    /** Shaped projection: system fields + entity fields, hidden fields stripped (§5/§9). */
+    private Map<String, Object> shape(EntityDefinition entity, RecordStore.StoredRecord record,
+                                      java.util.function.Predicate<String> hidden) {
         Map<String, Object> shaped = new LinkedHashMap<>();
         shaped.put("id", record.id().toString());
         shaped.put("version", record.version());
@@ -451,7 +505,11 @@ public class RecordEngine {
         shaped.put("updatedAt", record.updatedAt());
         shaped.put("createdBy", record.createdBy().toString());
         shaped.put("updatedBy", record.updatedBy().toString());
-        shaped.putAll(record.data());
+        record.data().forEach((key, value) -> {
+            if (!hidden.test(key)) {
+                shaped.put(key, value);
+            }
+        });
         return shaped;
     }
 

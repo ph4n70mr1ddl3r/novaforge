@@ -6,6 +6,7 @@ import com.novaforge.common.error.PlatformException;
 import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.DefinitionParser;
 import com.novaforge.metadata.EntityDefinition;
+import com.novaforge.metadata.PermissionSet;
 import com.novaforge.metadata.SequenceDefinition;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -40,24 +41,26 @@ public class MetadataStore {
     public AppDefinition insertApp(UUID tenantId, UUID actorId, AppDefinition app) {
         UUID appId = app.id() == null ? UUID.randomUUID() : UUID.fromString(app.id());
         jdbc.update("""
-                INSERT INTO md_apps (id, tenant_id, api_name, label, label_i18n, description, created_by, updated_by)
-                VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?)""",
+                INSERT INTO md_apps (id, tenant_id, api_name, label, label_i18n, description, permission_set, created_by, updated_by)
+                VALUES (?, ?, ?, ?, ?::jsonb, ?, ?::jsonb, ?, ?)""",
                 appId, tenantId, app.apiName(), app.label(),
-                DefinitionParser.write(app.labelI18n()), app.description(), actorId, actorId);
+                DefinitionParser.write(app.labelI18n()), app.description(),
+                app.permissionSet() == null ? "{}" : DefinitionParser.write(app.permissionSet()),
+                actorId, actorId);
         insertChildren(tenantId, actorId, appId, app);
         return withIds(appId, app);
     }
 
     public List<AppDefinition> listApps(UUID tenantId) {
         return jdbc.query("""
-                SELECT id, api_name, label, label_i18n, description, current_version
+                SELECT id, api_name, label, label_i18n, description, permission_set, current_version
                 FROM md_apps WHERE tenant_id = ? ORDER BY api_name""",
                 (rs, i) -> {
                     UUID appId = rs.getObject("id", UUID.class);
                     return assembleApp(tenantId, appId,
                             rs.getString("api_name"), rs.getString("label"),
                             rs.getString("label_i18n"), rs.getString("description"),
-                            rs.getInt("current_version"));
+                            rs.getString("permission_set"), rs.getInt("current_version"));
                 }, tenantId);
     }
 
@@ -75,12 +78,12 @@ public class MetadataStore {
 
     public Optional<AppDefinition> findApp(UUID tenantId, UUID appId) {
         return jdbc.query("""
-                SELECT api_name, label, label_i18n, description, current_version
+                SELECT api_name, label, label_i18n, description, permission_set, current_version
                 FROM md_apps WHERE tenant_id = ? AND id = ?""",
                 (rs, i) -> assembleApp(tenantId, appId,
                         rs.getString("api_name"), rs.getString("label"),
                         rs.getString("label_i18n"), rs.getString("description"),
-                        rs.getInt("current_version")),
+                        rs.getString("permission_set"), rs.getInt("current_version")),
                 tenantId, appId).stream().findFirst();
     }
 
@@ -94,9 +97,11 @@ public class MetadataStore {
     public AppDefinition updateApp(UUID tenantId, UUID actorId, UUID appId, AppDefinition draft) {
         int updated = jdbc.update("""
                 UPDATE md_apps
-                   SET label = ?, label_i18n = ?::jsonb, description = ?, updated_at = now(), updated_by = ?
+                   SET label = ?, label_i18n = ?::jsonb, description = ?, permission_set = ?::jsonb,
+                       updated_at = now(), updated_by = ?
                  WHERE tenant_id = ? AND id = ?""",
                 draft.label(), DefinitionParser.write(draft.labelI18n()), draft.description(),
+                draft.permissionSet() == null ? "{}" : DefinitionParser.write(draft.permissionSet()),
                 actorId, tenantId, appId);
         if (updated == 0) {
             throw new PlatformException(PlatformErrorCode.NOT_FOUND, "app " + appId + " not found");
@@ -265,7 +270,8 @@ public class MetadataStore {
     }
 
     private AppDefinition assembleApp(UUID tenantId, UUID appId, String apiName, String label,
-                                      String labelI18nJson, String description, int currentVersion) {
+                                      String labelI18nJson, String description, String permissionSetJson,
+                                      int currentVersion) {
         List<EntityDefinition> entities = jdbc.query(
                 "SELECT document FROM md_entities WHERE tenant_id = ? AND app_id = ? ORDER BY api_name",
                 (rs, i) -> DefinitionParser.parse(rs.getString("document"), EntityDefinition.class),
@@ -278,10 +284,14 @@ public class MetadataStore {
                 "SELECT document FROM md_settings WHERE tenant_id = ? AND app_id = ? AND kind = ? ORDER BY api_name",
                 (rs, i) -> DefinitionParser.parse(rs.getString("document"), SequenceDefinition.class),
                 tenantId, appId, KIND_SEQUENCE);
+        PermissionSet permissionSet = (permissionSetJson == null || permissionSetJson.isBlank()
+                || permissionSetJson.equals("{}"))
+                ? new PermissionSet(null, null, null)
+                : DefinitionParser.parse(permissionSetJson, PermissionSet.class);
         return new AppDefinition(appId.toString(), apiName, label,
                 DefinitionParser.parse(labelI18nJson == null ? "{}" : labelI18nJson, Map.class),
                 description, entities, pages,
-                new AppDefinition.SettingsDefinition(sequences, null, null));
+                new AppDefinition.SettingsDefinition(sequences, null, null), permissionSet);
     }
 
     @SuppressWarnings("unchecked")

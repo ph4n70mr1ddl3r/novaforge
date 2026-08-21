@@ -143,6 +143,17 @@
         "builder",
         "user"
       ]
+    },
+    {
+      "username": "service-account-novaforge-runtime",
+      "enabled": true,
+      "serviceAccountClientId": "novaforge-runtime",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users"
+        ]
+      }
     }
   ],
   "roles": {

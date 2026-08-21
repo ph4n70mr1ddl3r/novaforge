@@ -53,10 +53,32 @@ the ledger.
 Suites: 162 tests, `./mvnw verify` green (Testcontainers: Postgres + Redis; rootless
 Podman socket env documented in the README).
 
-## Phase 2 — Builder UI & Security ⬜ (spec: PHASE-2-UI-BUILDER.md)
+## Phase 2 — Builder UI & Security ◐ (spec: PHASE-2-UI-BUILDER.md)
 
-Not started. The runtime surface Phase 2 builds on is in place: published reads,
-record API, fail-closed role matrix, platform DB seed.
+**Backend implemented:**
+- `expression-dsl` (expr/v1, §7/Annex A): the JVM parser/evaluator with the pinned
+  grammar — exact BigDecimal semantics, null-aware operators, date arithmetic,
+  membership, the closed function set, injectable clock — plus the shared conformance
+  corpus (40 cases) and compile-check wired into the Metadata Service save/publish
+  (validations may read the clock; formula fields may not, PHASE-3 §3). Slots stay
+  inert until Phase 3 write-path evaluation.
+- RBAC + field security (§9): PermissionSet as versioned, promoted metadata
+  (roles, object CRUD matrix, field visible/readonly/hidden) with save-validation
+  rules; server-side enforcement in the Data Runtime — the matrix decides
+  create/read/update/delete per app-scoped role (`App.role` assignments in the
+  platform DB), hidden fields strip from every projection, writes to
+  hidden/readonly fields reject.
+- Tenant onboarding + platform-admin API (§10): `POST /api/v1/admin/tenants`
+  (tenant row + first admin, orchestrating Keycloak user creation via the service
+  account with realm-management roles) and role assignments — admin-gated, riding
+  the engine behind a UserProvisioner port (layering rules hold).
+- Realm export: service account `service-account-novaforge-runtime` with
+  manage-users; role-assignment check widened for app-scoped roles (V2 migration).
+
+**Not implemented:** the React builder/runtime UIs (§3–§6, §8 — the largest remaining
+Phase 2 surface: page model, component catalog, renderer, entity/page builders) and
+the TS evaluator twin for the conformance corpus. Backend surfaces are ready for it:
+published reads, expression bindings compile-checked, field security stripping.
 
 ## Phases 3–8 ⬜
 

@@ -13,7 +13,7 @@ spring:
             - id: data-runtime
               uri: ${novaforge.upstreams.data-runtime:http://localhost:8083}
               predicates:
-                - Path=/api/v1/runtime/**
+                - Path=/api/v1/runtime/**,/api/v1/admin/**
   security:
     oauth2:
       resourceserver:

@@ -24,17 +24,27 @@ public record AppDefinition(
         String description,
         List<EntityDefinition> entities,
         List<PageDefinition> pages,
-        SettingsDefinition settings) {
+        SettingsDefinition settings,
+        PermissionSet permissionSet) {
 
     public AppDefinition {
         entities = entities == null ? List.of() : List.copyOf(entities);
         pages = pages == null ? List.of() : List.copyOf(pages);
         labelI18n = labelI18n == null ? Map.of() : Map.copyOf(labelI18n);
         settings = settings == null ? new SettingsDefinition(null, null, null) : settings;
+        permissionSet = permissionSet == null ? new PermissionSet(null, null, null) : permissionSet;
     }
 
     public java.util.Optional<EntityDefinition> entity(String apiName) {
         return entities.stream().filter(e -> e.apiName().equals(apiName)).findFirst();
+    }
+
+    /** Constructor without the Permissions branch (pre-PermissionSet drafts). */
+    public AppDefinition(String id, String apiName, String label, Map<String, String> labelI18n,
+                         String description, List<EntityDefinition> entities,
+                         List<PageDefinition> pages, SettingsDefinition settings) {
+        this(id, apiName, label, labelI18n, description, entities, pages, settings,
+                new PermissionSet(null, null, null));
     }
 
     /** Page definition (reserved slot; authored from Phase 2 per PHASE-2 §3). */

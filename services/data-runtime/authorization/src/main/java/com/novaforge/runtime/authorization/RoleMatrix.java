@@ -2,6 +2,7 @@ package com.novaforge.runtime.authorization;
 
 import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
+import com.novaforge.metadata.PermissionSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -27,15 +28,58 @@ public class RoleMatrix {
         this.platform = platform;
     }
 
-    /** Fails closed with FORBIDDEN unless the actor holds a granting role. */
-    public void require(UUID tenantId, UUID actorId, Action action, String entityApiName) {
+    /**
+     * Fails closed with FORBIDDEN unless the actor holds a granting role. Platform
+     * {@code admin}/{@code builder} keep full CRUD (the Phase 1 bootstrap); everyone
+     * else is decided by the app's PermissionSet matrix (PHASE-2 §9 tightens the
+     * fail-closed default: {@code user} earns grants only through app roles).
+     */
+    public void require(UUID tenantId, UUID actorId, Action action, String entityApiName,
+                        String appApiName, PermissionSet permissionSet) {
         List<String> roles = platform.roles(tenantId, actorId);
-        boolean granted = roles.stream().anyMatch(FULL_CRUD::contains);
+        if (roles.stream().anyMatch(FULL_CRUD::contains)) {
+            return;
+        }
+        boolean granted = permissionSet.objectPermissions().stream()
+                .filter(p -> p.entity().equals(entityApiName))
+                .filter(p -> heldInApp(roles, appApiName, p.role()))
+                .anyMatch(p -> p.allows(action.name().toLowerCase()));
         if (!granted) {
             throw new PlatformException(PlatformErrorCode.FORBIDDEN,
                     "actor " + actorId + " is not granted " + action + " on " + entityApiName
                             + " (roles: " + roles + ")");
         }
+    }
+
+    /** An app role applies when the actor holds it scoped to this app ({@code app.role}). */
+    private static boolean heldInApp(List<String> roles, String appApiName, String role) {
+        return roles.contains(appApiName + "." + role);
+    }
+
+    /**
+     * Effective field access under the actor's app roles (PHASE-2 §9): hidden wins over
+     * readonly, readonly over visible; fields without an entry are visible.
+     */
+    public String fieldAccess(UUID tenantId, UUID actorId, String appApiName,
+                              PermissionSet permissionSet, String entityApiName, String field) {
+        List<String> roles = platform.roles(tenantId, actorId);
+        if (roles.stream().anyMatch(FULL_CRUD::contains)) {
+            return "visible";
+        }
+        String access = "visible";
+        for (PermissionSet.FieldSecurity security : permissionSet.fieldSecurity()) {
+            if (!security.entity().equals(entityApiName) || !security.field().equals(field)) {
+                continue;
+            }
+            if (!heldInApp(roles, appApiName, security.role())) {
+                continue;
+            }
+            if (PermissionSet.FieldSecurity.HIDDEN.equals(security.access())) {
+                return PermissionSet.FieldSecurity.HIDDEN;
+            }
+            access = PermissionSet.FieldSecurity.READONLY;
+        }
+        return access;
     }
 
     /** Admin-only surfaces — e.g. {@code includeDeleted} reads (PHASE-1 §5). */
