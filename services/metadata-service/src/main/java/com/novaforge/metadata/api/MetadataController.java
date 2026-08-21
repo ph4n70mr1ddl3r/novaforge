@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -88,6 +89,25 @@ public class MetadataController {
     @DeleteMapping("/apps/{appId}/entities/{entityApiName}")
     public AppDefinition deleteEntity(@PathVariable UUID appId, @PathVariable String entityApiName) {
         return definitions.deleteEntity(UUID.fromString(requireContext().tenantId()), appId, entityApiName);
+    }
+
+    // --- test suites (ADR-010) ---
+
+    @PutMapping("/apps/{appId}/test-suites/{suiteApiName}")
+    public AppDefinition putTestSuite(@PathVariable UUID appId, @PathVariable String suiteApiName,
+                                      @RequestBody com.novaforge.metadata.TestSuiteDefinition suite) {
+        var ctx = requireContext();
+        var normalized = new com.novaforge.metadata.TestSuiteDefinition(suiteApiName,
+                suite.label(), suite.cases());
+        return definitions.putTestSuite(UUID.fromString(ctx.tenantId()), UUID.fromString(ctx.actorId()),
+                appId, normalized);
+    }
+
+    @PostMapping("/apps/{appId}/test-suites/{suiteApiName}/run")
+    public Map<String, Object> runSuite(@PathVariable UUID appId, @PathVariable String suiteApiName) {
+        var ctx = requireContext();
+        return definitions.runSuite(UUID.fromString(ctx.tenantId()), UUID.fromString(ctx.actorId()),
+                appId, suiteApiName);
     }
 
     // --- publish + versions ---

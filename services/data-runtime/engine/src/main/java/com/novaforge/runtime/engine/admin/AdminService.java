@@ -27,6 +27,12 @@ public class AdminService {
     /** Tenant row + first-admin assignment in one flow (§10). */
     public Map<String, Object> createTenant(String apiName, String displayName,
                                             String adminUsername, String adminEmail) {
+        return createTenant(apiName, displayName, adminUsername, adminEmail, null);
+    }
+
+    public Map<String, Object> createTenant(String apiName, String displayName,
+                                            String adminUsername, String adminEmail,
+                                            String adminPassword) {
         if (apiName == null || apiName.isBlank()
                 || adminUsername == null || adminUsername.isBlank()) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
@@ -34,10 +40,26 @@ public class AdminService {
         }
         UUID tenantId = UUID.randomUUID();
         platform.createTenant(tenantId, apiName, displayName);
-        UUID adminId = users.createUser(adminUsername, adminEmail, tenantId);
+        UUID adminId = users.createUser(adminUsername, adminEmail, tenantId, adminPassword,
+                java.util.List.of("admin", "builder", "user"));
         platform.createUser(adminId, adminUsername);
         platform.assignRole(tenantId, adminId, "admin");
         return Map.of("tenantId", tenantId.toString(), "adminUserId", adminId.toString());
+    }
+
+    /** Scratch-tenant actor provisioning (ADR-010's synthetic actors). */
+    public Map<String, Object> createUser(UUID tenantId, String username, String password) {
+        if (username == null || username.isBlank() || password == null || password.isBlank()) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "username and password are required");
+        }
+        if (!platform.tenantExists(tenantId)) {
+            throw new PlatformException(PlatformErrorCode.NOT_FOUND, "tenant " + tenantId + " not found");
+        }
+        UUID userId = users.createUser(username, username + "@scratch.novaforge.local",
+                tenantId, password, java.util.List.of());
+        platform.createUser(userId, username);
+        return Map.of("userId", userId.toString());
     }
 
     /** Assigns a platform or app-scoped ({@code app.role}) role. */

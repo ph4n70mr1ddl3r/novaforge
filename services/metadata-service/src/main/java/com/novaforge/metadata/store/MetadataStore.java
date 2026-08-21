@@ -8,6 +8,7 @@ import com.novaforge.metadata.DefinitionParser;
 import com.novaforge.metadata.EntityDefinition;
 import com.novaforge.metadata.PermissionSet;
 import com.novaforge.metadata.SequenceDefinition;
+import com.novaforge.metadata.TestSuiteDefinition;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -179,6 +180,21 @@ public class MetadataStore {
         return requireApp(tenantId, appId);
     }
 
+    // --- test suites (ADR-010) ---
+
+    public AppDefinition putTestSuite(UUID tenantId, UUID actorId, UUID appId,
+                                      TestSuiteDefinition suite) {
+        requireApp(tenantId, appId);
+        jdbc.update("""
+                INSERT INTO md_test_suites (id, tenant_id, app_id, api_name, document, created_by, updated_by)
+                VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)
+                ON CONFLICT (tenant_id, app_id, api_name) DO UPDATE
+                   SET document = EXCLUDED.document, updated_at = now(), updated_by = EXCLUDED.updated_by""",
+                UUID.randomUUID(), tenantId, appId, suite.apiName(),
+                DefinitionParser.write(suite), actorId, actorId);
+        return requireApp(tenantId, appId);
+    }
+
     // --- versions ---
 
     public record VersionInfo(int version, Instant publishedAt, List<String> breakingChanges,
@@ -280,6 +296,10 @@ public class MetadataStore {
                 "SELECT document FROM md_pages WHERE tenant_id = ? AND app_id = ? ORDER BY api_name",
                 (rs, i) -> DefinitionParser.parse(rs.getString("document"), AppDefinition.PageDefinition.class),
                 tenantId, appId);
+        List<TestSuiteDefinition> suites = jdbc.query(
+                "SELECT document FROM md_test_suites WHERE tenant_id = ? AND app_id = ? ORDER BY api_name",
+                (rs, i) -> DefinitionParser.parse(rs.getString("document"), TestSuiteDefinition.class),
+                tenantId, appId);
         List<SequenceDefinition> sequences = jdbc.query(
                 "SELECT document FROM md_settings WHERE tenant_id = ? AND app_id = ? AND kind = ? ORDER BY api_name",
                 (rs, i) -> DefinitionParser.parse(rs.getString("document"), SequenceDefinition.class),
@@ -291,7 +311,7 @@ public class MetadataStore {
         return new AppDefinition(appId.toString(), apiName, label,
                 DefinitionParser.parse(labelI18nJson == null ? "{}" : labelI18nJson, Map.class),
                 description, entities, pages,
-                new AppDefinition.SettingsDefinition(sequences, null, null), permissionSet);
+                new AppDefinition.SettingsDefinition(sequences, null, null), permissionSet, suites);
     }
 
     @SuppressWarnings("unchecked")

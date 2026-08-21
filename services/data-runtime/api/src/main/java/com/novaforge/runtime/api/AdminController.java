@@ -37,7 +37,15 @@ public class AdminController {
     public Map<String, Object> createTenant(@RequestBody CreateTenantRequest request) {
         requirePlatformAdmin();
         return admin.createTenant(request.apiName(), request.displayName(),
-                request.adminUsername(), request.adminEmail());
+                request.adminUsername(), request.adminEmail(), request.adminPassword());
+    }
+
+    /** Synthetic-actor provisioning in a tenant (scratch tenants, ADR-010). */
+    @PostMapping("/tenants/{tenantId}/users")
+    public Map<String, Object> createUser(@PathVariable UUID tenantId,
+                                          @RequestBody CreateUserRequest request) {
+        requirePlatformAdmin();
+        return admin.createUser(tenantId, request.username(), request.password());
     }
 
     /** Assign a platform or app-scoped ({@code app.role}) role to a user in a tenant. */
@@ -49,13 +57,21 @@ public class AdminController {
     }
 
     public record CreateTenantRequest(String apiName, String displayName,
-                                      String adminUsername, String adminEmail) {
+                                      String adminUsername, String adminEmail,
+                                      String adminPassword) {
+    }
+
+    public record CreateUserRequest(String username, String password) {
     }
 
     public record RoleAssignmentRequest(String userId, String role) {
     }
 
-    /** Platform-admin gate: the fixed {@code admin} platform role from the token. */
+    /**
+     * Platform-admin gate: the fixed {@code admin} platform role from the token, or the
+     * trusted platform service client (client-credentials callers have no platform_roles
+     * claim — the metadata test runner and other platform services act here, ADR-010).
+     */
     private static void requirePlatformAdmin() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication instanceof JwtAuthenticationToken jwtAuth
@@ -65,6 +81,13 @@ public class AdminController {
                     && collection.contains("admin")) {
                 return;
             }
+            String azp = jwt.getClaimAsString("azp");
+            String clientId = jwt.getClaimAsString("client_id");
+            if ("novaforge-runtime".equals(azp) || "novaforge-runtime".equals(clientId)) {
+                return;
+            }
+            org.slf4j.LoggerFactory.getLogger(AdminController.class)
+                    .warn("admin gate rejected token: azp={}, client_id={}", azp, clientId);
         }
         throw new PlatformException(PlatformErrorCode.FORBIDDEN, "platform admin role required");
     }

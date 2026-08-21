@@ -131,8 +131,27 @@ persist → event seam → shaped projection):
   lines and reserves inventory stock via updateRecord — totals via roll-ups,
   reservation via a hook, zero app code
 
-**Not implemented (Phase 3 remainder):** the builder test harness (ADR-010), the
-Script Engine v0, the Tempo/Loki observability expansion.
+**Implemented — §7 builder test harness (ADR-010):**
+- `TestSuiteDefinition` (Tests branch): fixtures → steps → assertions, the pinned
+  encoding — step vocabulary createRecord/updateRecord/deleteRecord with `${…}`
+  templates (monetary values as strings), `expect: ok | error(code) | validation(rule)`,
+  assertions as DSL predicates over `${Entity[n].path}` references resolved to exact
+  decimal literals
+- suite APIs on the Metadata Service: PUT `/apps/{id}/test-suites/{name}` (ops and
+  expectations validated on save) and POST `.../run`
+- the runner: fresh scratch tenant per run via the platform-admin API (tenant
+  offboarding is unmodeled in v1 — PHASE-2 §10), synthetic actors provisioned with
+  role impersonation through Keycloak (firstName/lastName + email set — Keycloak 26's
+  Verify Profile blocks first login otherwise; tenant_id + platform_roles ride
+  declared managed attributes the provisioner ensures on boot), the candidate bundle
+  published into the scratch tenant (never a mutable draft), steps replayed through
+  the generic runtime APIs as the actors (4xx bodies are results, matched against
+  expectations), assertions evaluated under the run's frozen clock
+- **verified live**: a two-case suite over the ERP app (create with inline lines →
+  ok; bad enum → error(4000)) runs green through the gateway
+
+**Not implemented (Phase 3 remainder):** the Script Engine v0 (§6) and the Tempo/Loki
+observability expansion (§9).
 
 ## Phases 4–8 ⬜
 

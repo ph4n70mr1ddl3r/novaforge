@@ -9,6 +9,8 @@ import com.novaforge.metadata.EntityDefinition;
 import com.novaforge.expression.Expression;
 import com.novaforge.expression.ExpressionException;
 import com.novaforge.metadata.events.MetadataPublishEventPublisher;
+import com.novaforge.metadata.harness.TestRunner;
+import com.novaforge.metadata.harness.TestRunner;
 import com.novaforge.metadata.store.MetadataStore;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,10 +28,13 @@ public class DefinitionService {
 
     private final MetadataStore store;
     private final MetadataPublishEventPublisher events;
+    private final TestRunner testRunner;
 
-    public DefinitionService(MetadataStore store, MetadataPublishEventPublisher events) {
+    public DefinitionService(MetadataStore store, MetadataPublishEventPublisher events,
+                             TestRunner testRunner) {
         this.store = store;
         this.events = events;
+        this.testRunner = testRunner;
     }
 
     public AppDefinition createApp(UUID tenantId, UUID actorId, AppDefinition draft) {
@@ -95,6 +100,39 @@ public class DefinitionService {
     public AppDefinition deleteEntity(UUID tenantId, UUID appId, String entityApiName) {
         store.deleteEntity(tenantId, appId, entityApiName);
         return store.requireApp(tenantId, appId);
+    }
+
+    public AppDefinition putTestSuite(UUID tenantId, UUID actorId, UUID appId,
+                                      com.novaforge.metadata.TestSuiteDefinition suite) {
+        store.requireApp(tenantId, appId);
+        validateSuite(suite);
+        return store.putTestSuite(tenantId, actorId, appId, suite);
+    }
+
+    /** Runs the suite against the current draft candidate on a scratch tenant (ADR-010 #3). */
+    public Map<String, Object> runSuite(UUID tenantId, UUID actorId, UUID appId, String suiteApiName) {
+        AppDefinition candidate = store.requireApp(tenantId, appId);
+        var suite = candidate.testSuite(suiteApiName).orElseThrow(() ->
+                new PlatformException(PlatformErrorCode.NOT_FOUND,
+                        "test suite " + suiteApiName + " not found"));
+        return testRunner.run(candidate, suite, actorId);
+    }
+
+    /** Suite save-validation: ops known, expectations shaped (§7). */
+    private static void validateSuite(com.novaforge.metadata.TestSuiteDefinition suite) {
+        for (var testCase : suite.cases()) {
+            for (var step : testCase.steps()) {
+                if (!com.novaforge.metadata.TestSuiteDefinition.Step.OPS.contains(step.op())) {
+                    throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                            "unknown suite step op: " + step.op());
+                }
+                String expect = step.expect() == null ? "ok" : step.expect();
+                if (!expect.equals("ok") && !expect.matches("(error|validation)\\(.+\\)")) {
+                    throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                            "expect must be ok | error(code) | validation(rule): " + expect);
+                }
+            }
+        }
     }
 
     /**

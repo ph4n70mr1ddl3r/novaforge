@@ -25,7 +25,8 @@ public record AppDefinition(
         List<EntityDefinition> entities,
         List<PageDefinition> pages,
         SettingsDefinition settings,
-        PermissionSet permissionSet) {
+        PermissionSet permissionSet,
+        List<TestSuiteDefinition> testSuites) {
 
     public AppDefinition {
         entities = entities == null ? List.of() : List.copyOf(entities);
@@ -33,6 +34,11 @@ public record AppDefinition(
         labelI18n = labelI18n == null ? Map.of() : Map.copyOf(labelI18n);
         settings = settings == null ? new SettingsDefinition(null, null, null) : settings;
         permissionSet = permissionSet == null ? new PermissionSet(null, null, null) : permissionSet;
+        testSuites = testSuites == null ? List.of() : List.copyOf(testSuites);
+    }
+
+    public java.util.Optional<TestSuiteDefinition> testSuite(String apiName) {
+        return testSuites.stream().filter(t -> t.apiName().equals(apiName)).findFirst();
     }
 
     public java.util.Optional<EntityDefinition> entity(String apiName) {
@@ -45,6 +51,15 @@ public record AppDefinition(
                          List<PageDefinition> pages, SettingsDefinition settings) {
         this(id, apiName, label, labelI18n, description, entities, pages, settings,
                 new PermissionSet(null, null, null));
+    }
+
+    /** Constructor without the Tests branch (pre-harness drafts). */
+    public AppDefinition(String id, String apiName, String label, Map<String, String> labelI18n,
+                         String description, List<EntityDefinition> entities,
+                         List<PageDefinition> pages, SettingsDefinition settings,
+                         PermissionSet permissionSet) {
+        this(id, apiName, label, labelI18n, description, entities, pages, settings,
+                permissionSet, List.of());
     }
 
     /** Page definition (reserved slot; authored from Phase 2 per PHASE-2 §3). */
