@@ -53,7 +53,10 @@ public class TaskOutboxRelay {
             try {
                 String payload = String.valueOf(entry.get("payload"));
                 Map<String, Object> event = MAPPER.readValue(payload, Map.class);
-                ProducerRecord<String, String> record = new ProducerRecord<>("novaforge.task",
+                String eventType = String.valueOf(event.get("event"));
+                String topic = "novaforge." + (eventType.contains(".")
+                        ? eventType.substring(0, eventType.indexOf('.')) : eventType);
+                ProducerRecord<String, String> record = new ProducerRecord<>(topic,
                         entry.get("tenant_id") + ":" + entry.get("task_id"), payload);
                 record.headers().add("X-Event-Id",
                         String.valueOf(event.get("eventId")).getBytes());

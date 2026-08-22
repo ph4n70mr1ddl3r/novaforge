@@ -18,7 +18,7 @@ public interface ApprovalClient {
                       String entityKey, UUID recordId, String hookName, String stepId,
                       String afterStep, FlowStep onReject,
                       String approversRole, List<String> approverUsers, String mode,
-                      UUID initiatingActor) {
+                      String timeout, String escalateTo, UUID initiatingActor) {
     }
 
     /**

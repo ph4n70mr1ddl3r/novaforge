@@ -39,6 +39,7 @@ final class FlowCompiler {
             }
         }
         checkStateMachines(app, findings);
+        checkSlas(app, findings);
         if (!findings.isEmpty()) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "hook compilation failed", new ProblemErrors(findings, java.util.List.of()));
@@ -64,6 +65,28 @@ final class FlowCompiler {
                             scope + ".transition[" + transition.from() + "->" + transition.to() + "]",
                             entity.get(), findings);
                 }
+            }
+        }
+    }
+
+    /**
+     * SLA match expressions compile at publish (PHASE-4 §6) — the scope bindings are
+     * {@code entity} and {@code type} (SlaDefinition.bindings).
+     */
+    private static void checkSlas(AppDefinition app,
+                                  java.util.List<ProblemErrors.FieldError> findings) {
+        for (com.novaforge.metadata.SlaDefinition sla : app.slas()) {
+            if (sla.scope() == null || sla.scope().match() == null) {
+                continue;
+            }
+            String scope = "sla[" + sla.id() + "].scope.match";
+            try {
+                Expression.parse(sla.scope().match())
+                        .compileCheck(Expression.CompilePolicy.recordContext(
+                                java.util.Set.of("entity", "type"), true));
+            } catch (ExpressionException e) {
+                findings.add(new ProblemErrors.FieldError(scope,
+                        sla.scope().match() + " — " + e.getMessage(), sla.scope().match()));
             }
         }
     }

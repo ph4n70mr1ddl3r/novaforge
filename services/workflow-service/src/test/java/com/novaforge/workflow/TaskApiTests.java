@@ -41,7 +41,8 @@ import tools.jackson.databind.json.JsonMapper;
  * server-side access checks, {@code task.*} events riding the outbox to the spine,
  * and record deletion cancelling open tasks through the real Kafka leg.
  */
-@SpringBootTest(properties = "novaforge.events.relay-interval-ms=3600000")   // manual relay
+@SpringBootTest(properties = {"novaforge.events.relay-interval-ms=3600000",   // manual relay
+        "novaforge.sla.scan-interval-ms=3600000"})                            // manual scan
 @AutoConfigureMockMvc
 class TaskApiTests extends PostgresTestBase {
 
@@ -77,6 +78,12 @@ class TaskApiTests extends PostgresTestBase {
     @Autowired
     com.novaforge.workflow.task.SuspensionService suspensions;
 
+    @Autowired
+    com.novaforge.workflow.sla.SlaScanner slaScanner;
+
+    @Autowired
+    io.micrometer.core.instrument.MeterRegistry meters;
+
     @TestConfiguration
     static class StubRoles {
 
@@ -91,6 +98,19 @@ class TaskApiTests extends PostgresTestBase {
         com.novaforge.workflow.runtime.ResumeClient resumeClient() {
             return resume -> RESUMES.add(resume.approved() + ":" + resume.hook() + ":"
                     + (resume.afterStep() == null ? "-" : resume.afterStep()));
+        }
+
+        /** Canned SLA definitions — the governed overlay of §6's precedence. */
+        @Bean
+        @Primary
+        com.novaforge.workflow.sla.PublishedSlaSource slaSource() {
+            return (tenantId, appApiName) -> java.util.List.of(
+                    new com.novaforge.metadata.SlaDefinition("sla_po",
+                            new com.novaforge.metadata.SlaDefinition.Scope("approval",
+                                    "entity == 'Purch.PurchaseOrder'"),
+                            "PT1H", 0.5,
+                            new com.novaforge.metadata.SlaDefinition.OnBreach(
+                                    "role:Purch.seniorManager", true)));
         }
     }
 
@@ -295,7 +315,7 @@ class TaskApiTests extends PostgresTestBase {
         var result = suspensions.request(TENANT, "Purch", "PurchaseOrder",
                 "Purch.PurchaseOrder", record, "submit", "a1", "s2",
                 "{\"id\":\"r1\",\"op\":\"transitionState\",\"params\":{\"to\":\"REJECTED\"}}",
-                "Purch.manager", null, "any", CLERK);
+                "Purch.manager", null, "any", null, null, CLERK);
         UUID instance = UUID.fromString(String.valueOf(result.get("instanceId")));
 
         // the role task exists and links the instance; the manager approves
@@ -319,7 +339,7 @@ class TaskApiTests extends PostgresTestBase {
         // resolve their own approval (§4, fail closed)
         UUID own = UUID.randomUUID();
         suspensions.request(TENANT, "Purch", "PurchaseOrder", "Purch.PurchaseOrder", own,
-                "submit", "a1", "s2", null, "Purch.manager", null, "any", MANAGER);
+                "submit", "a1", "s2", null, "Purch.manager", null, "any", null, null, MANAGER);
         String ownTask = jdbc.queryForObject(
                 "SELECT id FROM wf_tasks WHERE instance_id = ?", UUID.class,
                 jdbc.queryForObject("SELECT id FROM wf_suspended_flows WHERE record_id = ?",
@@ -336,7 +356,7 @@ class TaskApiTests extends PostgresTestBase {
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                         suspensions.request(TENANT, "Purch", "PurchaseOrder",
                                 "Purch.PurchaseOrder", UUID.randomUUID(), "submit", "a1",
-                                "s2", null, null, List.of(CLERK.toString()), "all", CLERK))
+                                "s2", null, null, List.of(CLERK.toString()), "all", null, null, CLERK))
                 .isInstanceOf(com.novaforge.common.error.PlatformException.class)
                 .hasMessageContaining("segregated");
     }
@@ -348,7 +368,7 @@ class TaskApiTests extends PostgresTestBase {
         suspensions.request(TENANT, "Purch", "PurchaseOrder", "Purch.PurchaseOrder", record,
                 "submit", "a1", "s2",
                 "{\"id\":\"r1\",\"op\":\"transitionState\",\"params\":{\"to\":\"REJECTED\"}}",
-                "Purch.manager", null, "any", CLERK);
+                "Purch.manager", null, "any", null, null, CLERK);
         String taskId = jdbc.queryForObject(
                 "SELECT id FROM wf_tasks WHERE record_id = ?", UUID.class, record).toString();
         RESUMES.clear();
@@ -358,6 +378,68 @@ class TaskApiTests extends PostgresTestBase {
         // the verdict routes onReject; the engine ignores afterStep on reject
         org.assertj.core.api.Assertions.assertThat(RESUMES)
                 .containsExactly("false:submit:s2");
+    }
+
+    @Test
+    @DisplayName("SLAs: definition overrides the step timeout; warn once, breach escalates (§6)")
+    void slaPrecedenceWarnAndBreach() throws Exception {
+        // the step asked for PT2H + its own escalateTo — the matching SLA (PT1H,
+        // warnAt 0.5, senior escalation) governs instead
+        var result = suspensions.request(TENANT, "Purch", "PurchaseOrder",
+                "Purch.PurchaseOrder", UUID.randomUUID(), "submit", "a1", "s2", null,
+                "Purch.manager", null, "any", "PT2H", "Purch.stepEscalator", CLERK);
+        UUID instance = UUID.fromString(String.valueOf(result.get("instanceId")));
+        Map<String, Object> task = jdbc.queryForMap(
+                "SELECT id, warn_at, due_at, escalate_to FROM wf_tasks WHERE instance_id = ?",
+                instance);
+        long dueIn = ((java.sql.Timestamp) task.get("due_at")).getTime()
+                - System.currentTimeMillis();
+        org.assertj.core.api.Assertions.assertThat(dueIn)
+                .isBetween(55L * 60 * 1000 - 5000, 65L * 60 * 1000);
+        org.assertj.core.api.Assertions.assertThat(task.get("escalate_to"))
+                .isEqualTo("Purch.seniorManager");
+
+        // expire both timers; one scan warns once and breaches with a replacement
+        jdbc.update("UPDATE wf_tasks SET warn_at = now() - interval '1 second', "
+                + "due_at = now() - interval '1 second' WHERE instance_id = ?", instance);
+        double before = meters.counter("novaforge.sla.breach").count();
+        slaScanner.scanOnce();
+
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_tasks WHERE id = ?", String.class, task.get("id")))
+                .isEqualTo("ESCALATED");
+        Map<String, Object> replacement = jdbc.queryForMap(
+                "SELECT role, status, instance_id FROM wf_tasks "
+                        + "WHERE role = 'Purch.seniorManager'");
+        org.assertj.core.api.Assertions.assertThat(replacement.get("status"))
+                .isEqualTo("OPEN");
+        org.assertj.core.api.Assertions.assertThat(replacement.get("instance_id"))
+                .isEqualTo(instance);
+        List<String> events = jdbc.queryForList(
+                "SELECT event_type FROM wf_event_outbox ORDER BY created_at", String.class);
+        org.assertj.core.api.Assertions.assertThat(events).containsSubsequence(
+                "task.created", "sla.warn", "task.escalated", "sla.breach");
+        org.assertj.core.api.Assertions.assertThat(
+                meters.counter("novaforge.sla.breach").count()).isGreaterThan(before);
+
+        // a second pass warns and escalates nothing further
+        jdbc.update("DELETE FROM wf_event_outbox");
+        slaScanner.scanOnce();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
+                "SELECT event_type FROM wf_event_outbox", String.class)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("no SLA and no step timeout: no dueAt, no timer — open until resolved (§6)")
+    void noTimersWhenNothingGoverns() {
+        var result = suspensions.request(TENANT, "Purch", "Other",
+                "Purch.Other", UUID.randomUUID(), "hook", "a1", null, null,
+                "Purch.manager", null, "any", null, null, CLERK);
+        Map<String, Object> task = jdbc.queryForMap(
+                "SELECT due_at, warn_at FROM wf_tasks WHERE instance_id = ?",
+                UUID.fromString(String.valueOf(result.get("instanceId"))));
+        org.assertj.core.api.Assertions.assertThat(task.get("due_at")).isNull();
+        org.assertj.core.api.Assertions.assertThat(task.get("warn_at")).isNull();
     }
 
     private static org.springframework.security.test.web.servlet.request

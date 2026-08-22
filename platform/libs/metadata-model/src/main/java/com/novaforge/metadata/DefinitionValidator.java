@@ -61,8 +61,56 @@ public final class DefinitionValidator {
             validateEntity(app, entity, errors);
         }
         validateStateMachines(app, errors);
+        validateSlas(app, errors);
         validatePermissionSet(app, errors);
         return new ProblemErrors(errors, globals);
+    }
+
+    /**
+     * SLA rules (PHASE-4 §6): the target parses as an ISO-8601 duration, warnAt is a
+     * fraction in (0, 1] or null (disabled), taskType is a known task type, and the
+     * escalation target is shaped like a role reference. Match expressions compile at
+     * publish (the FlowCompiler rides the same engine).
+     */
+    private static void validateSlas(AppDefinition app, List<ProblemErrors.FieldError> errors) {
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (SlaDefinition sla : app.slas()) {
+            String scope = sla.id() == null ? "sla" : sla.id();
+            if (sla.id() != null && !ids.add(sla.id())) {
+                errors.add(field("slas", "SLA ids must be unique per app: " + sla.id(),
+                        sla.id()));
+            }
+            if (sla.target() == null) {
+                errors.add(field("slas." + scope + ".target",
+                        "SLA target is a required ISO-8601 duration (e.g. PT24H)", null));
+            } else {
+                try {
+                    java.time.Duration.parse(sla.target());
+                } catch (Exception e) {
+                    errors.add(field("slas." + scope + ".target",
+                            "SLA target must parse as an ISO-8601 duration: " + sla.target(),
+                            sla.target()));
+                }
+            }
+            if (sla.warnAt() != null && (sla.warnAt() <= 0 || sla.warnAt() > 1)) {
+                errors.add(field("slas." + scope + ".warnAt",
+                        "warnAt is a fraction of target in (0, 1] — or null to disable",
+                        sla.warnAt()));
+            }
+            if (sla.scope() != null && sla.scope().taskType() != null
+                    && !sla.scope().taskType().equals("approval")
+                    && !sla.scope().taskType().equals("todo")) {
+                errors.add(field("slas." + scope + ".scope.taskType",
+                        "taskType must be approval or todo: " + sla.scope().taskType(),
+                        sla.scope().taskType()));
+            }
+            if (sla.onBreach() != null && sla.onBreach().escalateTo() != null
+                    && !sla.onBreach().escalateTo().matches("(role:)?[A-Za-z][A-Za-z0-9._-]*")) {
+                errors.add(field("slas." + scope + ".onBreach.escalateTo",
+                        "escalateTo is a role reference: " + sla.onBreach().escalateTo(),
+                        sla.onBreach().escalateTo()));
+            }
+        }
     }
 
     /**

@@ -56,6 +56,16 @@ public class TaskService {
     public TaskStore.Task create(UUID tenantId, String type, String entityId, UUID recordId,
                                  UUID assignee, String role, Instant dueAt, Instant warnAt,
                                  UUID createdBy, UUID contextRef, UUID instance) {
+        return create(tenantId, type, entityId, recordId, assignee, role, dueAt, warnAt,
+                createdBy, contextRef, instance, null);
+    }
+
+    /** Full create: timers plus the escalation target the scanner acts on (§6). */
+    @Transactional
+    public TaskStore.Task create(UUID tenantId, String type, String entityId, UUID recordId,
+                                 UUID assignee, String role, Instant dueAt, Instant warnAt,
+                                 UUID createdBy, UUID contextRef, UUID instance,
+                                 String escalateTo) {
         if (assignee == null && role == null) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "a task requires an assignee or a role");
@@ -66,7 +76,7 @@ public class TaskService {
         }
         TaskStore.Task task = new TaskStore.Task(UUID.randomUUID(), tenantId, type, entityId,
                 recordId, assignee, role, "OPEN", null, dueAt, warnAt, createdBy,
-                contextRef == null ? null : contextRef, instance, Instant.now());
+                contextRef == null ? null : contextRef, instance, escalateTo, Instant.now());
         tasks.insert(task);
         emit(task, "task.created", createdBy, null);
         if (assignee != null) {

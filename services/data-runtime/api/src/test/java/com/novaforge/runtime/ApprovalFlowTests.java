@@ -262,7 +262,7 @@ class ApprovalFlowTests extends PostgresTestBase {
     private static ApprovalClient.Suspension stubSuspension(String recordId) {
         return new ApprovalClient.Suspension(TENANT, "Purch", "PurchaseOrder",
                 "Purch.PurchaseOrder", UUID.fromString(recordId), "submit", "a1", "s2",
-                null, "Purch.manager", null, "any", ACTOR);
+                null, "Purch.manager", null, "any", null, null, ACTOR);
     }
 
     private void assertThatOneSuspensionFor(String recordId) {

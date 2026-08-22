@@ -89,6 +89,9 @@ public class RestApprovalClient implements ApprovalClient {
         payload.put("approverUsers", suspension.approverUsers() == null
                 ? java.util.List.of() : suspension.approverUsers());
         payload.put("mode", suspension.mode());
+        payload.put("timeout", suspension.timeout() == null ? "" : suspension.timeout());
+        payload.put("escalateTo", suspension.escalateTo() == null ? ""
+                : suspension.escalateTo());
         payload.put("initiatingActor", suspension.initiatingActor() == null ? ""
                 : suspension.initiatingActor().toString());
         return payload;

@@ -24,12 +24,21 @@ public class TaskStore {
     public record Task(UUID id, UUID tenantId, String type, String entityId, UUID recordId,
                        UUID assignee, String role, String status, String comment,
                        Instant dueAt, Instant warnAt, UUID createdBy, UUID contextRef,
-                       UUID instance, Instant createdAt) {
+                       UUID instance, String escalateTo, Instant createdAt) {
+
+        /** Pre-SLA shape (no escalation target resolved). */
+        public Task(UUID id, UUID tenantId, String type, String entityId, UUID recordId,
+                    UUID assignee, String role, String status, String comment,
+                    Instant dueAt, Instant warnAt, UUID createdBy, UUID contextRef,
+                    UUID instance, Instant createdAt) {
+            this(id, tenantId, type, entityId, recordId, assignee, role, status, comment,
+                    dueAt, warnAt, createdBy, contextRef, instance, null, createdAt);
+        }
 
         public Task withStatus(String newStatus) {
             return new Task(id, tenantId, type, entityId, recordId, assignee, role,
                     newStatus, comment, dueAt, warnAt, createdBy, contextRef, instance,
-                    createdAt);
+                    escalateTo, createdAt);
         }
 
         public Map<String, Object> toJson() {
@@ -62,13 +71,13 @@ public class TaskStore {
         jdbc.update("""
                 INSERT INTO wf_tasks (id, tenant_id, type, entity_id, record_id, assignee,
                                       role, status, comment, due_at, warn_at, created_by,
-                                      context_ref, instance_id, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                      context_ref, instance_id, escalate_to, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 task.id(), task.tenantId(), task.type(), task.entityId(), task.recordId(),
                 task.assignee(), task.role(), task.status(), task.comment(),
                 task.dueAt() == null ? null : Timestamp.from(task.dueAt()),
                 task.warnAt() == null ? null : Timestamp.from(task.warnAt()),
-                task.createdBy(), task.contextRef(), task.instance(),
+                task.createdBy(), task.contextRef(), task.instance(), task.escalateTo(),
                 Timestamp.from(task.createdAt()));
     }
 

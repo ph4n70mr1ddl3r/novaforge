@@ -64,3 +64,9 @@ novaforge:
   events:
     relay-interval-ms: ${NOVAFORGE_RELAY_INTERVAL_MS:500}
     relay-batch: 100
+  sla:
+    # §6 timers stay in-process with the Workflow Service (ARCHITECTURE §2.8) — a
+    # scanner pass, not the Scheduler.
+    scan-interval-ms: ${NOVAFORGE_SLA_SCAN_MS:5000}
+  metadata:
+    url: ${NOVAFORGE_METADATA_URL:http://localhost:8081}

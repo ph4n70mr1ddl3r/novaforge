@@ -27,7 +27,8 @@ public record AppDefinition(
         SettingsDefinition settings,
         PermissionSet permissionSet,
         List<TestSuiteDefinition> testSuites,
-        List<StateMachineDefinition> stateMachines) {
+        List<StateMachineDefinition> stateMachines,
+        List<SlaDefinition> slas) {
 
     public AppDefinition {
         entities = entities == null ? List.of() : List.copyOf(entities);
@@ -37,6 +38,7 @@ public record AppDefinition(
         permissionSet = permissionSet == null ? new PermissionSet(null, null, null) : permissionSet;
         testSuites = testSuites == null ? List.of() : List.copyOf(testSuites);
         stateMachines = stateMachines == null ? List.of() : List.copyOf(stateMachines);
+        slas = slas == null ? List.of() : List.copyOf(slas);
     }
 
     public java.util.Optional<TestSuiteDefinition> testSuite(String apiName) {
@@ -45,6 +47,11 @@ public record AppDefinition(
 
     public java.util.Optional<EntityDefinition> entity(String apiName) {
         return entities.stream().filter(e -> e.apiName().equals(apiName)).findFirst();
+    }
+
+    /** The SLA definitions of the app (PHASE-4 §6), matched in declaration order. */
+    public List<SlaDefinition> slas() {
+        return slas;
     }
 
     /** The machine bound to an entity, if one exists (one per entity in v1). */
@@ -71,13 +78,23 @@ public record AppDefinition(
                 permissionSet, List.of());
     }
 
-    /** Constructor without the state-machines branch (pre-Phase-4 drafts). */
+    /** Constructor without the state-machines/sla branches (pre-Phase-4 drafts). */
     public AppDefinition(String id, String apiName, String label, Map<String, String> labelI18n,
                          String description, List<EntityDefinition> entities,
                          List<PageDefinition> pages, SettingsDefinition settings,
                          PermissionSet permissionSet, List<TestSuiteDefinition> testSuites) {
         this(id, apiName, label, labelI18n, description, entities, pages, settings,
-                permissionSet, testSuites, List.of());
+                permissionSet, testSuites, List.of(), List.of());
+    }
+
+    /** Constructor without the SLA branch (pre-T6 drafts). */
+    public AppDefinition(String id, String apiName, String label, Map<String, String> labelI18n,
+                         String description, List<EntityDefinition> entities,
+                         List<PageDefinition> pages, SettingsDefinition settings,
+                         PermissionSet permissionSet, List<TestSuiteDefinition> testSuites,
+                         List<StateMachineDefinition> stateMachines) {
+        this(id, apiName, label, labelI18n, description, entities, pages, settings,
+                permissionSet, testSuites, stateMachines, List.of());
     }
 
     /** Page definition (reserved slot; authored from Phase 2 per PHASE-2 §3). */

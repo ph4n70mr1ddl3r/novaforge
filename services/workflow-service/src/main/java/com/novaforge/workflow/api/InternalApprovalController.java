@@ -35,7 +35,8 @@ public class InternalApprovalController {
                                   String entityKey, String recordId, String hook,
                                   String stepId, String afterStep, String onReject,
                                   String approversRole, List<String> approverUsers,
-                                  String mode, String initiatingActor) {
+                                  String mode, String timeout, String escalateTo,
+                                  String initiatingActor) {
     }
 
     @PostMapping("/approvals")
@@ -46,6 +47,10 @@ public class InternalApprovalController {
                 UUID.fromString(request.recordId()), request.hook(), request.stepId(),
                 request.afterStep(), request.onReject(), request.approversRole(),
                 request.approverUsers(), request.mode(),
+                request.timeout() == null || request.timeout().isBlank() ? null
+                        : request.timeout(),
+                request.escalateTo() == null || request.escalateTo().isBlank() ? null
+                        : request.escalateTo(),
                 request.initiatingActor() == null || request.initiatingActor().isBlank()
                         ? null : UUID.fromString(request.initiatingActor()));
     }

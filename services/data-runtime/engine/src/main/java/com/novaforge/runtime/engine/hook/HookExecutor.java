@@ -340,6 +340,7 @@ public class HookExecutor {
                         context.currentHook, step.id(),
                         step.next(), step.body(), role, users,
                         step.param("mode") == null ? "any" : step.param("mode"),
+                        step.param("timeout"), step.param("escalateTo"),
                         context.initiatingActor));
                 return null;   // suspended — the remainder runs on resolution
             }

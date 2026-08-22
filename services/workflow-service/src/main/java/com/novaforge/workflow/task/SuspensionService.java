@@ -3,6 +3,7 @@ package com.novaforge.workflow.task;
 import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
 import com.novaforge.workflow.runtime.ResumeClient;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -34,11 +35,14 @@ public class SuspensionService {
     private final JdbcTemplate jdbc;
     private final TaskService tasks;
     private final ResumeClient runtime;
+    private final com.novaforge.workflow.sla.SlaResolver slas;
 
-    public SuspensionService(JdbcTemplate jdbc, TaskService tasks, ResumeClient runtime) {
+    public SuspensionService(JdbcTemplate jdbc, TaskService tasks, ResumeClient runtime,
+                             com.novaforge.workflow.sla.SlaResolver slas) {
         this.jdbc = jdbc;
         this.tasks = tasks;
         this.runtime = runtime;
+        this.slas = slas;
     }
 
     /** The Data Runtime's requestApproval arrival (internal, service-token surface). */
@@ -47,7 +51,8 @@ public class SuspensionService {
                                        String entityKey, UUID recordId, String hook,
                                        String stepId, String afterStep, String onRejectJson,
                                        String approversRole, List<String> approverUsers,
-                                       String mode, UUID initiatingActor) {
+                                       String mode, String stepTimeout, String stepEscalateTo,
+                                       UUID initiatingActor) {
         // SoD: the initiating actor leaves an explicit approver set (§4, fail closed).
         List<String> users = new ArrayList<>(approverUsers == null ? List.of() : approverUsers);
         if (initiatingActor != null) {
@@ -74,25 +79,41 @@ public class SuspensionService {
                 onRejectJson == null || onRejectJson.isBlank() ? null : onRejectJson,
                 mode, users.isEmpty() ? 1 : users.size());
 
+        // §6 precedence: a matching SLADefinition governs the timers (and its
+        // onBreach.escalateTo wins); otherwise the step's own timeout/escalateTo
+        // apply; with neither, no timer — the task stays open until resolved.
+        var timers = slas.resolve(tenantId, app, entityKey, "approval",
+                stepTimeout, Instant.now());
+        String escalateTo = timers.matched() != null && timers.matched().onBreach() != null
+                && timers.matched().onBreach().escalateTo() != null
+                ? roleOf(timers.matched().onBreach().escalateTo())
+                : roleOf(stepEscalateTo);
         if (users.isEmpty()) {
             // role-targeted: one task for the role; the initiator cannot resolve it
             tasks.create(tenantId, "approval", entityKey, recordId, null, approversRole,
-                    null, null, initiatingActor == null ? UUID.nameUUIDFromBytes(
+                    timers.dueAt(), timers.warnAt(),
+                    initiatingActor == null ? UUID.nameUUIDFromBytes(
                             ("system:" + app).getBytes()) : initiatingActor, null,
-                    instanceId);
+                    instanceId, escalateTo);
         } else {
             for (String user : users) {
                 tasks.create(tenantId, "approval", entityKey, recordId,
-                        UUID.fromString(user), null, null, null,
+                        UUID.fromString(user), null, timers.dueAt(), timers.warnAt(),
                         initiatingActor == null ? UUID.nameUUIDFromBytes(
                                 ("system:" + app).getBytes()) : initiatingActor, null,
-                        instanceId);
+                        instanceId, escalateTo);
             }
         }
         LOG.info("flow suspended: {} on {}/{} step {} ({} approvers, mode {})",
                 hook, entityKey, recordId, stepId, users.isEmpty() ? approversRole : users, mode);
         return Map.of("instanceId", instanceId.toString(), "tasks",
                 users.isEmpty() ? 1 : users.size());
+    }
+
+    /** {@code role:senior-manager} or a bare role name — one form, one meaning. */
+    private static String roleOf(String reference) {
+        return reference != null && reference.startsWith("role:")
+                ? reference.substring("role:".length()) : reference;
     }
 
     /**

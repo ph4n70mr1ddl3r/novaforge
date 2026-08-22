@@ -308,9 +308,35 @@ validated; carried from Phase 1).
   (suspension→resume exactly once, SoD at resolution and at creation, onReject
   routing)
 
-**Not implemented (Phase 4 remainder):** SLAs/escalation (T6), Scheduler (T7),
-Notification v1 (T8), sharing rules (T9), builder/runtime UI (T10), harness growth
-(T11).
+**Implemented — T6 SLAs & escalation (§6):**
+- `SlaDefinition` rides the app definition (`{id, scope{taskType, match}, target,
+  warnAt, onBreach{escalateTo, notify}}`); structural save validation (ISO-8601
+  target, warnAt ∈ (0,1] or null, task types, role-shaped escalation refs) and
+  publish-time compile checks for match expressions over the scope bindings
+  (`entity`, `type`)
+- resolution at task creation with §6's precedence pinned: a matching definition
+  governs (its `onBreach.escalateTo` wins), otherwise the `requestApproval` step's
+  own `timeout`/`escalateTo` apply (both now travel the suspension payload); with
+  neither, the task carries no `dueAt` — no timer, no escalation, open until
+  resolved; `warnAt` defaults to 0.8 on both paths, null disables the warn timer
+- the SlaScanner (in-process with the Workflow Service — ARCHITECTURE §2.8 keeps
+  escalation timers out of the Scheduler; a scanner pass rather than Flowable
+  jobs, the §6 mechanism deviation already logged) warns once per task
+  (`sla.warn`), and at breach: the open task goes ESCALATED, a replacement task
+  is created for the escalation role (single-level, §6), `task.escalated` +
+  `sla.breach` ride the outbox (family topics: `sla.*` → `novaforge.sla`, keyed
+  `tenantId:taskId`), and `novaforge.sla.breach` increments
+- the workflow relay now derives family topics like the runtime's — `task.*` and
+  `sla.*` publish to their own topics
+- published SLAs reach the Workflow Service through a read-only metadata consumer
+  (service token, 30s TTL cache) — definitions are versioned artifacts, never
+  authored at the service
+- suites: SLA precedence over the step timeout (PT2H requested, PT1H governs),
+  warn-once → breach → escalation replacement with events + counter, second pass
+  idempotent; the no-timer default (§6's "no dueAt" case)
+
+**Not implemented (Phase 4 remainder):** Scheduler (T7), Notification v1 (T8),
+sharing rules (T9), builder/runtime UI (T10), harness growth (T11).
 
 ## Phases 5–8 ⬜
 

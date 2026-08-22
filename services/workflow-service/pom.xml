@@ -24,6 +24,15 @@
       <artifactId>novaforge-common-core</artifactId>
     </dependency>
     <dependency>
+      <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-metadata-model</artifactId>
+    </dependency>
+    <dependency>
+      <!-- SLA match expressions evaluate in-process (PHASE-4 §6, ADR-008 #3). -->
+      <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-expression-dsl</artifactId>
+    </dependency>
+    <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-webmvc</artifactId>
     </dependency>
