@@ -1,4 +1,4 @@
-# Maven (multi-module per ADR-005; wrapper jar stays committable — PHASE-0 T2)
+# Maven (multi-module per ADR-005; script-only wrapper — PHASE-0 T2)
 target/
 
 # Java

@@ -64,7 +64,7 @@ inline children → 4 outbox rows published → `novaforge.record` carries the e
 - `expression-dsl` (expr/v1, §7/Annex A): the JVM parser/evaluator with the pinned
   grammar — exact BigDecimal semantics, null-aware operators, date arithmetic,
   membership, the closed function set, injectable clock — plus the shared conformance
-  corpus (40 cases) and compile-check wired into the Metadata Service save/publish
+  corpus (39 cases) and compile-check wired into the Metadata Service save/publish
   (validations may read the clock; formula fields may not, PHASE-3 §3). Slots stay
   inert until Phase 3 write-path evaluation.
 - RBAC + field security (§9): PermissionSet as versioned, promoted metadata
