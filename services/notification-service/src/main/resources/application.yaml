@@ -1,0 +1,77 @@
+spring:
+  application:
+    name: novaforge-notification-service
+  mail:
+    host: ${NOVAFORGE_MAIL_HOST:localhost}
+    port: ${NOVAFORGE_MAIL_PORT:1025}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}
+  datasource:
+    url: jdbc:postgresql://${NOVAFORGE_POSTGRES_HOST:localhost}:${NOVAFORGE_POSTGRES_PORT:5432}/novaforge_notification
+    username: novaforge
+    password: novaforge
+  flyway:
+    locations: classpath:db/migration
+  kafka:
+    bootstrap-servers: ${NOVAFORGE_KAFKA:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+    consumer:
+      group-id: novaforge-notification
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+server:
+  port: 8088
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  opentelemetry:
+    tracing:
+      # Tempo direct-to (PHASE-3 §9, §13 Q4 — no collector in between).
+      sampler: ${NOVAFORGE_TRACE_SAMPLER:always_on}
+      export:
+        otlp:
+          endpoint: ${NOVAFORGE_TEMPO_ENDPOINT:http://localhost:4318/v1/traces}
+
+logging:
+  file:
+    # Promtail tails this shared dir into Loki (PHASE-3 §9).
+    name: ${NOVAFORGE_LOG_DIR:/tmp/novaforge/logs}/${spring.application.name}.log
+  pattern:
+    level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
+
+novaforge:
+  mail:
+    from: ${NOVAFORGE_MAIL_FROM:novaforge@localhost}
+  auth:
+    issuer-uri: ${NOVAFORGE_AUTH_ISSUER:http://localhost:8082/realms/novaforge}
+    service-client:
+      id: ${NOVAFORGE_SERVICE_CLIENT_ID:novaforge-runtime}
+      secret: ${NOVAFORGE_SERVICE_CLIENT_SECRET:novaforge-runtime-secret}
+  data-runtime:
+    # Role→holders fan-out reads the runtime's admin surface (the platform DB is
+    # the runtime's to own).
+    url: ${NOVAFORGE_DATA_RUNTIME_URL:http://localhost:8083}
+  events:
+    relay-interval-ms: ${NOVAFORGE_RELAY_INTERVAL_MS:500}
+    relay-batch: 100
+  sla:
+    # §6 timers stay in-process with the Workflow Service (ARCHITECTURE §2.8) — a
+    # scanner pass, not the Scheduler.
+    scan-interval-ms: ${NOVAFORGE_SLA_SCAN_MS:5000}
+  metadata:
+    url: ${NOVAFORGE_METADATA_URL:http://localhost:8081}

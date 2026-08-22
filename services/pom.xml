@@ -21,5 +21,6 @@
     <module>audit-service</module>
     <module>script-engine</module>
     <module>workflow-service</module>
+    <module>notification-service</module>
   </modules>
 </project>

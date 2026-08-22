@@ -24,6 +24,16 @@ public class AdminService {
         this.users = users;
     }
 
+    /** The user's username — synthetic-actor detection (PHASE-4 §8). */
+    public String usernameOf(UUID userId) {
+        return platform.usernameOf(userId);
+    }
+
+    /** Holders of a role in a tenant — the Notification fan-out (PHASE-4 §8). */
+    public java.util.List<UUID> usersOfRole(UUID tenantId, String role) {
+        return platform.usersOfRole(tenantId, role);
+    }
+
     /** The user's roles in a tenant — platform set + app-scoped ({@code app.role}). */
     public java.util.List<String> rolesOf(UUID tenantId, UUID userId) {
         return platform.roles(tenantId, userId);

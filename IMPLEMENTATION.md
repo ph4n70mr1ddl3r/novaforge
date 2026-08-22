@@ -335,8 +335,31 @@ validated; carried from Phase 1).
   warn-once → breach → escalation replacement with events + counter, second pass
   idempotent; the no-timer default (§6's "no dueAt" case)
 
-**Not implemented (Phase 4 remainder):** Scheduler (T7), Notification v1 (T8),
-sharing rules (T9), builder/runtime UI (T10), harness growth (T11).
+**Implemented — T8 Notification v1 (§8):**
+- `novaforge-notification-service` (port 8088, gateway route
+  `/api/v1/notifications/**`, own database, Prometheus scrape): a pure spine
+  consumer — `task.assigned` fans out as `task-assignment`, `sla.warn`/`sla.breach`
+  as `sla-warning`
+- channels: the platform inbox (paged read, mark-read, own-data only) + SMTP email
+  (Mailpit joins compose on 1025/8025); per-user per-category channel toggles
+  (both on by default — v1's coarse shape)
+- built-in platform templates per category (no authoring surface, §8's pin) with
+  `${task.field}` tokens resolved from the event payload; `${record.field}`
+  resolution waits for a record-fetching surface (noted — the workflow events carry
+  entity/record ids, not record fields)
+- recipients: the task's assignee, or the holders of its role through new runtime
+  admin reads (`GET .../roles/{role}/users`, `GET .../users/{id}` for the
+  synthetic-actor username check)
+- synthetic actors have no channels (ADR-010 #3): recognized by their provisioned
+  username shape — no inbox row, no email, no `notification.delivered`; the
+  triggering `task.*`/`sla.*` events remain the assertable surface
+- `notification.delivered` rides its own outbox → `novaforge.notification`
+  (tenant-scoped keys)
+- suites: fan-out with both channels + token resolution, role-holder resolution +
+  preference filtering, synthetic skip, sla.warn delivery through real Kafka
+
+**Not implemented (Phase 4 remainder):** Scheduler (T7), sharing rules (T9),
+builder/runtime UI (T10), harness growth (T11).
 
 ## Phases 5–8 ⬜
 

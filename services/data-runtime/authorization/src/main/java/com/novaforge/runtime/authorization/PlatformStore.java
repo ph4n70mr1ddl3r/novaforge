@@ -28,6 +28,19 @@ public class PlatformStore {
                 String.class, tenantId, userId);
     }
 
+    /** The user's username — synthetic-actor detection (PHASE-4 §8, ADR-010 #3). */
+    public String usernameOf(UUID userId) {
+        return jdbc.queryForObject(
+                "SELECT username FROM platform.users WHERE id = ?", String.class, userId);
+    }
+
+    /** Holders of {@code role} in {@code tenant} — the notification fan-out (PHASE-4 §8). */
+    public List<UUID> usersOfRole(UUID tenantId, String role) {
+        return jdbc.queryForList(
+                "SELECT user_id FROM platform.role_assignments WHERE tenant_id = ? AND role = ?",
+                UUID.class, tenantId, role);
+    }
+
     public UUID createUser(UUID userId, String username) {
         jdbc.update("INSERT INTO platform.users (id, username) VALUES (?, ?) ON CONFLICT (id) DO NOTHING",
                 userId, username);

@@ -181,6 +181,15 @@ services:
       - loki
     restart: unless-stopped
 
+  # Local email sink (PHASE-4 §2): the Notification Service's SMTP target.
+  mailpit:
+    image: docker.io/axllent/mailpit:v1.23
+    container_name: novaforge-mailpit
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # web UI
+    restart: unless-stopped
+
   kafka-exporter:
     image: docker.io/danielqsj/kafka-exporter:v1.9.0
     container_name: novaforge-kafka-exporter

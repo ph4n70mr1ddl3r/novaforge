@@ -218,6 +218,8 @@ public class TaskService {
         payload.put("entityId", task.entityId());
         payload.put("recordId", task.recordId().toString());
         payload.put("actorId", actor.toString());
+        payload.put("assignee", task.assignee() == null ? "" : task.assignee().toString());
+        payload.put("role", task.role() == null ? "" : task.role());
         payload.put("status", task.status());
         payload.put("type", task.type());
         payload.put("occurredAt", Instant.now().toString());

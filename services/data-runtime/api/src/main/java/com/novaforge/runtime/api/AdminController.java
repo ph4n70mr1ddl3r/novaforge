@@ -49,6 +49,21 @@ public class AdminController {
         return admin.createUser(tenantId, request.username(), request.password());
     }
 
+    /** The user's username — the Notification fan-out's synthetic-actor check. */
+    @GetMapping("/users/{userId}")
+    public Map<String, Object> user(@PathVariable UUID userId) {
+        requirePlatformAdmin();
+        return Map.of("userId", userId.toString(), "username", admin.usernameOf(userId));
+    }
+
+    /** Holders of a role in a tenant — the Notification fan-out (PHASE-4 §8). */
+    @GetMapping("/tenants/{tenantId}/roles/{role}/users")
+    public java.util.List<String> usersOfRole(@PathVariable UUID tenantId,
+                                              @PathVariable String role) {
+        requirePlatformAdmin();
+        return admin.usersOfRole(tenantId, role).stream().map(UUID::toString).toList();
+    }
+
     /** The user's roles in a tenant (platform + app-scoped) — the Workflow inbox's
      *  "my tasks" resolution and access checks read here (PHASE-4 §5/§13). */
     @GetMapping("/tenants/{tenantId}/users/{userId}/roles")

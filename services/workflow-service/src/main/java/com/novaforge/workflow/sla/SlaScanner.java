@@ -54,7 +54,7 @@ public class SlaScanner {
 
     private void warn(Instant now) {
         List<Map<String, Object>> due = jdbc.queryForList("""
-                SELECT id, tenant_id, id AS task_id FROM wf_tasks
+                SELECT id, tenant_id, id AS task_id, assignee, role, entity_id, record_id FROM wf_tasks
                  WHERE status = 'OPEN' AND sla_warned = false
                    AND warn_at IS NOT NULL AND warn_at <= ?""", Timestamp.from(now));
         for (Map<String, Object> task : due) {
@@ -67,8 +67,8 @@ public class SlaScanner {
 
     private void breach(Instant now) {
         List<Map<String, Object>> due = jdbc.queryForList("""
-                SELECT id, tenant_id, id AS task_id, type, entity_id, record_id,
-                       created_by, context_ref, instance_id, escalate_to
+                SELECT id, tenant_id, id AS task_id, assignee, role, type, entity_id,
+                       record_id, created_by, context_ref, instance_id, escalate_to
                   FROM wf_tasks
                  WHERE status = 'OPEN' AND due_at IS NOT NULL AND due_at <= ?""",
                 Timestamp.from(now));
@@ -101,6 +101,11 @@ public class SlaScanner {
         payload.put("eventId", UUID.randomUUID().toString());
         payload.put("taskId", String.valueOf(task.get("task_id")));
         payload.put("tenantId", String.valueOf(task.get("tenant_id")));
+        payload.put("entityId", String.valueOf(task.get("entity_id")));
+        payload.put("recordId", String.valueOf(task.get("record_id")));
+        payload.put("assignee", task.get("assignee") == null ? ""
+                : String.valueOf(task.get("assignee")));
+        payload.put("role", task.get("role") == null ? "" : String.valueOf(task.get("role")));
         if (status != null) {
             payload.put("status", status);
         }
