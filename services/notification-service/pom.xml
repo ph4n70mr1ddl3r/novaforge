@@ -109,6 +109,29 @@
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
       </plugin>
+        <plugin>
+          <groupId>com.google.cloud.tools</groupId>
+          <artifactId>jib-maven-plugin</artifactId>
+          <version>3.5.2</version>
+          <configuration>
+            <from>
+              <image>eclipse-temurin:21-jre</image>
+            </from>
+            <to>
+              <image>ghcr.io/novaforge/novaforge-notification-service</image>
+              <tags><tag>${project.version}</tag></tags>
+            </to>
+            <container>
+              <creationTime>USE_CURRENT_TIMESTAMP</creationTime>
+              <jvmFlags>
+                <jvmFlag>-XX:MaxRAMPercentage=75.0</jvmFlag>
+              </jvmFlags>
+            </container>
+            <!-- OCI images for the Helm charts / Skaffold podman runner (ARCHITECTURE §6);
+                 no execution binding — inert under `mvn verify`, goal-invoked by Skaffold's
+                 jib builder. No per-entity codegen anywhere — same fat jars as the Boot plugin. -->
+          </configuration>
+        </plugin>
     </plugins>
   </build>
 </project>

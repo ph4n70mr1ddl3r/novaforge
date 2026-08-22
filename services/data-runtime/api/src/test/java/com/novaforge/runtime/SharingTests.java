@@ -36,10 +36,12 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Record-level sharing (PHASE-4 §10, §14 item 5): the visibility matrix per role —
- * owner rules (the creator plus the named roles), criteria rules (compiled
- * expressions shared with the named roles), platform-admin breadth, the no-rule
- * default preserved (full visibility under the matrix — no silent tightening), and
- * the same evaluation governing writes: a record outside visibility reads as absent.
+ * owner rules (the creator plus the named roles), roleHierarchy rules (seniors see
+ * juniors' records, never the reverse; unleveled roles widen nobody), criteria rules
+ * (compiled expressions shared with the named roles), platform-admin breadth, the
+ * no-rule default preserved (full visibility under the matrix — no silent
+ * tightening), and the same evaluation governing writes: a record outside
+ * visibility reads as absent.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -67,11 +69,15 @@ class SharingTests extends PostgresTestBase {
                   { "role": "manager", "entity": "Case", "create": true, "read": true, "update": true },
                   { "role": "auditor", "entity": "Case", "create": true, "read": true, "update": true },
                   { "role": "clerk", "entity": "Plain", "create": true, "read": true },
-                  { "role": "auditor", "entity": "Plain", "create": true, "read": true } ],
+                  { "role": "auditor", "entity": "Plain", "create": true, "read": true },
+                  { "role": "clerk", "entity": "Review", "create": true, "read": true },
+                  { "role": "manager", "entity": "Review", "create": true, "read": true },
+                  { "role": "auditor", "entity": "Review", "create": true, "read": true } ],
                 "sharingRules": [
                   { "entity": "Case", "type": "owner", "roles": ["manager"] },
                   { "entity": "Case", "type": "criteria", "roles": ["auditor"],
-                    "criteria": "amount > 100" } ] },
+                    "criteria": "amount > 100" },
+                  { "entity": "Review", "type": "roleHierarchy", "roles": ["manager"] } ] },
               "entities": [
                 { "apiName": "Case",
                   "displayField": "subject",
@@ -80,7 +86,11 @@ class SharingTests extends PostgresTestBase {
                     { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 } ] },
                 { "apiName": "Plain",
                   "fields": [
-                    { "apiName": "label", "type": "text", "required": true } ] } ] }
+                    { "apiName": "label", "type": "text", "required": true } ] },
+                { "apiName": "Review",
+                  "displayField": "subject",
+                  "fields": [
+                    { "apiName": "subject", "type": "text", "required": true } ] } ] }
             """;
 
     @Autowired
@@ -214,6 +224,31 @@ class SharingTests extends PostgresTestBase {
                 .andExpect(status().isOk());
     }
 
+    @Test
+    @DisplayName("roleHierarchy: seniors see juniors' records; juniors never see seniors'; unleveled widens nobody (§16 Q2)")
+    void roleHierarchyVisibility() throws Exception {
+        String clerks = createReview(CLERK1, "h-junior");
+        String managers = createReview(MANAGER, "h-senior");
+        String auditors = createReview(AUDITOR, "h-unleveled");
+
+        // the manager (level 1) sees records owned by the strictly less senior clerk (2)
+        mockMvc.perform(get("/api/v1/runtime/Review/" + clerks).with(jwtFor(MANAGER)))
+                .andExpect(status().isOk());
+        // the clerk (level 2) does not see the senior's record — only their own
+        mockMvc.perform(get("/api/v1/runtime/Review/" + managers).with(jwtFor(CLERK1)))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/v1/runtime/Review/" + clerks).with(jwtFor(CLERK1)))
+                .andExpect(status().isOk());
+        // an unleveled role carries no seniority — its records stay invisible to
+        // leveled actors (and it sees only its own)
+        mockMvc.perform(get("/api/v1/runtime/Review/" + auditors).with(jwtFor(CLERK1)))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/v1/runtime/Review/" + auditors).with(jwtFor(MANAGER)))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/v1/runtime/Review/" + auditors).with(jwtFor(AUDITOR)))
+                .andExpect(status().isOk());
+    }
+
     private int ownedBy(UUID actor) {
         Integer count = jdbc.queryForObject(
                 "SELECT count(*) FROM rec_records WHERE entity_id = 'Desk.Case' "
@@ -235,6 +270,14 @@ class SharingTests extends PostgresTestBase {
         MvcResult created = mockMvc.perform(post("/api/v1/runtime/Plain").with(jwtFor(actor))
                         .contentType("application/json")
                         .content("{\"label\":\"" + label + "\"}"))
+                .andExpect(status().isOk()).andReturn();
+        return MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+    }
+
+    private String createReview(UUID actor, String subject) throws Exception {
+        MvcResult created = mockMvc.perform(post("/api/v1/runtime/Review").with(jwtFor(actor))
+                        .contentType("application/json")
+                        .content("{\"subject\":\"" + subject + "\"}"))
                 .andExpect(status().isOk()).andReturn();
         return MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
     }

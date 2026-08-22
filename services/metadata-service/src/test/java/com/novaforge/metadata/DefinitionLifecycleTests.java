@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -83,6 +84,96 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                 new ChannelTopic(MetadataPublishEventPublisherFixtures.CHANNEL));
         container.afterPropertiesSet();
         container.start();
+    }
+
+    @Test
+    @DisplayName("suite vocabulary (§12): grown ops + named error outcomes save; malformed op params reject")
+    void suiteVocabularyGrowth() throws Exception {
+        // an app to hang the suite on
+        MvcResult app = mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "apiName": "VocabApp", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "name", "type": "text" } ] } ] }
+                                """))
+                .andExpect(status().isOk()).andReturn();
+        String appId = MAPPER.readTree(app.getResponse().getContentAsString())
+                .get("id").asString();
+
+        // Phase 4's grown vocabulary saves cleanly — including the §12 named outcome
+        // error(SOD_VIOLATION) as an expectation (the runner maps it to registry 4011)
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/test-suites/vocab")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "vocab", "cases": [ { "name": "journey",
+                                  "steps": [
+                                    { "op": "queryRecord", "entity": "Task", "asRole": "manager",
+                                      "template": { "filter": { "status": "OPEN" } },
+                                      "expect": "ok" },
+                                    { "op": "resolveTask", "entity": "Task", "asRole": "manager",
+                                      "recordId": "${Task[0].id}",
+                                      "template": { "action": "approve", "comment": "ok" },
+                                      "expect": "ok" },
+                                    { "op": "queryRecord", "entity": "Thing", "asRole": "manager",
+                                      "template": { "filter": { "field": "name", "op": "eq",
+                                                               "value": "x" } },
+                                      "expect": "ok" },
+                                    { "op": "resolveTask", "entity": "Task", "asRole": "manager",
+                                      "recordId": "${Task[0].id}",
+                                      "template": { "action": "reject" },
+                                      "expect": "error(SOD_VIOLATION)" } ],
+                                  "assertExpressions": [ "${Task[0].status} != 'OPEN'" ] } ] }
+                                """))
+                .andExpect(status().isOk());
+
+        // unknown ops still reject
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/test-suites/bad")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "bad", "cases": [ { "name": "c",
+                                  "steps": [ { "op": "teleport", "expect": "ok" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest());
+
+        // record-addressed ops require recordId at save time (§12 — authoring errors
+        // surface here, not as an aborted case at run time)
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/test-suites/no-id")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "no-id", "cases": [ { "name": "c",
+                                  "steps": [ { "op": "resolveTask", "entity": "Task",
+                                  "expect": "ok" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest());
+        // deleteRecord carries template.version for optimistic locking
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/test-suites/no-version")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "no-version", "cases": [ { "name": "c",
+                                  "steps": [ { "op": "deleteRecord", "entity": "Thing",
+                                  "recordId": "${Thing[0].id}", "expect": "ok" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest());
+        // resolveTask actions are the closed approve|reject set
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/test-suites/bad-action")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "bad-action", "cases": [ { "name": "c",
+                                  "steps": [ { "op": "resolveTask", "entity": "Task",
+                                  "recordId": "${Task[0].id}",
+                                  "template": { "action": "delegate" }, "expect": "ok" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest());
+        // the inbox query's v1 filter is {status} — the record DSL leaf rejects on save
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/test-suites/bad-filter")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "bad-filter", "cases": [ { "name": "c",
+                                  "steps": [ { "op": "queryRecord", "entity": "Task",
+                                  "template": { "filter": { "field": "assignee", "op": "eq",
+                                                            "value": "x" } }, "expect": "ok" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest());
     }
 
     private static org.springframework.security.test.web.servlet.request

@@ -41,7 +41,7 @@ public class RestMetadataClient implements MetadataClient {
     /** Cached client-credentials token for context-free calls (startup catch-up, subscriber). */
     private final AtomicReference<Map<String, Object>> serviceToken = new AtomicReference<>();
 
-    public RestMetadataClient(@Value("${novaforge.metadata-service.url:http://localhost:8081}") String baseUrl,
+    public RestMetadataClient(@Value("${novaforge.metadata.url:http://localhost:8081}") String baseUrl,
                               @Value("${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}") String issuer,
                               @Value("${novaforge.auth.service-client.id:novaforge-runtime}") String serviceClientId,
                               @Value("${novaforge.auth.service-client.secret:novaforge-runtime-secret}") String serviceClientSecret) {

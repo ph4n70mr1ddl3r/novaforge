@@ -118,7 +118,7 @@ public class DefinitionService {
         return testRunner.run(candidate, suite, actorId);
     }
 
-    /** Suite save-validation: ops known, expectations shaped (§7). */
+    /** Suite save-validation: ops known, expectations shaped, op params present (§7, §12). */
     private static void validateSuite(com.novaforge.metadata.TestSuiteDefinition suite) {
         for (var testCase : suite.cases()) {
             for (var step : testCase.steps()) {
@@ -130,6 +130,42 @@ public class DefinitionService {
                 if (!expect.equals("ok") && !expect.matches("(error|validation)\\(.+\\)")) {
                     throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                             "expect must be ok | error(code) | validation(rule): " + expect);
+                }
+                String where = "case '" + testCase.name() + "' step " + step.op()
+                        + (step.entity() == null ? "" : " " + step.entity());
+                switch (step.op()) {
+                    // record-addressed ops interpolate step.recordId() — absent means an
+                    // NPE at run time; authoring errors belong at save time
+                    case "updateRecord", "deleteRecord", "resolveTask" -> {
+                        if (step.recordId() == null || step.recordId().isBlank()) {
+                            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                                    where + " requires recordId");
+                        }
+                    }
+                    default -> { }
+                }
+                if ("deleteRecord".equals(step.op())
+                        && (step.template() == null
+                        || !(step.template().get("version") instanceof Number))) {
+                    throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                            where + " requires template.version (optimistic locking)");
+                }
+                if ("resolveTask".equals(step.op()) && step.template() != null) {
+                    Object action = step.template().get("action");
+                    if (action != null && !"approve".equals(action) && !"reject".equals(action)) {
+                        throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                                where + " action must be approve or reject: " + action);
+                    }
+                }
+                if ("queryRecord".equals(step.op()) && "Task".equals(step.entity())
+                        && step.template() != null && step.template().get("filter") != null) {
+                    Object filter = step.template().get("filter");
+                    boolean statusOnly = filter instanceof Map<?, ?> map && map.size() == 1
+                            && map.get("status") instanceof String;
+                    if (!statusOnly) {
+                        throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                                where + " filter supports {status: <string>} in v1");
+                    }
                 }
             }
         }

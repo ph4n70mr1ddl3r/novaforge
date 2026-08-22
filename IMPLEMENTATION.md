@@ -274,8 +274,9 @@ validated; carried from Phase 1).
   record's open tasks — verified through the real Kafka path
 - suites: `TaskApiTests` — inbox resolution, resolution + events, claim, delegation
   chains + SoD, reassign gate, access checks, deletion-cancel
-- Flowable itself is not yet a dependency: ADR-004's embedded engine enters with T5/T6
-  (suspension + SLA timers) where it has work to do; the Boot 4 compatibility of the
+- Flowable itself is not yet a dependency: T5's suspension is a durable instance table
+  and T6's timers a scanner, so ADR-004's embedded engine now enters with §9 (BPMN
+  execution + event-starts — Phase 4 remainder); the Boot 4 compatibility of the
   Flowable starter gets assessed at that boundary (deviation from T1's letter, noted)
 
 **Implemented — T5 `requestApproval` + durable suspension + SoD (§4):**
@@ -400,11 +401,57 @@ validated; carried from Phase 1).
   get/update/delete (no existence leak); platform admin/builder unrestricted;
   **no rules defined → Phase 2's default holds** — full visibility under the
   matrix, no silent tightening (regression-tested)
-- suites: the §14 item 5 matrix (own/named-role/criteria/admin), list visibility
-  per actor, writes governed by the same evaluation, the no-rule default
+- service-level tests (`SharingTests`): the §14 item 5 matrix (own/named-role/
+  criteria/admin), list visibility per actor, writes governed by the same
+  evaluation, the no-rule default — the matrix's queryRecord-suite form rides the
+  harness with T12's live-stack journey (§14 item 5's "via queryRecord-based
+  suites" wording)
 
-**Not implemented (Phase 4 remainder):** builder/runtime UI (T10), harness growth
-(T11) — plus the earlier UI surfaces of Phase 2.
+**Implemented — T11 harness growth (§12):**
+- new step ops: `queryRecord {entity, filter, asRole}` → `{count, ids}` in scope as
+  `${Query[n]}` (entity `Task` queries the workflow inbox with a v1 `{status}`
+  filter, remembering rows as `${Task[n]}` for status/assignee assertions) and
+  `resolveTask {recordId | Task reference, action: approve|reject, comment?}` —
+  resolution rides the same inbox API synthetic actors use, no back door
+  (ADR-010 #3). Both legs share the runtime transport's error-as-result contract,
+  so `expect: error(...)` matches problem payloads from either engine; pages cap
+  at 200 — `count` is the full total, `ids`/rows the first page
+- expected outcomes accept the ADR-010 named forms — any registry name
+  (`error(SOD_VIOLATION)`, `error(STATE_TRANSITION)`, …) resolves through
+  `PlatformErrorCode` onto its code; query results count as `ok`
+- scope semantics: re-observing a record id (an update, a resolved task)
+  overwrites the `${Entity[n]}` entry in place — post-step assertions read
+  current state, so a resolved `${Task[0]}` shows its post-resolution status
+- save validation covers the grown vocabulary: unknown ops reject; record-addressed
+  ops (`updateRecord`/`deleteRecord`/`resolveTask`) require `recordId`;
+  `deleteRecord` requires `template.version`; `resolveTask` actions are the closed
+  approve|reject set; the Task query's filter must be `{status}` (the record DSL
+  leaf rejects on save)
+- CI coverage: `DefinitionLifecycleTests` (save validation, named-outcome shapes)
+  + `TestRunnerJourneyTests` — the runner's real HTTP legs against stub servers:
+  the inbox query rides **GET** with `status`/`size=200`, resolutions POST,
+  `error(SOD_VIOLATION)` matches a 4011 problem body, `${…}` references in
+  filters interpolate before the query is sent, and the id-match scope holds.
+  The live-stack §1 journey itself rides T12
+- clock-driven SLA suites deferred — an **open deviation from §12's
+  clock-advanced leg**: the SlaScanner runs on wall clock in the Workflow
+  Service, and the harness (a metadata-service HTTP client) has no as-of scan
+  surface to drive; PHASE-3 §7's controlled clock pins assertion-time
+  determinism, not cross-service timer control. A scratch-scoped as-of scan
+  endpoint would satisfy the spec (scan path, not write path — no ADR-010 #3
+  conflict); until it exists, SLA behavior is covered by the workflow-side
+  scanner suites
+
+**Phase 4 remainder:** §9 BPMN execution (Flowable embedded, `WorkflowDefinition`
+metadata, event-start subscriptions, a live `processStart` target — §1 pins
+"execution and event-starts ship"; the scheduler's `processStart` registers but
+fires `skipped`), the builder/runtime UI (T10 — rides the unstarted Phase 2 React
+surface), and the §1 exit-journey demo (T12 — needs the full stack live; T11's
+acceptance form, the §14 item 1 journey suite green through the runner, and §14
+item 5's queryRecord-form visibility suites ride it too). All other backend
+machinery for the journey — state machines, approvals with suspension and SoD,
+SLA escalation, notifications, the scheduler — is implemented and covered by the
+service-level suites above.
 
 ## Phases 5–8 ⬜
 

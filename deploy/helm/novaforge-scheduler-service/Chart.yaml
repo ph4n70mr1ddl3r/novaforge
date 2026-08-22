@@ -1,0 +1,6 @@
+apiVersion: v2
+name: novaforge-scheduler-service
+description: NovaForge scheduler-service service chart (PHASE-4 §7)
+type: application
+version: 0.1.0
+appVersion: "0.1.0-SNAPSHOT"

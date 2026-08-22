@@ -72,13 +72,16 @@ public class SharingGate {
                     }
                 }
                 case SharingRuleDefinition.ROLE_HIERARCHY -> {
-                    // records owned by holders of strictly less senior roles
+                    // records owned by holders of strictly less senior roles — an
+                    // unleveled role carries no seniority and never widens anyone's
+                    // view; neither does a missing level on the actor's own roles
                     // (assignments carry the app-scoped form)
-                    for (PermissionSet.RoleDefinition role : app.permissionSet().roles()) {
-                        if (role.level() == null || (actorLevel != null
-                                && role.level() > actorLevel)) {
-                            owners.addAll(platform.usersOfRole(tenantId,
-                                    app.apiName() + "." + role.name()));
+                    if (actorLevel != null) {
+                        for (PermissionSet.RoleDefinition role : app.permissionSet().roles()) {
+                            if (role.level() != null && role.level() > actorLevel) {
+                                owners.addAll(platform.usersOfRole(tenantId,
+                                        app.apiName() + "." + role.name()));
+                            }
                         }
                     }
                 }

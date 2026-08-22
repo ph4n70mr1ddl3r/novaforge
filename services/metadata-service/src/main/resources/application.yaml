@@ -46,7 +46,23 @@ logging:
     level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
 
 novaforge:
+  auth:
+    # The harness's synthetic-actor grants ride the public client; the service client
+    # provisions the scratch tenant (ADR-010, PHASE-3 §7).
+    issuer-uri: ${NOVAFORGE_AUTH_ISSUER:http://localhost:8082/realms/novaforge}
+    service-client:
+      id: ${NOVAFORGE_SERVICE_CLIENT_ID:novaforge-runtime}
+      secret: ${NOVAFORGE_SERVICE_CLIENT_SECRET:novaforge-runtime-secret}
+  data-runtime:
+    # Suite steps replay through the generic runtime APIs as the actors (ADR-010 #3).
+    url: ${NOVAFORGE_DATA_RUNTIME_URL:http://localhost:8083}
+  workflow:
+    # The harness's resolveTask/queryRecord(Task) ride the inbox API (PHASE-4 §12).
+    url: ${NOVAFORGE_WORKFLOW_URL:http://localhost:8086}
   metadata:
+    # The candidate publish into the scratch tenant (self-call, same spelling every
+    # other metadata caller uses).
+    url: ${NOVAFORGE_METADATA_URL:http://localhost:8081}
     # redis (default) emits metadata.published on channel novaforge.metadata.events;
     # noop disables emission for hermetic tests (PHASE-1 §4 transport note).
     publish-transport: ${NOVAFORGE_METADATA_PUBLISH_TRANSPORT:redis}

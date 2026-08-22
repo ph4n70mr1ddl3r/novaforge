@@ -37,7 +37,7 @@ public class RestApprovalClient implements ApprovalClient {
     private record Grant(String token, long refreshAt) {
     }
 
-    public RestApprovalClient(@Value("${novaforge.workflow-service.url:http://localhost:8086}")
+    public RestApprovalClient(@Value("${novaforge.workflow.url:http://localhost:8086}")
                               String baseUrl,
                               @Value("${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}")
                               String issuer,

@@ -1,5 +1,6 @@
 # Skaffold inner-loop (podman runner — ARCHITECTURE.md §6, PHASE-1 §8): build → kind load → helm upgrade.
 # Usage:  skaffold dev --platform=podman
+# One artifact per umbrella subchart — the build and deploy sets stay the same eight.
 apiVersion: skaffold/v4beta11
 kind: Config
 metadata:
@@ -20,6 +21,21 @@ build:
     - image: ghcr.io/novaforge/novaforge-data-runtime
       jib:
         project: services/data-runtime/api
+    - image: ghcr.io/novaforge/novaforge-audit-service
+      jib:
+        project: services/audit-service
+    - image: ghcr.io/novaforge/novaforge-script-engine
+      jib:
+        project: services/script-engine
+    - image: ghcr.io/novaforge/novaforge-workflow-service
+      jib:
+        project: services/workflow-service
+    - image: ghcr.io/novaforge/novaforge-scheduler-service
+      jib:
+        project: services/scheduler-service
+    - image: ghcr.io/novaforge/novaforge-notification-service
+      jib:
+        project: services/notification-service
 deploy:
   helm:
     releases:
@@ -35,5 +51,20 @@ deploy:
           novaforge-data-runtime:
             image:
               repository: ghcr.io/novaforge/novaforge-data-runtime
+          novaforge-audit-service:
+            image:
+              repository: ghcr.io/novaforge/novaforge-audit-service
+          novaforge-script-engine:
+            image:
+              repository: ghcr.io/novaforge/novaforge-script-engine
+          novaforge-workflow-service:
+            image:
+              repository: ghcr.io/novaforge/novaforge-workflow-service
+          novaforge-scheduler-service:
+            image:
+              repository: ghcr.io/novaforge/novaforge-scheduler-service
+          novaforge-notification-service:
+            image:
+              repository: ghcr.io/novaforge/novaforge-notification-service
         imageStrategy:
           helm: {}

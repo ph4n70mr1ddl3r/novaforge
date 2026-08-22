@@ -45,7 +45,17 @@ public record TestSuiteDefinition(
     public record Step(String op, String entity, String asRole, String recordId,
                        Map<String, Object> template, String expect) {
 
+        /**
+         * The v1 vocabulary: the Phase 3 record ops plus Phase 4's growth (§12) —
+         * {@code queryRecord} (a filtered read as a role → {@code {count, ids}},
+         * remembered as {@code ${Query[n]}}; entity {@code Task} queries the
+         * workflow inbox with a v1 {@code {status}} filter and remembers rows as
+         * {@code ${Task[n]}}) and {@code resolveTask} (an approve/reject through
+         * the same inbox API synthetic actors use — the harness never gets a back
+         * door, ADR-010 #3).
+         */
         public static final java.util.Set<String> OPS =
-                java.util.Set.of("createRecord", "updateRecord", "deleteRecord");
+                java.util.Set.of("createRecord", "updateRecord", "deleteRecord",
+                        "queryRecord", "resolveTask");
     }
 }

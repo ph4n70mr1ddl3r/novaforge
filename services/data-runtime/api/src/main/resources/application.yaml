@@ -65,12 +65,23 @@ novaforge:
       max-attempts: ${NOVAFORGE_HOOK_RETRY_MAX:8}
       backoff-base-ms: ${NOVAFORGE_HOOK_RETRY_BACKOFF_MS:5000}
       scan-interval-ms: ${NOVAFORGE_HOOK_RETRY_SCAN_MS:2000}
-  metadata-service:
+  auth:
+    # The provisioner's Keycloak orchestration + the service-client grants the
+    # out-of-band callers (approvals, metadata index) authenticate with.
+    issuer-uri: ${NOVAFORGE_AUTH_ISSUER:http://localhost:8082/realms/novaforge}
+    service-client:
+      id: ${NOVAFORGE_SERVICE_CLIENT_ID:novaforge-runtime}
+      secret: ${NOVAFORGE_SERVICE_CLIENT_SECRET:novaforge-runtime-secret}
+  metadata:
+    # Same spelling every other metadata caller uses (workflow/scheduler/notification).
     url: ${NOVAFORGE_METADATA_URL:http://localhost:8081}
+    cache-index-ttl-ms: ${NOVAFORGE_METADATA_INDEX_TTL_MS:30000}
+  workflow:
+    # requestApproval hands suspensions here (PHASE-4 §4) — same spelling the
+    # metadata-service harness uses.
+    url: ${NOVAFORGE_WORKFLOW_URL:http://localhost:8086}
   script-engine:
     # Script hooks (ADR-003 escape hatch) call here with the caller's token relayed.
     url: ${NOVAFORGE_SCRIPT_ENGINE_URL:http://localhost:8084}
-  metadata:
-    cache-index-ttl-ms: ${NOVAFORGE_METADATA_INDEX_TTL_MS:30000}
   sequences:
     block-size: ${NOVAFORGE_SEQUENCE_BLOCK:100}

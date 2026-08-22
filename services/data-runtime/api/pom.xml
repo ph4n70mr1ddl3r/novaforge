@@ -113,8 +113,8 @@
               </jvmFlags>
             </container>
             <!-- OCI images for the Helm charts / Skaffold podman runner (ARCHITECTURE §6);
-                 no per-entity codegen anywhere — same fat jars as the Boot plugin. -->
-            <skip>true</skip>
+                 no execution binding — inert under `mvn verify`, goal-invoked by Skaffold's
+                 jib builder. No per-entity codegen anywhere — same fat jars as the Boot plugin. -->
           </configuration>
         </plugin>
     </plugins>

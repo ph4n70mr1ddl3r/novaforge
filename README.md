@@ -97,11 +97,14 @@ novaforge/
 ├── ARCHITECTURE.md      # Technical architecture
 ├── IMPLEMENTATION.md    # Phase-by-phase implementation ledger
 ├── platform/libs/       # shared libraries (common-core, metadata-model,
-│                        #   security-context, expression-dsl*, test-support)
+│                        #   security-context, expression-dsl, test-support)
 ├── services/            # gateway, metadata-service,
-│                        #   data-runtime (api/engine/storage/authorization)
-├── deploy/              # compose (Keycloak/PG/Redis/Kafka/Prometheus/Grafana),
-│                        #   postgres-init, kind/, helm/
+│                        #   data-runtime (api/engine/storage/authorization),
+│                        #   script-engine, audit-service, workflow-service,
+│                        #   scheduler-service, notification-service
+├── deploy/              # compose (Keycloak/PG/Redis/Kafka/Prometheus/Grafana
+│                        #   + Tempo/Loki/promtail, Mailpit), postgres-init,
+│                        #   kind/, helm/ (one chart per service + umbrella)
 ├── docs/
 │   ├── specs/           # Phase specifications (PHASE-0 … PHASE-8)
 │   ├── adr/             # ADR-001 … ADR-010
@@ -110,7 +113,8 @@ novaforge/
 └── .github/workflows/   # CI (build + Podman-socket integration)
 ```
 
-*expression-dsl lands with Phase 2 (PHASE-0 §5.4 — empty modules rot).*
+*expression-dsl landed with Phase 2 (RBAC + field security backend); the React builder
+surface is the remaining Phase 2 gap (see IMPLEMENTATION.md).*
 
 ## Development
 
@@ -163,11 +167,15 @@ transcript and `docs/loadtests/` for the measured read/list/write targets.
 
 ## Status
 
-**Phases 0–1 implemented and verified live; ADR-001 closed with measured numbers.**
-The platform core exists: gateway, Metadata Service (definition lifecycle, publish,
-versions, export, the Redis `metadata.published` spine), and the Data Runtime (generic
-record/query APIs, field validations, sequences, inline master-detail children,
-optimistic locking, soft delete, idempotency, hybrid-JSONB storage with ADR-001
-generated projections + RLS, the fail-closed role matrix) — 162 tests green, exit demo
-and load targets verified on the compose stack. Next: Phase 2 (builder UI, expression
-DSL, RBAC editors) per [PLAN.md §5](PLAN.md). Progress ledger: [IMPLEMENTATION.md](IMPLEMENTATION.md).
+**Phases 0–1 complete and verified live; Phases 2–4 partially implemented (all
+backend surfaces); Phases 5–8 not started.** The platform core (gateway, Metadata
+Service, Data Runtime — ADR-001 closed with measured numbers) shipped in Phases 0–1;
+since then: the expression DSL with server-side RBAC/field security and tenant
+onboarding (Phase 2 backend), the write-path evaluation chain, the Kafka event spine
+with transactional outbox, flow-IR hooks, the script sandbox, and the builder test
+harness (Phase 3), and the workflow plane — state machines, approvals with durable
+suspension and SoD, SLAs with escalation, notifications, the scheduler, record-level
+sharing, and the grown harness vocabulary (Phase 4). 316 tests green under
+`./mvnw verify`. The main remaining surfaces: the React builder/runtime UI (Phase 2's
+largest gap, which Phase 4's T10 rides), Phase 4's BPMN execution (§9), and the
+full-stack exit demos. Progress ledger: [IMPLEMENTATION.md](IMPLEMENTATION.md).

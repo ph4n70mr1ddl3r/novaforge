@@ -51,25 +51,40 @@ public class TestRunner {
     private final RestClient runtime;
     private final RestClient metadata;
     private final RestClient auth;
+    private final RestClient workflow;
     private final String clientId;
     private final String clientSecret;
     private final io.micrometer.core.instrument.MeterRegistry suiteRuns;
 
-    public TestRunner(@Value("${novaforge.runtime.url:http://localhost:8083}") String runtimeUrl,
+    public TestRunner(@Value("${novaforge.data-runtime.url:http://localhost:8083}") String runtimeUrl,
                       @Value("${novaforge.metadata.url:http://localhost:8081}") String metadataUrl,
                       @Value("${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}") String issuer,
+                      @Value("${novaforge.workflow.url:http://localhost:8086}") String workflowUrl,
                       @Value("${novaforge.auth.service-client.id:novaforge-runtime}") String clientId,
                       @Value("${novaforge.auth.service-client.secret:novaforge-runtime-secret}") String clientSecret,
                       io.micrometer.core.instrument.MeterRegistry suiteRuns) {
-        this.runtime = RestClient.builder().baseUrl(runtimeUrl).build();
+        this.runtime = preEncoded(runtimeUrl);
         this.metadata = RestClient.builder().baseUrl(metadataUrl).build();
         this.auth = RestClient.builder().baseUrl(issuer).build();
+        this.workflow = preEncoded(workflowUrl);
         this.clientId = clientId;
         this.clientSecret = clientSecret;
         this.suiteRuns = suiteRuns;
     }
 
-    /** One suite run: scratch tenant → candidate publish → cases → verdict. */
+    /**
+     * A client whose URIs are used verbatim: the runner pre-encodes its query
+     * strings (the filter DSL node rides {@code ?filter=} as compact percent-encoded
+     * JSON — PHASE-1 §5's canonical encoding), and RestClient's template mode would
+     * re-encode the {@code %} sequences into {@code %25…} on arrival.
+     */
+    private static RestClient preEncoded(String baseUrl) {
+        org.springframework.web.util.DefaultUriBuilderFactory uris =
+                new org.springframework.web.util.DefaultUriBuilderFactory(baseUrl);
+        uris.setEncodingMode(org.springframework.web.util.DefaultUriBuilderFactory.EncodingMode.NONE);
+        return RestClient.builder().uriBuilderFactory(uris).build();
+    }
+
     /** One suite run: scratch tenant → candidate publish → cases → verdict. */
     public Map<String, Object> run(AppDefinition candidate, TestSuiteDefinition suite, UUID actorId) {
         Instant frozenAt = Instant.now();
@@ -128,6 +143,7 @@ public class TestRunner {
         artifact.put("cases", caseResults);
         return artifact;
     }
+
     private Map<String, Object> runCase(TestCase testCase,
                                         Map<String, String> rolePasswords, Instant frozenAt) {
         Map<String, Object> scope = new LinkedHashMap<>();   // "Entity[n]" → last record map
@@ -161,6 +177,8 @@ public class TestRunner {
                                     + "?version=" + interpolateText(
                                     String.valueOf(step.template().get("version")), scope),
                             token, null);
+                    case "queryRecord" -> queryRecord(step, token, scope);
+                    case "resolveTask" -> resolveTask(step, token, scope);
                     default -> throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                             "unknown suite step op: " + step.op());
                 };
@@ -199,14 +217,110 @@ public class TestRunner {
         return verdict;
     }
 
+    /**
+     * ADR-010's named error forms resolve through the registry: any
+     * {@link PlatformErrorCode} name ({@code error(SOD_VIOLATION)}, §12) maps onto
+     * its code, so codes appended later need no harness change; numeric codes pass
+     * through untouched.
+     */
+    private static String registryCode(String expected) {
+        try {
+            return PlatformErrorCode.valueOf(expected).code();
+        } catch (IllegalArgumentException notARegistryName) {
+            return expected;
+        }
+    }
+
+    /**
+     * queryRecord (§12): a filtered read as the step's role → {@code {count, ids}} in
+     * scope as {@code ${Query[n]}}; entity {@code Task} queries the workflow inbox
+     * (v1 filter: {@code {status: <string>}}) and remembers each row as
+     * {@code ${Task[n]}} for status/assignee assertions. Both branches cap the page
+     * at 200 — {@code count} is the full total; {@code ids} and the remembered rows
+     * are the first page.
+     */
+    private JsonNode queryRecord(Step step, String token, Map<String, Object> scope) {
+        Object filter = step.template() == null ? null
+                : interpolateValue(step.template().get("filter"), scope);
+        if ("Task".equals(step.entity())) {
+            String status = "OPEN";
+            if (filter != null) {
+                if (!(filter instanceof Map<?, ?> taskFilter) || taskFilter.size() != 1
+                        || !(taskFilter.get("status") instanceof String filtered)) {
+                    throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                            "queryRecord Task filter supports {status: <string>} in v1: " + filter);
+                }
+                status = filtered;
+            }
+            JsonNode inbox = workflowCall(HttpMethod.GET, "/api/v1/workflow/tasks?status="
+                    + url(status) + "&size=200", token, null);
+            List<String> ids = new ArrayList<>();
+            for (JsonNode task : inbox.path("rows")) {
+                remember(scope, "Task", task);
+                ids.add(task.path("id").asString());
+            }
+            if (ids.isEmpty()) {
+                scope.putIfAbsent("Task[0]", Map.of());   // assertions see empties, not errors
+            }
+            return queryResult(scope, inbox.path("total").asLong(), ids);
+        }
+        StringBuilder uri = new StringBuilder("/api/v1/runtime/").append(step.entity())
+                .append("?page=").append(url("{\"size\":200}"));
+        if (filter != null) {
+            uri.append("&filter=").append(url(MAPPER.writeValueAsString(filter)));
+        }
+        JsonNode page = runtimeCall(HttpMethod.GET, uri.toString(), token, null);
+        List<String> ids = new ArrayList<>();
+        for (JsonNode row : page.path("rows")) {
+            ids.add(row.path("id").asString());
+        }
+        return queryResult(scope, page.path("total").asLong(), ids);
+    }
+
+    /** The §12 result shape — {@code {count, ids}}, remembered as the next ${Query[n]}. */
+    private JsonNode queryResult(Map<String, Object> scope, long count, List<String> ids) {
+        Map<String, Object> query = new LinkedHashMap<>();
+        query.put("count", count);
+        query.put("ids", ids);
+        return MAPPER.valueToTree(remember(scope, "Query", MAPPER.valueToTree(query)));
+    }
+
+    /** resolveTask (§12): approve/reject through the inbox API — no back door. */
+    private JsonNode resolveTask(Step step, String token, Map<String, Object> scope) {
+        String taskId = interpolateText(step.recordId(), scope);
+        String action = step.template() == null ? "approve"
+                : String.valueOf(step.template().getOrDefault("action", "approve"));
+        if (!"approve".equals(action) && !"reject".equals(action)) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "resolveTask action must be approve or reject: " + action);
+        }
+        String body = null;
+        if (step.template() != null && step.template().get("comment") != null) {
+            body = MAPPER.writeValueAsString(Map.of("comment",
+                    interpolateText(String.valueOf(step.template().get("comment")), scope)));
+        }
+        return workflowCall(HttpMethod.POST,
+                "/api/v1/workflow/tasks/" + url(taskId) + "/" + action, token, body);
+    }
+
+    /**
+     * Workflow calls mirror {@link #runtimeCall}: both success and failure statuses
+     * return the body — {@code expect: error(code)} matches the problem payload, so
+     * a 4xx (an SoD rejection, a resolution race) is a result, not an exception.
+     */
+    private JsonNode workflowCall(HttpMethod method, String uri, String token, String body) {
+        return MAPPER.readTree(call(workflow, method, uri, token, body));
+    }
+
     private boolean expectationHolds(String expect, JsonNode result) {
         if ("ok".equals(expect)) {
             return result.isObject() && result.hasNonNull("id")
-                    || (result.isObject() && result.has("status"));
+                    || (result.isObject() && result.has("status"))
+                    || (result.isObject() && result.has("count"));   // queryRecord results
         }
         if (expect.startsWith("error(") && expect.endsWith(")")) {
-            return result.hasNonNull("code")
-                    && expect.substring(6, expect.length() - 1).equals(result.path("code").asString());
+            String expected = registryCode(expect.substring(6, expect.length() - 1));
+            return result.hasNonNull("code") && expected.equals(result.path("code").asString());
         }
         if (expect.startsWith("validation(") && expect.endsWith(")")) {
             String rule = expect.substring(11, expect.length() - 1);
@@ -242,12 +356,32 @@ public class TestRunner {
                 .body(String.class);
     }
 
-    private void remember(Map<String, Object> scope, String entity, JsonNode record) {
+    /**
+     * Remembers a record under the entity's next free index; re-observing the same id
+     * (an update, a resolved task) overwrites that entry in place — {@code ${Entity[n]}}
+     * is the record's latest state, so post-step assertions read current values, and
+     * a resolved {@code ${Task[0]}} no longer shows its pre-resolution snapshot.
+     */
+    private Map<String, Object> remember(Map<String, Object> scope, String entity,
+                                         JsonNode record) {
+        String id = record.path("id").asString(null);
+        if (id != null) {
+            for (int n = 0; scope.containsKey(entity + "[" + n + "]"); n++) {
+                if (id.equals(String.valueOf(
+                        ((Map<?, ?>) scope.get(entity + "[" + n + "]")).get("id")))) {
+                    Map<String, Object> converted = MAPPER.convertValue(record, Map.class);
+                    scope.put(entity + "[" + n + "]", converted);
+                    return converted;
+                }
+            }
+        }
         int n = 0;
         while (scope.containsKey(entity + "[" + n + "]")) {
             n++;
         }
-        scope.put(entity + "[" + n + "]", MAPPER.convertValue(record, Map.class));
+        Map<String, Object> converted = MAPPER.convertValue(record, Map.class);
+        scope.put(entity + "[" + n + "]", converted);
+        return converted;
     }
 
     /** Actor token: the named role's synthetic actor; the scratch admin by default. */
@@ -343,12 +477,27 @@ public class TestRunner {
      * a 4xx is a result, not an exception.
      */
     private JsonNode runtimeCall(HttpMethod method, String path, String token, String body) {
-        String response = runtime.method(method).uri(path)
-                .headers(headers -> headers.setBearerAuth(token))
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(body == null ? "" : body)
-                .exchange((request, clientResponse) -> clientResponse.bodyTo(String.class));
-        return MAPPER.readTree(response == null || response.isBlank() ? "{}" : response);
+        return MAPPER.readTree(call(runtime, method, path, token, body));
+    }
+
+    /**
+     * One transport for both engines: a body only when present (the JDK client
+     * rejects a GET with a body), and a 2xx with no body reads as
+     * {@code {"status":"ok"}} — a delete's 204 satisfies {@code expect: ok}.
+     */
+    private static String call(RestClient client, HttpMethod method, String uri,
+                               String token, String body) {
+        RestClient.RequestBodySpec spec = client.method(method).uri(uri)
+                .headers(headers -> headers.setBearerAuth(token));
+        if (body != null) {
+            spec = spec.contentType(MediaType.APPLICATION_JSON).body(body);
+        }
+        return spec.exchange((request, clientResponse) -> {
+            String response = clientResponse.bodyTo(String.class);
+            return response == null || response.isBlank()
+                    ? (clientResponse.getStatusCode().is2xxSuccessful() ? "{\"status\":\"ok\"}" : "{}")
+                    : response;
+        });
     }
 
     private Map<String, Object> adminCall(HttpMethod method, String path, String token,

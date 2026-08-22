@@ -1,0 +1,6 @@
+apiVersion: v2
+name: novaforge-notification-service
+description: NovaForge notification-service service chart (PHASE-4 §8)
+type: application
+version: 0.1.0
+appVersion: "0.1.0-SNAPSHOT"

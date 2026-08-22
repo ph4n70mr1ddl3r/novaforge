@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-novaforge-scheduler-service
+  labels: {{ include "novaforge-scheduler-service.labels" . | indent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels: {{ include "novaforge-scheduler-service.selectorLabels" . | indent 6 }}
+  template:
+    metadata:
+      labels: {{ include "novaforge-scheduler-service.selectorLabels" . | indent 8 }}
+    spec:
+      containers:
+        - name: novaforge-scheduler-service
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8087
+              name: http
+          env: {{ toYaml .Values.env | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+          resources: {{ toYaml .Values.resources | nindent 12 }}

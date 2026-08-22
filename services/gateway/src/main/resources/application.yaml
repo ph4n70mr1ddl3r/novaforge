@@ -65,5 +65,9 @@ logging:
     level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
 
 novaforge:
+  auth:
+    # JWT validation reads the issuer through the same bridge every service uses —
+    # without this entry NOVAFORGE_AUTH_ISSUER never reaches the gateway.
+    issuer-uri: ${NOVAFORGE_AUTH_ISSUER:http://localhost:8082/realms/novaforge}
   upstreams:
     metadata-service: http://localhost:8081

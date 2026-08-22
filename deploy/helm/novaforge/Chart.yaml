@@ -1,6 +1,6 @@
 apiVersion: v2
 name: novaforge
-description: NovaForge umbrella chart — the full stack (gateway, metadata-service, data-runtime, audit-service, script-engine) on the shared compose-infra equivalents (PHASE-1 §8, ARCHITECTURE.md §7)
+description: NovaForge umbrella chart — the full stack (gateway, metadata-service, data-runtime, audit-service, script-engine, workflow-service, scheduler-service, notification-service) on the shared compose-infra equivalents (PHASE-1 §8, PHASE-4 §2, ARCHITECTURE.md §7)
 type: application
 version: 0.1.0
 appVersion: "0.1.0-SNAPSHOT"
@@ -20,3 +20,12 @@ dependencies:
   - name: novaforge-script-engine
     version: 0.1.0
     repository: file://../novaforge-script-engine
+  - name: novaforge-workflow-service
+    version: 0.1.0
+    repository: file://../novaforge-workflow-service
+  - name: novaforge-scheduler-service
+    version: 0.1.0
+    repository: file://../novaforge-scheduler-service
+  - name: novaforge-notification-service
+    version: 0.1.0
+    repository: file://../novaforge-notification-service
