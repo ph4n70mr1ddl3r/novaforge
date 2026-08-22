@@ -2,7 +2,10 @@ package com.novaforge.common.error;
 
 /**
  * Platform error-code registry. Codes are stable numeric strings registered exactly once
- * corpus-wide (README/docs registry: 4000/4001/4003/4004 + 4010–4014 + 4090 + 5000).
+ * corpus-wide. Registered here: 4000/4001/4003/4004 + 4090 + 5000 (the PHASE-0 §5.2
+ * seed) plus each phase's additions as they land (Phase 4: 4010/4011). 4012
+ * (SIGNATURE_INVALID — PHASE-6), 4013 (RECORD_FROZEN) and 4014 (PERIOD_LOCKED)
+ * (both PHASE-7) are pinned by their specs and join when those phases land.
  *
  * <p>Seed set per PHASE-0 §5.2; later phases append their codes here as they land.
  */

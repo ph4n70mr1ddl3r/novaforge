@@ -106,6 +106,11 @@ persist → event seam → shaped projection):
   the KafkaOutboxRelay publishes committed rows at-least-once to family topics
   (`novaforge.record`), keyed `tenantId:recordId` for per-record ordering, event id +
   type + tenant in headers, then marks rows published (stop-on-failure preserves order)
+- spine contracts live in-producer (payload shapes beside each outbox; shared header
+  constants in `security-context`) — the PHASE-0 §5.4 `event-schemas` lib charter was
+  resolved in place at the Phase 3 review rather than landing a module (extraction
+  awaits a second typed cross-service consumer; PHASE-0 §5.4 / PHASE-3 §4 amended,
+  root-POM phantom entry removed at the Phase 4 review)
 - Audit Service v1 (`novaforge-audit-service`, port 8085): consumes `novaforge.record`
   into an append-only, monthly-partitioned Postgres trail (`audit_events`, PK
   `(event_id, occurred_at)` — identical redeliveries collapse); tenant-scoped reads
@@ -153,6 +158,8 @@ persist → event seam → shaped projection):
   deferred with demand), no host I/O or classes, and the ADR's caps made real —
   statement watchdog (`ResourceLimits`), CPU-time cap (ThreadMXBean-sampled force
   close), heap tripwire (process-growth attribution; per-context metering is
+  Enterprise-only; trips on two consecutive over-budget samples so same-JVM
+  allocation churn can't false-kill a light script — review fix)
   Enterprise-only), wall-clock backstop, bounded concurrency with a bounded queue —
   the watchdog stays armed through result conversion (getters/proxies run guest code)
 - the closed surface: `$record` (read-only view, `id` included), `$data.query` (the

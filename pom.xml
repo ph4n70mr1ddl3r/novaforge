@@ -62,11 +62,11 @@
         <artifactId>novaforge-security-context</artifactId>
         <version>${project.version}</version>
       </dependency>
-      <dependency>
-        <groupId>com.novaforge</groupId>
-        <artifactId>novaforge-event-schemas</artifactId>
-        <version>${project.version}</version>
-      </dependency>
+      <!-- No novaforge-event-schemas entry: the PHASE-0 §5.4 charter was resolved
+           in place at the Phase 3 review — spine contracts live in-producer, shared
+           header constants in security-context (PHASE-3 §4); extract a contracts lib
+           only when a second typed cross-service consumer appears.
+      -->
       <dependency>
         <groupId>com.novaforge</groupId>
         <artifactId>novaforge-expression-dsl</artifactId>

@@ -146,6 +146,8 @@ public class ScriptSandbox {
         AtomicReference<String> killReason = new AtomicReference<>();
         java.util.concurrent.atomic.AtomicBoolean finished =
                 new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicBoolean heapOverBudget =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
         Converter converter = new Converter();
         try (Context context = Context.newBuilder("js")
                 .allowHostAccess(HOST_ACCESS)
@@ -173,9 +175,18 @@ public class ScriptSandbox {
                         context.close(true);
                     }
                 } else if (usedHeap() - startHeap >= heapLimitBytes) {
-                    if (killReason.compareAndSet(null, "heap")) {
+                    // The heap meter is process-wide (per-context metering is
+                    // Enterprise-only), so unrelated same-JVM allocation churn can
+                    // spike past the cap for one sample. Trip only on two consecutive
+                    // over-budget readings — a real hog holds the growth; a transient
+                    // burst (GC lag, parallel test load) recovers between samples.
+                    if (heapOverBudget.get()
+                            && killReason.compareAndSet(null, "heap")) {
                         context.close(true);
                     }
+                    heapOverBudget.set(true);
+                } else {
+                    heapOverBudget.set(false);
                 }
             }, 50, 25, TimeUnit.MILLISECONDS);
             try {

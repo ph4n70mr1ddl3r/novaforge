@@ -1,8 +1,11 @@
-# ADR-004: Workflow — Flowable 7 embedded + native state machines on the write path
+# ADR-004: Workflow — Flowable 8 embedded + native state machines on the write path
+
+*(Title amended 2026-08-22 with the engine-line amendment in Decision 1 — the
+accepted decision is unchanged, only its version pin.)*
 
 - **Status:** Accepted (ahead of implementation — docs-only; confirmed at Phase 4, PHASE-4 §2)
 - **Date:** 2026-08-21
-- **Affects:** PLAN.md §3 (Workflow row), §4 (Flowable 7 row), P4; ARCHITECTURE.md §2.6, §2.8; PHASE-4 (whole spec); resolves PHASE-4 §16 Q1
+- **Affects:** PLAN.md §3 (Workflow row), §4 (Workflow row), P4; ARCHITECTURE.md §2.6, §2.8; PHASE-4 (whole spec); resolves PHASE-4 §16 Q1
 
 ## Context
 

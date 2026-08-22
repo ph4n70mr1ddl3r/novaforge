@@ -235,7 +235,7 @@ CREATE INDEX ON rec_journal_entry (tenant_id, entry_date DESC);
   - Local Kubernetes via **Kind with the Podman provider** (`KIND_EXPERIMENTAL_PROVIDER=podman`) or Minikube `--driver=podman`.
   - **Skaffold** `--platform=podman` (or `container-structure` config) for inner-loop rebuild/deploy against the local Kind cluster.
   - **Testcontainers** works with Podman: expose the podman socket and set `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` (rootless) — CI included.
-  - Single-service debugging without a cluster: `podman kube play` runs the same K8s manifests from `deploy/k8s-base/`.
+  - Single-service debugging without a cluster: render any chart with `helm template` (deploy/helm/) and run it via `podman kube play`.
   - Production nodes run containerd/CRI-O; Podman-built OCI images are drop-in compatible. CI builds with `quay.io/podman/stable` and pushes to any registry (GHCR/Quay).
 
 ## 7. Suggested Repo Layout (monorepo)
@@ -247,8 +247,7 @@ novaforge/
 │   └── libs/                     # shared libraries
 │       ├── common-core/          # result types, error codes, context
 │       ├── metadata-model/       # definition POJOs + JSON schema
-│       ├── security-context/     # tenant/actor propagation
-│       ├── event-schemas/        # Kafka event contracts
+│       ├── security-context/     # tenant/actor propagation + shared spine event headers
 │       ├── expression-dsl/       # expression DSL: JVM parser/evaluator +
 │       │                          #   conformance fixtures (TS twin in frontend/shared)
 │       └── test-support/         # Testcontainers bases
@@ -276,8 +275,7 @@ novaforge/
 │   │                             #   infra only, per the Phase 0 spec §7;
 │   │                             #   gateway + backing service run on the host)
 │   ├── kind/                     # Kind-on-Podman cluster config (full stack)
-│   ├── helm/                     # per-service charts + umbrella
-│   └── k8s-base/                 # shared manifests (also `podman kube play`-able)
+│   └── helm/                     # per-service charts + umbrella
 └── docs/{adr,specs}/              # architecture decision records, phase specs
 ```
 

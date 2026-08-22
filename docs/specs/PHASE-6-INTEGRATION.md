@@ -38,7 +38,7 @@ here.
 | `novaforge-file-service` | Port 8091; gateway route `/api/v1/files/**`; presigned upload/download. |
 | Compose | **MinIO** joins the stack (API 9000, console 9001) with a persistent volume. Both new services hold state — delivery log/DLQ and import checkpoints (integration), attachment metadata (file) — and add their own databases on the shared Postgres, the PHASE-4 §2 per-service pattern. |
 | `common-core` | `SIGNATURE_INVALID("4012", 401)` for webhook auth failures. |
-| `event-schemas` | `connector.delivered`, `webhook.dispatched`, `import.progress` contracts, partition keys pinned at landing per PHASE-3 §4 — `import.*` keyed `tenant_id:job_id` (the job is the family's record, keeping per-record ordering; the progress UI rides it, §7), `connector.*`/`webhook.*` tenant-scoped (`tenant_id`). |
+| Spine contracts (in-producer — no `event-schemas` lib; the PHASE-0 §5.4 charter resolved in place, PHASE-3 §4) | `connector.delivered`, `webhook.dispatched`, `import.progress` contracts, partition keys pinned at landing per PHASE-3 §4 — `import.*` keyed `tenant_id:job_id` (the job is the family's record, keeping per-record ordering; the progress UI rides it, §7), `connector.*`/`webhook.*` tenant-scoped (`tenant_id`). |
 | `metadata-model` | `ConnectorDefinition`, `WebhookDefinition` (one schema, both directions — §5), `CredentialDefinition` (references only — §9), `ImportDefinition` (the §7 import mapping — versioned metadata like connectors; import *runs* are tenant data). |
 
 ## 3. Connector Framework (REST first)

@@ -22,8 +22,9 @@ code — verified by a builder-authored suite* (PLAN.md §5).
 
 In scope: the flow-IR engine with the closed primitive set (ADR-008); expression
 defaults, validation rules, formula fields, and roll-up summaries evaluated on the write path;
-the Kafka event spine (record events, audit emission, `metadata.published` rebind);
-the `event-schemas` lib; **Audit Service v1** and **Script Engine v0** — the two
+the Kafka event spine (record events, audit emission, `metadata.published` rebind;
+contracts in-producer — the `event-schemas` charter resolved in place, §4);
+**Audit Service v1** and **Script Engine v0** — the two
 landings the roadmap left implicit, pinned in §5/§6; the builder test harness v1
 (ADR-010) with its scratch-tenant runner; declarative authoring editors in the
 builder UI; and the tracing/log backend expansion of PHASE-0 §8.
@@ -138,8 +139,12 @@ persist with optimistic locking → events (§4) → shaped projection.
   PHASE-2 §10; definition-publish permission changes already surface via
   `metadata.published`), both tenant-scoped (`tenant_id`) under the same
   consumer-group/tenant-filter rules.
-- **`event-schemas` lib lands** (the PHASE-0 §5.4 charter): contracts for all of the
-  above, with round-trip tests.
+- **Spine contracts land in-producer** (the PHASE-0 §5.4 `event-schemas` charter,
+  resolved 2026-08-22 at review): payload shapes live beside each producer's
+  outbox, the shared header constants ride `security-context`, and round-trip
+  coverage sits in the producer suites; a shared contracts lib is extracted only
+  when a second consumer needs typed cross-service shapes (PHASE-0 §5.4 records
+  the resolution).
 - Trace context propagates in Kafka headers (ARCHITECTURE.md §6) via the
   `security-context` constants staged in Phase 1.
 
@@ -290,7 +295,7 @@ spine consumer lag under the load-test write rate.
 
 | # | Task | Content | Acceptance criteria |
 |---|---|---|---|
-| T1 | Spine bootstrap + event-schemas | Outbox + relay + Kafka producer, `metadata.published` rebind, header propagation, contracts lib (§4) | Redis channel retired; relay-restart test loses nothing |
+| T1 | Spine bootstrap + contracts | Outbox + relay + Kafka producer, `metadata.published` rebind, header propagation, contracts in-producer (§4's resolution of the charter) | Redis channel retired; relay-restart test loses nothing |
 | T2 | Write-path expressions | Expression defaults, validation rules + formula fields via the JVM engine (§3) | Formula stored at write; defaults evaluated before validations; rule failure renders problem+json and `validation(rule)` |
 | T3 | Roll-up summaries | Child-write recompute, synchronous in-transaction (§3) | Exit-scenario totals correct in-transaction |
 | T4 | Flow engine + compiler | IR schema, publish-time compiler, executable primitives, triggers, failure policy (§2) | Compiled-graph execution; rejection matrix green |

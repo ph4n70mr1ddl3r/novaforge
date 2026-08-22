@@ -35,7 +35,8 @@ bootstrap problem) vs a monorepo (atomic cross-cutting changes, one CI). The tea
 
 - One `mvn verify` builds the world; CI stays simple (PHASE-0 §9); Testcontainers
   jobs share the Podman-socket runner label from Phase 1.
-- Cross-service contract changes (e.g. `event-schemas`) are single PRs — the
+- Cross-service contract changes (e.g. `metadata-model` schemas, the spine's
+  shared header constants in `security-context`) are single PRs — the
   at-least-once spine contracts (PLAN.md §6) stay coherent.
 - Repo-level operations (mass refactors, version bumps) are cheap; the cost is CI
   time, mitigated by incremental builds and per-module test selection.

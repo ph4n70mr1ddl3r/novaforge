@@ -28,7 +28,7 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
  * executions run under the calling tenant, and a capped script — the T6 acceptance —
  * dies at its budget while the service stays on its feet.
  */
-@SpringBootTest
+@SpringBootTest(properties = "novaforge.script.heap-limit-mb=512")
 @AutoConfigureMockMvc
 class ScriptApiTests {
 

@@ -65,8 +65,9 @@ novaforge/
 
 `platform/libs/metadata-model`, `security-context`, `test-support` (Phase 1),
 `expression-dsl` (Phase 2), and `event-schemas` (Phase 3) — all chartered in
-ARCHITECTURE.md §7 — are intentionally **not created** in Phase 0; empty modules rot.
-Charters are recorded in §5.4 so intent is not lost.
+§5.4 below — are intentionally **not created** in Phase 0; empty modules rot.
+Charters are recorded in §5.4 so intent is not lost (§5.4 also records each
+charter's eventual resolution — see the `event-schemas` note).
 
 ## 4. Build Specification
 
@@ -140,6 +141,12 @@ ErrorCode uniqueness of `code`. AC: `mvn -pl platform/libs/common-core verify` g
 - `security-context` (Phase 1): tenant/actor propagation helpers on top of TenantContext
   (async-executor propagation, Kafka headers, mock-test fixtures).
 - `event-schemas` (Phase 3): Kafka domain-event contracts.
+  *(Resolved 2026-08-22 at the Phase 3 review: **not extracted as a lib** — the
+  spine landed with contracts in-producer (payload shapes beside each service's
+  outbox) and shared header constants in `security-context`; round-trip coverage
+  rides the producer suites. A shared contracts module is extracted only when a
+  second consumer needs typed cross-service shapes. PHASE-3 §4 records the same
+  resolution; the root POM carries no phantom management entry.)*
 - `expression-dsl` (Phase 2): JVM parser/evaluator for the shared expression language
   (ADR-008 #3); conformance fixtures shared with `frontend/shared` (PHASE-2 spec §7).
 - `test-support` (Phase 1): Testcontainers bases (Postgres + RLS fixtures).

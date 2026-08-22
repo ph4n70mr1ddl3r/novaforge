@@ -73,7 +73,7 @@ Tenant
 | **Scheduler Service** | Cron registry & orchestration of scheduled jobs (job definitions are versioned app metadata activated on publish — ARCHITECTURE.md §2.8), distributed locks |
 | **Audit Service** | Append-only event log (Kafka → store), who/what/when, field diffs |
 
-Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, `metadata-model`, `security-context`, `event-schemas`, `test-support`, `expression-dsl` (JVM parser/evaluator for the shared expression language — PHASE-2 spec §7).
+Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, `metadata-model`, `security-context`, `test-support`, `expression-dsl` (JVM parser/evaluator for the shared expression language — PHASE-2 spec §7). (`event-schemas`, chartered for the Phase 3 spine, was resolved in place at review: contracts live in-producer with shared header constants in `security-context`; a contracts lib is extracted only when a second typed cross-service consumer appears — PHASE-0 §5.4, PHASE-3 §4.)
 
 ---
 
