@@ -32,14 +32,17 @@ public class TaskService {
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final RoleLookup roles;
     private final org.springframework.beans.factory.ObjectProvider<SuspensionService> suspensions;
+    private final org.springframework.beans.factory.ObjectProvider<com.novaforge.workflow.process.ProcessTaskBridge> processTasks;
 
     public TaskService(TaskStore tasks, org.springframework.jdbc.core.JdbcTemplate jdbc,
                        RoleLookup roles,
-                       org.springframework.beans.factory.ObjectProvider<SuspensionService> suspensions) {
+                       org.springframework.beans.factory.ObjectProvider<SuspensionService> suspensions,
+                       org.springframework.beans.factory.ObjectProvider<com.novaforge.workflow.process.ProcessTaskBridge> processTasks) {
         this.tasks = tasks;
         this.jdbc = jdbc;
         this.roles = roles;
         this.suspensions = suspensions;
+        this.processTasks = processTasks;
     }
 
     /** Creates a task (OPEN) with its lifecycle events on the outbox. */
@@ -117,6 +120,10 @@ public class TaskService {
         if (task.instance() != null) {
             suspensions.getObject().resolved(tenantId, task.instance(), actor, approved);
         }
+        // Process-managed tasks (PHASE-4 §9): the engine task completes with the
+        // outcome variable — the row is resolved first, so the engine's deletion
+        // event finds it terminal and does not double-cancel.
+        processTasks.ifAvailable(bridge -> bridge.resolved(tenantId, id, approved, comment));
         return task.withStatus(status);
     }
 
@@ -130,6 +137,7 @@ public class TaskService {
         }
         TaskStore.Task claimed = require(tenantId, id);
         emit(claimed, "task.assigned", actor, "claimed");
+        processTasks.ifAvailable(bridge -> bridge.assigned(tenantId, id, actor));
         return claimed;
     }
 
@@ -141,6 +149,7 @@ public class TaskService {
     @Transactional
     public TaskStore.Task delegate(UUID tenantId, UUID actor, UUID id, UUID toUser) {
         TaskStore.Task task = requireAccess(tenantId, actor, id);
+        processTasks.ifAvailable(bridge -> bridge.assertDelegatable(id));
         if (toUser.equals(task.createdBy())) {
             throw new PlatformException(PlatformErrorCode.SOD_VIOLATION,
                     "the initiating actor cannot receive the approval back (§4)");
@@ -180,6 +189,7 @@ public class TaskService {
         TaskStore.Task reassigned = require(tenantId, id);
         emit(reassigned, "task.assigned", actor,
                 "reassigned to " + (toRole == null ? String.valueOf(toUser) : toRole));
+        processTasks.ifAvailable(bridge -> bridge.assigned(tenantId, id, toUser));
         return reassigned;
     }
 
@@ -189,7 +199,27 @@ public class TaskService {
         for (TaskStore.Task task : tasks.cancelForRecord(tenantId, recordId)) {
             emit(task.withStatus("CANCELLED"), "task.cancelled", task.createdBy(),
                     "record deleted");
+            // the engine task completes with CANCELLED so its process does not hang
+            processTasks.ifAvailable(bridge -> bridge.recordCancelled(tenantId, task.id()));
         }
+    }
+
+    /**
+     * The bridge's cancellation (PHASE-4 §9): an open inbox row whose engine side
+     * ended — process termination, boundary terminate, workflow removal. No-op when
+     * the row is already terminal (an inbox resolution completing the engine task
+     * fires the same engine event).
+     */
+    @Transactional
+    public void cancelProcessTask(UUID tenantId, UUID taskId, String reason) {
+        TaskStore.Task task = require(tenantId, taskId);
+        if (!"OPEN".equals(task.status())) {
+            return;
+        }
+        if (tasks.resolve(tenantId, taskId, "CANCELLED", reason) == 0) {
+            return;
+        }
+        emit(task.withStatus("CANCELLED"), "task.cancelled", task.createdBy(), reason);
     }
 
     // --- access (§13): assignee, the task's role holders, or platform admin ---
@@ -216,7 +246,7 @@ public class TaskService {
         payload.put("taskId", task.id().toString());
         payload.put("tenantId", task.tenantId().toString());
         payload.put("entityId", task.entityId());
-        payload.put("recordId", task.recordId().toString());
+        payload.put("recordId", task.recordId() == null ? "" : task.recordId().toString());
         payload.put("actorId", actor.toString());
         payload.put("assignee", task.assignee() == null ? "" : task.assignee().toString());
         payload.put("role", task.role() == null ? "" : task.role());

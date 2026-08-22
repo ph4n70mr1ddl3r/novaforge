@@ -288,4 +288,112 @@ class DefinitionValidatorTest {
                 """);
         assertThat(mentions(validate(broken), "value of the enum field")).isTrue();
     }
+
+    // --- BPMN workflows (PHASE-4 §9) ---
+
+    private static AppDefinition withWorkflow(AppDefinition app, WorkflowDefinition workflow) {
+        return new AppDefinition(app.id(), app.apiName(), app.label(), app.labelI18n(),
+                app.description(), app.entities(), app.pages(), app.settings(),
+                app.permissionSet(), app.testSuites(), java.util.List.of(), java.util.List.of(),
+                java.util.List.of(), java.util.List.of(workflow));
+    }
+
+    private static final String VALID_BPMN = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                         xmlns:flowable="http://flowable.org/bpmn"
+                         targetNamespace="novaforge">
+              <process id="journal_review" isExecutable="true">
+                <startEvent id="start"/>
+                <sequenceFlow id="f1" sourceRef="start" targetRef="review"/>
+                <userTask id="review" name="Review" flowable:candidateGroups="accountant"/>
+                <sequenceFlow id="f2" sourceRef="review" targetRef="end"/>
+                <endEvent id="end"/>
+              </process>
+            </definitions>
+            """;
+
+    private static WorkflowDefinition workflow(String id, String bpmn,
+                                               WorkflowDefinition.EventStart... starts) {
+        return new WorkflowDefinition(id, bpmn, java.util.List.of(starts));
+    }
+
+    @Test
+    @DisplayName("rule: a well-formed BPMN workflow with an event-start validates")
+    void workflowValid() {
+        WorkflowDefinition valid = workflow("journal_review", VALID_BPMN,
+                new WorkflowDefinition.EventStart("record.updated", "JournalEntry",
+                        "status = 'DRAFT'"));
+        assertThat(validate(withWorkflow(baseApp(), valid)).isEmpty()).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: the BPMN <process id> must equal the workflow id")
+    void workflowProcessIdMatches() {
+        WorkflowDefinition mismatch = workflow("other_key", VALID_BPMN);
+        assertThat(mentions(validate(withWorkflow(baseApp(), mismatch)),
+                "must equal the workflow id")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: malformed BPMN XML rejects")
+    void workflowMalformedXml() {
+        WorkflowDefinition broken = workflow("journal_review",
+                "<definitions><process id=\"journal_review\">");
+        assertThat(mentions(validate(withWorkflow(baseApp(), broken)), "well-formed XML")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: DOCTYPE in BPMN rejects — XXE-hardened parse (authored input)")
+    void workflowDoctypeRejected() {
+        WorkflowDefinition doctype = workflow("journal_review", VALID_BPMN.replace(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+                "<!DOCTYPE definitions [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>"));
+        assertThat(mentions(validate(withWorkflow(baseApp(), doctype)), "well-formed XML")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: blank BPMN source rejects")
+    void workflowBlankBpmn() {
+        WorkflowDefinition blank = workflow("journal_review", "   ");
+        assertThat(mentions(validate(withWorkflow(baseApp(), blank)), "requires BPMN XML")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: exactly one <process> per document")
+    void workflowSingleProcess() {
+        WorkflowDefinition two = workflow("journal_review",
+                VALID_BPMN.replace("</process>", "</process>\n<process id=\"spare\"/>"));
+        assertThat(mentions(validate(withWorkflow(baseApp(), two)),
+                "exactly one <process>")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: workflow ids unique per app and shaped as process keys")
+    void workflowIdRules() {
+        WorkflowDefinition valid = workflow("journal_review", VALID_BPMN);
+        AppDefinition app = withWorkflow(baseApp(), valid);
+        AppDefinition duplicate = new AppDefinition(app.id(), app.apiName(), app.label(),
+                app.labelI18n(), app.description(), app.entities(), app.pages(), app.settings(),
+                app.permissionSet(), app.testSuites(), java.util.List.of(), java.util.List.of(),
+                java.util.List.of(), java.util.List.of(valid, valid));
+        assertThat(mentions(validate(duplicate), "unique per app")).isTrue();
+
+        assertThat(mentions(validate(withWorkflow(baseApp(), workflow("9bad key!", "<x/>"))),
+                "process key")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: event-start events come from the closed set and bind app entities")
+    void workflowEventStartRules() {
+        WorkflowDefinition unknownEvent = workflow("journal_review", VALID_BPMN,
+                new WorkflowDefinition.EventStart("record.archived", "JournalEntry", null));
+        assertThat(mentions(validate(withWorkflow(baseApp(), unknownEvent)),
+                "event-start event must be one of")).isTrue();
+
+        WorkflowDefinition unknownEntity = workflow("journal_review", VALID_BPMN,
+                new WorkflowDefinition.EventStart("record.updated", "Ghost", null));
+        assertThat(mentions(validate(withWorkflow(baseApp(), unknownEntity)),
+                "event-start must bind to an entity of the app")).isTrue();
+    }
 }

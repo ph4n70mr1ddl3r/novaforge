@@ -29,7 +29,8 @@ public record AppDefinition(
         List<TestSuiteDefinition> testSuites,
         List<StateMachineDefinition> stateMachines,
         List<SlaDefinition> slas,
-        List<ScheduledJobDefinition> jobs) {
+        List<ScheduledJobDefinition> jobs,
+        List<WorkflowDefinition> workflows) {
 
     public AppDefinition {
         entities = entities == null ? List.of() : List.copyOf(entities);
@@ -41,6 +42,7 @@ public record AppDefinition(
         stateMachines = stateMachines == null ? List.of() : List.copyOf(stateMachines);
         slas = slas == null ? List.of() : List.copyOf(slas);
         jobs = jobs == null ? List.of() : List.copyOf(jobs);
+        workflows = workflows == null ? List.of() : List.copyOf(workflows);
     }
 
     public java.util.Optional<TestSuiteDefinition> testSuite(String apiName) {
@@ -61,6 +63,11 @@ public record AppDefinition(
         return stateMachines.stream()
                 .filter(m -> m.entity().equals(entityApiName))
                 .findFirst();
+    }
+
+    /** A workflow by process key, if one exists (PHASE-4 §9). */
+    public java.util.Optional<WorkflowDefinition> workflow(String id) {
+        return workflows.stream().filter(w -> w.id().equals(id)).findFirst();
     }
 
     /** Constructor without the Permissions branch (pre-PermissionSet drafts). */
@@ -107,7 +114,18 @@ public record AppDefinition(
                          List<StateMachineDefinition> stateMachines,
                          List<SlaDefinition> slas) {
         this(id, apiName, label, labelI18n, description, entities, pages, settings,
-                permissionSet, testSuites, stateMachines, slas, List.of());
+                permissionSet, testSuites, stateMachines, slas, List.of(), List.of());
+    }
+
+    /** Constructor without the workflows branch (pre-§9 drafts). */
+    public AppDefinition(String id, String apiName, String label, Map<String, String> labelI18n,
+                         String description, List<EntityDefinition> entities,
+                         List<PageDefinition> pages, SettingsDefinition settings,
+                         PermissionSet permissionSet, List<TestSuiteDefinition> testSuites,
+                         List<StateMachineDefinition> stateMachines,
+                         List<SlaDefinition> slas, List<ScheduledJobDefinition> jobs) {
+        this(id, apiName, label, labelI18n, description, entities, pages, settings,
+                permissionSet, testSuites, stateMachines, slas, jobs, List.of());
     }
 
     /** Page definition (reserved slot; authored from Phase 2 per PHASE-2 §3). */

@@ -27,6 +27,13 @@ spring:
 server:
   port: 8086
 
+flowable:
+  # ADR-004: the engine's schema lives in this service's own database — the shared
+  # DataSource above — and manages its own ACT_* DDL (Flyway owns only wf_* tables).
+  database-schema-update: true
+  # In-process BPMN timers (PHASE-4 §9, ARCHITECTURE §2.8) — never the Scheduler.
+  async-executor-activate: true
+
 management:
   endpoints:
     web:
@@ -70,3 +77,6 @@ novaforge:
     scan-interval-ms: ${NOVAFORGE_SLA_SCAN_MS:5000}
   metadata:
     url: ${NOVAFORGE_METADATA_URL:http://localhost:8081}
+  process:
+    # §9 deploy sync — publish-driven like every registry (§7's split).
+    sync-interval-ms: ${NOVAFORGE_PROCESS_SYNC_MS:30000}

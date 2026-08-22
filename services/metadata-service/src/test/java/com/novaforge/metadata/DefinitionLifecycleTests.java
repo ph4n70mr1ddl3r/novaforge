@@ -351,6 +351,113 @@ class DefinitionLifecycleTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("BPMN workflows (§9): valid definitions save and publish; broken ones reject at save, bad filters at publish")
+    void workflowDefinitions() throws Exception {
+        // a clean workflow rides the app definition and publishes
+        String bpmn = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                             xmlns:flowable="http://flowable.org/bpmn"
+                             targetNamespace="novaforge">
+                  <process id="po_review" isExecutable="true">
+                    <startEvent id="start"/>
+                    <sequenceFlow id="f1" sourceRef="start" targetRef="review"/>
+                    <userTask id="review" name="Review" flowable:candidateGroups="manager"/>
+                    <sequenceFlow id="f2" sourceRef="review" targetRef="end"/>
+                    <endEvent id="end"/>
+                  </process>
+                </definitions>
+                """.lines().map(line -> line.replace("\\", "\\\\").replace("\"", "\\\""))
+                .reduce((a, b) -> a + "\\n" + b).orElseThrow();
+        String app = """
+                { "apiName": "FlowApp", "entities": [ { "apiName": "PurchaseOrder",
+                  "fields": [ { "apiName": "total", "type": "money" },
+                              { "apiName": "status", "type": "enum",
+                                "values": [ "DRAFT", "SUBMITTED", "APPROVED" ] } ] } ],
+                  "workflows": [ { "id": "po_review", "bpmn": "%s",
+                    "eventStarts": [ { "event": "record.updated",
+                                       "entity": "PurchaseOrder",
+                                       "filter": "status == 'SUBMITTED'" } ] } ] }
+                """.formatted(bpmn);
+        MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps")
+                        .with(builderJwt()).contentType("application/json").content(app))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.workflows[0].id").value("po_review"))
+                .andReturn();
+        String appId = MAPPER.readTree(created.getResponse().getContentAsString())
+                .get("id").asString();
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/publish")
+                        .with(builderJwt()))
+                .andExpect(status().isOk());
+
+        // regression (the branch-persistence fix): drafts AND published bundles
+        // round-trip every Phase-4 branch — state machines, SLAs, scheduled jobs,
+        // workflows — so downstream consumers read what authors authored
+        MvcResult published = mockMvc.perform(get("/api/v1/metadata/apps/" + appId + "/published")
+                        .with(userJwt())).andExpect(status().isOk()).andReturn();
+        var tree = MAPPER.readTree(published.getResponse().getContentAsString());
+        org.assertj.core.api.Assertions.assertThat(
+                tree.at("/app/workflows").toString()).contains("po_review");
+        // the full-branch app carries the other kinds too when authored — verified
+        // through the draft read (the same assembly path)
+        MvcResult draft = mockMvc.perform(get("/api/v1/metadata/apps/" + appId)
+                        .with(builderJwt())).andExpect(status().isOk()).andReturn();
+        org.assertj.core.api.Assertions.assertThat(
+                MAPPER.readTree(draft.getResponse().getContentAsString())
+                        .at("/workflows").toString()).contains("po_review");
+
+        // a branch-bearing app: state machine + SLA + job ride the same round trip
+        String machineApp = """
+                { "apiName": "BranchApp", "entities": [ { "apiName": "Order",
+                  "fields": [ { "apiName": "status", "type": "enum",
+                                "values": [ "DRAFT", "POSTED" ] } ] } ],
+                  "stateMachines": [ { "id": "sm_order", "entity": "Order",
+                    "stateField": "status", "initial": "DRAFT",
+                    "states": [ { "name": "DRAFT" }, { "name": "POSTED", "terminal": true } ],
+                    "transitions": [ { "from": "DRAFT", "to": "POSTED" } ] } ],
+                  "slas": [ { "id": "sla_x", "scope": { "taskType": "approval" },
+                    "target": "PT2H" } ],
+                  "jobs": [ { "name": "sweep", "cron": "0 0 3 * * *", "target": "flow",
+                    "params": { "entity": "Order", "hook": "sweep" } } ] }
+                """;
+        MvcResult branchApp = mockMvc.perform(post("/api/v1/metadata/apps")
+                        .with(builderJwt()).contentType("application/json").content(machineApp))
+                .andExpect(status().isOk()).andReturn();
+        String branchId = MAPPER.readTree(branchApp.getResponse().getContentAsString())
+                .get("id").asString();
+        mockMvc.perform(post("/api/v1/metadata/apps/" + branchId + "/publish")
+                        .with(builderJwt())).andExpect(status().isOk());
+        MvcResult branchPublished = mockMvc.perform(
+                        get("/api/v1/metadata/apps/" + branchId + "/published").with(userJwt()))
+                .andExpect(status().isOk()).andReturn();
+        String publishedJson = MAPPER.readTree(
+                branchPublished.getResponse().getContentAsString()).at("/app").toString();
+        org.assertj.core.api.Assertions.assertThat(publishedJson)
+                .contains("sm_order").contains("sla_x").contains("sweep");
+
+        // a non-compiling event-start filter rejects — the compile rides save and
+        // publish like every expression slot (§9)
+        String brokenFilter = app.replace("status == 'SUBMITTED'", "bogusField == 'x'");
+        MvcResult broken = mockMvc.perform(post("/api/v1/metadata/apps")
+                        .with(builderJwt()).contentType("application/json")
+                        .content(brokenFilter.replace("FlowApp", "FlowApp2")))
+                .andExpect(status().isBadRequest())
+                .andReturn();
+        // the unknown binding reports through the workflow scope
+        org.assertj.core.api.Assertions.assertThat(
+                        MAPPER.readTree(broken.getResponse().getContentAsString()).toString())
+                .contains("eventStarts");
+
+        // process id mismatch rejects at save: the workflow id no longer equals the
+        // BPMN <process id> (po_review stays inside the XML)
+        String mismatch = app.replace("FlowApp", "FlowApp3")
+                .replace("\"id\": \"po_review\", \"bpmn\"", "\"id\": \"other_key\", \"bpmn\"");
+        mockMvc.perform(post("/api/v1/metadata/apps")
+                        .with(builderJwt()).contentType("application/json").content(mismatch))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     @DisplayName("flow compiler (§2): cycles, unknown ops, bad fields, dangling chains reject")
     void flowCompilerRejections() throws Exception {
         // cycle: s1 → s2 → s1

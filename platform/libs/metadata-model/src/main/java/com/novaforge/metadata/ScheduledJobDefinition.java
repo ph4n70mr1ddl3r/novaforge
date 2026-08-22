@@ -10,7 +10,8 @@ import java.util.Map;
  * set: {@code flow} (the compiled-graph engine, system principal, synthetic
  * {@code scheduled} trigger context — {@code $record} absent), {@code script}
  * (dormant until the Script Engine carries a service execution context),
- * {@code processStart} (dormant until Flowable lands), {@code report} (dormant until
+ * {@code processStart} (the Workflow Service's BPMN engine, PHASE-4 §9 — params
+ * {@code {process, recordId?, variables?}}), {@code report} (dormant until
  * Phase 5). Misfire policy: fire once, skip missed.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)

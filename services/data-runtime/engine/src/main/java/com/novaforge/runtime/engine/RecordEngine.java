@@ -398,6 +398,21 @@ public class RecordEngine {
     }
 
     /**
+     * The Workflow Service's event-start read (PHASE-4 §9): the record's raw stored
+     * fields for subscription-filter evaluation — system context (the resume
+     * surface's read pattern), never shaped or user-stripped, never a mutation
+     * (ADR-004 #2).
+     */
+    public Map<String, Object> recordForSubscription(UUID tenantId, String entityApiName,
+                                                     UUID recordId) {
+        EntityHandle handle = resolver.resolve(tenantId, entityApiName);
+        return records.find(tenantId, handle.entityKey(), recordId, false)
+                .map(RecordStore.StoredRecord::data)
+                .orElseThrow(() -> new PlatformException(PlatformErrorCode.NOT_FOUND,
+                        entityApiName + "/" + recordId + " not found"));
+    }
+
+    /**
      * The Scheduler's flow target (PHASE-4 §7): runs one named hook in the synthetic
      * {@code scheduled} trigger context — no record, empty bindings, the per-app
      * system principal. Flows here create records, publish events, or drive other

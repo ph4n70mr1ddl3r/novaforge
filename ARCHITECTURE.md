@@ -97,8 +97,8 @@ Companion to [PLAN.md](./PLAN.md). Covers service architecture, data strategy, s
 - Hook failure policy (flow-IR graphs and escape-hatch scripts alike): `beforeSave`/`beforeDelete` failure = abort transaction; `afterSave`/`afterDelete` failure = retry via Kafka (idempotency required).
 
 ### 2.6 Workflow Service
-- Flowable 7 embedded; process definitions authored as BPMN XML (v1 is editor-agnostic XML metadata — the visual designer defers with demand, PHASE-4 spec §9/§16).
-- Subscriptions to domain events can start processes (`on record.updated where status='SUBMITTED'`).
+- Flowable embedded — the **Flowable 8 line** (8.0.0; "Flowable 7" was pinned against the Boot 3 assumption and does not run on Boot 4 — ADR-004 amended in place); process definitions authored as BPMN XML (v1 is editor-agnostic XML metadata — the visual designer defers with demand, PHASE-4 spec §9/§16).
+- Subscriptions to domain events can start processes (`on record.updated where status='SUBMITTED'`) — spine events carry the envelope only, so matching evaluates against the record's current state through an internal system-principal read on the Data Runtime (a read, never a mutation); starts dedupe on the spine event id.
 - **State machines** as first-class metadata (states, allowed transitions, guards in the platform expression DSL per [ADR-008](./docs/adr/ADR-008-declarative-first-logic.md)) — most ERP flows are state machines, not full BPMN. Enforcement sits on the Data Runtime write path, not here (PHASE-4 spec §3): this service consumes state-change events and never mutates records.
 - Human tasks exposed via task inbox API; approvals support parallel modes (`any`, unanimous `all`) — sequential chains arrive as a versioned mode on demand (PHASE-4 spec §1) — plus delegation, reassignment, escalation timers.
 

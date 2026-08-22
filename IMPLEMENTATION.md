@@ -274,10 +274,11 @@ validated; carried from Phase 1).
   record's open tasks — verified through the real Kafka path
 - suites: `TaskApiTests` — inbox resolution, resolution + events, claim, delegation
   chains + SoD, reassign gate, access checks, deletion-cancel
-- Flowable itself is not yet a dependency: T5's suspension is a durable instance table
-  and T6's timers a scanner, so ADR-004's embedded engine now enters with §9 (BPMN
-  execution + event-starts — Phase 4 remainder); the Boot 4 compatibility of the
-  Flowable starter gets assessed at that boundary (deviation from T1's letter, noted)
+- Flowable entered with §9 (below) — as the **Flowable 8 line** (8.0.0): ADR-004's
+  "Flowable 7" was written against the Boot 3 assumption, and Flowable 7.2 does not
+  run on Boot 4; 8.0.0 is the same engine on the Spring Framework 7/Boot 4 line this
+  stack pins (the ledger's open compatibility assessment, resolved; ADR-004 and
+  PHASE-4 §2 amended in place)
 
 **Implemented — T5 `requestApproval` + durable suspension + SoD (§4):**
 - the primitive activates: a flow reaching `requestApproval` hands the approval to
@@ -442,16 +443,95 @@ validated; carried from Phase 1).
   conflict); until it exists, SLA behavior is covered by the workflow-side
   scanner suites
 
-**Phase 4 remainder:** §9 BPMN execution (Flowable embedded, `WorkflowDefinition`
-metadata, event-start subscriptions, a live `processStart` target — §1 pins
-"execution and event-starts ship"; the scheduler's `processStart` registers but
-fires `skipped`), the builder/runtime UI (T10 — rides the unstarted Phase 2 React
-surface), and the §1 exit-journey demo (T12 — needs the full stack live; T11's
-acceptance form, the §14 item 1 journey suite green through the runner, and §14
-item 5's queryRecord-form visibility suites ride it too). All other backend
-machinery for the journey — state machines, approvals with suspension and SoD,
-SLA escalation, notifications, the scheduler — is implemented and covered by the
-service-level suites above.
+**Implemented — §9 BPMN v1 (Flowable 8 embedded, event-starts, processStart):**
+- `WorkflowDefinition` rides the app definition (`{id, bpmn, eventStarts[]}` — the
+  `<process id>` must equal `id`, the process key): save validation is XXE-hardened
+  (DOCTYPE/external entities rejected — authored input), single-`<process>`,
+  size-capped; event-start subscriptions use the closed
+  `record.created|record.updated` set and bind app entities; filters compile at
+  publish through the same JVM engine (record context)
+- the embedded engine (Flowable 8.0.0, `flowable-spring-boot-starter-process`)
+  lives in the Workflow Service against its own `novaforge_workflow` database
+  (ACT_* under `database-schema-update`, Flyway owning only `wf_*`), UUID engine
+  ids, async executor on for in-process timers (ARCHITECTURE §2.8 — the Scheduler
+  never fires them)
+- deploy activation is publish-driven (§7's split): a sync pass deploys by content
+  hash (unchanged re-publishes redeploy nothing; changed BPMN deploys a new engine
+  version — running instances finish on their own), records failures audibly
+  (status + error, retried next pass — the last-known-good deployment keeps
+  serving), and removes deployments whose definitions left the published app
+  (cascading instances, cancelling the tasks those instances own)
+- **the v1 user-task gate** at deploy: every `userTask` carries a literal
+  `flowable:assignee` (user UUID) or literal `flowable:candidateGroups` (role
+  names — qualified with the owning app, the platform's app-scoped role identity);
+  expressions are not evaluated in v1 and fail the gate loudly at deploy, never
+  silently at runtime
+- **event-starts over the real spine**: `record.created/updated` events evaluate
+  subscriptions (entity match against the app-qualified spine key); spine events
+  carry the envelope only, so filters evaluate against the record's current state
+  fetched through a new internal system-principal read on the runtime
+  (`GET /api/v1/hooks/records/{id}`, service-client gated — a read, never a
+  mutation, ADR-004 #2; gone records skip); starts dedupe on the spine event id
+  with the claim riding the same transaction as the engine start (at-least-once
+  redelivery collapses; distinct events each start)
+- **user tasks join the §5 inbox**: TASK_CREATED of a deployed workflow bridges
+  into `wf_tasks` (type `todo`) through the same task service — SLA resolution and
+  `task.*` events ride the existing path — linked by `wf_process_tasks`; inbox
+  approve/reject completes the engine task (a `resolution` variable routes the
+  process's own gateways), claim/reassign mirror the assignee into the engine,
+  record-deletion completes the engine task with `CANCELLED` so the process never
+  hangs, engine-side termination cancels still-open rows; delegation of
+  process-managed tasks rejects explicitly in v1 (Flowable's single-task model
+  does not map to §5's replacement-task chains — reassign instead)
+- **the Scheduler's `processStart` target activates**: params
+  `{process, recordId?, variables?}` fire through the Workflow Service's
+  service-client-gated internal start surface
+  (`POST /api/v1/workflow/internal/processes/start`); undeployed processes reject
+  audibly and land as failed runs
+- suites: `BpmnProcessTests` (12 cases, real engine + Kafka) — deploy idempotency
+  and versioning, the user-task gate, event-start matching/filter-skip/redelivery
+  collapse, the inbox bridge (approve ends the process through history, claim
+  mirrors, delegation rejects), record-deletion cancellation, in-engine timers on
+  the async executor, removal cascading, the internal-start gate, and
+  deploy-failure recovery; `DefinitionValidatorTest` grew the §9 rule matrix
+  (process-key id, XML well-formedness, DOCTYPE rejection, single-`<process>`,
+  closed event set, entity binding); `DefinitionLifecycleTests` covers the API
+  save/publish path; `ApprovalFlowTests` covers the internal record read
+  (service-client gate, raw fields, gone-record 404); `SchedulerTests` covers the
+  processStart target firing (ok + failed runs)
+
+**Fixed with §9 — the Phase-4 branch persistence gap:** state machines, SLAs,
+scheduled jobs (and now workflows) had no persistence path in the Metadata
+Service — `assembleApp`/`mergeApp`/`withIds` dropped every branch, so drafts and
+published bundles never carried them downstream (the runtime's state-machine
+enforcement, the SLA/workflow sources, and the Scheduler's jobs all read empty
+lists outside stub-fed tests). The fix: `md_definitions` (kind-discriminated
+documents, the md_pages pattern) with insert/replace on app create/update, full
+branch assembly on every read, and merge semantics that never wipe branches on a
+scalar PATCH; `DefinitionLifecycleTests` pins the round-trip of all four branches
+through create → publish → published read (the regression).
+
+**Fixed with §9 — the review pass:** three defects found reviewing the landing.
+(1) The deploy sync's skip condition now also requires a non-null engine
+`deployment_id`: the scheduled path reaches `syncOnce()` unproxied, so the
+registry row and the engine deploy are not one transaction, and a crash between
+them used to leave a DEPLOYED row that every later sync skipped forever (the row
+now redeploys). (2) A literal non-duration `flowable:dueDate` (an ISO datetime)
+no longer throws out of the bridge's task-created listener and rolls back the
+process transaction — it parses as a step timer when it is an ISO duration and
+carries no timer otherwise. (3) The record-event consumer distinguishes envelope
+shape from processing: malformed envelopes are ignored terminally, but a
+processing failure (runtime down, lock timeout) propagates so Kafka redelivers —
+the §9 dedupe claim collapses any double-start, so at-least-once redelivery is
+safe where the old blanket catch silently lost event-starts. ARCHITECTURE.md
+§2.6's "Flowable 7" pin amended to the 8 line with the same note as ADR-004.
+
+**Phase 4 remainder:** the builder/runtime UI (T10 — rides the unstarted Phase 2
+React surface) and the §1 exit-journey demo (T12 — needs the full stack live; the
+§14 item 1 journey suite through the runner rides it too). All backend machinery
+for the journey — state machines, approvals with suspension and SoD, SLA
+escalation, notifications, the scheduler, BPMN execution with event-starts — is
+implemented and covered by the service-level suites above.
 
 ## Phases 5–8 ⬜
 

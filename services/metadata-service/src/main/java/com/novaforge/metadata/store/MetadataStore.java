@@ -30,6 +30,12 @@ public class MetadataStore {
 
     public static final String KIND_SEQUENCE = "sequence";
 
+    /** The app-definition branches persisting as kind-discriminated documents (PHASE-4). */
+    public static final String KIND_STATE_MACHINE = "state_machine";
+    public static final String KIND_SLA = "sla";
+    public static final String KIND_SCHEDULED_JOB = "scheduled_job";
+    public static final String KIND_WORKFLOW = "workflow";
+
     private final JdbcTemplate jdbc;
 
     public MetadataStore(JdbcTemplate jdbc) {
@@ -272,6 +278,7 @@ public class MetadataStore {
                     UUID.randomUUID(), tenantId, appId, KIND_SEQUENCE, sequence.apiName(),
                     DefinitionParser.write(sequence), actorId, actorId);
         }
+        insertBranches(tenantId, actorId, appId, app);
     }
 
     private void replaceChildren(UUID tenantId, UUID actorId, UUID appId, AppDefinition draft) {
@@ -283,6 +290,44 @@ public class MetadataStore {
                     UUID.randomUUID(), tenantId, appId, KIND_SEQUENCE, sequence.apiName(),
                     DefinitionParser.write(sequence), actorId, actorId);
         }
+        replaceBranches(tenantId, actorId, appId, draft);
+    }
+
+    /**
+     * The app-definition branches (PHASE-4 §3/§6/§7/§9) persist as
+     * kind-discriminated documents — the md_pages pattern — so drafts and published
+     * bundles round-trip every branch their consumers read (the runtime's
+     * state-machine enforcement, the Workflow Service's SLA/workflow sources, the
+     * Scheduler's jobs).
+     */
+    private void insertBranches(UUID tenantId, UUID actorId, UUID appId, AppDefinition app) {
+        for (com.novaforge.metadata.StateMachineDefinition machine : app.stateMachines()) {
+            insertBranch(tenantId, actorId, appId, KIND_STATE_MACHINE, machine.id(), machine);
+        }
+        for (com.novaforge.metadata.SlaDefinition sla : app.slas()) {
+            insertBranch(tenantId, actorId, appId, KIND_SLA, sla.id(), sla);
+        }
+        for (com.novaforge.metadata.ScheduledJobDefinition job : app.jobs()) {
+            insertBranch(tenantId, actorId, appId, KIND_SCHEDULED_JOB, job.name(), job);
+        }
+        for (com.novaforge.metadata.WorkflowDefinition workflow : app.workflows()) {
+            insertBranch(tenantId, actorId, appId, KIND_WORKFLOW, workflow.id(), workflow);
+        }
+    }
+
+    private void insertBranch(UUID tenantId, UUID actorId, UUID appId, String kind,
+                              String apiName, Object definition) {
+        jdbc.update("""
+                INSERT INTO md_definitions (id, tenant_id, app_id, kind, api_name, document, created_by, updated_by)
+                VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?)""",
+                UUID.randomUUID(), tenantId, appId, kind, apiName,
+                DefinitionParser.write(definition), actorId, actorId);
+    }
+
+    private void replaceBranches(UUID tenantId, UUID actorId, UUID appId, AppDefinition draft) {
+        jdbc.update("DELETE FROM md_definitions WHERE tenant_id = ? AND app_id = ?",
+                tenantId, appId);
+        insertBranches(tenantId, actorId, appId, draft);
     }
 
     private AppDefinition assembleApp(UUID tenantId, UUID appId, String apiName, String label,
@@ -308,16 +353,36 @@ public class MetadataStore {
                 || permissionSetJson.equals("{}"))
                 ? new PermissionSet(null, null, null)
                 : DefinitionParser.parse(permissionSetJson, PermissionSet.class);
+        List<com.novaforge.metadata.StateMachineDefinition> stateMachines =
+                branchDocuments(tenantId, appId, KIND_STATE_MACHINE,
+                        com.novaforge.metadata.StateMachineDefinition.class);
+        List<com.novaforge.metadata.SlaDefinition> slas = branchDocuments(tenantId, appId,
+                KIND_SLA, com.novaforge.metadata.SlaDefinition.class);
+        List<com.novaforge.metadata.ScheduledJobDefinition> jobs = branchDocuments(tenantId,
+                appId, KIND_SCHEDULED_JOB, com.novaforge.metadata.ScheduledJobDefinition.class);
+        List<com.novaforge.metadata.WorkflowDefinition> workflows = branchDocuments(tenantId,
+                appId, KIND_WORKFLOW, com.novaforge.metadata.WorkflowDefinition.class);
         return new AppDefinition(appId.toString(), apiName, label,
                 DefinitionParser.parse(labelI18nJson == null ? "{}" : labelI18nJson, Map.class),
                 description, entities, pages,
-                new AppDefinition.SettingsDefinition(sequences, null, null), permissionSet, suites);
+                new AppDefinition.SettingsDefinition(sequences, null, null), permissionSet,
+                suites, stateMachines, slas, jobs, workflows);
+    }
+
+    private <T> List<T> branchDocuments(UUID tenantId, UUID appId, String kind, Class<T> type) {
+        return jdbc.query("""
+                        SELECT document FROM md_definitions
+                         WHERE tenant_id = ? AND app_id = ? AND kind = ? ORDER BY api_name""",
+                (rs, i) -> DefinitionParser.parse(rs.getString("document"), type),
+                tenantId, appId, kind);
     }
 
     @SuppressWarnings("unchecked")
     private AppDefinition withIds(UUID appId, AppDefinition app) {
         return new AppDefinition(appId.toString(), app.apiName(), app.label(), app.labelI18n(),
-                app.description(), app.entities(), app.pages(), app.settings());
+                app.description(), app.entities(), app.pages(), app.settings(),
+                app.permissionSet(), app.testSuites(), app.stateMachines(), app.slas(),
+                app.jobs(), app.workflows());
     }
 
     private static List<String> parseStrings(String json) {

@@ -18,6 +18,10 @@ write path and using the engine only for coordination.
 1. **Flowable 7 embedded** in the Workflow Service (`novaforge-workflow-service`,
    port 8086) — approvals, timers/tasks, event-started processes; in-process BPMN
    timers stay inside Flowable, the Scheduler never fires them.
+   *(Amended 2026-08-22 at the §9 landing: the engine line is **Flowable 8.0.0** —
+   "Flowable 7" was pinned against the Boot 3 assumption, and Flowable 7.2 does not
+   run on Spring Boot 4; 8.0.0 is the same engine built for the Spring Framework 7 /
+   Boot 4 line this platform pins. Same decision, the version the stack requires.)*
 2. **State machines are metadata enforced on the Data Runtime write path** — the
    Workflow Service consumes state-change events (a `record.updated` whose diffs
    include the bound `stateField`); it never mutates records. There is no engine

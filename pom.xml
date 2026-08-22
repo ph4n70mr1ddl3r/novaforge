@@ -25,7 +25,11 @@
     <!-- ArchUnit rules start in Phase 1 (PHASE-0 §10) -->
     <archunit.version>1.4.1</archunit.version>
     <!-- GraalVM polyglot for the Script Engine sandbox (ADR-003) -->
-    <graalvm.version>24.2.1</graalvm.version>  </properties>
+    <graalvm.version>24.2.1</graalvm.version>
+    <!-- Flowable 8 = the Spring Framework 7 / Boot 4 line of the engine (ADR-004
+         amended: Flowable 7.2 does not run on Boot 4; 8.0.0 is the same engine on
+         the pinned stack). -->
+    <flowable.version>8.0.0</flowable.version>  </properties>
 
   <modules>
     <module>platform</module>
@@ -95,6 +99,12 @@
         <groupId>io.opentelemetry</groupId>
         <artifactId>opentelemetry-exporter-otlp</artifactId>
         <version>${opentelemetry.version}</version>
+      </dependency>
+      <!-- Embedded BPMN engine in the Workflow Service (ADR-004, PHASE-4 §9). -->
+      <dependency>
+        <groupId>org.flowable</groupId>
+        <artifactId>flowable-spring-boot-starter-process</artifactId>
+        <version>${flowable.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>

@@ -46,6 +46,12 @@ class SchedulerTests extends PostgresTestBase {
     /** Flow firings the stub observed (the runtime's stand-in). */
     static final List<String> FIRED = new CopyOnWriteArrayList<>();
 
+    /** Process firings the stub observed (the workflow service's stand-in). */
+    static final List<String> PROCESSES = new CopyOnWriteArrayList<>();
+
+    /** When set, the process stub fails — the run records the failure (§7). */
+    static volatile boolean failProcesses = false;
+
     @Autowired
     MockMvc mockMvc;
 
@@ -72,6 +78,26 @@ class SchedulerTests extends PostgresTestBase {
         FlowTarget flowTarget() {
             return (tenantId, app, entity, hook) -> FIRED.add(app + ":" + hook);
         }
+
+        @Bean
+        @Primary
+        com.novaforge.scheduler.jobs.RestProcessTarget processTarget() {
+            return new com.novaforge.scheduler.jobs.RestProcessTarget(
+                    "http://localhost:1", "http://localhost:1", "id", "secret") {
+                @Override
+                public String run(UUID tenantId, String appApiName, String process,
+                                  String recordId, Map<String, Object> variables) {
+                    if (failProcesses) {
+                        throw new com.novaforge.common.error.PlatformException(
+                                com.novaforge.common.error.PlatformErrorCode.INTERNAL,
+                                "workflow unreachable");
+                    }
+                    PROCESSES.add(appApiName + ":" + process
+                            + (recordId == null ? "" : ":" + recordId));
+                    return "instance-1";
+                }
+            };
+        }
     }
 
     private static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:4.3.1");
@@ -95,12 +121,16 @@ class SchedulerTests extends PostgresTestBase {
         jdbc.update("DELETE FROM sched_leases");
         jdbc.update("DELETE FROM sched_jobs");
         FIRED.clear();
+        PROCESSES.clear();
+        failProcesses = false;
         published = List.of(new PublishedJobsSource.AppJobs(TENANT, "Purch", List.of(
                 new ScheduledJobDefinition("nightlySweep", "0 0 3 * * *", "flow",
                         Map.of("entity", "PurchaseOrder", "hook", "sweep"), true),
                 new ScheduledJobDefinition("disabledJob", "0 0 4 * * *", "flow",
                         Map.of("entity", "PurchaseOrder", "hook", "x"), false),
-                new ScheduledJobDefinition("reportJob", "0 0 5 * * *", "report",
+                new ScheduledJobDefinition("processJob", "0 0 5 * * *", "processStart",
+                        Map.of("process", "po_review"), true),
+                new ScheduledJobDefinition("reportJob", "0 0 6 * * *", "report",
                         Map.of(), true))));
     }
 
@@ -109,7 +139,7 @@ class SchedulerTests extends PostgresTestBase {
     void syncRegistersFromMetadata() {
         runner.syncOnce();
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
-                "SELECT count(*) FROM sched_jobs", Integer.class)).isEqualTo(3);
+                "SELECT count(*) FROM sched_jobs", Integer.class)).isEqualTo(4);
         // definitions are upserts: a republish with a changed cron updates the row
         published = List.of(new PublishedJobsSource.AppJobs(TENANT, "Purch", List.of(
                 new ScheduledJobDefinition("nightlySweep", "0 30 3 * * *", "flow",
@@ -181,13 +211,40 @@ class SchedulerTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("processStart fires the workflow service's internal surface; failures record failed runs (§7/§9)")
+    void processStartTargetFires() {
+        runner.syncOnce();
+        jdbc.update("UPDATE sched_jobs SET next_fire_at = now() - interval '1 second' "
+                + "WHERE name = 'processJob'");
+        runner.scanOnce();
+
+        org.assertj.core.api.Assertions.assertThat(PROCESSES)
+                .containsExactly("Purch:po_review");
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForMap(
+                "SELECT last_status FROM sched_jobs WHERE name = 'processJob'")
+                .get("last_status")).isEqualTo("ok");
+
+        // a fire the workflow service rejects records a failed run — audibly, not skipped
+        failProcesses = true;
+        jdbc.update("UPDATE sched_jobs SET next_fire_at = now() - interval '1 second' "
+                + "WHERE name = 'processJob'");
+        // release the lease the first fire holds (the distributed lock's window)
+        jdbc.update("DELETE FROM sched_leases WHERE job_id = "
+                + "(SELECT id FROM sched_jobs WHERE name = 'processJob')");
+        runner.scanOnce();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
+                "SELECT status FROM sched_runs ORDER BY fired_at", String.class))
+                .containsExactly("ok", "failed");
+    }
+
+    @Test
     @DisplayName("the status route is read-only, tenant-scoped registry visibility (§7/§2)")
     void statusRoute() throws Exception {
         runner.syncOnce();
         mockMvc.perform(get("/api/v1/scheduler/jobs").with(jwtFor()))
                 .andExpect(status().isOk())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
-                        .jsonPath("$.length()").value(3));
+                        .jsonPath("$.length()").value(4));
     }
 
     private static org.springframework.security.test.web.servlet.request

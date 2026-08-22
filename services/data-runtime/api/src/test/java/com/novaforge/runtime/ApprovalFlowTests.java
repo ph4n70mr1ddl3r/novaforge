@@ -235,6 +235,32 @@ class ApprovalFlowTests extends PostgresTestBase {
                 .andExpect(status().isForbidden());
     }
 
+    @Test
+    @DisplayName("the event-start record read serves raw fields, service-client only (§9)")
+    void internalRecordRead() throws Exception {
+        String id = createOrder(100);
+        // the service client reads the record's current fields (filter evaluation)
+        mockMvc.perform(get("/api/v1/hooks/records/" + id).with(serviceJwt())
+                        .queryParam("tenantId", TENANT.toString())
+                        .queryParam("app", "Purch")
+                        .queryParam("entity", "PurchaseOrder"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.label").value("po"))
+                .andExpect(jsonPath("$.status").value("DRAFT"));
+        // user tokens never reach the surface
+        mockMvc.perform(get("/api/v1/hooks/records/" + id).with(jwtFor())
+                        .queryParam("tenantId", TENANT.toString())
+                        .queryParam("app", "Purch")
+                        .queryParam("entity", "PurchaseOrder"))
+                .andExpect(status().isForbidden());
+        // a gone record reads 404 — evaluation skips, no start
+        mockMvc.perform(get("/api/v1/hooks/records/" + UUID.randomUUID()).with(serviceJwt())
+                        .queryParam("tenantId", TENANT.toString())
+                        .queryParam("app", "Purch")
+                        .queryParam("entity", "PurchaseOrder"))
+                .andExpect(status().isNotFound());
+    }
+
     // --- helpers ---
 
     private String createOrder(double total) throws Exception {

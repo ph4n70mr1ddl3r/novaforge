@@ -63,6 +63,7 @@ public final class DefinitionValidator {
         validateStateMachines(app, errors);
         validateSlas(app, errors);
         validateSharingRules(app, errors);
+        validateWorkflows(app, errors);
         validatePermissionSet(app, errors);
         return new ProblemErrors(errors, globals);
     }
@@ -233,6 +234,106 @@ public final class DefinitionValidator {
                                     + transition.from() + "→" + transition.to(), null));
                 }
             }
+        }
+    }
+
+    /**
+     * BPMN workflow rules (PHASE-4 §9): the id is a process key and unique per app,
+     * the XML is well-formed (XXE-hardened parse — BPMN is authored input), carries
+     * exactly one {@code <process>} whose id equals the definition id, and stays
+     * within the size bound. Event-start subscriptions use the closed event set and
+     * bind to entities of the app; filter expressions compile at publish.
+     */
+    private static void validateWorkflows(AppDefinition app,
+                                          List<ProblemErrors.FieldError> errors) {
+        Set<String> ids = new HashSet<>();
+        for (WorkflowDefinition workflow : app.workflows()) {
+            String scope = workflow.id() == null ? "workflow" : workflow.id();
+            if (workflow.id() == null || !WorkflowDefinition.PROCESS_KEY
+                    .matcher(workflow.id()).matches()) {
+                errors.add(field("workflows." + scope + ".id",
+                        "workflow id is the BPMN process key — a letter/underscore then "
+                                + "word characters: " + workflow.id(), workflow.id()));
+                continue;
+            }
+            if (!ids.add(workflow.id())) {
+                errors.add(field("workflows." + scope + ".id",
+                        "workflow ids must be unique per app: " + workflow.id(),
+                        workflow.id()));
+            }
+            String processId = checkBpmn(workflow, scope, errors);
+            if (processId != null && !processId.equals(workflow.id())) {
+                errors.add(field("workflows." + scope + ".bpmn",
+                        "the BPMN <process id> must equal the workflow id (the process key): "
+                                + processId + " ≠ " + workflow.id(), processId));
+            }
+            for (WorkflowDefinition.EventStart start : workflow.eventStarts()) {
+                String startScope = "workflows." + scope + ".eventStarts";
+                if (start.event() == null
+                        || !WorkflowDefinition.EVENT_TYPES.contains(start.event())) {
+                    errors.add(field(startScope + ".event",
+                            "event-start event must be one of "
+                                    + WorkflowDefinition.EVENT_TYPES + ": " + start.event(),
+                            start.event()));
+                }
+                if (start.entity() == null
+                        || app.entity(start.entity() == null ? "" : start.entity()).isEmpty()) {
+                    errors.add(field(startScope + ".entity",
+                            "event-start must bind to an entity of the app: " + start.entity(),
+                            start.entity()));
+                }
+            }
+        }
+    }
+
+    /**
+     * The BPMN source checks: non-blank, within the size cap, and a well-formed
+     * single-process document. Returns the {@code <process id>} when the document
+     * parses — null when structural errors were already reported. The parser is
+     * XXE-hardened (no DOCTYPE, no external entities): definitions are authored
+     * input, not trusted.
+     */
+    private static String checkBpmn(WorkflowDefinition workflow, String scope,
+                                    List<ProblemErrors.FieldError> errors) {
+        if (workflow.bpmn() == null || workflow.bpmn().isBlank()) {
+            errors.add(field("workflows." + scope + ".bpmn",
+                    "workflow requires BPMN XML source", null));
+            return null;
+        }
+        if (workflow.bpmn().length() > WorkflowDefinition.MAX_BPMN_CHARS) {
+            errors.add(field("workflows." + scope + ".bpmn",
+                    "BPMN source exceeds " + WorkflowDefinition.MAX_BPMN_CHARS + " characters",
+                    workflow.bpmn().length()));
+            return null;
+        }
+        try {
+            javax.xml.parsers.DocumentBuilderFactory factory =
+                    javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
+            org.w3c.dom.Document document = factory.newDocumentBuilder()
+                    .parse(new org.xml.sax.InputSource(new java.io.StringReader(workflow.bpmn())));
+            org.w3c.dom.NodeList processes = document.getElementsByTagNameNS(
+                    "http://www.omg.org/spec/BPMN/20100524/MODEL", "process");
+            if (processes.getLength() == 0) {
+                // tolerate namespace-less authoring — match by local name
+                processes = document.getElementsByTagName("process");
+            }
+            if (processes.getLength() != 1) {
+                errors.add(field("workflows." + scope + ".bpmn",
+                        "BPMN requires exactly one <process> element (found "
+                                + processes.getLength() + ")", null));
+                return null;
+            }
+            org.w3c.dom.Element process = (org.w3c.dom.Element) processes.item(0);
+            return process.getAttribute("id");
+        } catch (Exception e) {
+            errors.add(field("workflows." + scope + ".bpmn",
+                    "BPMN source must be well-formed XML: " + e.getMessage(), null));
+            return null;
         }
     }
 

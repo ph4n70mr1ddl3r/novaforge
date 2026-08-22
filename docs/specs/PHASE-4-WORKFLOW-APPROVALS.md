@@ -54,7 +54,7 @@ pages (PHASE-2 deferral, unchanged).
 
 | Addition | Detail |
 |---|---|
-| `novaforge-workflow-service` | Port 8086; gateway route `/api/v1/workflow/**` (already anticipated by ARCHITECTURE.md §2.1). Flowable 7 embedded. **ADR-004 is accepted ahead of implementation (file written, ARCHITECTURE.md §8); this phase's landing confirms its pins.** |
+| `novaforge-workflow-service` | Port 8086; gateway route `/api/v1/workflow/**` (already anticipated by ARCHITECTURE.md §2.1). Flowable embedded — the **Flowable 8 line** (8.0.0): ADR-004 pinned "Flowable 7" against the Boot 3 assumption, and Flowable 7.2 does not run on Boot 4; 8.0.0 is the same engine on the Spring Framework 7/Boot 4 line (the compatibility assessment the T1 deviation noted, resolved 2026-08-22 — ADR-004 amended in place). **ADR-004 is accepted ahead of implementation (file written, ARCHITECTURE.md §8); this phase's landing confirms its pins.** |
 | `novaforge-scheduler-service` | Port 8087; no gateway route for administration — the registry is publish-driven, never written over REST (§7). The gateway routes exactly one Scheduler path, the read-only status route serving §11's builder visibility: `GET /api/v1/scheduler/jobs` (builder role; browser apps reach APIs via the gateway — PHASE-2 §2) — no write or admin route exists. |
 | `novaforge-notification-service` | Port 8088; gateway route `/api/v1/notifications/**` (inbox read + preferences). |
 | Compose | **Mailpit** joins the stack (SMTP 1025, UI 8025) as the local email sink. No other new infrastructure — the Postgres/Kafka/Redis instances are reused; each new service adds its own database on the shared Postgres (the PHASE-1 §6 pattern). |
@@ -226,17 +226,43 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 
 ## 9. BPMN v1 (Flowable) & Event-Start Subscriptions
 
-- Flowable 7 embedded (ADR-004); process definitions are `WorkflowDefinition`
-  metadata (versioned, promoted — ARCHITECTURE.md §2.3).
+- Flowable embedded (ADR-004 — the **Flowable 8 line** on Boot 4, per §2); process
+  definitions are `WorkflowDefinition` metadata (versioned, promoted —
+  ARCHITECTURE.md §2.3): `{id, bpmn, eventStarts[]}` where the BPMN `<process
+  id>` must equal the definition `id` (the process key), and each event-start
+  subscription is `{event: record.created|record.updated, entity, filter?}`.
 - **Event-start subscriptions** per ARCHITECTURE.md §2.6:
   `on record.updated where status='SUBMITTED'` — the subscription filter is a
-  platform expression compiled at publish; matching spine events start the process
-  (system principal).
+  platform expression compiled at publish (record context of the bound entity);
+  matching spine events start the process. Spine events carry the envelope only,
+  so the Workflow Service evaluates the filter against the record's current state
+  through an internal system-principal read on the Data Runtime — a read, never a
+  mutation (ADR-004 #2). Starts dedupe on the spine event id (at-least-once
+  redelivery collapses), and the dedupe row rides the same transaction as the
+  engine start.
 - v1 authors BPMN as XML metadata (import/editor-agnostic); the *visual* designer is
   deferred until demand (§16 Q1, resolved). State machines + approvals (§3–§6) cover the ERP-standard flows; full
   BPMN is the long tail.
+- **v1 user tasks join the §5 inbox:** a BPMN `userTask` meeting the deploy gate —
+  a literal `flowable:assignee` (a user UUID) or literal `flowable:candidateGroups`
+  (role names); expressions are not evaluated in v1 and fail the gate — creates a
+  `wf_tasks` row (type `todo`) through the same task service (SLA resolution and
+  `task.*` events ride the existing path), linked to its engine task. Inbox
+  approve/reject completes the engine task (a `resolution` variable carries the
+  outcome; the process's own gateways route on it); claim/reassign mirrors the
+  assignee into the engine; process termination cancels still-open rows. Delegation
+  of process-managed tasks rejects in v1 — Flowable's single-task model does not
+  map to §5's replacement-task chains; the error is explicit, not silent.
+- Deploy activation is publish-driven like every registry (§7's split): the
+  Workflow Service syncs published `WorkflowDefinition`s on an interval, deploys by
+  content hash (idempotent re-syncs redeploy nothing), records deploy failures
+  audibly (status + error, retried next pass), and removes deployments whose
+  definitions left the published app (cascading their instances and cancelling the
+  tasks those instances own).
 - In-process BPMN timers (escalation-style) stay inside Flowable (ARCHITECTURE
-  §2.8) — the Scheduler never fires BPMN timers.
+  §2.8) — the Scheduler never fires BPMN timers. The Scheduler's `processStart`
+  target activates (§7): params `{process, recordId?, variables?}` fire the process
+  through the Workflow Service's service-client-gated internal start surface.
 
 ## 10. Record-Level Sharing Rules (the PHASE-2 §9 remainder lands)
 

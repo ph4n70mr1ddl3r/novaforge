@@ -36,13 +36,16 @@ public class JobRunner {
     private final JdbcTemplate jdbc;
     private final PublishedJobsSource source;
     private final FlowTarget flows;
+    private final org.springframework.beans.factory.ObjectProvider<RestProcessTarget> processes;
     private final long leaseMs;
 
     public JobRunner(JdbcTemplate jdbc, PublishedJobsSource source, FlowTarget flows,
+                     org.springframework.beans.factory.ObjectProvider<RestProcessTarget> processes,
                      @Value("${novaforge.scheduler.lease-ms:60000}") long leaseMs) {
         this.jdbc = jdbc;
         this.source = source;
         this.flows = flows;
+        this.processes = processes;
         this.leaseMs = leaseMs;
     }
 
@@ -117,12 +120,7 @@ public class JobRunner {
         String target = String.valueOf(job.get("target"));
         String status;
         String detail = null;
-        if (!"flow".equals(target)) {
-            // script/processStart/report register but stay dormant (their consumers
-            // land with the Script Engine's service context / Flowable / Phase 5).
-            status = "skipped";
-            detail = "target '" + target + "' is registered but dormant";
-        } else {
+        if ("flow".equals(target)) {
             try {
                 Map<String, Object> params = MAPPER.readValue(
                         String.valueOf(job.get("params")), Map.class);
@@ -136,6 +134,31 @@ public class JobRunner {
                 LOG.error("scheduled flow failed for {}.{}: {}",
                         job.get("app"), job.get("name"), e.getMessage(), e);
             }
+        } else if ("processStart".equals(target)) {
+            // §9 activation: the Workflow Service's internal start surface — the
+            // process fires under the engine's per-app system principal.
+            try {
+                Map<String, Object> params = MAPPER.readValue(
+                        String.valueOf(job.get("params")), Map.class);
+                Object recordId = params.get("recordId");
+                Object variables = params.get("variables");
+                processes.getObject().run((UUID) job.get("tenant_id"),
+                        String.valueOf(job.get("app")),
+                        String.valueOf(params.get("process")),
+                        recordId == null ? null : String.valueOf(recordId),
+                        variables instanceof Map<?, ?> map ? (Map<String, Object>) map : null);
+                status = "ok";
+            } catch (Exception e) {
+                status = "failed";
+                detail = e.getMessage();
+                LOG.error("scheduled process start failed for {}.{}: {}",
+                        job.get("app"), job.get("name"), e.getMessage(), e);
+            }
+        } else {
+            // script/report register but stay dormant (the Script Engine's service
+            // context / Phase 5's Reporting Service are their consumers).
+            status = "skipped";
+            detail = "target '" + target + "' is registered but dormant";
         }
         jdbc.update("""
                 UPDATE sched_jobs SET last_run_at = now(), last_status = ?, updated_at = now()

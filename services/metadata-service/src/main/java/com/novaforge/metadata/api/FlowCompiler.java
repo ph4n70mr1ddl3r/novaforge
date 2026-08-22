@@ -41,6 +41,7 @@ final class FlowCompiler {
         checkStateMachines(app, findings);
         checkSlas(app, findings);
         checkSharingRules(app, findings);
+        checkWorkflows(app, findings);
         if (!findings.isEmpty()) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "hook compilation failed", new ProblemErrors(findings, java.util.List.of()));
@@ -117,6 +118,30 @@ final class FlowCompiler {
             } catch (ExpressionException e) {
                 findings.add(new ProblemErrors.FieldError(scope,
                         rule.criteria() + " — " + e.getMessage(), rule.criteria()));
+            }
+        }
+    }
+
+    /**
+     * Event-start filter expressions compile at publish (PHASE-4 §9) — the record
+     * context of the subscription's bound entity, the same engine and policy as
+     * every other expression slot.
+     */
+    private static void checkWorkflows(AppDefinition app,
+                                       java.util.List<ProblemErrors.FieldError> findings) {
+        for (com.novaforge.metadata.WorkflowDefinition workflow : app.workflows()) {
+            for (com.novaforge.metadata.WorkflowDefinition.EventStart start
+                    : workflow.eventStarts()) {
+                if (start.filter() == null || start.filter().isBlank()) {
+                    continue;   // a filterless subscription matches every event
+                }
+                var entity = app.entity(start.entity() == null ? "" : start.entity());
+                if (entity.isEmpty()) {
+                    continue;   // structural rule — the save validator reports it
+                }
+                String scope = "workflow[" + workflow.id() + "].eventStarts.filter";
+                new FlowCompiler().checkExpression(start.filter(), scope, entity.get(),
+                        findings);
             }
         }
     }

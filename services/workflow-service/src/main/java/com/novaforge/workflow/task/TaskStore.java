@@ -46,7 +46,7 @@ public class TaskStore {
             json.put("id", id.toString());
             json.put("type", type);
             json.put("entity", entityId);
-            json.put("recordId", recordId.toString());
+            json.put("recordId", recordId == null ? null : recordId.toString());
             json.put("assignee", assignee == null ? null : assignee.toString());
             json.put("role", role);
             json.put("status", status);

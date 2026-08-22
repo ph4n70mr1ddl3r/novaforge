@@ -305,7 +305,17 @@ public class DefinitionService {
                 current.entities(),
                 current.pages(),
                 patch.settings() != null && !patch.settings().sequences().isEmpty()
-                        ? patch.settings() : current.settings());
+                        ? patch.settings() : current.settings(),
+                patch.permissionSet() != null && (patch.permissionSet().roles() != null
+                        || !patch.permissionSet().objectPermissions().isEmpty()
+                        || !patch.permissionSet().fieldSecurity().isEmpty()
+                        || !patch.permissionSet().sharingRules().isEmpty())
+                        ? patch.permissionSet() : current.permissionSet(),
+                patch.testSuites().isEmpty() ? current.testSuites() : patch.testSuites(),
+                patch.stateMachines().isEmpty() ? current.stateMachines() : patch.stateMachines(),
+                patch.slas().isEmpty() ? current.slas() : patch.slas(),
+                patch.jobs().isEmpty() ? current.jobs() : patch.jobs(),
+                patch.workflows().isEmpty() ? current.workflows() : patch.workflows());
     }
 
     private static EntityDefinition mergeEntity(EntityDefinition current, EntityDefinition patch) {
@@ -324,7 +334,8 @@ public class DefinitionService {
 
     private static AppDefinition withEntities(AppDefinition app, List<EntityDefinition> entities) {
         return new AppDefinition(app.id(), app.apiName(), app.label(), app.labelI18n(),
-                app.description(), entities, app.pages(), app.settings());
+                app.description(), entities, app.pages(), app.settings(), app.permissionSet(),
+                app.testSuites(), app.stateMachines(), app.slas(), app.jobs(), app.workflows());
     }
 
     private static PlatformException validationFailure(String message, ProblemErrors errors) {

@@ -65,6 +65,10 @@ novaforge:
     # Role→holders fan-out reads the runtime's admin surface (the platform DB is
     # the runtime's to own).
     url: ${NOVAFORGE_DATA_RUNTIME_URL:http://localhost:8083}
+  workflow:
+    # The processStart target fires BPMN processes on the Workflow Service's
+    # internal start surface (PHASE-4 §7/§9).
+    url: ${NOVAFORGE_WORKFLOW_URL:http://localhost:8086}
   events:
     relay-interval-ms: ${NOVAFORGE_RELAY_INTERVAL_MS:500}
     relay-batch: 100

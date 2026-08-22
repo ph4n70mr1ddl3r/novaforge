@@ -175,7 +175,10 @@ onboarding (Phase 2 backend), the write-path evaluation chain, the Kafka event s
 with transactional outbox, flow-IR hooks, the script sandbox, and the builder test
 harness (Phase 3), and the workflow plane — state machines, approvals with durable
 suspension and SoD, SLAs with escalation, notifications, the scheduler, record-level
-sharing, and the grown harness vocabulary (Phase 4). 316 tests green under
-`./mvnw verify`. The main remaining surfaces: the React builder/runtime UI (Phase 2's
-largest gap, which Phase 4's T10 rides), Phase 4's BPMN execution (§9), and the
-full-stack exit demos. Progress ledger: [IMPLEMENTATION.md](IMPLEMENTATION.md).
+sharing, and the grown harness vocabulary (Phase 4) — with BPMN execution (§9):
+Flowable embedded in the Workflow Service, event-start subscriptions over the
+spine, process user tasks bridged into the §5 inbox, and the Scheduler's
+`processStart` target live. 181 tests green under `./mvnw verify`. The main
+remaining surfaces: the React builder/runtime UI (Phase 2's largest gap, which
+Phase 4's T10 rides) and the full-stack exit demos. Progress ledger:
+[IMPLEMENTATION.md](IMPLEMENTATION.md).
