@@ -17,6 +17,11 @@
 
   <dependencies>
     <dependency>
+      <!-- Sharing-rule criteria evaluate in-process (PHASE-4 §10, ADR-008 #3). -->
+      <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-expression-dsl</artifactId>
+    </dependency>
+    <dependency>
       <groupId>com.novaforge</groupId>
       <artifactId>novaforge-common-core</artifactId>
     </dependency>

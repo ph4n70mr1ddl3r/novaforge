@@ -382,8 +382,29 @@ validated; carried from Phase 1).
   event, misfire skip advancing to the next tick, dormant targets skip with
   reason, read-only tenant-scoped status route
 
-**Not implemented (Phase 4 remainder):** sharing rules (T9), builder/runtime UI
-(T10), harness growth (T11).
+**Implemented — T9 record-level sharing rules (§10, the PHASE-2 §9 remainder):**
+- `SharingRuleDefinition` on the PermissionSet branch (versioned, promoted):
+  `{entity, type: owner | roleHierarchy | criteria, roles[], ownerField?, criteria?}`;
+  roles carry an optional numeric `level` (lower = more senior, §16 Q2's pin)
+- save validation: bound entity resolves, type ∈ the closed v1 set, named roles
+  exist, hierarchy rules sit on leveled roles, criteria rules require an
+  expression; criteria compile at publish (record context, same engine)
+- enforcement (a `SharingGate` in the runtime): rules evaluate into the visibility
+  governing reads, writes, and deletes alike — `owner` (the creator plus the named
+  roles see everything), `roleHierarchy` (a user sees records owned by holders of
+  strictly less senior roles, resolved through the platform role store),
+  `criteria` (matching records shared with the named roles); lists lower
+  owner-sets to `created_by IN (…)` row filters spliced before the page tail,
+  criteria post-filter the page (exact for single records; page-level criteria
+  filtering may underfill a page — noted); invisible records read as NOT_FOUND on
+  get/update/delete (no existence leak); platform admin/builder unrestricted;
+  **no rules defined → Phase 2's default holds** — full visibility under the
+  matrix, no silent tightening (regression-tested)
+- suites: the §14 item 5 matrix (own/named-role/criteria/admin), list visibility
+  per actor, writes governed by the same evaluation, the no-rule default
+
+**Not implemented (Phase 4 remainder):** builder/runtime UI (T10), harness growth
+(T11) — plus the earlier UI surfaces of Phase 2.
 
 ## Phases 5–8 ⬜
 

@@ -27,6 +27,28 @@ public final class QueryLowering {
 
     /** SQL + bind params for one lowered statement. */
     public record Lowered(String sql, List<Object> params) {
+
+        /**
+         * Appends a sharing clause ({@code AND (created_by IN …)}) with its params,
+         * splicing before any trailing ORDER/LIMIT tail so the SQL stays valid.
+         */
+        public Lowered and(String clause, List<Object> clauseParams) {
+            int tailStart = sql.lastIndexOf(" ORDER BY ");
+            if (tailStart < 0) {
+                List<Object> merged = new java.util.ArrayList<>(params);
+                merged.addAll(clauseParams);
+                return new Lowered(sql + " AND (" + clause + ")", List.copyOf(merged));
+            }
+            String tail = sql.substring(tailStart);
+            long tailParams = tail.chars().filter(c -> c == '?').count();
+            List<Object> merged = new java.util.ArrayList<>(
+                    params.subList(0, params.size() - (int) tailParams));
+            merged.addAll(clauseParams);
+            merged.addAll(params.subList(params.size() - (int) tailParams, params.size()));
+            return new Lowered(sql.substring(0, tailStart) + " AND (" + clause + ")" + tail,
+                    List.copyOf(merged));
+        }
+
         public Lowered {
             params = List.copyOf(params);
         }

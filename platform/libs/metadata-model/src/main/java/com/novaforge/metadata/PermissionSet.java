@@ -15,21 +15,43 @@ import java.util.Optional;
 public record PermissionSet(
         List<RoleDefinition> roles,
         List<ObjectPermission> objectPermissions,
-        List<FieldSecurity> fieldSecurity) {
+        List<FieldSecurity> fieldSecurity,
+        List<SharingRuleDefinition> sharingRules) {
 
     public PermissionSet {
         roles = roles == null ? List.of() : List.copyOf(roles);
         objectPermissions = objectPermissions == null ? List.of() : List.copyOf(objectPermissions);
         fieldSecurity = fieldSecurity == null ? List.of() : List.copyOf(fieldSecurity);
+        sharingRules = sharingRules == null ? List.of() : List.copyOf(sharingRules);
+    }
+
+    public PermissionSet(List<RoleDefinition> roles, List<ObjectPermission> objectPermissions,
+                         List<FieldSecurity> fieldSecurity) {
+        this(roles, objectPermissions, fieldSecurity, List.of());
+    }
+
+    /** The sharing rules bound to an entity, in declaration order (PHASE-4 §10). */
+    public List<SharingRuleDefinition> sharingRulesFor(String entityApiName) {
+        return sharingRules.stream()
+                .filter(r -> r.entity().equals(entityApiName))
+                .toList();
     }
 
     public Optional<RoleDefinition> role(String name) {
         return roles.stream().filter(r -> r.name().equals(name)).findFirst();
     }
 
-    /** App-defined role; assignments scope it as {@code app.role}. */
+    /**
+     * App-defined role; assignments scope it as {@code app.role}. {@code level} is
+     * the optional seniority of the sharing hierarchy (PHASE-4 §10) — lower is more
+     * senior; a user sees records owned by holders of less senior roles.
+     */
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    public record RoleDefinition(String name, String description) {
+    public record RoleDefinition(String name, String description, Integer level) {
+
+        public RoleDefinition(String name, String description) {
+            this(name, description, null);
+        }
     }
 
     /** role × entity → CRUD flags (absent flags deny). */

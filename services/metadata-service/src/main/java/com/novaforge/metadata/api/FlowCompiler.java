@@ -40,6 +40,7 @@ final class FlowCompiler {
         }
         checkStateMachines(app, findings);
         checkSlas(app, findings);
+        checkSharingRules(app, findings);
         if (!findings.isEmpty()) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "hook compilation failed", new ProblemErrors(findings, java.util.List.of()));
@@ -87,6 +88,35 @@ final class FlowCompiler {
             } catch (ExpressionException e) {
                 findings.add(new ProblemErrors.FieldError(scope,
                         sla.scope().match() + " — " + e.getMessage(), sla.scope().match()));
+            }
+        }
+    }
+
+    /**
+     * Sharing-rule criteria compile at publish (PHASE-4 §10) — the bound entity's
+     * fields are the binding set.
+     */
+    private static void checkSharingRules(AppDefinition app,
+                                          java.util.List<ProblemErrors.FieldError> findings) {
+        for (com.novaforge.metadata.SharingRuleDefinition rule
+                : app.permissionSet().sharingRules()) {
+            if (!com.novaforge.metadata.SharingRuleDefinition.CRITERIA.equals(rule.type())
+                    || rule.criteria() == null) {
+                continue;
+            }
+            var entity = app.entity(rule.entity() == null ? "" : rule.entity());
+            if (entity.isEmpty()) {
+                continue;   // structural rule — the save validator reports it
+            }
+            String scope = "sharingRule[" + rule.entity() + "].criteria";
+            try {
+                Set<String> fields = new HashSet<>();
+                entity.get().fields().forEach(f -> fields.add(f.apiName()));
+                Expression.parse(rule.criteria())
+                        .compileCheck(Expression.CompilePolicy.recordContext(fields, true));
+            } catch (ExpressionException e) {
+                findings.add(new ProblemErrors.FieldError(scope,
+                        rule.criteria() + " — " + e.getMessage(), rule.criteria()));
             }
         }
     }

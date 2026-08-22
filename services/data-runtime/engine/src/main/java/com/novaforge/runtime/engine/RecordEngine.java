@@ -51,17 +51,21 @@ public class RecordEngine {
 
     private final EntityResolver resolver;
     private final RoleMatrix roleMatrix;
+    private final com.novaforge.runtime.authorization.SharingGate sharing;
     private final RecordStore records;
     private final SequenceService sequences;
     private final DomainEventPublisher events;
     private final HookExecutor hooks;
     private final HookExecutor.HookSink hookSink;
 
-    public RecordEngine(EntityResolver resolver, RoleMatrix roleMatrix, RecordStore records,
+    public RecordEngine(EntityResolver resolver, RoleMatrix roleMatrix,
+                        com.novaforge.runtime.authorization.SharingGate sharing,
+                        RecordStore records,
                         SequenceService sequences, DomainEventPublisher events,
                         HookExecutor hooks) {
         this.resolver = resolver;
         this.roleMatrix = roleMatrix;
+        this.sharing = sharing;
         this.records = records;
         this.sequences = sequences;
         this.events = events;
@@ -114,6 +118,7 @@ public class RecordEngine {
 
         RecordStore.StoredRecord existing = records.find(tenantId, handle.entityKey(), id, false)
                 .orElseThrow(() -> notFound(entityApiName, id));
+        requireVisible(sharing.forActor(tenantId, actorId, handle.entity(), app), existing);
         rejectReadonlyWrites(handle.entity(), body);
         rejectFieldSecurityWrites(tenantId, actorId, handle, app, body);
 
@@ -159,8 +164,10 @@ public class RecordEngine {
         roleMatrix.require(tenantId, actorId, RoleMatrix.Action.DELETE, entityApiName,
                 handle.appApiName(), app.permissionSet());
 
-        Map<String, Object> existingData = records.find(tenantId, handle.entityKey(), id, false)
-                .orElseThrow(() -> notFound(entityApiName, id)).data();
+        RecordStore.StoredRecord existingRecord = records.find(tenantId, handle.entityKey(),
+                id, false).orElseThrow(() -> notFound(entityApiName, id));
+        requireVisible(sharing.forActor(tenantId, actorId, handle.entity(), app), existingRecord);
+        Map<String, Object> existingData = existingRecord.data();
         runHooks(app, handle, tenantId, id, existingData, "beforeDelete",
                 appSystemPrincipal(handle), actorId);
         records.softDelete(tenantId, handle.entityKey(), id, expectedVersion, actorId);
@@ -184,7 +191,26 @@ public class RecordEngine {
         RecordStore.StoredRecord record = records.find(tenantId, handle.entityKey(), id,
                         includeDeleted)
                 .orElseThrow(() -> notFound(entityApiName, id));
+        requireVisible(sharing.forActor(tenantId, actorId, handle.entity(), app), record);
         return shape(handle.entity(), record, strip(tenantId, actorId, handle, app));
+    }
+
+    /**
+     * Sharing enforcement (PHASE-4 §10): a record outside the actor's visibility
+     * reads as absent — NOT_FOUND, not FORBIDDEN (no existence leak). Unrestricted
+     * actors (no rules defined, admins/builders, owner-rule-named roles) pass.
+     */
+    private void requireVisible(com.novaforge.runtime.authorization.SharingGate.Restriction restriction,
+                                RecordStore.StoredRecord record) {
+        if (restriction == null) {
+            return;
+        }
+        Map<String, Object> view = new LinkedHashMap<>(record.data());
+        view.put("__owner__", record.createdBy());
+        if (!restriction.recordVisible().test(view)) {
+            throw new PlatformException(PlatformErrorCode.NOT_FOUND,
+                    "record not visible to this actor (sharing rules apply)");
+        }
     }
 
     public QueryModel.QueryResult list(UUID tenantId, UUID actorId, String entityApiName,
@@ -198,10 +224,20 @@ public class RecordEngine {
         QueryLowering.Lowered countSql = lowering.count(handle.entity().apiName(), tenantId,
                 query.filter());
         QueryLowering.Lowered listSql = lowering.list(handle.entity().apiName(), tenantId, query);
+        var restriction = sharing.forActor(tenantId, actorId, handle.entity(), app);
+        if (restriction != null) {
+            String placeholders = restriction.visibleOwners().stream().map(o -> "?")
+                    .reduce((a, b) -> a + "," + b).orElse("?");
+            List<Object> owners = List.copyOf(restriction.visibleOwners());
+            countSql = countSql.and("created_by IN (" + placeholders + ")", owners);
+            listSql = listSql.and("created_by IN (" + placeholders + ")", owners);
+        }
         RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
                 listSql.sql(), listSql.params());
         java.util.function.Predicate<String> strip = strip(tenantId, actorId, handle, app);
         List<Map<String, Object>> rows = page.rows().stream()
+                .filter(row -> restriction == null   // criteria rules post-filter the
+                        || restriction.recordVisible().test(row))   // page (§10 note)
                 .map(row -> stripHidden(row, strip))
                 .toList();
         return new QueryModel.QueryResult(rows, page.total());

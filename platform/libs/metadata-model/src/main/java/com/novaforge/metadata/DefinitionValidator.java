@@ -62,6 +62,7 @@ public final class DefinitionValidator {
         }
         validateStateMachines(app, errors);
         validateSlas(app, errors);
+        validateSharingRules(app, errors);
         validatePermissionSet(app, errors);
         return new ProblemErrors(errors, globals);
     }
@@ -109,6 +110,50 @@ public final class DefinitionValidator {
                 errors.add(field("slas." + scope + ".onBreach.escalateTo",
                         "escalateTo is a role reference: " + sla.onBreach().escalateTo(),
                         sla.onBreach().escalateTo()));
+            }
+        }
+    }
+
+    /**
+     * Sharing-rule checks (PHASE-4 §10): the bound entity resolves, the type is the
+     * closed v1 set, the named roles exist, and hierarchy-bearing rules sit on
+     * leveled roles. Criteria expressions compile at publish.
+     */
+    private static void validateSharingRules(AppDefinition app,
+                                             List<ProblemErrors.FieldError> errors) {
+        for (SharingRuleDefinition rule : app.permissionSet().sharingRules()) {
+            String scope = "permissionSet.sharingRules[" + rule.entity() + ":" + rule.type() + "]";
+            if (rule.entity() == null || app.entity(rule.entity() == null ? "" : rule.entity()).isEmpty()) {
+                errors.add(field(scope + ".entity",
+                        "sharing rule must bind to an entity of the app: " + rule.entity(),
+                        rule.entity()));
+                continue;
+            }
+            if (rule.type() == null || !SharingRuleDefinition.TYPES.contains(rule.type())) {
+                errors.add(field(scope + ".type",
+                        "sharing rule type must be one of " + SharingRuleDefinition.TYPES,
+                        rule.type()));
+            }
+            for (String role : rule.roles()) {
+                if (app.permissionSet().role(role).isEmpty()) {
+                    errors.add(field(scope + ".roles",
+                            "sharing rule names an unknown role: " + role, role));
+                }
+            }
+            if (SharingRuleDefinition.ROLE_HIERARCHY.equals(rule.type())) {
+                for (String role : rule.roles()) {
+                    var definition = app.permissionSet().role(role);
+                    if (definition.isPresent() && definition.get().level() == null) {
+                        errors.add(field(scope + ".roles",
+                                "roleHierarchy rules require leveled roles — " + role
+                                        + " carries no level (§10)", role));
+                    }
+                }
+            }
+            if (SharingRuleDefinition.CRITERIA.equals(rule.type())
+                    && (rule.criteria() == null || rule.criteria().isBlank())) {
+                errors.add(field(scope + ".criteria",
+                        "criteria rules require a match expression", null));
             }
         }
     }
