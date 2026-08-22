@@ -72,10 +72,12 @@ services:
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENERS: PLAINTEXT://:9092,INTERNAL://:29092,CONTROLLER://:9093
+      # Host-run services use localhost:9092; in-network consumers (kafka-exporter)
+      # use the INTERNAL listener — advertised names must match where each client lives.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -137,6 +139,59 @@ services:
       retries: 12
     restart: unless-stopped
 
+  # --- PHASE-3 §9 expansion: the tracing/log backends + Kafka lag exporter ---
+
+  tempo:
+    image: docker.io/grafana/tempo:2.10.0
+    container_name: novaforge-tempo
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    ports:
+      # Tempo API (Grafana reaches it in-network; the host port is for inspection).
+      - "3200:3200"
+      # OTLP ingest from the host-run services (direct-to, no collector — §13 Q4).
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+      - ./observability/tempo/tempo.yml:/etc/tempo/tempo.yml:ro,Z
+      - tempo-data:/var/tempo
+    restart: unless-stopped
+
+  loki:
+    image: docker.io/grafana/loki:3.6.1
+    container_name: novaforge-loki
+    command: ["-config.file=/etc/loki/loki.yml"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./observability/loki/loki.yml:/etc/loki/loki.yml:ro,Z
+      - loki-data:/loki
+    restart: unless-stopped
+
+  promtail:
+    image: docker.io/grafana/promtail:3.6.1
+    container_name: novaforge-promtail
+    command: ["-config.file=/etc/promtail/promtail.yml"]
+    volumes:
+      - ./observability/promtail/promtail.yml:/etc/promtail/promtail.yml:ro,Z
+      - promtail-data:/var/lib/promtail
+      # Host services write their file logs here (logging.file.name defaults to
+      # /tmp/novaforge/logs). Rootless podman mounts the host dir read-only.
+      - "${NOVAFORGE_LOG_DIR:-/tmp/novaforge/logs}:/var/log/novaforge:ro"
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  kafka-exporter:
+    image: docker.io/danielqsj/kafka-exporter:v1.9.0
+    container_name: novaforge-kafka-exporter
+    command: ["--kafka.server=kafka:29092"]
+    ports:
+      - "9308:9308"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   keycloak-data:
@@ -144,3 +199,6 @@ volumes:
   kafka-data:
   prometheus-data:
   grafana-data:
+  tempo-data:
+  loki-data:
+  promtail-data:

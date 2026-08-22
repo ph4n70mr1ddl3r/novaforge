@@ -53,17 +53,20 @@ public class TestRunner {
     private final RestClient auth;
     private final String clientId;
     private final String clientSecret;
+    private final io.micrometer.core.instrument.MeterRegistry suiteRuns;
 
     public TestRunner(@Value("${novaforge.runtime.url:http://localhost:8083}") String runtimeUrl,
                       @Value("${novaforge.metadata.url:http://localhost:8081}") String metadataUrl,
                       @Value("${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}") String issuer,
                       @Value("${novaforge.auth.service-client.id:novaforge-runtime}") String clientId,
-                      @Value("${novaforge.auth.service-client.secret:novaforge-runtime-secret}") String clientSecret) {
+                      @Value("${novaforge.auth.service-client.secret:novaforge-runtime-secret}") String clientSecret,
+                      io.micrometer.core.instrument.MeterRegistry suiteRuns) {
         this.runtime = RestClient.builder().baseUrl(runtimeUrl).build();
         this.metadata = RestClient.builder().baseUrl(metadataUrl).build();
         this.auth = RestClient.builder().baseUrl(issuer).build();
         this.clientId = clientId;
         this.clientSecret = clientSecret;
+        this.suiteRuns = suiteRuns;
     }
 
     /** One suite run: scratch tenant → candidate publish → cases → verdict. */
@@ -110,6 +113,11 @@ public class TestRunner {
             caseResults.add(runCase(testCase, rolePasswords, frozenAt));
         }
         boolean green = caseResults.stream().allMatch(r -> Boolean.TRUE.equals(r.get("passed")));
+        // §9 suite pass-rate telemetry — the promotion gate's health at a glance.
+        suiteRuns.counter("novaforge.suite.runs",
+                        "app", candidate.apiName() == null ? "unknown" : candidate.apiName(),
+                        "outcome", green ? "green" : "red")
+                .increment();
         Map<String, Object> artifact = new LinkedHashMap<>();
         artifact.put("runId", runId);
         artifact.put("suite", suite.apiName());

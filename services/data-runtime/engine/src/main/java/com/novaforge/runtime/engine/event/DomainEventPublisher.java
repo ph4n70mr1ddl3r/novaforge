@@ -1,6 +1,7 @@
 package com.novaforge.runtime.engine.event;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -18,22 +19,45 @@ public interface DomainEventPublisher {
 
     void publish(DomainEvent event);
 
+    /**
+     * Emits with envelope extensions (PHASE-3 §2 retry leg): the metadata map rides the
+     * outbox payload alongside the envelope fields — {@code hook.retry} events carry the
+     * trigger, hook, kind, attempt, and error this way. Bindings without an extensions
+     * concept collapse to {@link #publish(DomainEvent)}.
+     */
+    default void publish(DomainEvent event, Map<String, Object> metadata) {
+        publish(event);
+    }
+
     /** Phase 1 binding: records events in memory for test observation. */
     class Recording implements DomainEventPublisher {
 
-        private final List<DomainEvent> events = new CopyOnWriteArrayList<>();
+        /** One captured emission: the envelope plus its extensions, when present. */
+        public record Captured(DomainEvent event, Map<String, Object> metadata) {
+        }
+
+        private final List<Captured> captured = new CopyOnWriteArrayList<>();
 
         @Override
         public void publish(DomainEvent event) {
-            events.add(event);
+            publish(event, Map.of());
+        }
+
+        @Override
+        public void publish(DomainEvent event, Map<String, Object> metadata) {
+            captured.add(new Captured(event, Map.copyOf(metadata)));
         }
 
         public List<DomainEvent> events() {
-            return List.copyOf(events);
+            return captured.stream().map(Captured::event).toList();
+        }
+
+        public List<Captured> captured() {
+            return List.copyOf(captured);
         }
 
         public void clear() {
-            events.clear();
+            captured.clear();
         }
     }
 }

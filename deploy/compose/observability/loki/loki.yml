@@ -1,0 +1,32 @@
+# Loki — the log backend (PHASE-3 §9): promtail pushes host-service log lines here.
+# Single-binary local deployment; schema v13/tsdb on the loki-data volume.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: "2026-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Local dev: service restarts can emit older lines; accept them.
+  reject_old_samples: false

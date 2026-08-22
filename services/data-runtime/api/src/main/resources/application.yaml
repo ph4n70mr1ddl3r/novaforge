@@ -22,6 +22,11 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       acks: all
+    consumer:
+      group-id: novaforge-hook-retry
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
 
 server:
   port: 8083
@@ -35,8 +40,18 @@ management:
     health:
       probes:
         enabled: true
+  opentelemetry:
+    tracing:
+      # Tempo direct-to (PHASE-3 §9, §13 Q4 — no collector in between).
+      sampler: ${NOVAFORGE_TRACE_SAMPLER:always_on}
+      export:
+        otlp:
+          endpoint: ${NOVAFORGE_TEMPO_ENDPOINT:http://localhost:4318/v1/traces}
 
 logging:
+  file:
+    # Promtail tails this shared dir into Loki (PHASE-3 §9).
+    name: ${NOVAFORGE_LOG_DIR:/tmp/novaforge/logs}/${spring.application.name}.log
   pattern:
     level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
 
@@ -44,6 +59,12 @@ novaforge:
   events:
     relay-interval-ms: ${NOVAFORGE_RELAY_INTERVAL_MS:500}
     relay-batch: 100
+  hooks:
+    retry:
+      # After-hook retry leg (PHASE-3 §2): bounded attempts, exponential backoff.
+      max-attempts: ${NOVAFORGE_HOOK_RETRY_MAX:8}
+      backoff-base-ms: ${NOVAFORGE_HOOK_RETRY_BACKOFF_MS:5000}
+      scan-interval-ms: ${NOVAFORGE_HOOK_RETRY_SCAN_MS:2000}
   metadata-service:
     url: ${NOVAFORGE_METADATA_URL:http://localhost:8081}
   script-engine:

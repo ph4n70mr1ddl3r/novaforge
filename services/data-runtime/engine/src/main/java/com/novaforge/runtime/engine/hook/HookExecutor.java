@@ -75,7 +75,11 @@ public class HookExecutor {
     }
 
     /** Result of a trigger run: aborted (before-hooks) or recorded retries (after). */
-    public record Outcome(boolean aborted, List<String> retryQueue) {
+    public record Outcome(boolean aborted, List<Retry> retryQueue) {
+
+        /** One failed after-hook, queued for the spine-driven retry leg (§2). */
+        public record Retry(String hook, String kind, String error) {
+        }
 
         static final Outcome CLEAN = new Outcome(false, List.of());
     }
@@ -83,33 +87,71 @@ public class HookExecutor {
     public Outcome runTrigger(AppDefinition app, EntityHandle handle, UUID tenantId,
                               UUID recordId, Map<String, Object> data, String trigger,
                               UUID systemPrincipal, HookSink sink) {
-        List<String> retries = new java.util.ArrayList<>();
+        List<Outcome.Retry> retries = new java.util.ArrayList<>();
         for (HookRule hook : handle.entity().hooks()) {
             if (!trigger.equals(hook.trigger())) {
                 continue;
             }
             try {
-                if (hook.script() != null) {
-                    counted(handle, trigger, "script");
-                    runScriptHook(handle, recordId, data, trigger, hook);
-                } else {
-                    counted(handle, trigger, "flow");
-                    executeFlow(app, handle, tenantId, recordId, data, hook.flow(),
-                            systemPrincipal, 0, sink);
-                }
-            } catch (PlatformException e) {
-                // before-hooks abort (§2.5); after-hooks record for retry — see the
-                // known limitation note in the phase log: the retry consumer is the
-                // Phase 3 remainder, uniform for flows and scripts.
+                runOne(app, handle, tenantId, recordId, data, trigger, hook,
+                        systemPrincipal, sink);
+            } catch (RuntimeException e) {
+                // before-hooks abort (§2.5); after-hooks ride the spine for retry —
+                // never lost, never blocking the write (§2 failure policy).
                 if (trigger.startsWith("before")) {
                     throw e;   // abort the transaction (§2.5)
                 }
                 LOG.warn("after-hook {} failed on {}: {} (recorded for retry)",
                         hook.name(), handle.entityKey(), e.getMessage());
-                retries.add(hook.name());
+                retries.add(new Outcome.Retry(hook.name(),
+                        hook.script() == null ? "flow" : "script", e.getMessage()));
             }
         }
         return retries.isEmpty() ? Outcome.CLEAN : new Outcome(false, retries);
+    }
+
+    /**
+     * The retry leg's entry point (§2 failure policy): re-drives one named after-hook
+     * against the record's current state, as the per-app system principal — the
+     * identical context to the original execution (§13 Q1). Returns false when the hook
+     * no longer exists in the published definition (republish drift) — the caller parks
+     * the retry rather than loop on a hook that can never run again.
+     */
+    public boolean runOneByName(AppDefinition app, EntityHandle handle, UUID tenantId,
+                                UUID recordId, Map<String, Object> data, String trigger,
+                                String hookName, UUID systemPrincipal, HookSink sink) {
+        for (HookRule hook : handle.entity().hooks()) {
+            if (trigger.equals(hook.trigger()) && hookName.equals(hook.name())) {
+                runOne(app, handle, tenantId, recordId, data, trigger, hook,
+                        systemPrincipal, sink);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void runOne(AppDefinition app, EntityHandle handle, UUID tenantId,
+                        UUID recordId, Map<String, Object> data, String trigger,
+                        HookRule hook, UUID systemPrincipal, HookSink sink) {
+        String kind = hook.script() == null ? "flow" : "script";
+        counted(handle, trigger, kind);
+        // §9 hook-duration histogram — the write path's per-trigger latency shape.
+        io.micrometer.core.instrument.Timer.Sample sample =
+                io.micrometer.core.instrument.Timer.start(meters);
+        try {
+            if (hook.script() != null) {
+                runScriptHook(handle, recordId, data, trigger, hook);
+            } else {
+                executeFlow(app, handle, tenantId, recordId, data, hook.flow(),
+                        systemPrincipal, 0, sink);
+            }
+        } finally {
+            sample.stop(io.micrometer.core.instrument.Timer
+                    .builder("novaforge.hook.duration")
+                    .tag("trigger", trigger).tag("kind", kind)
+                    .description("Hook execution duration (flows and scripts alike)")
+                    .register(meters));
+        }
     }
 
     /**

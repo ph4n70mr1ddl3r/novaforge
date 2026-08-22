@@ -178,13 +178,50 @@ persist → event seam → shaped projection):
 - **T6 acceptance pinned**: a capped script (infinite loop, getter bomb, heap hog)
   dies at its budget and the service stays on its feet; host access closed;
   authorization verdicts (FORBIDDEN et al.) survive the sandbox boundary
-- known limitation (pre-dates T6, uniform for flows): after-hook failures are
-  recorded (WARN + `Outcome.retryQueue`) but the retry consumer on the spine is the
-  Phase 3 remainder — see §2's failure policy for the pinned semantics
 
-**Not implemented (Phase 3 remainder):** the after-hook retry consumer (§2's spine
-leg — the outcome queue exists, nothing re-drives it yet) and the Tempo/Loki
-observability expansion (§9).
+**Implemented — §2 failure policy, the retry leg (phase close):**
+- after-hook failures ride the spine out of the write's own transaction: the engine
+  emits `hook.retry` outbox rows (trigger, hook, kind, attempt, error in the payload
+  envelope) — never lost, never blocking the write; the relay publishes them to
+  `novaforge.hook` (family topic)
+- the retry consumer on the spine (`HookRetryConsumer`, group `novaforge-hook-retry`)
+  claims events idempotently — the spine's event id is the `hook_retry_log` PK, so
+  at-least-once redelivery collapses
+- the scanner re-drives due rows through the real write path
+  (`RecordEngine.retryAfterHook`): the record's **current** state, the per-app system
+  principal — the identical context to the original execution (§13 Q1) — under
+  exponential backoff (base 5 s, ×2 per attempt, capped 10 min, 8 attempts default),
+  then parks durably (never silently dropped; `novaforge.hook.retry.outcome{result}`
+  + a pending gauge)
+- script-kind failures park at consume time by design: scripts are caller-context
+  only (ADR-003 #2) and the spine has no user token to relay — parking keeps the
+  failure visible instead of silently escalating to a service account
+- non-convergent retries park immediately: hook gone from the republished definition,
+  record since deleted
+
+**Implemented — §9 observability expansion (phase close):**
+- Tempo 2.10 (OTLP gRPC 4317 + HTTP 4318) and Loki 3.6 + promtail join the compose
+  stack; every service exports spans OTLP-direct to Tempo (no collector — §13 Q4).
+  Boot 4's modular tracing wiring: `spring-boot-micrometer-tracing-opentelemetry`
+  (the autoconfiguration) + `micrometer-tracing-bridge-otel` + the pinned
+  `io.opentelemetry:opentelemetry-exporter-otlp` (the OTLP autoconfig's
+  `@ConditionalOnClass` — Boot's BOM doesn't manage it), configured under
+  `management.opentelemetry.tracing.*` with the sampler switchable
+  (`NOVAFORGE_TRACE_SAMPLER`, default always-on for local)
+- logs ship to Loki: services file-log to a shared dir
+  (`NOVAFORGE_LOG_DIR`, default `/tmp/novaforge/logs`) that promtail tails with a
+  per-service label; the Loki datasource derives trace-id deep links into Tempo from
+  the shared `LEVEL [service,traceId,spanId]` pattern
+- kafka-exporter joins (via a new in-network Kafka `INTERNAL` listener — advertised
+  listeners must match where each client lives) and Prometheus scrapes it
+- new dashboards: the "NovaForge / Phase 3" board — Kafka consumer lag, hook-duration
+  histograms (`novaforge.hook.duration{trigger,kind}` — new Timer in the executor),
+  script ratio per app version, suite pass rates (`novaforge.suite.runs{app,outcome}`
+  — new counter in the harness runner), after-hook retry outcomes + backlog
+
+**Phase 3 closed:** all §1–§9 surfaces implemented. The environment track's live
+Kind-cluster bring-up remains the one outstanding operational check (declaratively
+validated; carried from Phase 1).
 
 ## Phases 4–8 ⬜
 

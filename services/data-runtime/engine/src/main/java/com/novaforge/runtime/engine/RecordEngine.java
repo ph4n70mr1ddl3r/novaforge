@@ -267,7 +267,60 @@ public class RecordEngine {
         if (handle.entity().hooks().isEmpty()) {
             return;
         }
-        hooks.runTrigger(app, handle, tenantId, recordId, data, trigger, systemPrincipal, hookSink);
+        HookExecutor.Outcome outcome = hooks.runTrigger(app, handle, tenantId, recordId,
+                data, trigger, systemPrincipal, hookSink);
+        // §2 failure policy: after-hook failures ride the spine as hook.retry outbox
+        // rows — same transaction as the write, so the failure is never lost and the
+        // spine's retry consumer re-drives it (idempotently, bounded).
+        for (HookExecutor.Outcome.Retry retry : outcome.retryQueue()) {
+            events.publish(new DomainEventPublisher.DomainEvent("hook.retry", tenantId,
+                    handle.entityKey(), recordId, systemPrincipal, Instant.now().toString()),
+                    Map.of("trigger", trigger, "hook", retry.hook(), "kind", retry.kind(),
+                            "attempt", 1, "error", String.valueOf(retry.error())));
+        }
+    }
+
+    /** The retry leg's terminal dispositions (§2) — the scanner maps these to row states. */
+    public enum RetryOutcome {
+
+        /** The hook re-ran clean against the record's current state. */
+        OK,
+
+        /** The hook is gone from the published definition — retrying can never converge. */
+        HOOK_GONE,
+
+        /** The record is gone — nothing left to drive the hook against. */
+        RECORD_GONE
+    }
+
+    /**
+     * Re-drives one failed after-hook from the spine (§2 failure policy): the record's
+     * current state, the per-app system principal, the standard hook sink — the same
+     * context the original execution had. Callers bind the tenant context; failures
+     * surface as {@link PlatformException} for the scanner's attempt bookkeeping.
+     */
+    public RetryOutcome retryAfterHook(UUID tenantId, String entityApiName, UUID recordId,
+                                       String trigger, String hookName) {
+        EntityHandle handle = resolver.resolve(tenantId, entityApiName);
+        AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        boolean deletedTrigger = "afterDelete".equals(trigger);
+        RecordStore.StoredRecord current = records.find(tenantId, handle.entityKey(),
+                recordId, deletedTrigger).orElse(null);
+        if (current == null && deletedTrigger) {
+            return RetryOutcome.RECORD_GONE;   // hard-gone: nothing to re-drive against
+        }
+        if (current == null) {
+            // afterSave retry on a since-deleted record: nothing left to observe.
+            return records.find(tenantId, handle.entityKey(), recordId, true)
+                    .map(gone -> gone.deleted() ? RetryOutcome.RECORD_GONE : null)
+                    .orElseGet(() -> {
+                        throw new PlatformException(PlatformErrorCode.NOT_FOUND,
+                                entityApiName + "/" + recordId + " not found for hook retry");
+                    });
+        }
+        boolean ran = hooks.runOneByName(app, handle, tenantId, recordId, current.data(),
+                trigger, hookName, appSystemPrincipal(handle), hookSink);
+        return ran ? RetryOutcome.OK : RetryOutcome.HOOK_GONE;
     }
 
     /**

@@ -129,13 +129,15 @@ export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/run/user/$UID/podman/podman.sock
 **Full local stack:**
 
 ```bash
-# 1. Infrastructure (Keycloak, Postgres, Redis, Kafka, Prometheus, Grafana)
+# 1. Infrastructure (Keycloak, Postgres, Redis, Kafka, Prometheus, Grafana,
+#    + the Phase 3 observability expansion: Tempo, Loki, promtail, kafka-exporter)
 cd deploy/compose
 PODMAN_COMPOSE_PROVIDER=podman-compose \
 NOVAFORGE_POSTGRES_PORT=5433 podman compose -f novaforge.yaml up -d
-podman ps                                       # wait until all six report (healthy)
+podman ps                                       # wait until all report (healthy)
 
-# 2. Services (host JVMs)
+# 2. Services (host JVMs). File logging defaults to /tmp/novaforge/logs — promtail
+#    tails that dir into Loki; spans ship OTLP-direct to Tempo (localhost:4318).
 cd ../..
 NOVAFORGE_POSTGRES_PORT=5433 java -jar services/metadata-service/target/novaforge-metadata-service-*.jar &
 NOVAFORGE_POSTGRES_PORT=5433 java -jar services/data-runtime/api/target/novaforge-data-runtime-*.jar &
@@ -147,8 +149,13 @@ TOKEN=$(curl -s -X POST http://localhost:8082/realms/novaforge/protocol/openid-c
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 ```
 
-Grafana (admin/admin) at http://localhost:3000 ships the seeded "NovaForge" dashboards;
-Prometheus scrapes every service's `/actuator/prometheus`.
+Grafana (admin/admin) at http://localhost:3000 ships the seeded "NovaForge" dashboards
+(the Phase 0 service baseline plus the Phase 3 board: Kafka consumer lag, hook-duration
+histograms, script ratio per app version, suite pass rates, after-hook retry outcomes);
+Prometheus scrapes every service's `/actuator/prometheus` plus the kafka-exporter.
+Tempo (http://localhost:3200) is the OTLP trace backend — services export direct, no
+collector; Loki (http://localhost:3100) holds the shipped service logs with trace-id
+deep links into Tempo.
 
 The **Phase 1 exit demo** (create an app via the API, publish, then CRUD records with
 validations enforced) runs against that stack — see IMPLEMENTATION.md for the verified

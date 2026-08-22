@@ -24,6 +24,11 @@ public class OutboxEventPublisher implements DomainEventPublisher {
 
     @Override
     public void publish(DomainEvent event) {
+        publish(event, Map.of());
+    }
+
+    @Override
+    public void publish(DomainEvent event, Map<String, Object> metadata) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("event", event.event());
         payload.put("eventId", UUID.randomUUID().toString());
@@ -32,6 +37,7 @@ public class OutboxEventPublisher implements DomainEventPublisher {
         payload.put("recordId", event.recordId().toString());
         payload.put("actorId", event.actorId().toString());
         payload.put("occurredAt", event.occurredAt() == null ? Instant.now().toString() : event.occurredAt());
+        payload.putAll(metadata);
         outbox.append(UUID.randomUUID(), event.tenantId(), event.entityId(), event.recordId(),
                 event.event(), payload);
     }

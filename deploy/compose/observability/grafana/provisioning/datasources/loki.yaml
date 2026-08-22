@@ -1,0 +1,18 @@
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: false
+    editable: false
+    jsonData:
+      # Trace correlation (PHASE-3 §9): the shared log pattern carries
+      # "LEVEL [service,traceId,spanId]" — a detected trace id deep-links into Tempo.
+      derivedFields:
+        - name: TraceID
+          matcherRegex: ",([0-9a-f]{32}),"
+          datasourceUid: tempo
+          url: "$${__value.raw}"

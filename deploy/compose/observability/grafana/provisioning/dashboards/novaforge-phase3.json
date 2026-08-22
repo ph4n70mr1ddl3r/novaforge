@@ -1,0 +1,333 @@
+{
+ "title": "NovaForge / Phase 3",
+ "uid": "novaforge-phase3",
+ "schemaVersion": 39,
+ "version": 1,
+ "editable": true,
+ "refresh": "30s",
+ "time": {
+  "from": "now-1h",
+  "to": "now"
+ },
+ "templating": {
+  "list": [
+   {
+    "name": "DS",
+    "type": "datasource",
+    "query": "prometheus",
+    "current": {
+     "text": "Prometheus",
+     "value": "prometheus"
+    }
+   }
+  ]
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "row",
+   "title": "Event spine \u2014 Kafka",
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   }
+  },
+  {
+   "id": 2,
+   "type": "timeseries",
+   "title": "Consumer group lag (total)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (consumergroup) (kafka_consumergroup_lag)",
+     "legendFormat": "{{consumergroup}}"
+    }
+   ],
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 0,
+    "y": 1
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   }
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "Under-replicated / offline partitions",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "kafka_topic_partition_under_replicated_partition",
+     "legendFormat": "under-replicated {{topic}}"
+    },
+    {
+     "refId": "B",
+     "expr": "sum(kafka_brokers)",
+     "legendFormat": "brokers"
+    }
+   ],
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 12,
+    "y": 1
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   }
+  },
+  {
+   "id": 4,
+   "type": "row",
+   "title": "Business-logic engine \u2014 hooks & scripts",
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 8
+   }
+  },
+  {
+   "id": 5,
+   "type": "timeseries",
+   "title": "Hook duration p95 (s)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "histogram_quantile(0.95, sum by (le, trigger, kind) (rate(novaforge_hook_duration_seconds_bucket[5m])))",
+     "legendFormat": "{{trigger}} {{kind}}"
+    }
+   ],
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 9
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   }
+  },
+  {
+   "id": 6,
+   "type": "timeseries",
+   "title": "Script share of hook executions (per app/version)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (app, version) (rate(novaforge_script_executions_total[15m])) / (sum by (app, version) (rate(novaforge_script_executions_total[15m])) + sum by (app, version) (rate(novaforge_hook_executions_total{kind=\"flow\"}[15m])))",
+     "legendFormat": "{{app}} v{{version}}"
+    }
+   ],
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 8,
+    "y": 9
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   }
+  },
+  {
+   "id": 7,
+   "type": "timeseries",
+   "title": "Script outcomes (engine side)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (outcome) (rate(novaforge_script_executions_total[5m]))",
+     "legendFormat": "{{outcome}}"
+    }
+   ],
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 16,
+    "y": 9
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   }
+  },
+  {
+   "id": 8,
+   "type": "row",
+   "title": "Retry leg & suites (\u00a72 failure policy, ADR-010)",
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 16
+   }
+  },
+  {
+   "id": 9,
+   "type": "timeseries",
+   "title": "After-hook retry outcomes",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (result) (rate(novaforge_hook_retry_outcome_total[5m]))",
+     "legendFormat": "{{result}}"
+    }
+   ],
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 17
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   }
+  },
+  {
+   "id": 10,
+   "type": "stat",
+   "title": "Retry backlog (pending)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "novaforge_hook_retry_pending"
+    }
+   ],
+   "gridPos": {
+    "h": 7,
+    "w": 4,
+    "x": 8,
+    "y": 17
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area"
+   }
+  },
+  {
+   "id": 11,
+   "type": "timeseries",
+   "title": "Suite pass rate (ADR-010)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum(rate(novaforge_suite_runs_total{outcome=\"green\"}[30m])) / clamp_min(sum(rate(novaforge_suite_runs_total[30m])), 1e-9)"
+    }
+   ],
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 12,
+    "y": 17
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "min": 0,
+     "max": 1
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   }
+  }
+ ]
+}

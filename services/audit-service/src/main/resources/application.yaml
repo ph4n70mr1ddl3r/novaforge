@@ -32,7 +32,17 @@ management:
     health:
       probes:
         enabled: true
+  opentelemetry:
+    tracing:
+      # Tempo direct-to (PHASE-3 §9, §13 Q4 — no collector in between).
+      sampler: ${NOVAFORGE_TRACE_SAMPLER:always_on}
+      export:
+        otlp:
+          endpoint: ${NOVAFORGE_TEMPO_ENDPOINT:http://localhost:4318/v1/traces}
 
 logging:
+  file:
+    # Promtail tails this shared dir into Loki (PHASE-3 §9).
+    name: ${NOVAFORGE_LOG_DIR:/tmp/novaforge/logs}/${spring.application.name}.log
   pattern:
     level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"

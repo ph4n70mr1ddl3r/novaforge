@@ -25,8 +25,7 @@
     <!-- ArchUnit rules start in Phase 1 (PHASE-0 §10) -->
     <archunit.version>1.4.1</archunit.version>
     <!-- GraalVM polyglot for the Script Engine sandbox (ADR-003) -->
-    <graalvm.version>24.2.1</graalvm.version>
-  </properties>
+    <graalvm.version>24.2.1</graalvm.version>  </properties>
 
   <modules>
     <module>platform</module>
@@ -91,6 +90,11 @@
         <groupId>org.graalvm.regex</groupId>
         <artifactId>regex</artifactId>
         <version>${graalvm.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.opentelemetry</groupId>
+        <artifactId>opentelemetry-exporter-otlp</artifactId>
+        <version>${opentelemetry.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>

@@ -50,8 +50,19 @@
       <artifactId>micrometer-registry-prometheus</artifactId>
     </dependency>
     <dependency>
+      <!-- Boot 4's OTel tracing module (PHASE-3 §9): bridge + OTLP span export to
+           Tempo direct-to (management.opentelemetry.tracing.export.otlp.endpoint). -->
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-micrometer-tracing-opentelemetry</artifactId>
+    </dependency>
+    <dependency>
       <groupId>io.micrometer</groupId>
       <artifactId>micrometer-tracing-bridge-otel</artifactId>
+    </dependency>
+    <dependency>
+      <!-- OtlpHttpSpanExporter — the OTLP autoconfig's @ConditionalOnClass. -->
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-exporter-otlp</artifactId>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>

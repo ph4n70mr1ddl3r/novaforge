@@ -1,0 +1,43 @@
+# Promtail — the log shipper (PHASE-3 §9): host services write JSON-free console lines
+# to a shared dir (logging.file.name → ${NOVAFORGE_LOG_DIR}/<app>.log); promtail tails
+# that dir and pushes to Loki with a per-service label. The level regex pulls the
+# pattern-level field ("%5p [app,traceId,spanId]"); trace ids stay query-time parsed
+# (never labels — unbounded cardinality).
+
+server:
+  http_listen_port: 9080
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: novaforge
+    static_configs:
+      - targets: [localhost]
+        labels:
+          __path__: /var/log/novaforge/novaforge-gateway.log
+          service: gateway
+      - targets: [localhost]
+        labels:
+          __path__: /var/log/novaforge/novaforge-metadata-service.log
+          service: metadata-service
+      - targets: [localhost]
+        labels:
+          __path__: /var/log/novaforge/novaforge-data-runtime.log
+          service: data-runtime
+      - targets: [localhost]
+        labels:
+          __path__: /var/log/novaforge/novaforge-script-engine.log
+          service: script-engine
+      - targets: [localhost]
+        labels:
+          __path__: /var/log/novaforge/novaforge-audit-service.log
+          service: audit-service
+    pipeline_stages:
+      - regex:
+          expression: '\s(?P<level>[A-Z]+) \[[^,]+,(?P<trace>[^,]*),(?P<span>[^\]]*)\]'
+      - labels:
+          level:
