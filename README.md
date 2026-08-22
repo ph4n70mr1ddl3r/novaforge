@@ -40,7 +40,7 @@ Most no-code tools handle forms and lists well but collapse under ERP-grade requ
 | Language/Runtime | Java 21 LTS, Spring Boot 4.1.x, Spring Cloud 2025.1.x |
 | Auth | Keycloak (OIDC) |
 | Data | PostgreSQL 16 (JSONB hybrid), Redis, Kafka |
-| Workflow | Flowable 7 |
+| Workflow | Flowable 8 (embedded in Workflow Service) |
 | Scripting | GraalVM JS sandbox (CPU/memory caps, no host I/O by default) |
 | Frontend | React 19.2.x + TypeScript, metadata-driven renderer |
 | Observability | Micrometer, Prometheus, Grafana, Tempo (traces, from Phase 3), OpenTelemetry, Loki (logs — same Phase 3 expansion) |

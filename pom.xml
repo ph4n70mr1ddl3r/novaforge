@@ -29,7 +29,8 @@
     <!-- Flowable 8 = the Spring Framework 7 / Boot 4 line of the engine (ADR-004
          amended: Flowable 7.2 does not run on Boot 4; 8.0.0 is the same engine on
          the pinned stack). -->
-    <flowable.version>8.0.0</flowable.version>  </properties>
+    <flowable.version>8.0.0</flowable.version>
+  </properties>
 
   <modules>
     <module>platform</module>

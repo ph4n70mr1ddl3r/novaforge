@@ -86,7 +86,7 @@ Shared libraries (no separate service, per ARCHITECTURE.md §7): `common-core`, 
 | Databases | PostgreSQL 16 (metadata + tenant data; JSONB hybrid) |
 | Cache | Redis (metadata cache, sequences, distributed locks) |
 | Messaging | Kafka (domain events, audit, webhooks, cache invalidation) |
-| Workflow | Flowable 7 (embedded in Workflow Service) |
+| Workflow | Flowable 8 (embedded in Workflow Service; amended from Flowable 7 per ADR-004 — 7.2 does not run on Boot 4) |
 | Scripting | GraalVM JS sandbox — CPU/memory caps, no host I/O by default (escape hatch per ADR-008) |
 | Resilience | Resilience4j (circuit breakers, retries, bulkheads) |
 | API docs | OpenAPI 3 generated per service, aggregated at gateway |
