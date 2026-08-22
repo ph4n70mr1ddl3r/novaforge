@@ -93,6 +93,7 @@ public class RecordEngine {
 
         UUID id = UUID.randomUUID();
         runHooks(app, handle, tenantId, id, canonical, "beforeSave", appSystemPrincipal(handle));
+        enforceCreateState(app, handle, canonical);
         evaluateRollupsFromChildren(app, handle, children, canonical);
         persistWithChildren(tenantId, actorId, app, handle, id, canonical, children, errors);
 
@@ -133,6 +134,7 @@ public class RecordEngine {
         evaluateValidationRules(handle.entity(), merged, errors);
         reject(errors, "update " + entityApiName + "/" + id + " failed validation");
         runHooks(app, handle, tenantId, id, merged, "beforeSave", appSystemPrincipal(handle));
+        enforceTransition(app, handle, existing.data(), merged);
 
         int newVersion = records.update(tenantId, handle.entityKey(), id, merged,
                 expectedVersion, actorId);
@@ -256,6 +258,57 @@ public class RecordEngine {
     }
 
     // --- flow hooks (PHASE-3 §2) ---
+
+    /**
+     * State machines on the write path (PHASE-4 §3): metadata enforced like
+     * validations, after the beforeSave hooks so hook-driven transitions ride the
+     * same check — no bypass exists for flows, scripts, or humans.
+     */
+    private void enforceCreateState(AppDefinition app, EntityHandle handle,
+                                    Map<String, Object> data) {
+        var machine = app.stateMachineFor(handle.entity().apiName());
+        if (machine.isEmpty()) {
+            return;
+        }
+        Object current = data.get(machine.get().stateField());
+        if (current == null) {
+            data.put(machine.get().stateField(), machine.get().initial());
+        } else if (!machine.get().initial().equals(current)) {
+            throw new PlatformException(PlatformErrorCode.STATE_TRANSITION,
+                    "create must start in the initial state " + machine.get().initial()
+                            + ", got " + current);
+        }
+    }
+
+    /** A changed state field requires a listed transition with a passing guard (§3). */
+    private void enforceTransition(AppDefinition app, EntityHandle handle,
+                                   Map<String, Object> existing, Map<String, Object> data) {
+        var machine = app.stateMachineFor(handle.entity().apiName());
+        if (machine.isEmpty()) {
+            return;
+        }
+        String stateField = machine.get().stateField();
+        Object from = existing.get(stateField);
+        Object to = data.get(stateField);
+        if (java.util.Objects.equals(from, to)) {
+            return;
+        }
+        var transition = machine.get().transition(String.valueOf(from), String.valueOf(to));
+        if (transition.isEmpty()) {
+            // Terminal states admit no transitions at all (publish-validated) — this
+            // is also the terminal-frozen-state rejection.
+            throw new PlatformException(PlatformErrorCode.STATE_TRANSITION,
+                    "no transition " + from + " → " + to + " on " + machine.get().id());
+        }
+        String guard = transition.get().guard();
+        if (guard != null) {
+            Object outcome = evaluate(handle.entity(), guard, data);
+            if (!(outcome instanceof Boolean allowed) || !allowed) {
+                throw new PlatformException(PlatformErrorCode.STATE_TRANSITION,
+                        "transition " + from + " → " + to + " guard failed: " + guard);
+            }
+        }
+    }
 
     /** The per-app system principal declarative flows run as (§13 Q1 — audited). */
     private static UUID appSystemPrincipal(EntityHandle handle) {
@@ -388,6 +441,7 @@ public class RecordEngine {
         evaluateValidationRules(handle.entity(), canonical, errors);
         reject(errors, "hook create " + entityApiName + " failed validation");
         UUID id = UUID.randomUUID();
+        enforceCreateState(app, handle, canonical);
         persistWithChildren(tenantId, systemPrincipal, app, handle, id, canonical, children, errors);
         events.publish(event("record.created", tenantId, handle.entityKey(), id, systemPrincipal));
         return canonical;
@@ -412,6 +466,7 @@ public class RecordEngine {
             }
         });
         evaluateFormulas(handle.entity(), merged);
+        enforceTransition(app, handle, existing.data(), merged);
         int version = body.get("version") instanceof Number number ? number.intValue()
                 : existing.version();
         records.update(tenantId, handle.entityKey(), UUID.fromString(recordId), merged,

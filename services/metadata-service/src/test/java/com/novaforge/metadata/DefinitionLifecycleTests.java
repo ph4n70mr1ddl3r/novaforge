@@ -303,16 +303,37 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                 .andExpect(jsonPath("$.errors[0].message").value(
                         org.hamcrest.Matchers.containsString("existing field")));
 
-        // grammar-fixed ops compile fine (activation later)
+        // transitionState compiles against a bound machine (Phase 4 activation, §3)
         mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
                         .contentType("application/json").content("""
                                 { "apiName": "FixedApp", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "name", "type": "text" },
+                                               { "apiName": "status", "type": "enum",
+                                                 "values": ["DRAFT", "POSTED"] } ],
+                                  "hooks": [ { "name": "x", "trigger": "afterSave",
+                                    "flow": { "id": "s1", "op": "transitionState",
+                                      "params": { "to": "POSTED" } } } ] } ],
+                                  "stateMachines": [
+                                    { "id": "sm_thing", "entity": "Thing", "stateField": "status",
+                                      "initial": "DRAFT",
+                                      "states": [ { "name": "DRAFT" },
+                                                  { "name": "POSTED", "terminal": true } ],
+                                      "transitions": [ { "from": "DRAFT", "to": "POSTED" } ] } ] }
+                                """))
+                .andExpect(status().isOk());
+
+        // …and rejects on an entity with no machine bound (compile-checked)
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "NoMachine", "entities": [ { "apiName": "Thing",
                                   "fields": [ { "apiName": "name", "type": "text" } ],
                                   "hooks": [ { "name": "x", "trigger": "afterSave",
                                     "flow": { "id": "s1", "op": "transitionState",
-                                      "params": { "state": "POSTED" } } } ] } ] }
+                                      "params": { "to": "POSTED" } } } ] } ] }
                                 """))
-                .andExpect(status().isOk());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("requires a state machine")));
     }
 
     @Test

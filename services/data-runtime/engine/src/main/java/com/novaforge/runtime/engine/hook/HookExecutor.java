@@ -26,9 +26,10 @@ import org.springframework.stereotype.Component;
  * graphs, and script artifacts — the ADR-008 escape hatch (PHASE-3 §6, ADR-003) —
  * through the {@link ScriptClient}. Executable primitives: setField (expression),
  * createRecord/updateRecord (${…} record templates), publishEvent (payload template),
- * branch (guard), iterate (relationship body). Grammar-fixed primitives
- * (requestApproval/transitionState/callConnector) fail loudly — they activate with
- * Phases 4/6.
+ * branch (guard), iterate (relationship body), transitionState (Phase 4: a guarded
+ * field write validated by the write path's state-machine check). Grammar-fixed
+ * primitives (requestApproval until the suspension leg, callConnector until Phase 6)
+ * fail loudly.
  *
  * <p>Failure policy (ARCHITECTURE.md §2.5), uniform for flows and scripts:
  * beforeSave/beforeDelete failure aborts the transaction (the executor throws);
@@ -269,9 +270,28 @@ public class HookExecutor {
                 }
                 return byName(context, step.next());
             }
-            case "requestApproval", "transitionState" -> throw new PlatformException(
+            case "transitionState" -> {
+                // Phase 4 activation (§3): a guarded field write — the write path's
+                // state-machine enforcement validates it after the hooks run, the
+                // same check every human write goes through. No bypass exists.
+                String to = step.param("to");
+                var machine = context.app.stateMachineFor(context.handle.entity().apiName());
+                if (machine.isEmpty()) {
+                    throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                            "transitionState requires a state machine bound to "
+                                    + context.handle.entity().apiName());
+                }
+                if (machine.get().state(to).isEmpty()) {
+                    throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                            "unknown state on " + machine.get().id() + ": " + to);
+                }
+                context.data.put(machine.get().stateField(), to);
+                return byName(context, step.next());
+            }
+            case "requestApproval" -> throw new PlatformException(
                     PlatformErrorCode.VALIDATION_FAILED,
-                    step.op() + " is grammar-fixed and activates with Phase 4 (PHASE-3 §2)");
+                    "requestApproval is grammar-fixed until the durable-suspension leg "
+                            + "lands (PHASE-4 §4, T5)");
             case "callConnector" -> throw new PlatformException(
                     PlatformErrorCode.VALIDATION_FAILED,
                     "callConnector is grammar-fixed and activates with Phase 6 (PHASE-3 §2)");

@@ -198,4 +198,94 @@ class DefinitionValidatorTest {
                         .toList(),
                 app.pages(), app.settings());
     }
+
+    // --- state machines (PHASE-4 §3) ---
+
+    private static AppDefinition withMachine(AppDefinition app, String machineJson) {
+        return new AppDefinition(app.id(), app.apiName(), app.label(), app.labelI18n(),
+                app.description(), app.entities(), app.pages(), app.settings(),
+                app.permissionSet(), app.testSuites(),
+                java.util.List.of(DefinitionParser.parse(machineJson, StateMachineDefinition.class)));
+    }
+
+    private static final String VALID_MACHINE = """
+            { "id": "sm_journal", "entity": "JournalEntry", "stateField": "status",
+              "initial": "DRAFT",
+              "states": [ { "name": "DRAFT" }, { "name": "POSTED", "terminal": true } ],
+              "transitions": [ { "from": "DRAFT", "to": "POSTED" } ] }
+            """;
+
+    @Test
+    @DisplayName("rule: a well-formed state machine validates (and binds an enum field)")
+    void machineValid() {
+        assertThat(validate(withMachine(baseApp(), VALID_MACHINE)).isEmpty()).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: stateField must be an enum field on the bound entity")
+    void machineStateFieldMustBeEnum() {
+        AppDefinition broken = withMachine(baseApp(), """
+                { "id": "sm_x", "entity": "JournalEntry", "stateField": "memo",
+                  "initial": "DRAFT", "states": [ { "name": "DRAFT" } ], "transitions": [] }
+                """);
+        assertThat(mentions(validate(broken), "stateField must be an enum field")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: initial must be one of the machine's states")
+    void machineInitialKnown() {
+        AppDefinition broken = withMachine(baseApp(), """
+                { "id": "sm_x", "entity": "JournalEntry", "stateField": "status",
+                  "initial": "NOWHERE",
+                  "states": [ { "name": "DRAFT" } ], "transitions": [] }
+                """);
+        assertThat(mentions(validate(broken), "initial must be one of")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: transitions must reference known states")
+    void machineTransitionsKnown() {
+        AppDefinition broken = withMachine(baseApp(), """
+                { "id": "sm_x", "entity": "JournalEntry", "stateField": "status",
+                  "initial": "DRAFT", "states": [ { "name": "DRAFT" } ],
+                  "transitions": [ { "from": "DRAFT", "to": "GHOST" } ] }
+                """);
+        assertThat(mentions(validate(broken), "reference known states")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: terminal states admit no outgoing transitions")
+    void machineTerminalNoOutgoing() {
+        AppDefinition broken = withMachine(baseApp(), """
+                { "id": "sm_x", "entity": "JournalEntry", "stateField": "status",
+                  "initial": "DRAFT",
+                  "states": [ { "name": "DRAFT" }, { "name": "POSTED", "terminal": true } ],
+                  "transitions": [ { "from": "DRAFT", "to": "POSTED" },
+                                   { "from": "POSTED", "to": "DRAFT" } ] }
+                """);
+        assertThat(mentions(validate(broken), "admits no outgoing")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: one state machine per entity in v1")
+    void machineOnePerEntity() {
+        AppDefinition app = withMachine(baseApp(), VALID_MACHINE);
+        AppDefinition twice = new AppDefinition(app.id(), app.apiName(), app.label(),
+                app.labelI18n(), app.description(), app.entities(), app.pages(), app.settings(),
+                app.permissionSet(), app.testSuites(),
+                java.util.List.of(DefinitionParser.parse(VALID_MACHINE, StateMachineDefinition.class),
+                        DefinitionParser.parse(VALID_MACHINE, StateMachineDefinition.class)));
+        assertThat(mentions(validate(twice), "one state machine per entity")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: states must be values of the enum field")
+    void machineStatesWithinEnum() {
+        AppDefinition broken = withMachine(baseApp(), """
+                { "id": "sm_x", "entity": "JournalEntry", "stateField": "status",
+                  "initial": "DRAFT", "states": [ { "name": "DRAFT" }, { "name": "FLYING" } ],
+                  "transitions": [] }
+                """);
+        assertThat(mentions(validate(broken), "value of the enum field")).isTrue();
+    }
 }

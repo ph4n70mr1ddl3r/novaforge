@@ -223,6 +223,39 @@ persist → event seam → shaped projection):
 Kind-cluster bring-up remains the one outstanding operational check (declaratively
 validated; carried from Phase 1).
 
-## Phases 4–8 ⬜
+## Phase 4 — Workflow & Approvals ◐ (spec: PHASE-4-WORKFLOW-APPROVALS.md)
 
-Not started. `requestApproval`/`transitionState` grammar notes live in the specs.
+**Implemented — T2+T3 state machines (§3):**
+- `StateMachineDefinition` (`{id, entity, stateField, initial, states, transitions}`
+  with terminal flags and optional transition guards) rides the app definition as a
+  first-class branch — one machine per entity in v1
+- save validation: bound entity resolves, `stateField` is an enum field whose values
+  contain every state, `initial` ∈ states, transitions reference known states,
+  terminal states admit no outgoing edges, UPPER_SNAKE state names
+- publish compilation: transition guards compile through the FlowCompiler's
+  expression check (the same JVM engine and record-context policy as every other
+  slot); `transitionState` steps compile-check their bound machine + target state
+- write-path enforcement (the §3 pin — metadata enforced by the Data Runtime, like
+  validations): create pins the initial state (a differing explicit value — or a
+  hook-driven one — rejects with `STATE_TRANSITION` 4010); an update changing the
+  state field requires a listed transition with a passing guard; terminal states
+  freeze the state field only (whole-record freezing is Phase 7's
+  `freezeOnTerminal`); nested engine writes (`updateRecord` from hooks) pass the
+  same check
+- `transitionState` primitive activated: a guarded field write into the record
+  before persist — the write path's enforcement validates it, so flows, scripts,
+  and humans share one check with no bypass
+- error codes 4010 `STATE_TRANSITION` and 4011 `SOD_VIOLATION` joined the registry
+  (§2; the seed set is a floor, not a ceiling)
+- suites: `StateMachineTests` (§14 item 2 — create-pins-initial, hook-driven
+  transitions ride the check, guard failures reject, terminal semantics, nested
+  writes) + seven validator rules in `DefinitionValidatorTest`
+
+**Not implemented (Phase 4 remainder):** the Workflow Service skeleton (T1), tasks +
+inbox (T4), `requestApproval` durable suspension + SoD (T5), SLAs/escalation (T6),
+Scheduler (T7), Notification v1 (T8), sharing rules (T9), builder/runtime UI (T10),
+harness growth (T11).
+
+## Phases 5–8 ⬜
+
+Not started. `requestApproval`/`callConnector` grammar notes live in the specs.

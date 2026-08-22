@@ -12,6 +12,8 @@ public enum PlatformErrorCode implements ErrorCode {
     TENANT_MISSING("4001", 400),
     FORBIDDEN("4003", 403),
     NOT_FOUND("4004", 404),
+    STATE_TRANSITION("4010", 400),
+    SOD_VIOLATION("4011", 400),
     CONFLICT_VERSION("4090", 409),
     INTERNAL("5000", 500);
 

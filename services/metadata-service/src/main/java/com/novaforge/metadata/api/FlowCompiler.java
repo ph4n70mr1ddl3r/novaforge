@@ -38,9 +38,33 @@ final class FlowCompiler {
                 new FlowCompiler().checkHook(app, entity, hook, findings);
             }
         }
+        checkStateMachines(app, findings);
         if (!findings.isEmpty()) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "hook compilation failed", new ProblemErrors(findings, java.util.List.of()));
+        }
+    }
+
+    /**
+     * State-machine guards compile at publish (PHASE-4 §3) — the same JVM engine and
+     * record-context policy as every other expression slot.
+     */
+    private static void checkStateMachines(AppDefinition app,
+                                           java.util.List<ProblemErrors.FieldError> findings) {
+        for (com.novaforge.metadata.StateMachineDefinition machine : app.stateMachines()) {
+            var entity = app.entity(machine.entity() == null ? "" : machine.entity());
+            if (entity.isEmpty()) {
+                continue;   // structural rule — the save validator reports it
+            }
+            String scope = "stateMachine[" + machine.id() + "]";
+            for (com.novaforge.metadata.StateMachineDefinition.Transition transition
+                    : machine.transitions()) {
+                if (transition.guard() != null) {
+                    new FlowCompiler().checkExpression(transition.guard(),
+                            scope + ".transition[" + transition.from() + "->" + transition.to() + "]",
+                            entity.get(), findings);
+                }
+            }
         }
     }
 
@@ -208,9 +232,25 @@ final class FlowCompiler {
                             "publishEvent requires a dotted event name: " + name, name));
                 }
             }
+            case "transitionState" -> {
+                // Phase 4 activation (§3): a guarded field write through the same
+                // write-path check — the entity must carry a machine and the target
+                // must be one of its states.
+                String to = step.param("to");
+                var machine = app.stateMachineFor(entity.apiName());
+                if (machine.isEmpty()) {
+                    errors.add(new ProblemErrors.FieldError(where,
+                            "transitionState requires a state machine bound to "
+                                    + entity.apiName(), null));
+                } else if (to == null || machine.get().state(to).isEmpty()) {
+                    errors.add(new ProblemErrors.FieldError(where,
+                            "transitionState target must be a state of "
+                                    + machine.get().id() + ": " + to, to));
+                }
+            }
             default -> {
-                // requestApproval / transitionState / callConnector: grammar-fixed;
-                // execution activates with Phase 4/6 — nothing further to check.
+                // requestApproval / callConnector: grammar-fixed; execution activates
+                // with Phase 4 (T5) / Phase 6 — nothing further to check.
             }
         }
         if (!"branch".equals(step.op())

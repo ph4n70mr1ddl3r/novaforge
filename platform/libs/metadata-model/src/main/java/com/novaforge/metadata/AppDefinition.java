@@ -26,7 +26,8 @@ public record AppDefinition(
         List<PageDefinition> pages,
         SettingsDefinition settings,
         PermissionSet permissionSet,
-        List<TestSuiteDefinition> testSuites) {
+        List<TestSuiteDefinition> testSuites,
+        List<StateMachineDefinition> stateMachines) {
 
     public AppDefinition {
         entities = entities == null ? List.of() : List.copyOf(entities);
@@ -35,6 +36,7 @@ public record AppDefinition(
         settings = settings == null ? new SettingsDefinition(null, null, null) : settings;
         permissionSet = permissionSet == null ? new PermissionSet(null, null, null) : permissionSet;
         testSuites = testSuites == null ? List.of() : List.copyOf(testSuites);
+        stateMachines = stateMachines == null ? List.of() : List.copyOf(stateMachines);
     }
 
     public java.util.Optional<TestSuiteDefinition> testSuite(String apiName) {
@@ -43,6 +45,13 @@ public record AppDefinition(
 
     public java.util.Optional<EntityDefinition> entity(String apiName) {
         return entities.stream().filter(e -> e.apiName().equals(apiName)).findFirst();
+    }
+
+    /** The machine bound to an entity, if one exists (one per entity in v1). */
+    public java.util.Optional<StateMachineDefinition> stateMachineFor(String entityApiName) {
+        return stateMachines.stream()
+                .filter(m -> m.entity().equals(entityApiName))
+                .findFirst();
     }
 
     /** Constructor without the Permissions branch (pre-PermissionSet drafts). */
@@ -60,6 +69,15 @@ public record AppDefinition(
                          PermissionSet permissionSet) {
         this(id, apiName, label, labelI18n, description, entities, pages, settings,
                 permissionSet, List.of());
+    }
+
+    /** Constructor without the state-machines branch (pre-Phase-4 drafts). */
+    public AppDefinition(String id, String apiName, String label, Map<String, String> labelI18n,
+                         String description, List<EntityDefinition> entities,
+                         List<PageDefinition> pages, SettingsDefinition settings,
+                         PermissionSet permissionSet, List<TestSuiteDefinition> testSuites) {
+        this(id, apiName, label, labelI18n, description, entities, pages, settings,
+                permissionSet, testSuites, List.of());
     }
 
     /** Page definition (reserved slot; authored from Phase 2 per PHASE-2 §3). */

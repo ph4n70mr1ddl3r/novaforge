@@ -23,6 +23,9 @@ public final class DefinitionValidator {
     /** Field/relationship/sequence apiNames: camelCase. */
     public static final Pattern CAMEL_CASE = Pattern.compile("^[a-z][A-Za-z0-9]*$");
 
+    /** State names (PHASE-4 §3) — the ERP convention (DRAFT, SUBMITTED, POSTED). */
+    public static final Pattern UPPER_SNAKE = Pattern.compile("^[A-Z][A-Z0-9_]*$");
+
     /** System field names the record API exposes; authored fields must not shadow them. */
     public static final Set<String> RESERVED_FIELD_NAMES = Set.of(
             "id", "version", "createdAt", "updatedAt", "createdBy", "updatedBy", "deleted");
@@ -57,8 +60,87 @@ public final class DefinitionValidator {
         for (EntityDefinition entity : app.entities()) {
             validateEntity(app, entity, errors);
         }
+        validateStateMachines(app, errors);
         validatePermissionSet(app, errors);
         return new ProblemErrors(errors, globals);
+    }
+
+    /**
+     * State-machine rules (PHASE-4 §3): the bound entity and enum stateField exist,
+     * initial ∈ states, transitions reference known states, terminal states have no
+     * outgoing edges, one machine per entity. Guard expressions compile at publish
+     * (the FlowCompiler rides the same JVM engine as every other slot).
+     */
+    private static void validateStateMachines(AppDefinition app,
+                                              List<ProblemErrors.FieldError> errors) {
+        Set<String> boundEntities = new HashSet<>();
+        for (StateMachineDefinition machine : app.stateMachines()) {
+            String scope = machine.id() != null ? machine.id() : "stateMachine";
+            var entity = app.entity(machine.entity() == null ? "" : machine.entity());
+            if (entity.isEmpty()) {
+                errors.add(field("stateMachines." + scope + ".entity",
+                        "state machine must bind to an entity of the app: " + machine.entity(),
+                        machine.entity()));
+                continue;
+            }
+            if (!boundEntities.add(machine.entity())) {
+                errors.add(field("stateMachines." + scope,
+                        "one state machine per entity in v1: " + machine.entity(),
+                        machine.entity()));
+            }
+            var stateField = entity.get().field(machine.stateField() == null ? "" : machine.stateField());
+            if (stateField.isEmpty() || stateField.get().type() != FieldType.ENUM) {
+                errors.add(field("stateMachines." + scope + ".stateField",
+                        "stateField must be an enum field on " + machine.entity() + ": "
+                                + machine.stateField(), machine.stateField()));
+            } else if (stateField.get().values() != null) {
+                for (StateMachineDefinition.State state : machine.states()) {
+                    if (state.name() != null && !stateField.get().values().contains(state.name())) {
+                        errors.add(field("stateMachines." + scope + ".states",
+                                "state must be a value of the enum field " + machine.stateField()
+                                        + ": " + state.name(), state.name()));
+                    }
+                }
+            }
+            if (machine.states().isEmpty()) {
+                errors.add(field("stateMachines." + scope + ".states",
+                        "a state machine requires at least one state", null));
+            }
+            Set<String> names = new HashSet<>();
+            for (StateMachineDefinition.State state : machine.states()) {
+                if (state.name() == null || !UPPER_SNAKE.matcher(state.name()).matches()) {
+                    errors.add(field("stateMachines." + scope + ".states",
+                            "state names must be UPPER_SNAKE: " + state.name(), state.name()));
+                } else if (!names.add(state.name())) {
+                    errors.add(field("stateMachines." + scope + ".states",
+                            "duplicate state name: " + state.name(), state.name()));
+                }
+            }
+            if (machine.initial() == null || !names.contains(machine.initial())) {
+                errors.add(field("stateMachines." + scope + ".initial",
+                        "initial must be one of the machine's states: " + machine.initial(),
+                        machine.initial()));
+            }
+            for (StateMachineDefinition.State state : machine.states()) {
+                if (state.terminalOn()) {
+                    for (StateMachineDefinition.Transition transition : machine.transitions()) {
+                        if (state.name() != null && state.name().equals(transition.from())) {
+                            errors.add(field("stateMachines." + scope + ".transitions",
+                                    "terminal state " + state.name() + " admits no outgoing "
+                                            + "transitions", transition.from() + "→" + transition.to()));
+                        }
+                    }
+                }
+            }
+            for (StateMachineDefinition.Transition transition : machine.transitions()) {
+                if (transition.from() == null || !names.contains(transition.from())
+                        || transition.to() == null || !names.contains(transition.to())) {
+                    errors.add(field("stateMachines." + scope + ".transitions",
+                            "transition must reference known states: "
+                                    + transition.from() + "→" + transition.to(), null));
+                }
+            }
+        }
     }
 
     /** PermissionSet rules (PHASE-2 §9): roles unique, entities/fields resolve, access ∈ {readonly, hidden}. */

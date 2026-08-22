@@ -24,12 +24,14 @@ class PlatformErrorCodeTest {
     }
 
     @Test
-    @DisplayName("seed set matches PHASE-0 §5.2 exactly")
+    @DisplayName("registry = the PHASE-0 §5.2 seed plus the codes later phases append")
     void seedSet() {
+        // The seed is a floor, not a ceiling (PHASE-4 §2 appends 4010/4011).
         assertThat(Arrays.stream(PlatformErrorCode.values()).map(PlatformErrorCode::name))
                 .containsExactlyInAnyOrder(
                         "VALIDATION_FAILED", "TENANT_MISSING", "FORBIDDEN",
-                        "NOT_FOUND", "CONFLICT_VERSION", "INTERNAL");
+                        "NOT_FOUND", "STATE_TRANSITION", "SOD_VIOLATION",
+                        "CONFLICT_VERSION", "INTERNAL");
     }
 
     @Test
