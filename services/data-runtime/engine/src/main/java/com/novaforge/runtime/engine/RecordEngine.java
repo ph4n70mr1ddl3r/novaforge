@@ -361,6 +361,24 @@ public class RecordEngine {
                 onReject, approved, appSystemPrincipal(handle), hookSink);
     }
 
+    /**
+     * The Scheduler's flow target (PHASE-4 §7): runs one named hook in the synthetic
+     * {@code scheduled} trigger context — no record, empty bindings, the per-app
+     * system principal. Flows here create records, publish events, or drive other
+     * entities; own-record references resolve empty.
+     */
+    public void runScheduledHook(UUID tenantId, String entityApiName, String hookName) {
+        EntityHandle handle = resolver.resolve(tenantId, entityApiName);
+        AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        HookRule hook = handle.entity().hooks().stream()
+                .filter(h -> hookName.equals(h.name()))
+                .findFirst()
+                .orElseThrow(() -> new PlatformException(PlatformErrorCode.NOT_FOUND,
+                        "hook " + hookName + " not found on " + entityApiName));
+        hooks.runTrigger(app, handle, tenantId, null, new LinkedHashMap<>(), "scheduled",
+                appSystemPrincipal(handle), null, hookSink);
+    }
+
     /** The retry leg's terminal dispositions (§2) — the scanner maps these to row states. */
     public enum RetryOutcome {
 

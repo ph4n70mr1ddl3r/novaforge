@@ -28,7 +28,8 @@ public record AppDefinition(
         PermissionSet permissionSet,
         List<TestSuiteDefinition> testSuites,
         List<StateMachineDefinition> stateMachines,
-        List<SlaDefinition> slas) {
+        List<SlaDefinition> slas,
+        List<ScheduledJobDefinition> jobs) {
 
     public AppDefinition {
         entities = entities == null ? List.of() : List.copyOf(entities);
@@ -39,6 +40,7 @@ public record AppDefinition(
         testSuites = testSuites == null ? List.of() : List.copyOf(testSuites);
         stateMachines = stateMachines == null ? List.of() : List.copyOf(stateMachines);
         slas = slas == null ? List.of() : List.copyOf(slas);
+        jobs = jobs == null ? List.of() : List.copyOf(jobs);
     }
 
     public java.util.Optional<TestSuiteDefinition> testSuite(String apiName) {
@@ -49,9 +51,9 @@ public record AppDefinition(
         return entities.stream().filter(e -> e.apiName().equals(apiName)).findFirst();
     }
 
-    /** The SLA definitions of the app (PHASE-4 §6), matched in declaration order. */
-    public List<SlaDefinition> slas() {
-        return slas;
+    /** The scheduled jobs of the app (PHASE-4 §7), activated on publish. */
+    public List<ScheduledJobDefinition> jobs() {
+        return jobs;
     }
 
     /** The machine bound to an entity, if one exists (one per entity in v1). */
@@ -87,14 +89,25 @@ public record AppDefinition(
                 permissionSet, testSuites, List.of(), List.of());
     }
 
-    /** Constructor without the SLA branch (pre-T6 drafts). */
+    /** Constructor without the SLA/jobs branches (pre-Phase-4 drafts). */
     public AppDefinition(String id, String apiName, String label, Map<String, String> labelI18n,
                          String description, List<EntityDefinition> entities,
                          List<PageDefinition> pages, SettingsDefinition settings,
                          PermissionSet permissionSet, List<TestSuiteDefinition> testSuites,
                          List<StateMachineDefinition> stateMachines) {
         this(id, apiName, label, labelI18n, description, entities, pages, settings,
-                permissionSet, testSuites, stateMachines, List.of());
+                permissionSet, testSuites, stateMachines, List.of(), List.of());
+    }
+
+    /** Constructor without the jobs branch (pre-T7 drafts). */
+    public AppDefinition(String id, String apiName, String label, Map<String, String> labelI18n,
+                         String description, List<EntityDefinition> entities,
+                         List<PageDefinition> pages, SettingsDefinition settings,
+                         PermissionSet permissionSet, List<TestSuiteDefinition> testSuites,
+                         List<StateMachineDefinition> stateMachines,
+                         List<SlaDefinition> slas) {
+        this(id, apiName, label, labelI18n, description, entities, pages, settings,
+                permissionSet, testSuites, stateMachines, slas, List.of());
     }
 
     /** Page definition (reserved slot; authored from Phase 2 per PHASE-2 §3). */

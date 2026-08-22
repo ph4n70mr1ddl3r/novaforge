@@ -358,8 +358,32 @@ validated; carried from Phase 1).
 - suites: fan-out with both channels + token resolution, role-holder resolution +
   preference filtering, synthetic skip, sla.warn delivery through real Kafka
 
-**Not implemented (Phase 4 remainder):** Scheduler (T7), sharing rules (T9),
-builder/runtime UI (T10), harness growth (T11).
+**Implemented — T7 Scheduler (§7):**
+- `novaforge-scheduler-service` (port 8087, own database, Prometheus scrape): the
+  cron registry — job definitions are `ScheduledJobDefinition` metadata
+  (`{name, cron, target, params, enabled}`) riding the app definition, activated on
+  publish; the registry is runtime state only (next-fire, leases, run history — the
+  job-definitions-vs-registry split), synced from the Metadata Service's published
+  surface on an interval (restart-safe upserts)
+- exactly one gateway route: read-only `GET /api/v1/scheduler/jobs` (builder
+  visibility); no write or admin route exists — administration is publish-driven
+- firing: due jobs acquire a lease by atomic conditional update — the distributed
+  lock, single-fire under concurrent replicas (§14 item 4); misfire policy fire
+  once/skip missed (next-fire advances past `now`, a missed window waits for the
+  next tick); every fire records a run row and emits `scheduler.job.run`
+  (success/failure) on the outbox → `novaforge.scheduler`, tenant-scoped keys
+- targets: `flow` fires the compiled-graph engine through the runtime's new
+  internal `/api/v1/hooks/scheduled` surface (service-client gated) — hooks
+  addressed by name in the synthetic `scheduled` context, no record, per-app
+  system principal; `script`/`processStart`/`report` register but fire as
+  `skipped` (dormant) — script awaits the Script Engine's service execution
+  context, processStart awaits Flowable, report awaits Phase 5 (ledger note)
+- suites: publish-driven sync with upsert republish, fire-exactly-once with run +
+  event, misfire skip advancing to the next tick, dormant targets skip with
+  reason, read-only tenant-scoped status route
+
+**Not implemented (Phase 4 remainder):** sharing rules (T9), builder/runtime UI
+(T10), harness growth (T11).
 
 ## Phases 5–8 ⬜
 

@@ -93,8 +93,13 @@ public class HookExecutor {
                               UUID systemPrincipal, UUID initiatingActor, HookSink sink) {
         List<Outcome.Retry> retries = new java.util.ArrayList<>();
         for (HookRule hook : handle.entity().hooks()) {
-            if (!trigger.equals(hook.trigger())) {
+            // the Scheduler's synthetic "scheduled" context addresses hooks by name —
+            // their authored trigger is irrelevant to a recordless firing (§7)
+            if (!trigger.equals(hook.trigger()) && !"scheduled".equals(trigger)) {
                 continue;
+            }
+            if ("scheduled".equals(trigger) && recordId != null) {
+                continue;   // name-matched only in the recordless context
             }
             try {
                 runOne(app, handle, tenantId, recordId, data, trigger, hook,

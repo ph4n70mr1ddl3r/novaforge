@@ -22,5 +22,6 @@
     <module>script-engine</module>
     <module>workflow-service</module>
     <module>notification-service</module>
+    <module>scheduler-service</module>
   </modules>
 </project>
