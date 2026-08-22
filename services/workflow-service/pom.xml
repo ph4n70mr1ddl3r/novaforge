@@ -24,6 +24,12 @@
       <artifactId>novaforge-common-core</artifactId>
     </dependency>
     <dependency>
+      <!-- ServiceClientGate — the shared trusted-service gate for the internal
+           suspension/process-start surfaces (PHASE-4 §4/§9). -->
+      <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-security-context</artifactId>
+    </dependency>
+    <dependency>
       <groupId>com.novaforge</groupId>
       <artifactId>novaforge-metadata-model</artifactId>
     </dependency>

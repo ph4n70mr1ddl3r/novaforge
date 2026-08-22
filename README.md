@@ -178,7 +178,7 @@ suspension and SoD, SLAs with escalation, notifications, the scheduler, record-l
 sharing, and the grown harness vocabulary (Phase 4) — with BPMN execution (§9):
 Flowable embedded in the Workflow Service, event-start subscriptions over the
 spine, process user tasks bridged into the §5 inbox, and the Scheduler's
-`processStart` target live. 181 tests green under `./mvnw verify`. The main
+`processStart` target live. 185 tests green under `./mvnw verify`. The main
 remaining surfaces: the React builder/runtime UI (Phase 2's largest gap, which
 Phase 4's T10 rides) and the full-stack exit demos. Progress ledger:
 [IMPLEMENTATION.md](IMPLEMENTATION.md).

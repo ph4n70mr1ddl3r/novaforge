@@ -15,7 +15,7 @@
   <name>NovaForge Security Context</name>
   <description>Tenant/actor propagation on top of TenantContext: async-executor
     decoration, the RLS session-var DataSource bridge, Kafka header constants,
-    mock-test fixtures (PHASE-1 §3).</description>
+    the shared trusted-service gate, mock-test fixtures (PHASE-1 §3).</description>
 
   <dependencies>
     <dependency>
@@ -25,6 +25,21 @@
     <dependency>
       <groupId>org.springframework</groupId>
       <artifactId>spring-core</artifactId>
+    </dependency>
+    <!-- ServiceClientGate reads the resource-server JwtAuthenticationToken —
+         versions ride Boot's dependencyManagement; every consuming service
+         already carries them via its oauth2-resource-server starter. -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-oauth2-jose</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-oauth2-resource-server</artifactId>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>

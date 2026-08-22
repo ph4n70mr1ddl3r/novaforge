@@ -1,16 +1,11 @@
 package com.novaforge.runtime.api;
 
 import com.novaforge.common.context.TenantContext;
-import com.novaforge.common.error.PlatformErrorCode;
-import com.novaforge.common.error.PlatformException;
 import com.novaforge.metadata.FlowStep;
 import com.novaforge.runtime.engine.RecordEngine;
+import com.novaforge.security.ServiceClientGate;
 import java.util.Map;
 import java.util.UUID;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -43,7 +38,7 @@ public class HookResumeController {
 
     @PostMapping("/resume")
     public Map<String, Object> resume(@RequestBody ResumeRequest request) {
-        requireServiceClient();
+        ServiceClientGate.require("resume");
         UUID tenantId = UUID.fromString(request.tenantId());
         UUID recordId = UUID.fromString(request.recordId());
         FlowStep onReject = request.onReject() == null || request.onReject().isBlank()
@@ -55,18 +50,4 @@ public class HookResumeController {
         return Map.of("status", "resumed");
     }
 
-    /** Trusted-service gate: the platform service client, same rule as the admin API. */
-    private static void requireServiceClient() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication instanceof JwtAuthenticationToken jwtAuth
-                && jwtAuth.getToken() instanceof Jwt jwt) {
-            String azp = jwt.getClaimAsString("azp");
-            String clientId = jwt.getClaimAsString("client_id");
-            if ("novaforge-runtime".equals(azp) || "novaforge-runtime".equals(clientId)) {
-                return;
-            }
-        }
-        throw new PlatformException(PlatformErrorCode.FORBIDDEN,
-                "the resume surface is service-client only");
-    }
 }

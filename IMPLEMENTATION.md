@@ -159,8 +159,8 @@ persist → event seam → shaped projection):
   statement watchdog (`ResourceLimits`), CPU-time cap (ThreadMXBean-sampled force
   close), heap tripwire (process-growth attribution; per-context metering is
   Enterprise-only; trips on two consecutive over-budget samples so same-JVM
-  allocation churn can't false-kill a light script — review fix)
-  Enterprise-only), wall-clock backstop, bounded concurrency with a bounded queue —
+  allocation churn can't false-kill a light script — review fix), wall-clock
+  backstop, bounded concurrency with a bounded queue —
   the watchdog stays armed through result conversion (getters/proxies run guest code)
 - the closed surface: `$record` (read-only view, `id` included), `$data.query` (the
   Data Runtime list API under the calling user's relayed token — no service-account
@@ -532,6 +532,13 @@ processing failure (runtime down, lock timeout) propagates so Kafka redelivers �
 the §9 dedupe claim collapses any double-start, so at-least-once redelivery is
 safe where the old blanket catch silently lost event-starts. ARCHITECTURE.md
 §2.6's "Flowable 7" pin amended to the 8 line with the same note as ADR-004.
+
+**Fixed at review — one trusted-service gate:** the five identical
+`requireServiceClient` copies across the runtime's internal surfaces and the
+workflow's suspension/process-start controllers collapsed into a single shared
+`ServiceClientGate` in `security-context` (one client id, one rule, one
+implementation; per-surface rejection wording preserved verbatim), with unit
+tests for the accept/reject/anonymous/no-auth cases.
 
 **Phase 4 remainder:** the builder/runtime UI (T10 — rides the unstarted Phase 2
 React surface) and the §1 exit-journey demo (T12 — needs the full stack live; the

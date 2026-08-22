@@ -3,12 +3,9 @@ package com.novaforge.workflow.api;
 import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
 import com.novaforge.workflow.process.ProcessStarts;
+import com.novaforge.security.ServiceClientGate;
 import java.util.Map;
 import java.util.UUID;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -35,7 +32,7 @@ public class InternalProcessController {
 
     @PostMapping("/processes/start")
     public Map<String, Object> start(@RequestBody StartRequest request) {
-        requireServiceClient();
+        ServiceClientGate.require("process-start");
         if (request.process() == null || request.process().isBlank()
                 || request.app() == null || request.app().isBlank()) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
@@ -48,18 +45,4 @@ public class InternalProcessController {
         return Map.of("instanceId", instanceId, "started", true);
     }
 
-    /** Trusted-service gate: the platform service client, same rule as the admin API. */
-    private static void requireServiceClient() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication instanceof JwtAuthenticationToken jwtAuth
-                && jwtAuth.getToken() instanceof Jwt jwt) {
-            String azp = jwt.getClaimAsString("azp");
-            String clientId = jwt.getClaimAsString("client_id");
-            if ("novaforge-runtime".equals(azp) || "novaforge-runtime".equals(clientId)) {
-                return;
-            }
-        }
-        throw new PlatformException(PlatformErrorCode.FORBIDDEN,
-                "the process-start surface is service-client only");
-    }
 }
