@@ -1,0 +1,6 @@
+apiVersion: v2
+name: novaforge-script-engine
+description: NovaForge script-engine service chart
+type: application
+version: 0.1.0
+appVersion: "0.1.0-SNAPSHOT"

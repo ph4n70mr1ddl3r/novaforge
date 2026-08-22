@@ -147,10 +147,43 @@ persist → event seam → shaped projection):
   published into the scratch tenant (never a mutable draft), steps replayed through
   the generic runtime APIs as the actors (4xx bodies are results, matched against
   expectations), assertions evaluated under the run's frozen clock
-- **verified live**: a two-case suite over the ERP app (create with inline lines →
-  ok; bad enum → error(4000)) runs green through the gateway
+**Implemented — §6 Script Engine v0 (ADR-003, T6):**
+- `novaforge-script-engine` (port 8084, internal — hooks invoke it, no gateway route):
+  GraalVM JS on the community jars, one `Context` per execution (no warm pools —
+  deferred with demand), no host I/O or classes, and the ADR's caps made real —
+  statement watchdog (`ResourceLimits`), CPU-time cap (ThreadMXBean-sampled force
+  close), heap tripwire (process-growth attribution; per-context metering is
+  Enterprise-only), wall-clock backstop, bounded concurrency with a bounded queue —
+  the watchdog stays armed through result conversion (getters/proxies run guest code)
+- the closed surface: `$record` (read-only view, `id` included), `$data.query` (the
+  Data Runtime list API under the calling user's relayed token — no service-account
+  fallback, a script can never exceed its authorizing user's grants), `$log` (bounded
+  capture); the program's completion value is the result (integral numbers stay
+  integral; conversion bounded)
+- metadata: `ScriptDefinition` artifact riding the app definition (versioned on the
+  same review/promotion path); `HookRule` is flow XOR script, publish-enforced
+  (language set, source size, blank rejects)
+- runtime: HookExecutor script branch — caller-context through RestScriptEngineClient
+  (the write request's token relayed verbatim), beforeSave return-merge into declared
+  fields (reserved names pass through), failure policy uniform with flows; script
+  hooks die at the same caps through the engine and render problem+json on the write
+  path
+- script-ratio telemetry per app version: engine-side
+  `novaforge.script.executions{app,version,trigger,outcome}` + duration; runtime-side
+  `novaforge.hook.executions{app,version,trigger,kind}` — the ratio joins on the
+  dashboards (§9)
+- deploy: helm chart + umbrella dependency + prometheus scrape; graalvm pins in the
+  parent dependencyManagement (the `js-community` coordinates are pom-packaging
+  aggregators — the concrete community jars are polyglot/js-language/regex)
+- **T6 acceptance pinned**: a capped script (infinite loop, getter bomb, heap hog)
+  dies at its budget and the service stays on its feet; host access closed;
+  authorization verdicts (FORBIDDEN et al.) survive the sandbox boundary
+- known limitation (pre-dates T6, uniform for flows): after-hook failures are
+  recorded (WARN + `Outcome.retryQueue`) but the retry consumer on the spine is the
+  Phase 3 remainder — see §2's failure policy for the pinned semantics
 
-**Not implemented (Phase 3 remainder):** the Script Engine v0 (§6) and the Tempo/Loki
+**Not implemented (Phase 3 remainder):** the after-hook retry consumer (§2's spine
+leg — the outcome queue exists, nothing re-drives it yet) and the Tempo/Loki
 observability expansion (§9).
 
 ## Phases 4–8 ⬜

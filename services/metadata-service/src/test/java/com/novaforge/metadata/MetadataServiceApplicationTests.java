@@ -18,10 +18,13 @@ import org.springframework.test.web.servlet.MockMvc;
 /** PHASE-0 §6.3 metadata-service test slice (hermetic: stores mocked, infra excluded). */
 @SpringBootTest(properties = {
         "novaforge.metadata.publish-transport=noop",
+        // Boot 4 names: DataRedisAutoConfiguration (the RedisAutoConfiguration excludes
+        // predate the rename and silently no-op, leaving a live redis health indicator)
         "spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
                 + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration,"
-                + "org.springframework.boot.data.redis.autoconfigure.RedisAutoConfiguration,"
-                + "org.springframework.boot.data.redis.autoconfigure.RedisRepositoriesAutoConfiguration"
+                + "org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration,"
+                + "org.springframework.boot.data.redis.autoconfigure.health.DataRedisHealthContributorAutoConfiguration,"
+                + "org.springframework.boot.data.redis.autoconfigure.DataRedisRepositoriesAutoConfiguration"
 })
 @AutoConfigureMockMvc
 class MetadataServiceApplicationTests {

@@ -1,0 +1,46 @@
+spring:
+  application:
+    name: novaforge-script-engine
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}
+
+server:
+  port: 8084
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
+
+novaforge:
+  auth:
+    issuer-uri: ${NOVAFORGE_AUTH_ISSUER:http://localhost:8082/realms/novaforge}
+  data-runtime:
+    # $data.query forwards here with the calling user's token relayed (§5 item 4).
+    url: ${NOVAFORGE_DATA_RUNTIME_URL:http://localhost:8083}
+  scripts:
+    # ADR-003 caps. CPU-time is metered per executing thread (ThreadMXBean); the
+    # wall-clock backstop covers scripts wedged in host calls. The heap cap trips on
+    # process-heap growth attributable to an execution (per-context metering is a
+    # GraalVM Enterprise capability — the statement watchdog bounds allocation loops
+    # independently). Statement limit is the loop watchdog; concurrency bounds the
+    # JVM so a script flood cannot take the service hostage.
+    cpu-budget-ms: ${NOVAFORGE_SCRIPT_CPU_MS:1000}
+    wall-budget-ms: ${NOVAFORGE_SCRIPT_WALL_MS:30000}
+    heap-limit-mb: ${NOVAFORGE_SCRIPT_HEAP_MB:64}
+    statement-limit: ${NOVAFORGE_SCRIPT_STATEMENTS:100000}
+    max-concurrent: ${NOVAFORGE_SCRIPT_MAX_CONCURRENT:8}
+    # bounded queue wait before shedding (well under the runtime's read timeout)
+    queue-wait-ms: ${NOVAFORGE_SCRIPT_QUEUE_WAIT_MS:5000}

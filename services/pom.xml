@@ -19,5 +19,6 @@
     <module>metadata-service</module>
     <module>data-runtime</module>
     <module>audit-service</module>
+    <module>script-engine</module>
   </modules>
 </project>

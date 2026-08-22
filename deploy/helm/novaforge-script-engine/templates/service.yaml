@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-novaforge-script-engine
+  labels: {{ include "novaforge-script-engine.labels" . | indent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      name: http
+  selector: {{ include "novaforge-script-engine.selectorLabels" . | indent 4 }}

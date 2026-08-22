@@ -46,6 +46,9 @@ novaforge:
     relay-batch: 100
   metadata-service:
     url: ${NOVAFORGE_METADATA_URL:http://localhost:8081}
+  script-engine:
+    # Script hooks (ADR-003 escape hatch) call here with the caller's token relayed.
+    url: ${NOVAFORGE_SCRIPT_ENGINE_URL:http://localhost:8084}
   metadata:
     cache-index-ttl-ms: ${NOVAFORGE_METADATA_INDEX_TTL_MS:30000}
   sequences:

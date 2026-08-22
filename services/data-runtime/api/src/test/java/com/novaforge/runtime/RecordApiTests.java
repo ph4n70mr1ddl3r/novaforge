@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.DefinitionParser;
+import com.novaforge.runtime.engine.hook.ScriptClient;
 import com.novaforge.runtime.engine.metadata.EntityResolver;
 import com.novaforge.runtime.engine.metadata.MetadataClient;
 import com.novaforge.runtime.storage.materializer.Materializer;
@@ -142,6 +143,16 @@ class RecordApiTests extends PostgresTestBase {
                       "default": { "expression": "upper(note)" } },
                     { "apiName": "noteLength", "type": "int",
                       "default": { "expression": "length(note)" } } ] },
+                { "apiName": "Scripty",
+                  "fields": [
+                    { "apiName": "label", "type": "text", "required": true } ],
+                  "hooks": [
+                    { "name": "enrich", "trigger": "beforeSave",
+                      "script": { "language": "js",
+                        "source": "({ label: 'ENRICHED-' + $record.label })" } },
+                    { "name": "notify", "trigger": "afterSave",
+                      "script": { "language": "js",
+                        "source": "$log.info('saved ' + $record.id)" } } ] },
                 { "apiName": "Ticket",
                   "fields": [
                     { "apiName": "number", "type": "text",
@@ -166,6 +177,11 @@ class RecordApiTests extends PostgresTestBase {
 
     static final List<String> PUBLISHED_APP_INDEX = new CopyOnWriteArrayList<>();
 
+    /** Script-hook calls observed by the stub (app|hook|trigger|language|recordId). */
+    static final List<String> SCRIPT_CALLS = new CopyOnWriteArrayList<>();
+    static volatile boolean failBeforeScripts;
+    static volatile boolean failAfterScripts;
+
     @TestConfiguration
     static class StubMetadata {
         @Bean
@@ -179,6 +195,32 @@ class RecordApiTests extends PostgresTestBase {
             Mockito.when(client.publishedBundle(Mockito.any(UUID.class))).thenAnswer(inv ->
                     new MetadataClient.PublishedBundle(currentVersion(), currentApp()));
             return client;
+        }
+
+        /** The script-engine port, stubbed: canned outcomes, recorded invocations. */
+        @Bean
+        @Primary
+        ScriptClient scriptClient() {
+            return (app, appVersion, hook, trigger, script, record) -> {
+                SCRIPT_CALLS.add(app + "|" + hook + "|" + trigger + "|" + script.language()
+                        + "|" + record.get("id"));
+                if (failBeforeScripts && trigger.startsWith("before")) {
+                    throw new com.novaforge.common.error.PlatformException(
+                            com.novaforge.common.error.PlatformErrorCode.VALIDATION_FAILED,
+                            "script hook " + hook + " exploded");
+                }
+                if (failAfterScripts && trigger.startsWith("after")) {
+                    throw new com.novaforge.common.error.PlatformException(
+                            com.novaforge.common.error.PlatformErrorCode.VALIDATION_FAILED,
+                            "script hook " + hook + " exploded");
+                }
+                if ("beforeSave".equals(trigger)) {
+                    return new ScriptClient.ScriptOutcome(
+                            Map.of("label", "ENRICHED-" + record.get("label")),
+                            List.of("stub enrich"));
+                }
+                return new ScriptClient.ScriptOutcome(Map.of(), List.of("stub notify"));
+            };
         }
 
         static int currentVersion() {
@@ -226,6 +268,54 @@ class RecordApiTests extends PostgresTestBase {
         jdbc.update("INSERT INTO platform.role_assignments (tenant_id, user_id, role) VALUES (?, ?, 'admin') "
                 + "ON CONFLICT DO NOTHING", SECOND_TENANT, ACTOR);
         materializer.apply(DefinitionParser.parseApp(APP_JSON));
+    }
+
+    @Test
+    @DisplayName("script hooks (§6): beforeSave write-back merges, caller artifact travels, failure policy is uniform")
+    void scriptHooks() throws Exception {
+        failBeforeScripts = false;
+        failAfterScripts = false;
+        SCRIPT_CALLS.clear();
+
+        // beforeSave: the returned object is the write-back channel — merged into the
+        // record before persist, exactly like setField
+        MvcResult created = mockMvc.perform(post("/api/v1/runtime/Scripty").with(jwtFor(TENANT))
+                        .contentType("application/json").content("{\"label\":\"widget\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.label").value("ENRICHED-widget"))
+                .andReturn();
+        String id = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+
+        // the caller's artifact arrived with app, hook, trigger, language, and the id view
+        assertThat(SCRIPT_CALLS).anySatisfy(call -> {
+            org.assertj.core.api.Assertions.assertThat(call)
+                    .contains("Erp|enrich|beforeSave|js|" + id);
+        });
+
+        // afterSave fired on the same write; its failure must not block the write
+        assertThat(SCRIPT_CALLS).anySatisfy(call -> {
+            org.assertj.core.api.Assertions.assertThat(call)
+                    .contains("Erp|notify|afterSave|js|" + id);
+        });
+        failAfterScripts = true;
+        mockMvc.perform(post("/api/v1/runtime/Scripty").with(jwtFor(TENANT))
+                        .contentType("application/json").content("{\"label\":\"second\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.label").value("ENRICHED-second"));
+        failAfterScripts = false;
+
+        // beforeSave failure aborts the transaction — uniform with flows (§2.5)
+        failBeforeScripts = true;
+        mockMvc.perform(post("/api/v1/runtime/Scripty").with(jwtFor(TENANT))
+                        .contentType("application/json").content("{\"label\":\"doomed\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("exploded")));
+        Integer doomed = jdbc.queryForObject(
+                "SELECT count(*) FROM rec_records WHERE entity_id = 'Erp.Scripty' "
+                        + "AND data->>'label' = 'doomed' AND NOT deleted", Integer.class);
+        assertThat(doomed).isZero();
+        failBeforeScripts = false;
     }
 
     private static org.springframework.security.test.web.servlet.request

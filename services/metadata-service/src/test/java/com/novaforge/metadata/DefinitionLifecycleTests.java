@@ -316,6 +316,82 @@ class DefinitionLifecycleTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("script hooks (§6): publish accepts a valid artifact; shape, language, and size reject")
+    void scriptHookPublishChecks() throws Exception {
+        // valid script hook rides the same review path as flows
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "ScriptOk", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "name", "type": "text" } ],
+                                  "hooks": [ { "name": "enrich", "trigger": "beforeSave",
+                                    "script": { "language": "js",
+                                      "source": "({ name: $record.name.toUpperCase() })" } } ] } ] }
+                                """))
+                .andExpect(status().isOk());
+
+        // flow and script are exclusive bodies
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "BothApp", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "name", "type": "text" } ],
+                                  "hooks": [ { "name": "x", "trigger": "beforeSave",
+                                    "flow": { "id": "s1", "op": "setField",
+                                      "params": { "field": "name", "expression": "name" } },
+                                    "script": { "language": "js", "source": "1" } } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("not both")));
+
+        // a hook needs one of the two bodies
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "NeitherApp", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "name", "type": "text" } ],
+                                  "hooks": [ { "name": "x", "trigger": "beforeSave" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("flow entry step or a script")));
+
+        // v0 ships GraalVM JS only
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "LangApp", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "name", "type": "text" } ],
+                                  "hooks": [ { "name": "x", "trigger": "afterSave",
+                                    "script": { "language": "python", "source": "1" } } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("language")));
+
+        // blank source is no artifact at all
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "BlankApp", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "name", "type": "text" } ],
+                                  "hooks": [ { "name": "x", "trigger": "afterSave",
+                                    "script": { "language": "js", "source": "  " } } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("blank")));
+
+        // source is bounded — 64 KiB is the reviewed-artifact ceiling
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content(
+                                "{ \"apiName\": \"HugeApp\", \"entities\": [ { \"apiName\": \"Thing\","
+                                + " \"fields\": [ { \"apiName\": \"name\", \"type\": \"text\" } ],"
+                                + " \"hooks\": [ { \"name\": \"x\", \"trigger\": \"afterSave\","
+                                + " \"script\": { \"language\": \"js\", \"source\": \""
+                                + "x".repeat(64 * 1024 + 1) + "\" } } ] } ] }"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("exceeds")));
+    }
+
+    @Test
     @DisplayName("app delete cascades (draft workspace) — publish history stays queryable per app row removal")
     void deleteAppCascades() throws Exception {
         MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps")

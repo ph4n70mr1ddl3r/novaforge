@@ -22,18 +22,29 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Executes compiled flow-IR hook graphs on the write path (PHASE-3 §2, ADR-008).
- * Executable primitives: setField (expression), createRecord/updateRecord (${…}
- * record templates), publishEvent (payload template), branch (guard), iterate
- * (relationship body). Grammar-fixed primitives (requestApproval/transitionState/
- * callConnector) fail loudly — they activate with Phases 4/6.
+ * Executes hooks on the write path (PHASE-3 §2, ADR-008): compiled flow-IR step
+ * graphs, and script artifacts — the ADR-008 escape hatch (PHASE-3 §6, ADR-003) —
+ * through the {@link ScriptClient}. Executable primitives: setField (expression),
+ * createRecord/updateRecord (${…} record templates), publishEvent (payload template),
+ * branch (guard), iterate (relationship body). Grammar-fixed primitives
+ * (requestApproval/transitionState/callConnector) fail loudly — they activate with
+ * Phases 4/6.
  *
- * <p>Failure policy (ARCHITECTURE.md §2.5): beforeSave/beforeDelete failure aborts
- * the transaction (the executor throws); afterSave/afterDelete failure is recorded
- * for retry — never lost, never blocks the write.</p>
+ * <p>Failure policy (ARCHITECTURE.md §2.5), uniform for flows and scripts:
+ * beforeSave/beforeDelete failure aborts the transaction (the executor throws);
+ * afterSave/afterDelete failure is recorded for retry — never lost, never blocks the
+ * write.</p>
  */
 @Component
 public class HookExecutor {
+
+    private final ScriptClient scripts;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
+
+    public HookExecutor(ScriptClient scripts, io.micrometer.core.instrument.MeterRegistry meters) {
+        this.scripts = scripts;
+        this.meters = meters;
+    }
 
     /** Defensive cap — compiled graphs are DAGs; this guards runaway recursion. */
     public static final int MAX_STEPS = 256;
@@ -78,9 +89,18 @@ public class HookExecutor {
                 continue;
             }
             try {
-                executeFlow(app, handle, tenantId, recordId, data, hook.flow(),
-                        systemPrincipal, 0, sink);
+                if (hook.script() != null) {
+                    counted(handle, trigger, "script");
+                    runScriptHook(handle, recordId, data, trigger, hook);
+                } else {
+                    counted(handle, trigger, "flow");
+                    executeFlow(app, handle, tenantId, recordId, data, hook.flow(),
+                            systemPrincipal, 0, sink);
+                }
             } catch (PlatformException e) {
+                // before-hooks abort (§2.5); after-hooks record for retry — see the
+                // known limitation note in the phase log: the retry consumer is the
+                // Phase 3 remainder, uniform for flows and scripts.
                 if (trigger.startsWith("before")) {
                     throw e;   // abort the transaction (§2.5)
                 }
@@ -90,6 +110,52 @@ public class HookExecutor {
             }
         }
         return retries.isEmpty() ? Outcome.CLEAN : new Outcome(false, retries);
+    }
+
+    /**
+     * Hook-kind telemetry (PHASE-3 §6, ADR-008 #5): flow vs script executions per app
+     * version and trigger — the join side of the script-ratio KPI (the Script Engine
+     * counts its own executions per app version).
+     */
+    private void counted(EntityHandle handle, String trigger, String kind) {
+        meters.counter("novaforge.hook.executions",
+                        "app", handle.appApiName(),
+                        "version", String.valueOf(handle.version()),
+                        "trigger", trigger, "kind", kind)
+                .increment();
+    }
+
+    /**
+     * The escape hatch (PHASE-3 §6): the script runs caller-context through the
+     * {@link ScriptClient}. Its return value is the write-back channel — a beforeSave
+     * script's returned object merges into the record (declared fields only, mirroring
+     * setField's contract; reserved names like the injected {@code id} pass through);
+     * after-trigger returns are recorded in the outcome and nothing more. Failure
+     * policy is uniform with flows (§2.5): throws before the persist for
+     * before-triggers, surfaces as a retry for after-triggers.
+     */
+    private void runScriptHook(EntityHandle handle, UUID recordId, Map<String, Object> data,
+                               String trigger, HookRule hook) {
+        Map<String, Object> view = new LinkedHashMap<>(data);
+        view.put("id", recordId == null ? null : recordId.toString());
+        ScriptClient.ScriptOutcome outcome = scripts.execute(handle.appApiName(),
+                handle.version(), hook.name(), trigger, hook.script(), view);
+        if (outcome != null && "beforeSave".equals(trigger)
+                && outcome.value() instanceof Map<?, ?> merged) {
+            merged.forEach((key, value) -> {
+                String field = String.valueOf(key);
+                if (com.novaforge.metadata.DefinitionValidator.RESERVED_FIELD_NAMES
+                        .contains(field)) {
+                    return;   // the executor's injected view keys (id) — never declared
+                }
+                if (handle.entity().field(field).isPresent()) {
+                    data.put(field, value);
+                } else {
+                    throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                            "script hook " + hook.name() + " returned an unknown field: " + field);
+                }
+            });
+        }
     }
 
     private void executeFlow(AppDefinition app, EntityHandle handle, UUID tenantId,

@@ -9,6 +9,7 @@ import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.EntityDefinition;
 import com.novaforge.metadata.FlowStep;
 import com.novaforge.metadata.HookRule;
+import com.novaforge.metadata.ScriptDefinition;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -51,15 +52,47 @@ final class FlowCompiler {
                     "trigger must be one of " + HookRule.TRIGGERS, hook.trigger()));
             return;
         }
+        if (hook.script() != null) {
+            if (hook.flow() != null) {
+                errors.add(new ProblemErrors.FieldError(scope,
+                        "a hook is either a flow or a script, not both", hook.name()));
+                return;
+            }
+            checkScript(hook.script(), scope, errors);
+            return;
+        }
         if (hook.flow() == null || hook.flow().id() == null) {
             errors.add(new ProblemErrors.FieldError(scope,
-                    "hook requires a flow entry step", null));
+                    "hook requires a flow entry step or a script", null));
             return;
         }
         indexSteps(hook.flow(), scope, entity, errors);
         Set<String> visited = new HashSet<>();
         Set<String> stack = new HashSet<>();
         checkStep(hook.flow(), app, entity, scope, errors, visited, stack);
+    }
+
+    /**
+     * Script hooks (PHASE-3 §6, ADR-003): the escape hatch attaches to the same
+     * triggers as flows. The publish check bounds the artifact — v0's language set and
+     * size; semantic caps (CPU/heap/statements) live in the sandbox, which enforces
+     * them per execution.
+     */
+    private static void checkScript(ScriptDefinition script, String scope,
+                                    java.util.List<ProblemErrors.FieldError> errors) {
+        if (script.language() == null || !ScriptDefinition.LANGUAGES.contains(script.language())) {
+            errors.add(new ProblemErrors.FieldError(scope + ".script.language",
+                    "script language must be one of " + ScriptDefinition.LANGUAGES,
+                    script.language()));
+        }
+        if (script.source() == null || script.source().isBlank()) {
+            errors.add(new ProblemErrors.FieldError(scope + ".script.source",
+                    "script source must not be blank", null));
+        } else if (script.source().length() > ScriptDefinition.MAX_SOURCE_CHARS) {
+            errors.add(new ProblemErrors.FieldError(scope + ".script.source",
+                    "script source exceeds " + ScriptDefinition.MAX_SOURCE_CHARS + " characters",
+                    script.source().length()));
+        }
     }
 
     /** Indexes the graph (incl. iterate bodies) for target resolution. */
