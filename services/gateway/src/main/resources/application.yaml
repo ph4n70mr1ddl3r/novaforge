@@ -18,6 +18,10 @@ spring:
               uri: ${novaforge.upstreams.audit-service:http://localhost:8085}
               predicates:
                 - Path=/api/v1/audit/**
+            - id: workflow
+              uri: ${novaforge.upstreams.workflow-service:http://localhost:8086}
+              predicates:
+                - Path=/api/v1/workflow/**
   security:
     oauth2:
       resourceserver:

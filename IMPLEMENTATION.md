@@ -251,10 +251,36 @@ validated; carried from Phase 1).
   transitions ride the check, guard failures reject, terminal semantics, nested
   writes) + seven validator rules in `DefinitionValidatorTest`
 
-**Not implemented (Phase 4 remainder):** the Workflow Service skeleton (T1), tasks +
-inbox (T4), `requestApproval` durable suspension + SoD (T5), SLAs/escalation (T6),
-Scheduler (T7), Notification v1 (T8), sharing rules (T9), builder/runtime UI (T10),
-harness growth (T11).
+**Implemented — T1 skeleton + T4 tasks & inbox (§5):**
+- `novaforge-workflow-service` (port 8086, gateway route `/api/v1/workflow/**`, its own
+  `novaforge_workflow` database, Prometheus scrape): the human-task plane of §5 —
+  a pure spine participant that never mutates records
+- task model per §5: `{type: approval|todo, entity, recordId, assignee|role, status,
+  dueAt/warnAt, createdBy, contextRef}`; statuses OPEN → APPROVED | REJECTED |
+  DELEGATED | ESCALATED | CANCELLED
+- inbox API: `GET /tasks` (mine = assigned to me or one of my roles, open by default,
+  server-side paged), `GET /tasks/{id}`, approve/reject with comment (re-resolution
+  409s), claim (role task → assignee, stays OPEN), delegate (replacement task, the
+  original DELEGATED, chain rooted via `contextRef`, delegation to the initiating
+  actor rejected `SOD_VIOLATION`), reassign (admin/builder-only, audited)
+- access enforced server-side (§13): assignee, the task's role holders, or platform
+  admin; role resolution rides a new read endpoint on the runtime's admin surface
+  (`GET /api/v1/admin/tenants/{t}/users/{u}/roles`) through the trusted service
+  client — no cross-service database reads
+- `task.*` events (`created/assigned/approved/rejected/delegated/escalated/cancelled`)
+  ride a transactional outbox relayed to `novaforge.task` keyed `tenantId:taskId`
+  (per-task ordering; delegation chains ride each delegate's own key)
+- spine consumption (T1's leg): `record.deleted` on `novaforge.record` cancels the
+  record's open tasks — verified through the real Kafka path
+- suites: `TaskApiTests` — inbox resolution, resolution + events, claim, delegation
+  chains + SoD, reassign gate, access checks, deletion-cancel
+- Flowable itself is not yet a dependency: ADR-004's embedded engine enters with T5/T6
+  (suspension + SLA timers) where it has work to do; the Boot 4 compatibility of the
+  Flowable starter gets assessed at that boundary (deviation from T1's letter, noted)
+
+**Not implemented (Phase 4 remainder):** `requestApproval` durable suspension + SoD
+(T5), SLAs/escalation (T6), Scheduler (T7), Notification v1 (T8), sharing rules (T9),
+builder/runtime UI (T10), harness growth (T11).
 
 ## Phases 5–8 ⬜
 

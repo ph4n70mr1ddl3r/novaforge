@@ -24,6 +24,11 @@ public class AdminService {
         this.users = users;
     }
 
+    /** The user's roles in a tenant — platform set + app-scoped ({@code app.role}). */
+    public java.util.List<String> rolesOf(UUID tenantId, UUID userId) {
+        return platform.roles(tenantId, userId);
+    }
+
     /** Tenant row + first-admin assignment in one flow (§10). */
     public Map<String, Object> createTenant(String apiName, String displayName,
                                             String adminUsername, String adminEmail) {

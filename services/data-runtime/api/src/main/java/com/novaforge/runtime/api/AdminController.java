@@ -10,6 +10,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -46,6 +47,14 @@ public class AdminController {
                                           @RequestBody CreateUserRequest request) {
         requirePlatformAdmin();
         return admin.createUser(tenantId, request.username(), request.password());
+    }
+
+    /** The user's roles in a tenant (platform + app-scoped) — the Workflow inbox's
+     *  "my tasks" resolution and access checks read here (PHASE-4 §5/§13). */
+    @GetMapping("/tenants/{tenantId}/users/{userId}/roles")
+    public java.util.List<String> rolesOf(@PathVariable UUID tenantId, @PathVariable UUID userId) {
+        requirePlatformAdmin();
+        return admin.rolesOf(tenantId, userId);
     }
 
     /** Assign a platform or app-scoped ({@code app.role}) role to a user in a tenant. */
