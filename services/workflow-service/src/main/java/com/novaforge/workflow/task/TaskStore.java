@@ -24,11 +24,12 @@ public class TaskStore {
     public record Task(UUID id, UUID tenantId, String type, String entityId, UUID recordId,
                        UUID assignee, String role, String status, String comment,
                        Instant dueAt, Instant warnAt, UUID createdBy, UUID contextRef,
-                       Instant createdAt) {
+                       UUID instance, Instant createdAt) {
 
         public Task withStatus(String newStatus) {
             return new Task(id, tenantId, type, entityId, recordId, assignee, role,
-                    newStatus, comment, dueAt, warnAt, createdBy, contextRef, createdAt);
+                    newStatus, comment, dueAt, warnAt, createdBy, contextRef, instance,
+                    createdAt);
         }
 
         public Map<String, Object> toJson() {
@@ -61,20 +62,21 @@ public class TaskStore {
         jdbc.update("""
                 INSERT INTO wf_tasks (id, tenant_id, type, entity_id, record_id, assignee,
                                       role, status, comment, due_at, warn_at, created_by,
-                                      context_ref, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                      context_ref, instance_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 task.id(), task.tenantId(), task.type(), task.entityId(), task.recordId(),
                 task.assignee(), task.role(), task.status(), task.comment(),
                 task.dueAt() == null ? null : Timestamp.from(task.dueAt()),
                 task.warnAt() == null ? null : Timestamp.from(task.warnAt()),
-                task.createdBy(), task.contextRef(), Timestamp.from(task.createdAt()));
+                task.createdBy(), task.contextRef(), task.instance(),
+                Timestamp.from(task.createdAt()));
     }
 
     public Optional<Task> find(UUID tenantId, UUID id) {
         return jdbc.query("""
                         SELECT id, tenant_id, type, entity_id, record_id, assignee, role,
                                status, comment, due_at, warn_at, created_by, context_ref,
-                               created_at
+                               instance_id, created_at
                           FROM wf_tasks WHERE tenant_id = ? AND id = ?""",
                 TaskStore::mapRow, tenantId, id).stream().findFirst();
     }
@@ -119,7 +121,7 @@ public class TaskStore {
         return jdbc.query("""
                         SELECT id, tenant_id, type, entity_id, record_id, assignee, role,
                                status, comment, due_at, warn_at, created_by, context_ref,
-                               created_at
+                               instance_id, created_at
                           FROM wf_tasks WHERE tenant_id = ? AND record_id = ?
                          ORDER BY created_at""",
                 TaskStore::mapRow, tenantId, recordId);
@@ -149,7 +151,8 @@ public class TaskStore {
         paged.add(page * size);
         List<Task> rows = jdbc.query(
                 "SELECT id, tenant_id, type, entity_id, record_id, assignee, role, status,"
-                        + " comment, due_at, warn_at, created_by, context_ref, created_at"
+                        + " comment, due_at, warn_at, created_by, context_ref, instance_id,"
+                        + " created_at"
                         + " FROM wf_tasks WHERE tenant_id = ? AND " + filter
                         + " ORDER BY created_at LIMIT ? OFFSET ?",
                 TaskStore::mapRow, paged.toArray());
@@ -176,6 +179,7 @@ public class TaskStore {
                 rs.getTimestamp("warn_at") == null ? null
                         : rs.getTimestamp("warn_at").toInstant(),
                 rs.getObject("created_by", UUID.class), rs.getObject("context_ref", UUID.class),
+                rs.getObject("instance_id", UUID.class),
                 rs.getTimestamp("created_at").toInstant());
     }
 }

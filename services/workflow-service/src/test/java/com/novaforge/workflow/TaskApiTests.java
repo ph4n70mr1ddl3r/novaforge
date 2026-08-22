@@ -71,6 +71,12 @@ class TaskApiTests extends PostgresTestBase {
     @Autowired
     com.novaforge.workflow.task.TaskService tasks;
 
+    /** Resumes the stub observed (the Data Runtime's stand-in). */
+    static final List<String> RESUMES = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    @Autowired
+    com.novaforge.workflow.task.SuspensionService suspensions;
+
     @TestConfiguration
     static class StubRoles {
 
@@ -78,6 +84,13 @@ class TaskApiTests extends PostgresTestBase {
         @Primary
         RoleLookup roleLookup() {
             return (tenantId, actor) -> ROLES.getOrDefault(actor.toString(), List.of());
+        }
+
+        @Bean
+        @Primary
+        com.novaforge.workflow.runtime.ResumeClient resumeClient() {
+            return resume -> RESUMES.add(resume.approved() + ":" + resume.hook() + ":"
+                    + (resume.afterStep() == null ? "-" : resume.afterStep()));
         }
     }
 
@@ -98,7 +111,9 @@ class TaskApiTests extends PostgresTestBase {
     @BeforeEach
     void seed() {
         jdbc.update("DELETE FROM wf_event_outbox");
+        jdbc.update("DELETE FROM wf_suspended_flows");
         jdbc.update("DELETE FROM wf_tasks");
+        RESUMES.clear();
         ROLES.clear();
         ROLES.put(CLERK.toString(), List.of("user"));
         ROLES.put(MANAGER.toString(), List.of("user", "Purch.manager"));
@@ -271,6 +286,78 @@ class TaskApiTests extends PostgresTestBase {
         assertThat(jdbc.queryForList(
                 "SELECT event_type FROM wf_event_outbox WHERE event_type = 'task.cancelled'",
                 String.class)).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("requestApproval suspends durably; resolution resumes the engine once (§4)")
+    void suspensionAndResume() throws Exception {
+        UUID record = UUID.randomUUID();
+        var result = suspensions.request(TENANT, "Purch", "PurchaseOrder",
+                "Purch.PurchaseOrder", record, "submit", "a1", "s2",
+                "{\"id\":\"r1\",\"op\":\"transitionState\",\"params\":{\"to\":\"REJECTED\"}}",
+                "Purch.manager", null, "any", CLERK);
+        UUID instance = UUID.fromString(String.valueOf(result.get("instanceId")));
+
+        // the role task exists and links the instance; the manager approves
+        org.assertj.core.api.Assertions.assertThat(
+                jdbc.queryForObject("SELECT count(*) FROM wf_tasks WHERE instance_id = ?",
+                        Integer.class, instance)).isEqualTo(1);
+        String taskId = jdbc.queryForObject(
+                "SELECT id FROM wf_tasks WHERE instance_id = ?", UUID.class, instance).toString();
+        RESUMES.clear();
+        mockMvc.perform(post("/api/v1/workflow/tasks/" + taskId + "/approve")
+                        .with(jwtFor(MANAGER)).contentType("application/json").content("{}"))
+                .andExpect(status().isOk());
+        // the engine re-entered after the step, exactly once
+        org.assertj.core.api.Assertions.assertThat(RESUMES)
+                .containsExactly("true:submit:s2");
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_suspended_flows WHERE id = ?", String.class, instance))
+                .isEqualTo("RESUMED");
+
+        // the initiating MANAGER (a role holder — access passes, SoD does not) cannot
+        // resolve their own approval (§4, fail closed)
+        UUID own = UUID.randomUUID();
+        suspensions.request(TENANT, "Purch", "PurchaseOrder", "Purch.PurchaseOrder", own,
+                "submit", "a1", "s2", null, "Purch.manager", null, "any", MANAGER);
+        String ownTask = jdbc.queryForObject(
+                "SELECT id FROM wf_tasks WHERE instance_id = ?", UUID.class,
+                jdbc.queryForObject("SELECT id FROM wf_suspended_flows WHERE record_id = ?",
+                        UUID.class, own)).toString();
+        mockMvc.perform(post("/api/v1/workflow/tasks/" + ownTask + "/approve")
+                        .with(jwtFor(MANAGER)).contentType("application/json").content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("4011"));
+    }
+
+    @Test
+    @DisplayName("an explicit approver set empty after SoD rejects fail closed (§4)")
+    void sodEmptySetRejects() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        suspensions.request(TENANT, "Purch", "PurchaseOrder",
+                                "Purch.PurchaseOrder", UUID.randomUUID(), "submit", "a1",
+                                "s2", null, null, List.of(CLERK.toString()), "all", CLERK))
+                .isInstanceOf(com.novaforge.common.error.PlatformException.class)
+                .hasMessageContaining("segregated");
+    }
+
+    @Test
+    @DisplayName("reject routes the onReject subgraph into the engine (§4)")
+    void rejectRunsOnReject() throws Exception {
+        UUID record = UUID.randomUUID();
+        suspensions.request(TENANT, "Purch", "PurchaseOrder", "Purch.PurchaseOrder", record,
+                "submit", "a1", "s2",
+                "{\"id\":\"r1\",\"op\":\"transitionState\",\"params\":{\"to\":\"REJECTED\"}}",
+                "Purch.manager", null, "any", CLERK);
+        String taskId = jdbc.queryForObject(
+                "SELECT id FROM wf_tasks WHERE record_id = ?", UUID.class, record).toString();
+        RESUMES.clear();
+        mockMvc.perform(post("/api/v1/workflow/tasks/" + taskId + "/reject")
+                        .with(jwtFor(MANAGER)).contentType("application/json").content("{}"))
+                .andExpect(status().isOk());
+        // the verdict routes onReject; the engine ignores afterStep on reject
+        org.assertj.core.api.Assertions.assertThat(RESUMES)
+                .containsExactly("false:submit:s2");
     }
 
     private static org.springframework.security.test.web.servlet.request

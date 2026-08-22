@@ -8,6 +8,7 @@ import com.novaforge.metadata.DefaultValue;
 import com.novaforge.metadata.EntityDefinition;
 import com.novaforge.metadata.FieldDefinition;
 import com.novaforge.metadata.FieldType;
+import com.novaforge.metadata.HookRule;
 import com.novaforge.metadata.PermissionSet;
 import com.novaforge.metadata.RelationshipDefinition;
 import com.novaforge.metadata.RelationshipType;
@@ -92,13 +93,13 @@ public class RecordEngine {
         reject(errors, "create " + entityApiName + " failed validation");
 
         UUID id = UUID.randomUUID();
-        runHooks(app, handle, tenantId, id, canonical, "beforeSave", appSystemPrincipal(handle));
+        runHooks(app, handle, tenantId, id, canonical, "beforeSave", appSystemPrincipal(handle), actorId);
         enforceCreateState(app, handle, canonical);
         evaluateRollupsFromChildren(app, handle, children, canonical);
         persistWithChildren(tenantId, actorId, app, handle, id, canonical, children, errors);
 
         events.publish(event("record.created", tenantId, handle.entityKey(), id, actorId));
-        runHooks(app, handle, tenantId, id, canonical, "afterSave", appSystemPrincipal(handle));
+        runHooks(app, handle, tenantId, id, canonical, "afterSave", appSystemPrincipal(handle), actorId);
         return shape(handle.entity(), records.find(tenantId, handle.entityKey(), id, false)
                 .orElseThrow(), strip(tenantId, actorId, handle, app));
     }
@@ -133,7 +134,7 @@ public class RecordEngine {
         evaluateFormulas(handle.entity(), merged);
         evaluateValidationRules(handle.entity(), merged, errors);
         reject(errors, "update " + entityApiName + "/" + id + " failed validation");
-        runHooks(app, handle, tenantId, id, merged, "beforeSave", appSystemPrincipal(handle));
+        runHooks(app, handle, tenantId, id, merged, "beforeSave", appSystemPrincipal(handle), actorId);
         enforceTransition(app, handle, existing.data(), merged);
 
         int newVersion = records.update(tenantId, handle.entityKey(), id, merged,
@@ -141,7 +142,7 @@ public class RecordEngine {
         replaceChildren(tenantId, actorId, app, handle, id, children);
         newVersion = recomputeRollupsIfChanged(tenantId, actorId, app, handle, id, merged, newVersion);
         events.publish(event("record.updated", tenantId, handle.entityKey(), id, actorId));
-        runHooks(app, handle, tenantId, id, merged, "afterSave", appSystemPrincipal(handle));
+        runHooks(app, handle, tenantId, id, merged, "afterSave", appSystemPrincipal(handle), actorId);
 
         Map<String, Object> shaped = shape(handle.entity(),
                 records.find(tenantId, handle.entityKey(), id, false).orElseThrow(),
@@ -161,12 +162,12 @@ public class RecordEngine {
         Map<String, Object> existingData = records.find(tenantId, handle.entityKey(), id, false)
                 .orElseThrow(() -> notFound(entityApiName, id)).data();
         runHooks(app, handle, tenantId, id, existingData, "beforeDelete",
-                appSystemPrincipal(handle));
+                appSystemPrincipal(handle), actorId);
         records.softDelete(tenantId, handle.entityKey(), id, expectedVersion, actorId);
         cascadeChildren(tenantId, actorId, app, handle, id);
         events.publish(event("record.deleted", tenantId, handle.entityKey(), id, actorId));
         runHooks(app, handle, tenantId, id, existingData, "afterDelete",
-                appSystemPrincipal(handle));
+                appSystemPrincipal(handle), actorId);
     }
 
     // --- read path ---
@@ -316,12 +317,13 @@ public class RecordEngine {
     }
 
     private void runHooks(AppDefinition app, EntityHandle handle, UUID tenantId, UUID recordId,
-                          Map<String, Object> data, String trigger, UUID systemPrincipal) {
+                          Map<String, Object> data, String trigger, UUID systemPrincipal,
+                          UUID initiatingActor) {
         if (handle.entity().hooks().isEmpty()) {
             return;
         }
         HookExecutor.Outcome outcome = hooks.runTrigger(app, handle, tenantId, recordId,
-                data, trigger, systemPrincipal, hookSink);
+                data, trigger, systemPrincipal, initiatingActor, hookSink);
         // §2 failure policy: after-hook failures ride the spine as hook.retry outbox
         // rows — same transaction as the write, so the failure is never lost and the
         // spine's retry consumer re-drives it (idempotently, bounded).
@@ -331,6 +333,32 @@ public class RecordEngine {
                     Map.of("trigger", trigger, "hook", retry.hook(), "kind", retry.kind(),
                             "attempt", 1, "error", String.valueOf(retry.error())));
         }
+    }
+
+    /**
+     * The suspension leg's re-entry (PHASE-4 §4): a resolved approval resumes the
+     * compiled graph as the per-app system principal against the record's current
+     * state. Callers bind the tenant context; failures surface to the Workflow
+     * Service as problem+json (the instance stays resolvable, never silently lost).
+     */
+    public void resumeApproval(UUID tenantId, String entityApiName, UUID recordId,
+                               String hookName, String afterStep,
+                               com.novaforge.metadata.FlowStep onReject, boolean approved) {
+        EntityHandle handle = resolver.resolve(tenantId, entityApiName);
+        AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        HookRule hook = handle.entity().hooks().stream()
+                .filter(h -> hookName.equals(h.name()))
+                .findFirst()
+                .orElseThrow(() -> new PlatformException(PlatformErrorCode.NOT_FOUND,
+                        "hook " + hookName + " no longer exists in the published "
+                                + "definition — the suspended flow cannot resume"));
+        Map<String, Object> current = records.find(tenantId, handle.entityKey(), recordId,
+                        true)
+                .orElseThrow(() -> new PlatformException(PlatformErrorCode.NOT_FOUND,
+                        entityApiName + "/" + recordId + " not found for resume"))
+                .data();
+        hooks.resumeFrom(app, handle, tenantId, recordId, current, hook, afterStep,
+                onReject, approved, appSystemPrincipal(handle), hookSink);
     }
 
     /** The retry leg's terminal dispositions (§2) — the scanner maps these to row states. */

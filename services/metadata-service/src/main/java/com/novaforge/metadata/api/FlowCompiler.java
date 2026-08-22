@@ -158,7 +158,7 @@ final class FlowCompiler {
             checkStep(byId(step.onTrue()), app, entity, scope, errors, visited, stack);
             checkStep(byId(step.onFalse()), app, entity, scope, errors, visited, stack);
         }
-        if ("iterate".equals(step.op())) {
+        if ("iterate".equals(step.op()) || "requestApproval".equals(step.op())) {
             checkStep(step.body(), app, entity, scope, errors, visited, stack);
         }
         stack.remove(step.id());
@@ -248,9 +248,25 @@ final class FlowCompiler {
                                     + machine.get().id() + ": " + to, to));
                 }
             }
+            case "requestApproval" -> {
+                // Phase 4 activation (§4): approvers (a role reference or a user list)
+                // and mode are compile-checked; the optional onReject subgraph rides
+                // the step's body and is checked like any graph fragment.
+                Object approvers = step.params().get("approvers");
+                if (!(approvers instanceof String) && !(approvers instanceof java.util.List<?> list
+                        && !list.isEmpty())) {
+                    errors.add(new ProblemErrors.FieldError(where,
+                            "requestApproval requires approvers — a role reference or a "
+                                    + "non-empty user list", approvers));
+                }
+                String mode = step.param("mode");
+                if (mode != null && !"any".equals(mode) && !"all".equals(mode)) {
+                    errors.add(new ProblemErrors.FieldError(where,
+                            "requestApproval mode must be any or all: " + mode, mode));
+                }
+            }
             default -> {
-                // requestApproval / callConnector: grammar-fixed; execution activates
-                // with Phase 4 (T5) / Phase 6 — nothing further to check.
+                // callConnector: grammar-fixed; execution activates with Phase 6.
             }
         }
         if (!"branch".equals(step.op())

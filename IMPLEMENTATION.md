@@ -278,9 +278,39 @@ validated; carried from Phase 1).
   (suspension + SLA timers) where it has work to do; the Boot 4 compatibility of the
   Flowable starter gets assessed at that boundary (deviation from T1's letter, noted)
 
-**Not implemented (Phase 4 remainder):** `requestApproval` durable suspension + SoD
-(T5), SLAs/escalation (T6), Scheduler (T7), Notification v1 (T8), sharing rules (T9),
-builder/runtime UI (T10), harness growth (T11).
+**Implemented — T5 `requestApproval` + durable suspension + SoD (§4):**
+- the primitive activates: a flow reaching `requestApproval` hands the approval to
+  the Workflow Service's internal surface (`/api/v1/workflow/internal/approvals`,
+  service-client gated) — step id, after-step pointer, and the optional inline
+  `onReject` subgraph (the step's `body`) travel in the payload; execution of that
+  flow ends there, so a suspension inside a write-path hook never holds the
+  enclosing transaction — the triggering write commits
+- durable instances (`wf_suspended_flows`): where the flow resumes, the onReject
+  graph, and unanimity bookkeeping — `any` resumes on first resolution, `all` on
+  unanimity; siblings after the first win are no-ops (exactly-once resume)
+- resolution re-enters the compiled-graph engine through the runtime's internal
+  `/api/v1/hooks/resume` (service-client gated, no gateway route): approve
+  continues after the step; reject runs the step's own `onReject` subgraph, or the
+  instance fails audibly (status FAILED + last_error, never silent); resume
+  executes as the per-app system principal against the record's current state,
+  with `transitionState` persisting through the standard guarded write on this
+  path (no enclosing write carries the field)
+- segregation of duties, fail closed (§4): the initiating actor is removed from
+  explicit approver sets at suspension (empty remainder → `SOD_VIOLATION` renders
+  onto the write path and aborts a beforeSave flow); role-targeted approvals
+  enforce the same rule at resolution (the initiator cannot resolve their own
+  request); delegation to the initiator rejects
+- publish compilation: `requestApproval` params (approvers role/user-list, mode
+  any|all) and the onReject subgraph are compile-checked like any graph fragment
+- suites: `ApprovalFlowTests` (submit → suspends, write commits SUBMITTED; approve
+  resumes to APPROVED; reject routes onReject to REJECTED; SoD aborts the write
+  4011; the resume surface is service-client only) + three workflow-side cases
+  (suspension→resume exactly once, SoD at resolution and at creation, onReject
+  routing)
+
+**Not implemented (Phase 4 remainder):** SLAs/escalation (T6), Scheduler (T7),
+Notification v1 (T8), sharing rules (T9), builder/runtime UI (T10), harness growth
+(T11).
 
 ## Phases 5–8 ⬜
 

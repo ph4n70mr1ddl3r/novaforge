@@ -40,10 +40,13 @@ import org.springframework.stereotype.Component;
 public class HookExecutor {
 
     private final ScriptClient scripts;
+    private final ApprovalClient approvals;
     private final io.micrometer.core.instrument.MeterRegistry meters;
 
-    public HookExecutor(ScriptClient scripts, io.micrometer.core.instrument.MeterRegistry meters) {
+    public HookExecutor(ScriptClient scripts, ApprovalClient approvals,
+                        io.micrometer.core.instrument.MeterRegistry meters) {
         this.scripts = scripts;
+        this.approvals = approvals;
         this.meters = meters;
     }
 
@@ -87,7 +90,7 @@ public class HookExecutor {
 
     public Outcome runTrigger(AppDefinition app, EntityHandle handle, UUID tenantId,
                               UUID recordId, Map<String, Object> data, String trigger,
-                              UUID systemPrincipal, HookSink sink) {
+                              UUID systemPrincipal, UUID initiatingActor, HookSink sink) {
         List<Outcome.Retry> retries = new java.util.ArrayList<>();
         for (HookRule hook : handle.entity().hooks()) {
             if (!trigger.equals(hook.trigger())) {
@@ -95,7 +98,7 @@ public class HookExecutor {
             }
             try {
                 runOne(app, handle, tenantId, recordId, data, trigger, hook,
-                        systemPrincipal, sink);
+                        systemPrincipal, initiatingActor, sink);
             } catch (RuntimeException e) {
                 // before-hooks abort (§2.5); after-hooks ride the spine for retry —
                 // never lost, never blocking the write (§2 failure policy).
@@ -124,16 +127,42 @@ public class HookExecutor {
         for (HookRule hook : handle.entity().hooks()) {
             if (trigger.equals(hook.trigger()) && hookName.equals(hook.name())) {
                 runOne(app, handle, tenantId, recordId, data, trigger, hook,
-                        systemPrincipal, sink);
+                        systemPrincipal, null, sink);
                 return true;
             }
         }
         return false;
     }
 
+    /**
+     * The suspension leg's re-entry (PHASE-4 §4): a resolved approval resumes the
+     * compiled graph — after the requestApproval step on approve, the step's own
+     * onReject subgraph on reject — as the per-app system principal against the
+     * record's current state. The triggering write committed long before; resume
+     * writes go through the standard hook sink (guarded writes, no bypass).
+     */
+    public void resumeFrom(AppDefinition app, EntityHandle handle, UUID tenantId,
+                           UUID recordId, Map<String, Object> data, HookRule hook,
+                           String afterStep, FlowStep onReject, boolean approved,
+                           UUID systemPrincipal, HookSink sink) {
+        Context context = new Context(app, handle, tenantId, recordId, data,
+                systemPrincipal, 0, sink);
+        context.resume = true;
+        context.index(hook.flow());
+        FlowStep entry = approved ? context.step(afterStep) : onReject;
+        if (entry == null) {
+            return;   // approve with no remainder, or no onReject authored
+        }
+        int executed = 0;
+        while (entry != null && executed++ < MAX_STEPS) {
+            entry = executeStep(entry, context);
+        }
+    }
+
     private void runOne(AppDefinition app, EntityHandle handle, UUID tenantId,
                         UUID recordId, Map<String, Object> data, String trigger,
-                        HookRule hook, UUID systemPrincipal, HookSink sink) {
+                        HookRule hook, UUID systemPrincipal, UUID initiatingActor,
+                        HookSink sink) {
         String kind = hook.script() == null ? "flow" : "script";
         counted(handle, trigger, kind);
         // §9 hook-duration histogram — the write path's per-trigger latency shape.
@@ -143,8 +172,12 @@ public class HookExecutor {
             if (hook.script() != null) {
                 runScriptHook(handle, recordId, data, trigger, hook);
             } else {
-                executeFlow(app, handle, tenantId, recordId, data, hook.flow(),
+                Context context = new Context(app, handle, tenantId, recordId, data,
                         systemPrincipal, 0, sink);
+                context.initiatingActor = initiatingActor;
+                context.currentHook = hook.name();
+                context.index(hook.flow());
+                executeIndexed(hook.flow(), context);
             }
         } finally {
             sample.stop(io.micrometer.core.instrument.Timer
@@ -201,12 +234,7 @@ public class HookExecutor {
         }
     }
 
-    private void executeFlow(AppDefinition app, EntityHandle handle, UUID tenantId,
-                             UUID recordId, Map<String, Object> data, FlowStep entry,
-                             UUID systemPrincipal, int depth, HookSink sink) {
-        Context context = new Context(app, handle, tenantId, recordId, data,
-                systemPrincipal, depth, sink);
-        context.index(entry);
+    private void executeIndexed(FlowStep entry, Context context) {
         FlowStep step = entry;
         int executed = 0;
         while (step != null) {
@@ -286,12 +314,35 @@ public class HookExecutor {
                             "unknown state on " + machine.get().id() + ": " + to);
                 }
                 context.data.put(machine.get().stateField(), to);
+                if (context.resume) {
+                    // no enclosing write carries the field here — the transition
+                    // rides the standard guarded write (updateAsPrincipal enforces
+                    // the machine; no bypass exists).
+                    context.sink.writeRecord(context.handle.entity().apiName(),
+                            Map.of(machine.get().stateField(), to),
+                            context.recordId == null ? null : context.recordId.toString(),
+                            context.systemPrincipal, context.depth + 1);
+                }
                 return byName(context, step.next());
             }
-            case "requestApproval" -> throw new PlatformException(
-                    PlatformErrorCode.VALIDATION_FAILED,
-                    "requestApproval is grammar-fixed until the durable-suspension leg "
-                            + "lands (PHASE-4 §4, T5)");
+            case "requestApproval" -> {
+                // Phase 4 activation (§4): the approval is handed to the Workflow
+                // Service (task + suspended instance); execution of this flow ends
+                // here — the triggering write commits, resolution re-enters the
+                // engine afterward. Never holds the enclosing transaction.
+                Object approvers = step.params().get("approvers");
+                String role = approvers instanceof String text ? text : null;
+                java.util.List<String> users = approvers instanceof List<?> list
+                        ? list.stream().map(String::valueOf).toList() : null;
+                approvals.request(new ApprovalClient.Suspension(context.tenantId,
+                        context.handle.appApiName(), context.handle.entity().apiName(),
+                        context.handle.entityKey(), context.recordId,
+                        context.currentHook, step.id(),
+                        step.next(), step.body(), role, users,
+                        step.param("mode") == null ? "any" : step.param("mode"),
+                        context.initiatingActor));
+                return null;   // suspended — the remainder runs on resolution
+            }
             case "callConnector" -> throw new PlatformException(
                     PlatformErrorCode.VALIDATION_FAILED,
                     "callConnector is grammar-fixed and activates with Phase 6 (PHASE-3 §2)");
@@ -340,6 +391,9 @@ public class HookExecutor {
         final UUID systemPrincipal;
         final HookSink sink;
         final int depth;
+        boolean resume;
+        UUID initiatingActor;
+        String currentHook;
         private final Map<String, Object> overlay = new HashMap<>();
         private final Map<String, FlowStep> steps = new HashMap<>();
 

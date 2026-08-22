@@ -31,12 +31,15 @@ public class TaskService {
     private final TaskStore tasks;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final RoleLookup roles;
+    private final org.springframework.beans.factory.ObjectProvider<SuspensionService> suspensions;
 
     public TaskService(TaskStore tasks, org.springframework.jdbc.core.JdbcTemplate jdbc,
-                       RoleLookup roles) {
+                       RoleLookup roles,
+                       org.springframework.beans.factory.ObjectProvider<SuspensionService> suspensions) {
         this.tasks = tasks;
         this.jdbc = jdbc;
         this.roles = roles;
+        this.suspensions = suspensions;
     }
 
     /** Creates a task (OPEN) with its lifecycle events on the outbox. */
@@ -44,6 +47,15 @@ public class TaskService {
     public TaskStore.Task create(UUID tenantId, String type, String entityId, UUID recordId,
                                  UUID assignee, String role, Instant dueAt, Instant warnAt,
                                  UUID createdBy, UUID contextRef) {
+        return create(tenantId, type, entityId, recordId, assignee, role, dueAt, warnAt,
+                createdBy, contextRef, null);
+    }
+
+    /** The suspension-aware create: approval tasks link their suspended instance. */
+    @Transactional
+    public TaskStore.Task create(UUID tenantId, String type, String entityId, UUID recordId,
+                                 UUID assignee, String role, Instant dueAt, Instant warnAt,
+                                 UUID createdBy, UUID contextRef, UUID instance) {
         if (assignee == null && role == null) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "a task requires an assignee or a role");
@@ -54,7 +66,7 @@ public class TaskService {
         }
         TaskStore.Task task = new TaskStore.Task(UUID.randomUUID(), tenantId, type, entityId,
                 recordId, assignee, role, "OPEN", null, dueAt, warnAt, createdBy,
-                contextRef == null ? null : contextRef, Instant.now());
+                contextRef == null ? null : contextRef, instance, Instant.now());
         tasks.insert(task);
         emit(task, "task.created", createdBy, null);
         if (assignee != null) {
@@ -79,6 +91,12 @@ public class TaskService {
     public TaskStore.Task resolve(UUID tenantId, UUID actor, UUID id, boolean approved,
                                   String comment) {
         TaskStore.Task task = requireAccess(tenantId, actor, id);
+        // Segregation of duties at resolution (§4): the initiating actor never
+        // resolves their own request — role-targeted approvals enforce it here.
+        if (task.instance() != null && actor.equals(task.createdBy())) {
+            throw new PlatformException(PlatformErrorCode.SOD_VIOLATION,
+                    "the initiating actor cannot resolve their own approval (§4)");
+        }
         String status = approved ? "APPROVED" : "REJECTED";
         if (tasks.resolve(tenantId, id, status, comment) == 0) {
             throw new PlatformException(PlatformErrorCode.CONFLICT_VERSION,
@@ -86,6 +104,9 @@ public class TaskService {
         }
         emit(task.withStatus(status), approved ? "task.approved" : "task.rejected",
                 actor, comment);
+        if (task.instance() != null) {
+            suspensions.getObject().resolved(tenantId, task.instance(), actor, approved);
+        }
         return task.withStatus(status);
     }
 
@@ -118,7 +139,7 @@ public class TaskService {
         TaskStore.Task replacement = new TaskStore.Task(UUID.randomUUID(), tenantId,
                 task.type(), task.entityId(), task.recordId(), toUser, task.role(),
                 "OPEN", null, task.dueAt(), task.warnAt(), task.createdBy(), chainRoot,
-                Instant.now());
+                task.instance(), Instant.now());
         tasks.insert(replacement);
         if (task.contextRef() == null) {
             jdbc.update("UPDATE wf_tasks SET context_ref = ?, updated_at = now() WHERE id = ?",
