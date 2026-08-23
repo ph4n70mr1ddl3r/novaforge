@@ -9,9 +9,11 @@ services:
     environment:
       POSTGRES_PASSWORD: novaforge
     ports:
-      # Canonical host port is 5432; override with NOVAFORGE_POSTGRES_PORT when the host
-      # already runs a Postgres (the connection string rides the same variable).
-      - "${NOVAFORGE_POSTGRES_PORT:-5432}:5432"
+      # Default host port is 5434: this host runs a native Postgres on 5432, and
+      # the mda workspace reserves 5433 for its dev database — 5434 keeps every
+      # stack on its own port. Override with NOVAFORGE_POSTGRES_PORT when needed
+      # (the JVM connection strings ride the same variable).
+      - "${NOVAFORGE_POSTGRES_PORT:-5434}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ../postgres-init:/docker-entrypoint-initdb.d:ro,Z

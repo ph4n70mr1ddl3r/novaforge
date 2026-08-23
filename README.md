@@ -138,15 +138,15 @@ export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/run/user/$UID/podman/podman.sock
 #    + the Phase 3 observability expansion: Tempo, Loki, promtail, kafka-exporter)
 cd deploy/compose
 PODMAN_COMPOSE_PROVIDER=podman-compose \
-NOVAFORGE_POSTGRES_PORT=5433 podman compose -f novaforge.yaml up -d
+podman compose -f novaforge.yaml up -d   # postgres lands on host :5434 (5432 = host pg, 5433 = mda)
 podman ps                                       # wait until all report (healthy)
 
 # 2. Services (host JVMs). File logging defaults to /tmp/novaforge/logs — promtail
 #    tails that dir into Loki; spans ship OTLP-direct to Tempo (localhost:4318).
 cd ../..
-NOVAFORGE_POSTGRES_PORT=5433 java -jar services/metadata-service/target/novaforge-metadata-service-*.jar &
-NOVAFORGE_POSTGRES_PORT=5433 java -jar services/data-runtime/api/target/novaforge-data-runtime-*.jar &
-java -jar services/gateway/target/novaforge-gateway-*.jar &
+NOVAFORGE_POSTGRES_PORT=5434 java -jar services/metadata-service/target/novaforge-metadata-service-*.jar &
+NOVAFORGE_POSTGRES_PORT=5434 java -jar services/data-runtime/api/target/novaforge-data-runtime-*.jar &
+NOVAFORGE_POSTGRES_PORT=5434 java -jar services/gateway/target/novaforge-gateway-*.jar &
 
 # 3. Token (scope novaforge.api + tenant/actor/platform-roles claims)
 TOKEN=$(curl -s -X POST http://localhost:8082/realms/novaforge/protocol/openid-connect/token \
