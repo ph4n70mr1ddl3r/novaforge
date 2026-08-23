@@ -4,8 +4,8 @@ import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.EntityDefinition;
 import com.novaforge.metadata.FieldDefinition;
 import com.novaforge.metadata.FieldType;
-import com.novaforge.runtime.storage.schema.PromotionPolicy;
-import com.novaforge.runtime.storage.schema.Snake;
+import com.novaforge.metadata.PromotionPolicy;
+import com.novaforge.metadata.Snake;
 
 import java.util.ArrayList;
 import java.util.List;

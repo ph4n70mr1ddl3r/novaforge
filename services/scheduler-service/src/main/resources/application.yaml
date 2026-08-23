@@ -61,6 +61,10 @@ novaforge:
     service-client:
       id: ${NOVAFORGE_SERVICE_CLIENT_ID:novaforge-runtime}
       secret: ${NOVAFORGE_SERVICE_CLIENT_SECRET:novaforge-runtime-secret}
+  reporting:
+    # §7's report target: scheduled delivery fires the Reporting Service's internal
+    # surface (run + render + notify under the job's runAsRole).
+    url: ${NOVAFORGE_REPORTING_URL:http://localhost:8089}
   data-runtime:
     # Role→holders fan-out reads the runtime's admin surface (the platform DB is
     # the runtime's to own).

@@ -21,6 +21,13 @@
       <groupId>com.novaforge</groupId>
       <artifactId>novaforge-common-core</artifactId>
     </dependency>
+    <!-- expr/v1 — the shared expression grammar; the model's promotion-aware field
+         resolver feeds the SQL lowering (PHASE-5 §3) shared by the publish-time
+         compile gate and the Data Runtime's aggregate pipeline. -->
+    <dependency>
+      <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-expression-dsl</artifactId>
+    </dependency>
     <dependency>
       <groupId>tools.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>

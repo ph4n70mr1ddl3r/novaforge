@@ -49,8 +49,14 @@ class SchedulerTests extends PostgresTestBase {
     /** Process firings the stub observed (the workflow service's stand-in). */
     static final List<String> PROCESSES = new CopyOnWriteArrayList<>();
 
+    /** Report deliveries the stub observed (the reporting service's stand-in). */
+    static final List<String> REPORTS = new CopyOnWriteArrayList<>();
+
     /** When set, the process stub fails — the run records the failure (§7). */
     static volatile boolean failProcesses = false;
+
+    /** When set, the report stub fails — the delivery run records the failure (§7). */
+    static volatile boolean failReports = false;
 
     @Autowired
     MockMvc mockMvc;
@@ -98,6 +104,25 @@ class SchedulerTests extends PostgresTestBase {
                 }
             };
         }
+
+        @Bean
+        @Primary
+        com.novaforge.scheduler.jobs.RestReportTarget reportTarget() {
+            return new com.novaforge.scheduler.jobs.RestReportTarget(
+                    "http://localhost:1", "http://localhost:1", "id", "secret") {
+                @Override
+                public Map<String, Object> run(UUID tenantId, String appApiName,
+                                               Map<String, Object> params) {
+                    if (failReports) {
+                        throw new com.novaforge.common.error.PlatformException(
+                                com.novaforge.common.error.PlatformErrorCode.INTERNAL,
+                                "reporting unreachable");
+                    }
+                    REPORTS.add(appApiName + ":" + params.get("reportId"));
+                    return Map.of("status", "delivered", "rows", 7);
+                }
+            };
+        }
     }
 
     private static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:4.3.1");
@@ -122,7 +147,9 @@ class SchedulerTests extends PostgresTestBase {
         jdbc.update("DELETE FROM sched_jobs");
         FIRED.clear();
         PROCESSES.clear();
+        REPORTS.clear();
         failProcesses = false;
+        failReports = false;
         published = List.of(new PublishedJobsSource.AppJobs(TENANT, "Purch", List.of(
                 new ScheduledJobDefinition("nightlySweep", "0 0 3 * * *", "flow",
                         Map.of("entity", "PurchaseOrder", "hook", "sweep"), true),
@@ -131,6 +158,8 @@ class SchedulerTests extends PostgresTestBase {
                 new ScheduledJobDefinition("processJob", "0 0 5 * * *", "processStart",
                         Map.of("process", "po_review"), true),
                 new ScheduledJobDefinition("reportJob", "0 0 6 * * *", "report",
+                        Map.of("reportId", "arAging"), true),
+                new ScheduledJobDefinition("scriptJob", "0 0 7 * * *", "script",
                         Map.of(), true))));
     }
 
@@ -139,7 +168,7 @@ class SchedulerTests extends PostgresTestBase {
     void syncRegistersFromMetadata() {
         runner.syncOnce();
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
-                "SELECT count(*) FROM sched_jobs", Integer.class)).isEqualTo(4);
+                "SELECT count(*) FROM sched_jobs", Integer.class)).isEqualTo(5);
         // definitions are upserts: a republish with a changed cron updates the row
         published = List.of(new PublishedJobsSource.AppJobs(TENANT, "Purch", List.of(
                 new ScheduledJobDefinition("nightlySweep", "0 30 3 * * *", "flow",
@@ -200,7 +229,7 @@ class SchedulerTests extends PostgresTestBase {
     void dormantTargetsSkip() {
         runner.syncOnce();
         jdbc.update("UPDATE sched_jobs SET next_fire_at = now() - interval '1 second' "
-                + "WHERE name = 'reportJob'");
+                + "WHERE name = 'scriptJob'");
         runner.scanOnce();
         org.assertj.core.api.Assertions.assertThat(FIRED).isEmpty();
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForMap(
@@ -208,6 +237,36 @@ class SchedulerTests extends PostgresTestBase {
         org.assertj.core.api.Assertions.assertThat(String.valueOf(
                 jdbc.queryForMap("SELECT detail FROM sched_runs").get("detail")))
                 .contains("dormant");
+    }
+
+    @Test
+    @DisplayName("report fires the reporting service's delivery surface; failures record failed runs (§7/PHASE-5)")
+    void reportTargetFires() {
+        runner.syncOnce();
+        jdbc.update("UPDATE sched_jobs SET next_fire_at = now() - interval '1 second' "
+                + "WHERE name = 'reportJob'");
+        runner.scanOnce();
+
+        org.assertj.core.api.Assertions.assertThat(REPORTS)
+                .containsExactly("Purch:arAging");
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForMap(
+                "SELECT last_status FROM sched_jobs WHERE name = 'reportJob'")
+                .get("last_status")).isEqualTo("ok");
+        org.assertj.core.api.Assertions.assertThat(String.valueOf(jdbc.queryForMap(
+                "SELECT detail FROM sched_runs ORDER BY fired_at DESC LIMIT 1")
+                .get("detail"))).contains("delivered");
+
+        // a delivery the reporting service rejects records a failed run — audibly
+        failReports = true;
+        jdbc.update("UPDATE sched_jobs SET next_fire_at = now() - interval '1 second' "
+                + "WHERE name = 'reportJob'");
+        // release the lease the first fire holds (the distributed lock's window)
+        jdbc.update("DELETE FROM sched_leases WHERE job_id = "
+                + "(SELECT id FROM sched_jobs WHERE name = 'reportJob')");
+        runner.scanOnce();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForMap(
+                "SELECT last_status FROM sched_jobs WHERE name = 'reportJob'")
+                .get("last_status")).isEqualTo("failed");
     }
 
     @Test
@@ -244,7 +303,7 @@ class SchedulerTests extends PostgresTestBase {
         mockMvc.perform(get("/api/v1/scheduler/jobs").with(jwtFor()))
                 .andExpect(status().isOk())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
-                        .jsonPath("$.length()").value(4));
+                        .jsonPath("$.length()").value(5));
     }
 
     private static org.springframework.security.test.web.servlet.request

@@ -42,8 +42,40 @@ public final class QueryModel {
     public record Aggregate(AggregateOp op, String field, String alias) {
     }
 
+    /**
+     * One group-by level (PHASE-5 §3): a plain field, or the same field bucketed by
+     * ordered platform expressions — first matching bucket wins (branch semantics),
+     * and the bucketing lowers to a CASE expression inside the aggregate pipeline,
+     * never client-side shaping. {@code asOf} on the query binds {@code today()} in
+     * bucket expressions — the run's governing clock (a suite's frozen clock pins
+     * deterministic buckets, PHASE-3 §7).
+     */
+    public record GroupBy(String field, List<Bucket> buckets) {
+
+        public GroupBy(String field) {
+            this(field, List.of());
+        }
+
+        public GroupBy {
+            buckets = buckets == null ? List.of() : List.copyOf(buckets);
+        }
+
+        public boolean bucketed() {
+            return !buckets.isEmpty();
+        }
+    }
+
+    /** A bucket of a bucketed group-by: the label is the grouped output value. */
+    public record Bucket(String label, String expression) {
+    }
+
     /** Aggregate query (POST /{entity}/query). */
-    public record AggregateQuery(Filter filter, List<String> groupBy, List<Aggregate> aggregates) {
+    public record AggregateQuery(Filter filter, List<GroupBy> groupBy,
+                                 List<Aggregate> aggregates, java.time.LocalDate asOf) {
+
+        public AggregateQuery(Filter filter, List<GroupBy> groupBy, List<Aggregate> aggregates) {
+            this(filter, groupBy, aggregates, null);
+        }
     }
 
     public record QueryResult(List<Map<String, Object>> rows, long total) {

@@ -33,8 +33,9 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code expect: error(SOD_VIOLATION)} depends on, filter interpolation, and the
  * id-match scope so a resolved {@code ${Task[n]}} reflects its post-resolution state.
  *
- * <p>Four stub servers stand in for auth/runtime/metadata/workflow; the runner's own
- * HTTP behavior — methods, paths, encodings — is asserted by the stubs being strict.
+ * <p>Five stub servers stand in for auth/runtime/metadata/workflow/reporting; the
+ * runner's own HTTP behavior — methods, paths, encodings — is asserted by the stubs
+ * being strict.
  */
 class TestRunnerJourneyTests {
 
@@ -79,6 +80,8 @@ class TestRunnerJourneyTests {
     private static final AtomicReference<String> INBOX_METHOD = new AtomicReference<>();
     private static final AtomicReference<String> INBOX_QUERY = new AtomicReference<>();
     private static final AtomicReference<String> THING_FILTER = new AtomicReference<>();
+    private static final AtomicReference<String> REPORT_METHOD = new AtomicReference<>();
+    private static final AtomicReference<String> REPORT_BODY = new AtomicReference<>();
 
     @BeforeAll
     static void stubs() throws IOException {
@@ -143,11 +146,28 @@ class TestRunnerJourneyTests {
                     + method + " " + path + "\"}");
         });
 
+        // reporting: the run surface (PHASE-5 §9) — POST-only, actor token, app-bound
+        HttpServer reporting = server((exchange, body) -> {
+            String path = exchange.getRequestURI().getPath();
+            REPORT_METHOD.set(exchange.getRequestMethod());
+            REPORT_BODY.set(body);
+            if ("POST".equals(exchange.getRequestMethod())
+                    && path.equals("/api/v1/reports/arAging/run")) {
+                respond(exchange, 200, "{\"columns\":[\"customer\",\"sum_amount\"],"
+                        + "\"rows\":[{\"customer\":\"acme\",\"sum_amount\":300.50}],"
+                        + "\"totals\":{\"sum_amount\":300.50},\"chart\":{}}");
+                return;
+            }
+            respond(exchange, 405, "{\"code\":\"4000\",\"detail\":\"unexpected "
+                    + exchange.getRequestMethod() + " " + path + "\"}");
+        });
+
         runner = new TestRunner(
                 "http://127.0.0.1:" + runtime.getAddress().getPort(),
                 "http://127.0.0.1:" + metadata.getAddress().getPort(),
                 "http://127.0.0.1:" + auth.getAddress().getPort(),
                 "http://127.0.0.1:" + workflow.getAddress().getPort(),
+                "http://127.0.0.1:" + reporting.getAddress().getPort(),
                 "novaforge-runtime", "novaforge-runtime-secret", new SimpleMeterRegistry());
     }
 
@@ -173,11 +193,15 @@ class TestRunnerJourneyTests {
                                 Map.of("action", "approve", "comment", "go"), "ok"),
                         new Step("queryRecord", "Thing", "manager", null,
                                 Map.of("filter", thingFilter), "ok"),
+                        new Step("runReport", "arAging", "manager", null,
+                                Map.of("status", "POSTED", "asOf", "2026-08-23"), "ok"),
                         new Step("resolveTask", "Task", "manager", "${Task[0].id}",
                                 Map.of("action", "reject"), "error(SOD_VIOLATION)")),
                         List.of("${Task[0].status} == 'APPROVED'",
                                 "${Query[0].count} == 1",
-                                "${Query[1].count} == 1"))));
+                                "${Query[1].count} == 1",
+                                "${Report[0].rowCount} == 1",
+                                "${Report[0].totals.sum_amount} == 300.5"))));
 
         AppDefinition candidate = new AppDefinition(null, "JourneyApp", null, null, null,
                 null, null, null, null, null, null, null, null);
@@ -192,5 +216,11 @@ class TestRunnerJourneyTests {
         // ${...} references in filters are interpolated before the query is sent
         assertEquals(MAPPER.readValue("{\"field\":\"name\",\"op\":\"eq\",\"value\":\"t-1\"}", Map.class),
                 MAPPER.readValue(THING_FILTER.get(), Map.class));
+        // the report run rode POST with the app bound and the params carried
+        // (PHASE-5 §9: the step's actor token, the candidate app's apiName)
+        assertEquals("POST", REPORT_METHOD.get());
+        assertEquals(MAPPER.readValue(
+                "{\"app\":\"JourneyApp\",\"params\":{\"status\":\"POSTED\",\"asOf\":\"2026-08-23\"}}", Map.class),
+                MAPPER.readValue(REPORT_BODY.get(), Map.class));
     }
 }

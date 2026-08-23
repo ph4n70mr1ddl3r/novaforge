@@ -22,6 +22,11 @@
       <groupId>com.novaforge</groupId>
       <artifactId>novaforge-common-core</artifactId>
     </dependency>
+    <!-- ServiceClientGate — the internal send surface's trusted-service gate (§7). -->
+    <dependency>
+      <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-security-context</artifactId>
+    </dependency>
     <dependency>
       <!-- SMTP email (Mailpit locally, §2). -->
       <groupId>org.springframework.boot</groupId>

@@ -54,10 +54,22 @@ public record PermissionSet(
         }
     }
 
-    /** role × entity → CRUD flags (absent flags deny). */
+    /**
+     * role × entity → CRUD flags (absent flags deny). {@code reportExecute} grows the
+     * matrix beyond entity CRUD (PHASE-5 §8): the object-level {@code report: execute}
+     * grant for reports bound to this entity — default deny until an app grants it;
+     * report runs additionally require the underlying entity READ of the effective
+     * actor, and sharing-rule row filters apply as to lists (§4).
+     */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record ObjectPermission(String role, String entity,
-                                   Boolean create, Boolean read, Boolean update, Boolean delete) {
+                                   Boolean create, Boolean read, Boolean update, Boolean delete,
+                                   Boolean reportExecute) {
+
+        public ObjectPermission(String role, String entity,
+                                Boolean create, Boolean read, Boolean update, Boolean delete) {
+            this(role, entity, create, read, update, delete, null);
+        }
 
         public boolean allows(String action) {
             return switch (action) {
@@ -65,6 +77,7 @@ public record PermissionSet(
                 case "read" -> Boolean.TRUE.equals(read);
                 case "update" -> Boolean.TRUE.equals(update);
                 case "delete" -> Boolean.TRUE.equals(delete);
+                case "reportExecute" -> Boolean.TRUE.equals(reportExecute);
                 default -> false;
             };
         }

@@ -59,6 +59,10 @@ novaforge:
   workflow:
     # The harness's resolveTask/queryRecord(Task) ride the inbox API (PHASE-4 §12).
     url: ${NOVAFORGE_WORKFLOW_URL:http://localhost:8086}
+  reporting:
+    # The harness's runReport op rides the public run surface as the step's actor
+    # (PHASE-5 §9) — report: execute and sharing row filters apply per run (§8).
+    url: ${NOVAFORGE_REPORTING_URL:http://localhost:8089}
   metadata:
     # The candidate publish into the scratch tenant (self-call, same spelling every
     # other metadata caller uses).

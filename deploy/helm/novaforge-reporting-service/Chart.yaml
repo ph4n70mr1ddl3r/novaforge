@@ -1,0 +1,6 @@
+apiVersion: v2
+name: novaforge-reporting-service
+description: NovaForge reporting-service service chart (PHASE-5 §2)
+type: application
+version: 0.1.0
+appVersion: "0.1.0-SNAPSHOT"

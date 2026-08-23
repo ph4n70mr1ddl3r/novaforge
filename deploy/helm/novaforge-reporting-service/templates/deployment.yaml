@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-novaforge-reporting-service
+  labels: {{ include "novaforge-reporting-service.labels" . | indent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels: {{ include "novaforge-reporting-service.selectorLabels" . | indent 6 }}
+  template:
+    metadata:
+      labels: {{ include "novaforge-reporting-service.selectorLabels" . | indent 8 }}
+    spec:
+      containers:
+        - name: novaforge-reporting-service
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8089
+              name: http
+          env: {{ toYaml .Values.env | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+          resources: {{ toYaml .Values.resources | nindent 12 }}

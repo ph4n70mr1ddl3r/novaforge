@@ -75,8 +75,10 @@ class AuditTrailTests extends PostgresTestBase {
         // at-least-once: redeliver the same event — dedup collapses it
         kafka.send(new ProducerRecord<>("novaforge.record", TENANT + ":" + recordId, payload)).get();
 
+        // await the event itself, not a non-empty body — the trail reads "[]" until
+        // the consumer lands the row, and "[]" is a non-empty string
         await().atMost(Duration.ofSeconds(30)).until(() ->
-                !mockMvcPerform(recordId).isEmpty());
+                mockMvcPerform(recordId).contains("record.created"));
 
         String body = mockMvcPerform(recordId);
         assertThat(body).contains("record.created").contains(recordId.toString());

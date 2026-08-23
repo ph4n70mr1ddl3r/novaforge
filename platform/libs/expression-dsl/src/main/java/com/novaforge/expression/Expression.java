@@ -66,6 +66,11 @@ public final class Expression {
         return new ClockUse().scan(root);
     }
 
+    /** The parsed tree — for host-side compilers over the same grammar (ExpressionSql). */
+    public Node root() {
+        return root;
+    }
+
     /**
      * Compile check: every reference must resolve against the slot's declared bindings,
      * and clock functions are rejected where determinism demands it (stored formula
@@ -122,7 +127,13 @@ public final class Expression {
 
     // --- nodes ---
 
-    sealed interface Node permits Node.Literal, Node.Reference, Node.Unary, Node.Binary,
+    /**
+     * The parsed tree. Public (and walkable by hosts) so lowering pipelines can compile
+     * an authored expression into another execution surface — the Phase 5 SQL lowering
+     * for report buckets and sharing criteria is the first (ExpressionSql). The permit
+     * set stays closed: hosts consume, never extend.
+     */
+    public sealed interface Node permits Node.Literal, Node.Reference, Node.Unary, Node.Binary,
             Node.Call, Node.ListLiteral, Node.Method {
         record Literal(Object value) implements Node {
         }
@@ -487,9 +498,5 @@ public final class Expression {
             }
             throw new ExpressionException("expected a string value");
         }
-    }
-
-    static Node root(Expression expression) {
-        return expression.root;
     }
 }

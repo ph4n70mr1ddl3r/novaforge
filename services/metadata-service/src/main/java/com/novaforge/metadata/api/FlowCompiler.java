@@ -5,6 +5,7 @@ import com.novaforge.common.error.PlatformException;
 import com.novaforge.common.error.ProblemErrors;
 import com.novaforge.expression.Expression;
 import com.novaforge.expression.ExpressionException;
+import com.novaforge.expression.ExpressionSql;
 import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.EntityDefinition;
 import com.novaforge.metadata.FlowStep;
@@ -42,6 +43,7 @@ final class FlowCompiler {
         checkSlas(app, findings);
         checkSharingRules(app, findings);
         checkWorkflows(app, findings);
+        checkReports(app, findings);
         if (!findings.isEmpty()) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "hook compilation failed", new ProblemErrors(findings, java.util.List.of()));
@@ -142,6 +144,52 @@ final class FlowCompiler {
                 String scope = "workflow[" + workflow.id() + "].eventStarts.filter";
                 new FlowCompiler().checkExpression(start.filter(), scope, entity.get(),
                         findings);
+            }
+        }
+    }
+
+    /**
+     * Report bucket expressions compile at publish (PHASE-5 §3) twice over: through
+     * the JVM engine (record context, clock admissible — aging inputs compute at run
+     * time) <em>and</em> through the SQL lowering (ExpressionSql over the same
+     * promotion-aware field resolver the Data Runtime lowers with). An expression
+     * that parses but cannot lower — {@code round()}, collections, method calls —
+     * is an authoring error here, never a run-time surprise.
+     */
+    private static void checkReports(AppDefinition app,
+                                     java.util.List<ProblemErrors.FieldError> findings) {
+        for (com.novaforge.metadata.ReportDefinition report : app.reports()) {
+            var entity = app.entity(report.entity() == null ? "" : report.entity());
+            if (entity.isEmpty()) {
+                continue;   // structural rule — the save validator reports it
+            }
+            Set<String> fields = new HashSet<>();
+            entity.get().fields().forEach(f -> fields.add(f.apiName()));
+            var resolver = com.novaforge.metadata.ExpressionFields.resolver(entity.get());
+            for (com.novaforge.metadata.ReportDefinition.GroupBy group : report.groupBy()) {
+                for (com.novaforge.metadata.ReportDefinition.Bucket bucket : group.buckets()) {
+                    String scope = "report[" + report.id() + "].groupBy[" + group.field()
+                            + "].bucket[" + bucket.label() + "]";
+                    try {
+                        Expression.parse(bucket.expression())
+                                .compileCheck(Expression.CompilePolicy.recordContext(
+                                        fields, true));
+                    } catch (ExpressionException e) {
+                        findings.add(new ProblemErrors.FieldError(scope,
+                                bucket.expression() + " — " + e.getMessage(),
+                                bucket.expression()));
+                        continue;
+                    }
+                    try {
+                        ExpressionSql.checkLowerable(Expression.parse(bucket.expression()),
+                                resolver);
+                    } catch (ExpressionException e) {
+                        findings.add(new ProblemErrors.FieldError(scope,
+                                bucket.expression() + " — does not lower to SQL (buckets "
+                                        + "compute in the aggregate pipeline, §3): "
+                                        + e.getMessage(), bucket.expression()));
+                    }
+                }
             }
         }
     }

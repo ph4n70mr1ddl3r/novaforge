@@ -396,4 +396,129 @@ class DefinitionValidatorTest {
         assertThat(mentions(validate(withWorkflow(baseApp(), unknownEntity)),
                 "event-start must bind to an entity of the app")).isTrue();
     }
+
+    // --- PHASE-5 §3/§5/§7: reports, dashboards, report jobs ---
+
+    /** An A/R-shaped app: every report surface promoted (display + indexed fields). */
+    private static final String REPORTING_APP = """
+            {
+              "apiName": "ArDesk",
+              __BRANCHES__
+              "permissionSet": {
+                "roles": [ { "name": "reporting" }, { "name": "clerk" } ],
+                "objectPermissions": [
+                  { "role": "reporting", "entity": "Invoice", "read": true },
+                  { "role": "clerk", "entity": "Invoice", "read": true } ]
+              },
+              "entities": [
+                { "apiName": "Invoice",
+                  "displayField": "customer",
+                  "fields": [
+                    { "apiName": "customer", "type": "text" },
+                    { "apiName": "status", "type": "enum", "values": ["DRAFT","POSTED"] },
+                    { "apiName": "dueDate", "type": "date" },
+                    { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 },
+                    { "apiName": "memo", "type": "text" } ],
+                  "indexes": [ { "fields": ["status", "dueDate", "amount"] } ] } ]
+            }
+            """;
+
+    /**
+     * Splices report/dashboard/job branches into the A/R app at the marker. Branch
+     * fragments are authored as {@code ", \"reports\": […]"} continuations; the splice
+     * normalizes them to plain properties so the template stays one valid document
+     * for the empty and non-empty cases alike.
+     */
+    private static AppDefinition reportingApp(String branches) {
+        return reportingApp(branches, REPORTING_APP);
+    }
+
+    /** Negative cases rewrite the app template itself (e.g. strip a declared role). */
+    private static AppDefinition reportingApp(String branches, String appTemplate) {
+        String spliced = branches == null ? "" : branches.strip();
+        if (spliced.startsWith(",")) {
+            spliced = spliced.substring(1).strip();
+        }
+        if (!spliced.isEmpty()) {
+            spliced = spliced + ",";
+        }
+        return DefinitionParser.parseApp(appTemplate.replace("__BRANCHES__", spliced));
+    }
+
+    private static final String VALID_REPORT = """
+            , "reports": [
+                { "id": "arAging", "entity": "Invoice",
+                  "filters": [ { "field": "status", "op": "eq", "value": "POSTED" } ],
+                  "groupBy": [
+                    { "field": "customer" },
+                    { "field": "dueDate", "buckets": [
+                      { "label": "current", "expression": "today() - dueDate < 0" },
+                      { "label": "60+", "expression": "today() - dueDate > 60" } ] } ],
+                  "aggregates": [ { "op": "sum", "field": "amount", "alias": "outstanding" } ] } ]
+            """;
+
+    @Test
+    @DisplayName("rule: a promoted-field report with buckets validates save-clean")
+    void validReportPasses() {
+        assertThat(validate(reportingApp(VALID_REPORT)).isEmpty()).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: unpromoted group-by/aggregate fields reject with guidance")
+    void unpromotedFieldsReject() {
+        // memo exists on Invoice but rides no index/display/lookup — the unpromoted case
+        String unpromoted = VALID_REPORT.replace("\"field\": \"customer\"", "\"field\": \"memo\"");
+        assertThat(mentions(validate(reportingApp(unpromoted)),
+                "group-by fields must be projection-promoted")).isTrue();
+        String unpromotedSum = VALID_REPORT.replace("\"op\": \"sum\", \"field\": \"amount\"",
+                "\"op\": \"sum\", \"field\": \"status\"");
+        assertThat(mentions(validate(reportingApp(unpromotedSum)),
+                "aggregate fields must be numeric")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: bucket labels unique and non-empty; dashboards resolve report refs")
+    void bucketAndDashboardRules() {
+        String dupLabels = VALID_REPORT.replace("\"60+\"", "\"current\"");
+        assertThat(mentions(validate(reportingApp(dupLabels)),
+                "bucket labels must be unique")).isTrue();
+
+        String dashboard = VALID_REPORT + """
+            , "dashboards": [
+                    { "id": "exec", "widgets": [
+                      { "widget": "kpi", "reportRef": "ghost", "span": 4 } ] } ]
+            """;
+        assertThat(mentions(validate(reportingApp(dashboard)),
+                "reportRef must resolve")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: report jobs pin their report, default runAsRole, and recipients")
+    void reportJobRules() {
+        String job = VALID_REPORT + """
+            , "jobs": [
+                    { "name": "nightlyAging", "cron": "0 0 6 * * *", "target": "report",
+                      "params": { "reportId": "arAging",
+                        "recipients": { "roles": ["reporting"] } } } ]
+            """;
+        assertThat(validate(reportingApp(job)).isEmpty()).isTrue();
+
+        assertThat(mentions(validate(reportingApp(
+                job.replace("\"reportId\": \"arAging\"", "\"reportId\": \"ghost\""))),
+                "must reference a report")).isTrue();
+        assertThat(mentions(validate(reportingApp(
+                job.replace("{ \"roles\": [\"reporting\"] }", "{}"))),
+                "at least one recipient")).isTrue();
+        assertThat(mentions(validate(reportingApp(job
+                .replace("\"roles\": [\"reporting\"]", "\"roles\": [\"ghost\"]"))),
+                "recipient role must resolve")).isTrue();
+        assertThat(mentions(validate(reportingApp(
+                job.replace("{ \"roles\": [\"reporting\"] }", "{ \"users\": [\"not-a-uuid\"] }"))),
+                "recipient users must be uuids")).isTrue();
+        // the default runAsRole must resolve: strip the reporting role from the app and
+        // the job rejects
+        assertThat(mentions(validate(reportingApp(job,
+                REPORTING_APP.replace("{ \"name\": \"reporting\" }, ", ""))),
+                "default runAsRole")).isTrue();
+    }
 }

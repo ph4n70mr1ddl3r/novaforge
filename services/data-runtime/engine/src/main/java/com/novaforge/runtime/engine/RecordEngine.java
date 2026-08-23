@@ -25,7 +25,7 @@ import com.novaforge.runtime.engine.query.QueryLowering;
 import com.novaforge.runtime.engine.query.QueryModel;
 import com.novaforge.runtime.engine.query.QueryParser;
 import com.novaforge.runtime.storage.record.RecordStore;
-import com.novaforge.runtime.storage.schema.Snake;
+import com.novaforge.metadata.Snake;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -250,10 +250,140 @@ public class RecordEngine {
         roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, entityApiName,
                 handle.appApiName(), app.permissionSet());
         QueryModel.AggregateQuery query = QueryParser.parseAggregate(queryJson, handle.entity());
+        // aggregates leak values, not rows — hidden group-by/aggregate fields fail closed
+        for (QueryModel.GroupBy group : query.groupBy()) {
+            requireFieldVisible(roleMatrix.fieldAccess(tenantId, actorId, handle.appApiName(),
+                    app.permissionSet(), entityApiName, group.field()), entityApiName,
+                    group.field());
+        }
+        for (QueryModel.Aggregate aggregate : query.aggregates()) {
+            if (aggregate.field() != null) {
+                requireFieldVisible(roleMatrix.fieldAccess(tenantId, actorId, handle.appApiName(),
+                        app.permissionSet(), entityApiName, aggregate.field()), entityApiName,
+                        aggregate.field());
+            }
+        }
         QueryLowering.Lowered lowered = new QueryLowering(handle.entity())
-                .aggregate(handle.entity().apiName(), tenantId, query);
-        return new QueryModel.AggregateResult(query.groupBy(),
+                .aggregate(handle.entity().apiName(), tenantId, query,
+                        java.time.LocalDate.now(clock));
+        lowered = applySharing(lowered, handle,
+                sharing.forActor(tenantId, actorId, handle.entity(), app));
+        return new QueryModel.AggregateResult(
+                query.groupBy().stream().map(QueryModel.GroupBy::field).toList(),
                 records.aggregate(lowered.sql(), lowered.params()).rows());
+    }
+
+    /**
+     * The scheduled-report scope (PHASE-5 §7): the per-app system principal executes
+     * over an explicitly permissioned role — the app's matrix decides the entity READ
+     * and field security for {@code asRole}, and the sharing rules evaluate as-if a
+     * holder of exactly that role (no personal ownership). Never a bypass: an
+     * ungranted role fails closed exactly like an ungranted actor.
+     */
+    public QueryModel.AggregateResult aggregateAsRole(UUID tenantId, String entityApiName,
+                                                      String asRole, String queryJson) {
+        EntityHandle handle = resolver.resolve(tenantId, entityApiName);
+        AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        var role = app.permissionSet().role(asRole == null ? "" : asRole);
+        if (role.isEmpty()) {
+            throw new PlatformException(PlatformErrorCode.FORBIDDEN,
+                    "runAsRole must resolve against the app's roles: " + asRole);
+        }
+        boolean granted = app.permissionSet().objectPermissions().stream()
+                .filter(p -> p.entity().equals(entityApiName))
+                .filter(p -> p.role().equals(asRole))
+                .anyMatch(p -> p.allows("read"));
+        if (!granted) {
+            throw new PlatformException(PlatformErrorCode.FORBIDDEN,
+                    "role " + asRole + " is not granted read on " + entityApiName);
+        }
+        QueryModel.AggregateQuery query = QueryParser.parseAggregate(queryJson, handle.entity());
+        for (QueryModel.GroupBy group : query.groupBy()) {
+            requireFieldVisible(roleFieldAccess(app, entityApiName, group.field(), asRole),
+                    entityApiName, group.field());
+        }
+        for (QueryModel.Aggregate aggregate : query.aggregates()) {
+            if (aggregate.field() != null) {
+                requireFieldVisible(
+                        roleFieldAccess(app, entityApiName, aggregate.field(), asRole),
+                        entityApiName, aggregate.field());
+            }
+        }
+        QueryLowering.Lowered lowered = new QueryLowering(handle.entity())
+                .aggregate(handle.entity().apiName(), tenantId, query,
+                        java.time.LocalDate.now(clock));
+        lowered = applySharing(lowered, handle, sharing.forRole(tenantId, handle.entity(),
+                app, asRole));
+        return new QueryModel.AggregateResult(
+                query.groupBy().stream().map(QueryModel.GroupBy::field).toList(),
+                records.aggregate(lowered.sql(), lowered.params()).rows());
+    }
+
+    private static void requireFieldVisible(String access, String entityApiName, String field) {
+        if (com.novaforge.metadata.PermissionSet.FieldSecurity.HIDDEN.equals(access)) {
+            throw new PlatformException(PlatformErrorCode.FORBIDDEN,
+                    "field " + entityApiName + "." + field + " is hidden — aggregates fail closed");
+        }
+    }
+
+    /** Field access for one authored role, without an actor's platform lookup. */
+    private static String roleFieldAccess(AppDefinition app, String entityApiName,
+                                          String field, String role) {
+        String access = "visible";
+        for (com.novaforge.metadata.PermissionSet.FieldSecurity security
+                : app.permissionSet().fieldSecurity()) {
+            if (!security.entity().equals(entityApiName) || !security.field().equals(field)
+                    || !security.role().equals(role)) {
+                continue;
+            }
+            if (com.novaforge.metadata.PermissionSet.FieldSecurity.HIDDEN.equals(security.access())) {
+                return com.novaforge.metadata.PermissionSet.FieldSecurity.HIDDEN;
+            }
+            access = com.novaforge.metadata.PermissionSet.FieldSecurity.READONLY;
+        }
+        return access;
+    }
+
+    /**
+     * Sharing applies to aggregates exactly as to lists (PHASE-5 §4): the owner set
+     * lowers to {@code created_by IN (…)}, criteria expressions lower into the same
+     * predicate — visibility is one OR over both, evaluated in the pipeline. A
+     * criteria that cannot lower (round(), collections) fails closed rather than
+     * widening the dataset.
+     */
+    private QueryLowering.Lowered applySharing(QueryLowering.Lowered lowered, EntityHandle handle,
+                                               com.novaforge.runtime.authorization.SharingGate.Restriction restriction) {
+        if (restriction == null) {
+            return lowered;
+        }
+        java.time.LocalDate asOf = java.time.LocalDate.now(clock);
+        java.time.Instant asOfInstant = asOf.atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        var resolver = com.novaforge.metadata.ExpressionFields.resolver(handle.entity());
+        List<String> alternatives = new ArrayList<>();
+        List<Object> clauseParams = new ArrayList<>();
+        if (!restriction.visibleOwners().isEmpty()) {
+            alternatives.add("created_by IN (" + restriction.visibleOwners().stream()
+                    .map(o -> "?").reduce((a, b) -> a + "," + b).orElse("?") + ")");
+            clauseParams.addAll(restriction.visibleOwners());
+        }
+        for (String criteria : restriction.criteriaExpressions()) {
+            try {
+                var loweredCriteria = com.novaforge.expression.ExpressionSql.lowerBoolean(
+                        com.novaforge.expression.Expression.parse(criteria), resolver,
+                        asOf, asOfInstant);
+                alternatives.add("(" + loweredCriteria.sql() + ")");
+                clauseParams.addAll(loweredCriteria.params());
+            } catch (com.novaforge.expression.ExpressionException e) {
+                throw new PlatformException(PlatformErrorCode.FORBIDDEN,
+                        "a sharing criterion does not lower for aggregate scope — reports "
+                                + "over " + handle.entity().apiName() + " stay fail closed: "
+                                + e.getMessage());
+            }
+        }
+        if (alternatives.isEmpty()) {
+            return lowered.and("false", List.of());   // restricted to nobody
+        }
+        return lowered.and(String.join(" OR ", alternatives), clauseParams);
     }
 
     /** Bulk ops with per-item outcomes, max 500 (PHASE-1 §5). */

@@ -1,4 +1,4 @@
-package com.novaforge.runtime.storage.schema;
+package com.novaforge.metadata;
 
 /** camelCase → snake_case with SQL-safe identifier fallback. */
 public final class Snake {

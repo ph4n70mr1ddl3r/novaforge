@@ -36,6 +36,10 @@ public class MetadataStore {
     public static final String KIND_SCHEDULED_JOB = "scheduled_job";
     public static final String KIND_WORKFLOW = "workflow";
 
+    /** The reporting branches (PHASE-5 §3/§5) — same document pattern. */
+    public static final String KIND_REPORT = "report";
+    public static final String KIND_DASHBOARD = "dashboard";
+
     private final JdbcTemplate jdbc;
 
     public MetadataStore(JdbcTemplate jdbc) {
@@ -313,6 +317,12 @@ public class MetadataStore {
         for (com.novaforge.metadata.WorkflowDefinition workflow : app.workflows()) {
             insertBranch(tenantId, actorId, appId, KIND_WORKFLOW, workflow.id(), workflow);
         }
+        for (com.novaforge.metadata.ReportDefinition report : app.reports()) {
+            insertBranch(tenantId, actorId, appId, KIND_REPORT, report.id(), report);
+        }
+        for (com.novaforge.metadata.DashboardDefinition dashboard : app.dashboards()) {
+            insertBranch(tenantId, actorId, appId, KIND_DASHBOARD, dashboard.id(), dashboard);
+        }
     }
 
     private void insertBranch(UUID tenantId, UUID actorId, UUID appId, String kind,
@@ -362,11 +372,15 @@ public class MetadataStore {
                 appId, KIND_SCHEDULED_JOB, com.novaforge.metadata.ScheduledJobDefinition.class);
         List<com.novaforge.metadata.WorkflowDefinition> workflows = branchDocuments(tenantId,
                 appId, KIND_WORKFLOW, com.novaforge.metadata.WorkflowDefinition.class);
+        List<com.novaforge.metadata.ReportDefinition> reports = branchDocuments(tenantId,
+                appId, KIND_REPORT, com.novaforge.metadata.ReportDefinition.class);
+        List<com.novaforge.metadata.DashboardDefinition> dashboards = branchDocuments(tenantId,
+                appId, KIND_DASHBOARD, com.novaforge.metadata.DashboardDefinition.class);
         return new AppDefinition(appId.toString(), apiName, label,
                 DefinitionParser.parse(labelI18nJson == null ? "{}" : labelI18nJson, Map.class),
                 description, entities, pages,
                 new AppDefinition.SettingsDefinition(sequences, null, null), permissionSet,
-                suites, stateMachines, slas, jobs, workflows);
+                suites, stateMachines, slas, jobs, workflows, reports, dashboards);
     }
 
     private <T> List<T> branchDocuments(UUID tenantId, UUID appId, String kind, Class<T> type) {
@@ -382,7 +396,7 @@ public class MetadataStore {
         return new AppDefinition(appId.toString(), app.apiName(), app.label(), app.labelI18n(),
                 app.description(), app.entities(), app.pages(), app.settings(),
                 app.permissionSet(), app.testSuites(), app.stateMachines(), app.slas(),
-                app.jobs(), app.workflows());
+                app.jobs(), app.workflows(), app.reports(), app.dashboards());
     }
 
     private static List<String> parseStrings(String json) {

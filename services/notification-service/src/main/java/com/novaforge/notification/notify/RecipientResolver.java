@@ -32,6 +32,11 @@ public class RecipientResolver {
         return users;
     }
 
+    /** Holders of one platform role ({@code app.role}) — the internal send fan-out (§7). */
+    public List<UUID> holdersOf(UUID tenantId, String role) {
+        return runtime.usersOfRole(tenantId, role);
+    }
+
     /** Synthetic actors have no channels (ADR-010 #3): no inbox, no email. */
     public boolean hasChannels(UUID user) {
         String username = runtime.usernameOf(user);

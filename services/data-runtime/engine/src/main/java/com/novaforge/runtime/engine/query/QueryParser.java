@@ -80,12 +80,38 @@ public final class QueryParser {
         }
         QueryModel.Filter filter = root.hasNonNull("filter")
                 ? parseFilter(root.get("filter"), entity) : null;
-        List<String> groupBy = new ArrayList<>();
+        List<QueryModel.GroupBy> groupBy = new ArrayList<>();
         if (root.hasNonNull("groupBy")) {
-            for (JsonNode field : root.get("groupBy")) {
-                String name = field.asString();
-                requireField(entity, name, "groupBy");
-                groupBy.add(name);
+            for (JsonNode node : root.get("groupBy")) {
+                if (node.isTextual()) {
+                    // plain field — the pre-Phase-5 wire shape (roll-ups ride it)
+                    requireField(entity, node.asString(), "groupBy");
+                    groupBy.add(new QueryModel.GroupBy(node.asString()));
+                    continue;
+                }
+                String field = requiredText(node, "field", "groupBy.field");
+                requireField(entity, field, "groupBy");
+                List<QueryModel.Bucket> buckets = new ArrayList<>();
+                if (node.hasNonNull("buckets")) {
+                    JsonNode bucketNode = node.get("buckets");
+                    if (!bucketNode.isArray() || bucketNode.isEmpty()) {
+                        throw validation("groupBy.buckets",
+                                "buckets must be a non-empty array of {label, expression}");
+                    }
+                    for (JsonNode bucket : bucketNode) {
+                        String label = requiredText(bucket, "label", "groupBy.buckets.label");
+                        String expression = requiredText(bucket, "expression",
+                                "groupBy.buckets.expression");
+                        try {
+                            com.novaforge.expression.Expression.parse(expression);
+                        } catch (com.novaforge.expression.ExpressionException e) {
+                            throw validation("groupBy.buckets.expression",
+                                    "bucket expression does not parse: " + e.getMessage());
+                        }
+                        buckets.add(new QueryModel.Bucket(label, expression));
+                    }
+                }
+                groupBy.add(new QueryModel.GroupBy(field, buckets));
             }
         }
         List<QueryModel.Aggregate> aggregates = new ArrayList<>();
@@ -113,7 +139,16 @@ public final class QueryParser {
         if (aggregates.isEmpty() && groupBy.isEmpty()) {
             throw validation("aggregates", "aggregate query requires aggregates and/or groupBy");
         }
-        return new QueryModel.AggregateQuery(filter, List.copyOf(groupBy), List.copyOf(aggregates));
+        java.time.LocalDate asOf = null;
+        if (root.hasNonNull("asOf")) {
+            try {
+                asOf = java.time.LocalDate.parse(root.get("asOf").asString());
+            } catch (RuntimeException e) {
+                throw validation("asOf", "asOf must be an ISO date (yyyy-MM-dd)");
+            }
+        }
+        return new QueryModel.AggregateQuery(filter, List.copyOf(groupBy),
+                List.copyOf(aggregates), asOf);
     }
 
     static QueryModel.Filter parseFilter(JsonNode node, EntityDefinition entity) {

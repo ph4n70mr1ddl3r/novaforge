@@ -37,8 +37,12 @@ public class SharingGate {
      * The actor's restriction on an entity's records — null means unrestricted.
      * {@code visibleOwners} lowers to list row filters ({@code created_by IN …});
      * {@code recordVisible} decides single records exactly (owner set + criteria).
+     * {@code criteriaExpressions} carries the raw authored expressions so the
+     * aggregate path can lower the same visibility into its pipeline (PHASE-5 §4 —
+     * sharing applies to reports exactly as to lists).
      */
     public record Restriction(Set<UUID> visibleOwners,
+                              Set<String> criteriaExpressions,
                               java.util.function.Predicate<Map<String, Object>> recordVisible) {
     }
 
@@ -58,8 +62,28 @@ public class SharingGate {
         java.util.List<String> roles = held.stream()
                 .map(role -> role.startsWith(prefix) ? role.substring(prefix.length()) : role)
                 .toList();
-        Set<UUID> owners = new HashSet<>();
-        owners.add(actor);   // everyone sees their own
+        return evaluate(tenantId, entity, app, roles, Set.of(actor));
+    }
+
+    /**
+     * The scheduled-report scope (PHASE-5 §7): a system principal runs over an
+     * explicitly permissioned role — the visibility a holder of exactly {@code role}
+     * (and nothing else) would have, minus personal ownership (a synthetic actor owns
+     * no records). {@code null} (unrestricted) means the role's rules see everything.
+     */
+    public Restriction forRole(UUID tenantId, EntityDefinition entity, AppDefinition app,
+                               String role) {
+        if (app.permissionSet().sharingRulesFor(entity.apiName()).isEmpty()) {
+            return null;
+        }
+        return evaluate(tenantId, entity, app, java.util.List.of(role), Set.of());
+    }
+
+    /** The shared rule evaluation: {@code selfOwnership} seeds the owner set. */
+    private Restriction evaluate(UUID tenantId, EntityDefinition entity, AppDefinition app,
+                                 java.util.List<String> roles, Set<UUID> selfOwnership) {
+        var rules = app.permissionSet().sharingRulesFor(entity.apiName());
+        Set<UUID> owners = new HashSet<>(selfOwnership);
         boolean seesAll = false;
         Set<String> criteriaSources = new HashSet<>();
         Integer actorLevel = seniority(app.permissionSet(), roles);
@@ -96,7 +120,7 @@ public class SharingGate {
         if (seesAll) {
             return null;
         }
-        return new Restriction(Set.copyOf(owners), record ->
+        return new Restriction(Set.copyOf(owners), Set.copyOf(criteriaSources), record ->
                 owners.contains(recordOwner(record))
                         || criteriaSources.stream().anyMatch(source -> {
                     try {

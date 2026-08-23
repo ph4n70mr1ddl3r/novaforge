@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.novaforge</groupId>
+    <artifactId>novaforge-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>novaforge-reporting-service</artifactId>
+  <name>NovaForge Reporting Service</name>
+  <description>Reporting (PHASE-5): report definitions compile to Data Runtime
+    aggregate calls — never raw SQL — executed as the requesting actor (sharing-rule
+    row filters apply exactly as to lists); scheduled delivery runs under an explicitly
+    permissioned role through the internal surface. Stateless: definitions via the
+    Metadata Service, the result cache in Redis.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-common-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-security-context</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-metadata-model</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <!-- the result cache (§4) — a latency tool, never an authorization boundary -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-micrometer-tracing-opentelemetry</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-tracing-bridge-otel</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-exporter-otlp</artifactId>
+    </dependency>
+    <!-- XLSX export (§6) — CSV is hand-rolled, XLSX rides POI. -->
+    <dependency>
+      <groupId>org.apache.poi</groupId>
+      <artifactId>poi-ooxml</artifactId>
+      <version>5.4.1</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security-oauth2-resource-server-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-test-support</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+      <plugin>
+        <groupId>com.google.cloud.tools</groupId>
+        <artifactId>jib-maven-plugin</artifactId>
+        <version>3.5.2</version>
+        <configuration>
+          <from>
+            <image>eclipse-temurin:21-jre</image>
+          </from>
+          <to>
+            <image>ghcr.io/novaforge/novaforge-reporting-service</image>
+            <tags><tag>${project.version}</tag></tags>
+          </to>
+          <container>
+            <creationTime>USE_CURRENT_TIMESTAMP</creationTime>
+            <jvmFlags>
+              <jvmFlag>-XX:MaxRAMPercentage=75.0</jvmFlag>
+            </jvmFlags>
+          </container>
+          <!-- OCI images for the Helm charts / Skaffold podman runner (ARCHITECTURE §6);
+               no execution binding — inert under `mvn verify`, goal-invoked by Skaffold's
+               jib builder. -->
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

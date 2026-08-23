@@ -101,7 +101,8 @@ novaforge/
 ├── services/            # gateway, metadata-service,
 │                        #   data-runtime (api/engine/storage/authorization),
 │                        #   script-engine, audit-service, workflow-service,
-│                        #   scheduler-service, notification-service
+│                        #   scheduler-service, notification-service,
+│                        #   reporting-service
 ├── deploy/              # compose (Keycloak/PG/Redis/Kafka/Prometheus/Grafana
 │                        #   + Tempo/Loki/promtail, Mailpit), postgres-init,
 │                        #   kind/, helm/ (one chart per service + umbrella)
@@ -167,18 +168,23 @@ transcript and `docs/loadtests/` for the measured read/list/write targets.
 
 ## Status
 
-**Phases 0–1 complete and verified live; Phases 2–4 partially implemented (all
-backend surfaces); Phases 5–8 not started.** The platform core (gateway, Metadata
+**Phases 0–1 complete and verified live; Phases 2–5 partially implemented (all
+backend surfaces); Phases 6–8 not started.** The platform core (gateway, Metadata
 Service, Data Runtime — ADR-001 closed with measured numbers) shipped in Phases 0–1;
 since then: the expression DSL with server-side RBAC/field security and tenant
 onboarding (Phase 2 backend), the write-path evaluation chain, the Kafka event spine
 with transactional outbox, flow-IR hooks, the script sandbox, and the builder test
-harness (Phase 3), and the workflow plane — state machines, approvals with durable
+harness (Phase 3), the workflow plane — state machines, approvals with durable
 suspension and SoD, SLAs with escalation, notifications, the scheduler, record-level
-sharing, and the grown harness vocabulary (Phase 4) — with BPMN execution (§9):
-Flowable embedded in the Workflow Service, event-start subscriptions over the
-spine, process user tasks bridged into the §5 inbox, and the Scheduler's
-`processStart` target live. 185 tests green under `./mvnw verify`. The main
+sharing, BPMN execution with Flowable embedded and event-starts over the spine, and
+the grown harness vocabulary (Phase 4) — and the reporting plane (Phase 5 backend):
+report/dashboard metadata with bucketed group-by lowering to the aggregate pipeline,
+sharing-rule row filters enforced on aggregates exactly as on lists, the Reporting
+Service (run/export as the requesting actor, Redis-cached, scheduled delivery under
+an explicitly permissioned `runAsRole` through the Scheduler + Notification with
+inline attachments), the expression-to-SQL lowering with parity guards, and the
+harness `runReport` op. 225 tests green under `./mvnw verify`. The main
 remaining surfaces: the React builder/runtime UI (Phase 2's largest gap, which
-Phase 4's T10 rides) and the full-stack exit demos. Progress ledger:
+Phases 4/5's UI tasks ride), the Phase 5 report-perf measurement and exit demos,
+and the full-stack exit demos. Progress ledger:
 [IMPLEMENTATION.md](IMPLEMENTATION.md).

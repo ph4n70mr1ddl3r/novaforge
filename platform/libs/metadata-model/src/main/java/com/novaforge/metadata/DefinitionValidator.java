@@ -26,6 +26,33 @@ public final class DefinitionValidator {
     /** State names (PHASE-4 §3) — the ERP convention (DRAFT, SUBMITTED, POSTED). */
     public static final Pattern UPPER_SNAKE = Pattern.compile("^[A-Z][A-Z0-9_]*$");
 
+    /** One cron item: {@code * | n | n-m | n/m | name} (a structural save check). */
+    private static final Pattern CRON_ITEM =
+            Pattern.compile("^(?:\\*|\\d+(?:-\\d+)?|\\d+/\\d+|[A-Za-z]+)$");
+
+    /**
+     * Cron shape for scheduled jobs (PHASE-4 §7): five or six space-separated fields,
+     * each a comma list of {@link #CRON_ITEM}s — a structural check; the Scheduler's
+     * cron parser stays the final authority.
+     */
+    private static boolean cronShaped(String cron) {
+        if (cron == null) {
+            return false;
+        }
+        String[] fields = cron.trim().split("\\s+");
+        if (fields.length != 5 && fields.length != 6) {
+            return false;
+        }
+        for (String field : fields) {
+            for (String item : field.split(",")) {
+                if (!CRON_ITEM.matcher(item).matches()) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     /** System field names the record API exposes; authored fields must not shadow them. */
     public static final Set<String> RESERVED_FIELD_NAMES = Set.of(
             "id", "version", "createdAt", "updatedAt", "createdBy", "updatedBy", "deleted");
@@ -64,6 +91,9 @@ public final class DefinitionValidator {
         validateSlas(app, errors);
         validateSharingRules(app, errors);
         validateWorkflows(app, errors);
+        validateJobs(app, errors);
+        validateReports(app, errors);
+        validateDashboards(app, errors);
         validatePermissionSet(app, errors);
         return new ProblemErrors(errors, globals);
     }
@@ -337,6 +367,310 @@ public final class DefinitionValidator {
         }
     }
 
+    /**
+     * Scheduled-job rules (PHASE-4 §7 grown at PHASE-5 §7): names unique, cron is
+     * structurally shaped (the Scheduler's cron parser is the final authority), the
+     * target is the closed v1 set, and per-target params resolve against the app —
+     * report jobs pin their report, runAsRole (explicit or the {@code reporting}
+     * default), recipient roles, and format; flow jobs pin entity + hook. A job that
+     * cannot fire audibly is a save-time error, never a silent registry skip.
+     */
+    private static void validateJobs(AppDefinition app, List<ProblemErrors.FieldError> errors) {
+        Set<String> names = new HashSet<>();
+        for (ScheduledJobDefinition job : app.jobs()) {
+            String scope = job.name() == null ? "job" : job.name();
+            if (job.name() == null || job.name().isBlank()) {
+                errors.add(field("jobs", "scheduled jobs require a name", job.name()));
+                continue;
+            }
+            if (!names.add(job.name())) {
+                errors.add(field("jobs", "scheduled job names must be unique per app: "
+                        + job.name(), job.name()));
+            }
+            if (!cronShaped(job.cron())) {
+                errors.add(field("jobs." + scope + ".cron",
+                        "cron must be five or six space-separated fields: " + job.cron(),
+                        job.cron()));
+            }
+            if (job.target() == null || !ScheduledJobDefinition.TARGETS.contains(job.target())) {
+                errors.add(field("jobs." + scope + ".target",
+                        "target must be one of " + ScheduledJobDefinition.TARGETS + ": "
+                                + job.target(), job.target()));
+                continue;
+            }
+            switch (job.target()) {
+                case "flow" -> {
+                    if (isBlank(job.param("entity")) || isBlank(job.param("hook"))) {
+                        errors.add(field("jobs." + scope + ".params",
+                                "flow jobs require params {entity, hook}", job.params()));
+                    }
+                }
+                case "report" -> validateReportJob(app, job, scope, errors);
+                default -> { }   // script/processStart params are their services' contract
+            }
+        }
+    }
+
+    /** The report-target params (PHASE-5 §7): reportId, runAsRole, recipients, format. */
+    private static void validateReportJob(AppDefinition app, ScheduledJobDefinition job,
+                                          String scope, List<ProblemErrors.FieldError> errors) {
+        String reportId = job.param("reportId");
+        if (isBlank(reportId) || app.report(reportId).isEmpty()) {
+            errors.add(field("jobs." + scope + ".params.reportId",
+                    "report jobs must reference a report of the app: " + reportId, reportId));
+        }
+        String runAsRole = job.param("runAsRole");
+        if (runAsRole != null && !runAsRole.isBlank()) {
+            if (app.permissionSet().role(runAsRole).isEmpty()) {
+                errors.add(field("jobs." + scope + ".params.runAsRole",
+                        "runAsRole must resolve against the app's roles: " + runAsRole,
+                        runAsRole));
+            }
+        } else if (app.permissionSet().role("reporting").isEmpty()) {
+            // §7: the default is the app's `reporting` role — the default must resolve too
+            errors.add(field("jobs." + scope + ".params.runAsRole",
+                    "report jobs default runAsRole to the app's 'reporting' role — declare it "
+                            + "or set runAsRole explicitly", null));
+        }
+        String format = job.param("format");
+        if (format != null && !format.isBlank() && !format.equals("csv") && !format.equals("xlsx")) {
+            errors.add(field("jobs." + scope + ".params.format",
+                    "report delivery format must be csv or xlsx: " + format, format));
+        }
+        if (job.params().get("recipients") instanceof java.util.Map<?, ?> recipients) {
+            List<?> roles = recipients.get("roles") instanceof List<?> list ? list : List.of();
+            List<?> users = recipients.get("users") instanceof List<?> list ? list : List.of();
+            for (Object role : roles) {
+                if (app.permissionSet().role(String.valueOf(role)).isEmpty()) {
+                    errors.add(field("jobs." + scope + ".params.recipients",
+                            "recipient role must resolve against the app's roles: " + role,
+                            role));
+                }
+            }
+            for (Object user : users) {
+                try {   // structural: existence is the platform's, shape is ours
+                    java.util.UUID.fromString(String.valueOf(user));
+                } catch (IllegalArgumentException e) {
+                    errors.add(field("jobs." + scope + ".params.recipients",
+                            "recipient users must be uuids: " + user, user));
+                }
+            }
+            if (roles.isEmpty() && users.isEmpty()) {
+                // a job that fires but reaches nobody is a save-time error, not a
+                // silent no-op delivery
+                errors.add(field("jobs." + scope + ".params.recipients",
+                        "report jobs require at least one recipient role or user",
+                        job.params()));
+            }
+        } else {
+            errors.add(field("jobs." + scope + ".params.recipients",
+                    "report jobs require recipients {roles: […], users: […]}", job.params()));
+        }
+    }
+
+    /**
+     * Report rules (PHASE-5 §3): the bound entity resolves; filter/group-by/aggregate
+     * fields exist; aggregates are numeric (decimal sums stay BigDecimal — PLAN.md §1);
+     * group-by and aggregate fields are projection-promoted (the §4 materialized path —
+     * sums execute on promoted columns) or the definition is rejected with guidance;
+     * bucket labels are non-empty and unique. Bucket expressions compile at publish
+     * (JVM engine + SQL lowering — the FlowCompiler's checkReports).
+     */
+    private static void validateReports(AppDefinition app, List<ProblemErrors.FieldError> errors) {
+        Set<String> ids = new HashSet<>();
+        for (ReportDefinition report : app.reports()) {
+            String scope = report.id() == null ? "report" : report.id();
+            if (report.id() == null || !ReportDefinition.REPORT_KEY.matcher(report.id()).matches()) {
+                errors.add(field("reports." + scope + ".id",
+                        "report id must be a letter/underscore then word characters: "
+                                + report.id(), report.id()));
+                continue;
+            }
+            if (!ids.add(report.id())) {
+                errors.add(field("reports." + scope + ".id",
+                        "report ids must be unique per app: " + report.id(), report.id()));
+            }
+            var entity = app.entity(report.entity() == null ? "" : report.entity());
+            if (entity.isEmpty()) {
+                errors.add(field("reports." + scope + ".entity",
+                        "report must bind to an entity of the app: " + report.entity(),
+                        report.entity()));
+                continue;
+            }
+            EntityDefinition bound = entity.get();
+            java.util.Map<String, String> promoted = PromotionPolicy.promotedColumns(bound);
+            for (ReportDefinition.Filter filter : report.filters()) {
+                String fScope = "reports." + scope + ".filters[" + filter.field() + "]";
+                var fieldRef = bound.field(filter.field() == null ? "" : filter.field());
+                if (fieldRef.isEmpty()) {
+                    errors.add(field(fScope,
+                            "filter field must exist on " + report.entity() + ": "
+                                    + filter.field(), filter.field()));
+                } else if (filter.op() == null
+                        || !ReportDefinition.FILTER_OPS.contains(filter.op())) {
+                    errors.add(field(fScope + ".op",
+                            "filter op must be one of " + ReportDefinition.FILTER_OPS + ": "
+                                    + filter.op(), filter.op()));
+                } else if ("contains".equals(filter.op())
+                        && !fieldRef.get().type().textual()) {
+                    errors.add(field(fScope + ".op",
+                            "contains filters require a textual field: "
+                                    + filter.field() + " is " + fieldRef.get().type().wireName(),
+                            filter.op()));
+                } else if ("isNull".equals(filter.op()) && filter.value() != null) {
+                    errors.add(field(fScope,
+                            "isNull filters carry no value", filter.value()));
+                } else if ("in".equals(filter.op())
+                        && !(filter.value() instanceof List<?>)) {
+                    errors.add(field(fScope,
+                            "in filters require a list value", filter.value()));
+                }
+            }
+            Set<String> aliases = new HashSet<>();
+            for (ReportDefinition.GroupBy group : report.groupBy()) {
+                String gScope = "reports." + scope + ".groupBy[" + group.field() + "]";
+                var fieldRef = bound.field(group.field() == null ? "" : group.field());
+                if (fieldRef.isEmpty()) {
+                    errors.add(field(gScope,
+                            "group-by field must exist on " + report.entity() + ": "
+                                    + group.field(), group.field()));
+                    continue;
+                }
+                if (!promoted.containsKey(group.field())) {
+                    errors.add(field(gScope,
+                            "group-by fields must be projection-promoted — add " + group.field()
+                                    + " to an index (or uniqueOn/displayField/lookup) so sums "
+                                    + "execute on a promoted column (§4): " + report.entity()
+                                    + "." + group.field(), group.field()));
+                }
+                Set<String> labels = new HashSet<>();
+                for (ReportDefinition.Bucket bucket : group.buckets()) {
+                    if (bucket.label() == null || bucket.label().isBlank()) {
+                        errors.add(field(gScope + ".buckets",
+                                "bucket labels must be non-empty", bucket.label()));
+                    } else if (!labels.add(bucket.label())) {
+                        errors.add(field(gScope + ".buckets",
+                                "bucket labels must be unique per group-by: " + bucket.label(),
+                                bucket.label()));
+                    }
+                    if (bucket.expression() == null || bucket.expression().isBlank()) {
+                        errors.add(field(gScope + ".buckets",
+                                "buckets require a match expression", bucket.label()));
+                    }
+                }
+            }
+            for (ReportDefinition.AggregateField aggregate : report.aggregates()) {
+                if (aggregate.op() == null
+                        || !ReportDefinition.AGGREGATE_OPS.contains(aggregate.op())) {
+                    errors.add(field("reports." + scope + ".aggregates",
+                            "aggregate op must be one of " + ReportDefinition.AGGREGATE_OPS
+                                    + ": " + aggregate.op(), aggregate.op()));
+                    continue;
+                }
+                if (aggregate.field() == null) {
+                    if (!aggregate.op().equals("count")) {
+                        errors.add(field("reports." + scope + ".aggregates",
+                                aggregate.op() + " requires a field", aggregate.op()));
+                    }
+                    continue;
+                }
+                var fieldRef = bound.field(aggregate.field());
+                if (fieldRef.isEmpty()) {
+                    errors.add(field("reports." + scope + ".aggregates",
+                            "aggregate field must exist on " + report.entity() + ": "
+                                    + aggregate.field(), aggregate.field()));
+                } else if (!fieldRef.get().type().numeric()) {
+                    errors.add(field("reports." + scope + ".aggregates",
+                            "aggregate fields must be numeric (decimal sums stay BigDecimal — "
+                                    + "PLAN.md §1): " + aggregate.field() + " is "
+                                    + fieldRef.get().type().wireName(), aggregate.field()));
+                }
+                if (!promoted.containsKey(aggregate.field())) {
+                    errors.add(field("reports." + scope + ".aggregates",
+                            "aggregate fields must be projection-promoted — add "
+                                    + aggregate.field() + " to an index so sums execute on a "
+                                    + "promoted column (§4)", aggregate.field()));
+                }
+                if (aggregate.alias() != null) {
+                    if (!ReportDefinition.REPORT_KEY.matcher(aggregate.alias()).matches()) {
+                        errors.add(field("reports." + scope + ".aggregates",
+                                "aggregate alias must be a letter/underscore then word "
+                                        + "characters: " + aggregate.alias(), aggregate.alias()));
+                    } else if (!aliases.add(aggregate.alias())) {
+                        errors.add(field("reports." + scope + ".aggregates",
+                                "aggregate aliases must be unique per report: "
+                                        + aggregate.alias(), aggregate.alias()));
+                    }
+                }
+            }
+            if (report.groupBy().isEmpty() && report.aggregates().isEmpty()) {
+                errors.add(field("reports." + scope,
+                        "a report requires at least one group-by or aggregate", null));
+            }
+            if (report.drillThrough() != null && (report.drillThrough().entity() == null
+                    || app.entity(report.drillThrough().entity()).isEmpty())) {
+                errors.add(field("reports." + scope + ".drillThrough.entity",
+                        "drill-through must bind to an entity of the app: "
+                                + (report.drillThrough().entity()), report.drillThrough().entity()));
+            }
+        }
+    }
+
+    /**
+     * Dashboard rules (PHASE-5 §5): ids unique, widget types from the closed set,
+     * report refs resolve to reports of the same app, spans are 1..12 grid columns,
+     * visibility roles resolve. Roles govern composition only — every widget's run
+     * still executes under the requesting actor's grants (§8).
+     */
+    private static void validateDashboards(AppDefinition app,
+                                           List<ProblemErrors.FieldError> errors) {
+        Set<String> ids = new HashSet<>();
+        for (DashboardDefinition dashboard : app.dashboards()) {
+            String scope = dashboard.id() == null ? "dashboard" : dashboard.id();
+            if (dashboard.id() == null
+                    || !DashboardDefinition.DASHBOARD_KEY.matcher(dashboard.id()).matches()) {
+                errors.add(field("dashboards." + scope + ".id",
+                        "dashboard id must be a letter/underscore then word characters: "
+                                + dashboard.id(), dashboard.id()));
+                continue;
+            }
+            if (!ids.add(dashboard.id())) {
+                errors.add(field("dashboards." + scope + ".id",
+                        "dashboard ids must be unique per app: " + dashboard.id(),
+                        dashboard.id()));
+            }
+            if (dashboard.widgets().isEmpty()) {
+                errors.add(field("dashboards." + scope + ".widgets",
+                        "a dashboard requires at least one widget", null));
+            }
+            for (DashboardDefinition.Widget widget : dashboard.widgets()) {
+                String wScope = "dashboards." + scope + ".widgets[" + widget.reportRef() + "]";
+                if (widget.widget() == null
+                        || !DashboardDefinition.WIDGET_TYPES.contains(widget.widget())) {
+                    errors.add(field(wScope,
+                            "widget type must be one of " + DashboardDefinition.WIDGET_TYPES
+                                    + ": " + widget.widget(), widget.widget()));
+                }
+                if (widget.reportRef() == null || app.report(widget.reportRef()).isEmpty()) {
+                    errors.add(field(wScope,
+                            "widget reportRef must resolve to a report of the app: "
+                                    + widget.reportRef(), widget.reportRef()));
+                }
+                if (widget.span() != null && (widget.span() < 1 || widget.span() > 12)) {
+                    errors.add(field(wScope + ".span",
+                            "widget span is 1..12 grid columns: " + widget.span(), widget.span()));
+                }
+            }
+            for (String role : dashboard.roles()) {
+                if (app.permissionSet().role(role).isEmpty()) {
+                    errors.add(field("dashboards." + scope + ".roles",
+                            "visibility role must resolve against the app's roles: " + role,
+                            role));
+                }
+            }
+        }
+    }
+
     /** PermissionSet rules (PHASE-2 §9): roles unique, entities/fields resolve, access ∈ {readonly, hidden}. */
     private static void validatePermissionSet(AppDefinition app, List<ProblemErrors.FieldError> errors) {
         PermissionSet permissions = app.permissionSet();
@@ -516,6 +850,10 @@ public final class DefinitionValidator {
 
     private static boolean appEntityExists(AppDefinition app, String apiName) {
         return app.entity(apiName).isPresent();
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private static ProblemErrors.FieldError field(String field, String message, Object rejected) {

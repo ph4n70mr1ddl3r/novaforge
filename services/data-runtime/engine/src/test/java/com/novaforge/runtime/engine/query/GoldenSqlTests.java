@@ -6,7 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.novaforge.common.error.PlatformException;
 import com.novaforge.metadata.DefinitionParser;
 import com.novaforge.metadata.EntityDefinition;
-import com.novaforge.runtime.storage.schema.PromotionPolicy;
+import com.novaforge.metadata.PromotionPolicy;
 import com.novaforge.runtime.engine.query.QueryLowering.Lowered;
 import java.math.BigDecimal;
 import java.util.List;
@@ -107,12 +107,14 @@ class GoldenSqlTests {
                 """, entity);
         Lowered lowered = lowering.aggregate("JournalEntry", TENANT, query);
 
+        // GROUP BY addresses select ordinals since PHASE-5 §3 (a bucketed CASE in the
+        // select list would rebind every parameter if repeated in the tail)
         assertThat(lowered.sql()).isEqualTo(
                 "SELECT (data->>'status') AS status, count(*) AS count, "
                         + "sum(((data->>'amount')::numeric)) AS total, "
                         + "max(((data->>'amount')::numeric)) AS max_amount "
                         + "FROM rec_journal_entry WHERE tenant_id = ? AND deleted = false "
-                        + "GROUP BY (data->>'status')");
+                        + "GROUP BY 1");
     }
 
     @Test

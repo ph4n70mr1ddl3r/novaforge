@@ -52,6 +52,7 @@ public class TestRunner {
     private final RestClient metadata;
     private final RestClient auth;
     private final RestClient workflow;
+    private final RestClient reports;
     private final String clientId;
     private final String clientSecret;
     private final io.micrometer.core.instrument.MeterRegistry suiteRuns;
@@ -60,6 +61,7 @@ public class TestRunner {
                       @Value("${novaforge.metadata.url:http://localhost:8081}") String metadataUrl,
                       @Value("${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}") String issuer,
                       @Value("${novaforge.workflow.url:http://localhost:8086}") String workflowUrl,
+                      @Value("${novaforge.reporting.url:http://localhost:8089}") String reportingUrl,
                       @Value("${novaforge.auth.service-client.id:novaforge-runtime}") String clientId,
                       @Value("${novaforge.auth.service-client.secret:novaforge-runtime-secret}") String clientSecret,
                       io.micrometer.core.instrument.MeterRegistry suiteRuns) {
@@ -67,6 +69,7 @@ public class TestRunner {
         this.metadata = RestClient.builder().baseUrl(metadataUrl).build();
         this.auth = RestClient.builder().baseUrl(issuer).build();
         this.workflow = preEncoded(workflowUrl);
+        this.reports = RestClient.builder().baseUrl(reportingUrl).build();
         this.clientId = clientId;
         this.clientSecret = clientSecret;
         this.suiteRuns = suiteRuns;
@@ -125,7 +128,7 @@ public class TestRunner {
         // 4. cases — fixtures then steps as synthetic actors, assertions frozen-clock
         List<Map<String, Object>> caseResults = new ArrayList<>();
         for (TestCase testCase : suite.cases()) {
-            caseResults.add(runCase(testCase, rolePasswords, frozenAt));
+            caseResults.add(runCase(testCase, rolePasswords, frozenAt, candidate.apiName()));
         }
         boolean green = caseResults.stream().allMatch(r -> Boolean.TRUE.equals(r.get("passed")));
         // §9 suite pass-rate telemetry — the promotion gate's health at a glance.
@@ -144,8 +147,8 @@ public class TestRunner {
         return artifact;
     }
 
-    private Map<String, Object> runCase(TestCase testCase,
-                                        Map<String, String> rolePasswords, Instant frozenAt) {
+    private Map<String, Object> runCase(TestCase testCase, Map<String, String> rolePasswords,
+                                        Instant frozenAt, String appApiName) {
         Map<String, Object> scope = new LinkedHashMap<>();   // "Entity[n]" → last record map
         List<String> failures = new ArrayList<>();
         try {
@@ -179,6 +182,7 @@ public class TestRunner {
                             token, null);
                     case "queryRecord" -> queryRecord(step, token, scope);
                     case "resolveTask" -> resolveTask(step, token, scope);
+                    case "runReport" -> runReport(step, token, scope, appApiName);
                     default -> throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                             "unknown suite step op: " + step.op());
                 };
@@ -285,6 +289,29 @@ public class TestRunner {
         return MAPPER.valueToTree(remember(scope, "Query", MAPPER.valueToTree(query)));
     }
 
+    /**
+     * runReport (PHASE-5 §9): a report run through the public surface as the step's
+     * actor — the candidate app is published in the scratch tenant, so the Reporting
+     * Service resolves it through the published read and executes the compiled query
+     * under the actor's grants (report: execute + sharing row filters, §8). The result
+     * lands in scope as the next {@code ${Report[n]}} carrying {@code {rowCount, totals}}
+     * — the §7 A/R-vs-ledger reconciliation assertions read exactly those.
+     */
+    private JsonNode runReport(Step step, String token, Map<String, Object> scope,
+                               String appApiName) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("app", appApiName);
+        body.put("params", step.template() == null ? Map.of()
+                : interpolate(step.template(), scope));
+        JsonNode run = MAPPER.readTree(call(reports, HttpMethod.POST,
+                "/api/v1/reports/" + url(step.entity()) + "/run", token,
+                MAPPER.writeValueAsString(body)));
+        Map<String, Object> shaped = new LinkedHashMap<>();
+        shaped.put("rowCount", run.path("rows").size());
+        shaped.put("totals", MAPPER.convertValue(run.path("totals"), Map.class));
+        return MAPPER.valueToTree(remember(scope, "Report", MAPPER.valueToTree(shaped)));
+    }
+
     /** resolveTask (§12): approve/reject through the inbox API — no back door. */
     private JsonNode resolveTask(Step step, String token, Map<String, Object> scope) {
         String taskId = interpolateText(step.recordId(), scope);
@@ -316,7 +343,8 @@ public class TestRunner {
         if ("ok".equals(expect)) {
             return result.isObject() && result.hasNonNull("id")
                     || (result.isObject() && result.has("status"))
-                    || (result.isObject() && result.has("count"));   // queryRecord results
+                    || (result.isObject() && result.has("count"))   // queryRecord results
+                    || (result.isObject() && result.has("rowCount"));   // runReport results
         }
         if (expect.startsWith("error(") && expect.endsWith(")")) {
             String expected = registryCode(expect.substring(6, expect.length() - 1));

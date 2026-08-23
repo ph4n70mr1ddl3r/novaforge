@@ -1,8 +1,5 @@
-package com.novaforge.runtime.storage.schema;
+package com.novaforge.metadata;
 
-import com.novaforge.metadata.EntityDefinition;
-import com.novaforge.metadata.FieldDefinition;
-import com.novaforge.metadata.FieldType;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -13,6 +10,12 @@ import java.util.Set;
  * {@code indexes} declarations and unique constraints promote, plus automatic promotion
  * of display and lookup fields. Promotion lowers to generated columns on the ADR-001
  * projection table (text/numeric only — cast-immutability constraint).
+ *
+ * <p>Lives in the metadata model because promotion is a pure function of the published
+ * entity definition with three consumers that must never disagree: the materializer's
+ * DDL (publish time), the query lowering (run time), and the Metadata Service's
+ * save-time validation (PHASE-5 §3 — report group-by/aggregate fields must promote
+ * or the definition is rejected with guidance).</p>
  */
 public final class PromotionPolicy {
 

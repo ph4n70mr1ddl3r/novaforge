@@ -315,7 +315,9 @@ public class DefinitionService {
                 patch.stateMachines().isEmpty() ? current.stateMachines() : patch.stateMachines(),
                 patch.slas().isEmpty() ? current.slas() : patch.slas(),
                 patch.jobs().isEmpty() ? current.jobs() : patch.jobs(),
-                patch.workflows().isEmpty() ? current.workflows() : patch.workflows());
+                patch.workflows().isEmpty() ? current.workflows() : patch.workflows(),
+                patch.reports().isEmpty() ? current.reports() : patch.reports(),
+                patch.dashboards().isEmpty() ? current.dashboards() : patch.dashboards());
     }
 
     private static EntityDefinition mergeEntity(EntityDefinition current, EntityDefinition patch) {
@@ -335,7 +337,8 @@ public class DefinitionService {
     private static AppDefinition withEntities(AppDefinition app, List<EntityDefinition> entities) {
         return new AppDefinition(app.id(), app.apiName(), app.label(), app.labelI18n(),
                 app.description(), entities, app.pages(), app.settings(), app.permissionSet(),
-                app.testSuites(), app.stateMachines(), app.slas(), app.jobs(), app.workflows());
+                app.testSuites(), app.stateMachines(), app.slas(), app.jobs(), app.workflows(),
+                app.reports(), app.dashboards());
     }
 
     private static PlatformException validationFailure(String message, ProblemErrors errors) {

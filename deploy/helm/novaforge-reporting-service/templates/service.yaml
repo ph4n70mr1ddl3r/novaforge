@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-novaforge-reporting-service
+  labels: {{ include "novaforge-reporting-service.labels" . | indent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      name: http
+  selector: {{ include "novaforge-reporting-service.selectorLabels" . | indent 4 }}

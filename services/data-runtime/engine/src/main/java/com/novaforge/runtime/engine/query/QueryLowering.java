@@ -1,8 +1,8 @@
 package com.novaforge.runtime.engine.query;
 
 import com.novaforge.metadata.EntityDefinition;
-import com.novaforge.runtime.storage.schema.PromotionPolicy;
-import com.novaforge.runtime.storage.schema.Snake;
+import com.novaforge.metadata.PromotionPolicy;
+import com.novaforge.metadata.Snake;
 import com.novaforge.metadata.FieldDefinition;
 import com.novaforge.runtime.engine.query.QueryModel.Aggregate;
 import com.novaforge.runtime.engine.query.QueryModel.AggregateQuery;
@@ -30,10 +30,17 @@ public final class QueryLowering {
 
         /**
          * Appends a sharing clause ({@code AND (created_by IN …)}) with its params,
-         * splicing before any trailing ORDER/LIMIT tail so the SQL stays valid.
+         * splicing before any trailing GROUP/ORDER/LIMIT tail so the SQL stays valid
+         * (aggregates carry a GROUP BY tail since PHASE-5 §3 grew the pipeline).
          */
         public Lowered and(String clause, List<Object> clauseParams) {
-            int tailStart = sql.lastIndexOf(" ORDER BY ");
+            int tailStart = -1;
+            for (String marker : new String[] {" GROUP BY ", " ORDER BY ", " LIMIT "}) {
+                int at = sql.lastIndexOf(marker);
+                if (at >= 0 && (tailStart < 0 || at < tailStart)) {
+                    tailStart = at;
+                }
+            }
             if (tailStart < 0) {
                 List<Object> merged = new java.util.ArrayList<>(params);
                 merged.addAll(clauseParams);
@@ -54,10 +61,12 @@ public final class QueryLowering {
         }
     }
 
+    private final EntityDefinition entity;
     private final Map<String, String> promotedColumns;
     private final Map<String, Boolean> numericFields;
 
     public QueryLowering(EntityDefinition entity) {
+        this.entity = entity;
         this.promotedColumns = PromotionPolicy.promotedColumns(entity);
         this.numericFields = new HashMap<>();
         for (FieldDefinition field : entity.fields()) {
@@ -110,11 +119,51 @@ public final class QueryLowering {
     }
 
     public Lowered aggregate(String entityApiName, UUID tenantId, AggregateQuery query) {
+        return aggregate(entityApiName, tenantId, query, null);
+    }
+
+    /**
+     * Lowers an aggregate query (PHASE-5 §3 grows the group-by with buckets): plain
+     * fields group on their promoted/JSONB text expression exactly as before; a
+     * bucketed group-by lowers its authored expressions to CASE WHEN branches inside
+     * the pipeline — first match wins, unmatched rows land in no bucket (NULL), and
+     * {@code today()} binds the run's evaluation date.
+     *
+     * <p>Bind order matches placeholder order: SELECT-list CASE binds first, then the
+     * tenant, then the filter. GROUP BY addresses the select ordinals — a repeated
+     * CASE expression would rebind every parameter, and an alias would be ambiguous
+     * against the source column it shadows.</p>
+     */
+    public Lowered aggregate(String entityApiName, UUID tenantId, AggregateQuery query,
+                             java.time.LocalDate asOfOverride) {
+        com.novaforge.expression.ExpressionSql.FieldResolver resolver =
+                com.novaforge.metadata.ExpressionFields.resolver(entity);
+        // the governing clock, in priority order: the query's pinned date (a suite's
+        // frozen clock), the engine's date, and UTC now as the last resort
+        java.time.LocalDate asOf = query.asOf() != null ? query.asOf()
+                : asOfOverride != null ? asOfOverride
+                : java.time.LocalDate.now(java.time.ZoneOffset.UTC);
+        java.time.Instant asOfInstant = asOf.atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
         List<Object> params = new ArrayList<>();
-        params.add(tenantId);
         List<String> selects = new ArrayList<>();
-        for (String groupField : query.groupBy()) {
-            selects.add(textExpr(groupField) + " AS " + Snake.caseName(groupField));
+        for (QueryModel.GroupBy group : query.groupBy()) {
+            String alias = Snake.caseName(group.field());
+            if (!group.bucketed()) {
+                selects.add(textExpr(group.field()) + " AS " + alias);
+                continue;
+            }
+            StringBuilder branch = new StringBuilder("CASE");
+            for (QueryModel.Bucket bucket : group.buckets()) {
+                com.novaforge.expression.ExpressionSql.Lowered condition =
+                        com.novaforge.expression.ExpressionSql.lowerBoolean(
+                                com.novaforge.expression.Expression.parse(bucket.expression()),
+                                resolver, asOf, asOfInstant);
+                params.addAll(condition.params());
+                branch.append(" WHEN ").append(condition.sql()).append(" THEN ?");
+                params.add(bucket.label());
+            }
+            branch.append(" ELSE NULL END");
+            selects.add(branch + " AS " + alias);
         }
         for (Aggregate aggregate : query.aggregates()) {
             String alias = aggregate.alias() != null ? aggregate.alias()
@@ -129,6 +178,7 @@ public final class QueryLowering {
             };
             selects.add(expr + " AS " + alias);
         }
+        params.add(tenantId);
         StringBuilder sql = new StringBuilder("SELECT ")
                 .append(String.join(", ", selects))
                 .append(" FROM ").append(projectionTable(entityApiName))
@@ -137,8 +187,12 @@ public final class QueryLowering {
             sql.append(" AND ").append(lowerFilter(query.filter(), params));
         }
         if (!query.groupBy().isEmpty()) {
-            sql.append(" GROUP BY ").append(String.join(", ",
-                    query.groupBy().stream().map(this::textExpr).toList()));
+            // select ordinals — the group-by entries lead the select list
+            List<String> ordinals = new ArrayList<>();
+            for (int i = 1; i <= query.groupBy().size(); i++) {
+                ordinals.add(String.valueOf(i));
+            }
+            sql.append(" GROUP BY ").append(String.join(", ", ordinals));
         }
         return new Lowered(sql.toString(), params);
     }

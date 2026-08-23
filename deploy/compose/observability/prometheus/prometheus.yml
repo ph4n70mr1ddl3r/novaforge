@@ -40,6 +40,11 @@ scrape_configs:
     static_configs:
       - targets: ["host.docker.internal:8088"]
 
+  - job_name: novaforge-reporting-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8089"]
+
   - job_name: novaforge-scheduler-service
     metrics_path: /actuator/prometheus
     static_configs:

@@ -547,6 +547,140 @@ for the journey — state machines, approvals with suspension and SoD, SLA
 escalation, notifications, the scheduler, BPMN execution with event-starts — is
 implemented and covered by the service-level suites above.
 
-## Phases 5–8 ⬜
+## Phase 5 — Reporting & Dashboards ◐ (spec: PHASE-5-REPORTING.md)
+
+**Backend surfaces implemented (T1–T4, T7, T8); the UI tasks (T5 catalog components,
+T6 report builder/dashboard composer) ride the unstarted Phase 2 React surface, and
+the §12 performance validation + §1 exit demo need the live stack.**
+
+**Implemented — the expression SQL lowering (§3's compile surface):**
+- `ExpressionSql` (`expression-dsl`): the grammar's second execution surface — compiles
+  an authored expression to a boolean SQL fragment over the record's columns with
+  ordered bind params and a null-aware type lattice. Deliberately partial: every
+  construct whose SQL and JVM semantics could diverge rejects loudly (`round` —
+  half-even vs half-up; `min`/`max` — NULL handling; `size`/collections; method
+  calls), and the parity that *is* lowered is pinned construct-by-construct
+  (`== null` → `IS NULL`, `!=` value → `IS DISTINCT FROM`, date arithmetic per Annex A
+  over `CAST(… AS date)`, booleans in the canonical `'true'/'false'` text form,
+  division guarded by `NULLIF`)
+- `ExpressionFields` (`metadata-model`): the promotion-aware field resolver shared by
+  the publish-time compile gate and the Data Runtime's aggregate pipeline — promoted
+  fields lower to their projection columns, everything else to the JSONB extract with
+  numeric casts; json/file/collections never lower
+- `PromotionPolicy`/`Snake` moved from `data-runtime/storage` into `metadata-model`:
+  promotion is a pure function of the published definition with three consumers
+  (materializer DDL, query lowering, save-time validation) that must never disagree
+- suites: `ExpressionSqlTest` (15 — bind order, null semantics, date arithmetic,
+  parity rejects, type mismatches)
+
+**Implemented — T2 report/dashboard metadata (§3/§5):**
+- `ReportDefinition` (`{id, entity, filters, groupBy (+buckets), aggregates,
+  drillThrough}`) and `DashboardDefinition` (`{id, widgets[{widget, reportRef,
+  params, span}], roles}`) as first-class app branches: `md_definitions` kind rows
+  (V5 migration), full branch assembly on every read, PATCH-merge semantics that
+  never wipe branches — the Phase 4 §9 branch-persistence pattern extended
+- save validation (§3): bound entity resolves; filter ops from the query-DSL leaf
+  set with per-op shape rules (`contains` textual, `isNull` valueless, `in` list);
+  aggregate fields numeric; **group-by and aggregate fields projection-promoted or
+  the definition rejects with guidance** (reporting rides the §4 materialized path —
+  the fix reads "add the field to an index"); bucket labels non-empty and unique;
+  aggregate aliases unique; drill-through binds to an app entity; dashboards: widget
+  types from `{kpi, chart, table}`, reportRefs resolve, spans 1..12, visibility roles
+  resolve (composition only — §8)
+- publish compilation: every bucket expression compiles twice — the JVM engine
+  (record context, clock admissible) **and** the SQL lowering (an authored `round()`
+  or method call is a publish error, never a run-time surprise)
+- `ObjectPermission.reportExecute` grows the matrix beyond CRUD: the object-level
+  `report: execute` grant — default deny until an app grants it (§8)
+- scheduled jobs gained their save-time rules (the Phase 4 gap): unique names, cron
+  structurally shaped (5–6 fields — the Scheduler's parser stays authoritative),
+  per-target params; report jobs pin `reportId`, `runAsRole` (default the app's
+  `reporting` role — must resolve), `format ∈ {csv, xlsx}`, and at least one
+  resolvable recipient role/user (a job that fires but reaches nobody is a save
+  error, not a silent no-op)
+- suites: `DefinitionValidatorTest` +the §3/§5/§7 rule matrix (valid A/R app saves
+  clean; unpromoted/non-numeric/dup-label/ghost-ref cases reject with the guidance)
+
+**Implemented — the aggregate pipeline growth (§3/§4, in the Data Runtime):**
+- bucketed group-by lowers to ordered `CASE WHEN` branches **inside the pipeline** —
+  first match wins, unmatched rows land in no bucket (NULL), labels bind as params,
+  and `today()` binds the run's governing date (a query `asOf` — a suite's frozen
+  clock — pins deterministic buckets)
+- `GROUP BY` addresses select ordinals (a repeated CASE would rebind every
+  parameter; the goldens re-pinned)
+- **sharing-rule row filters apply to aggregates exactly as to lists (§4):** owner
+  sets lower to `created_by IN (…)`, criteria expressions lower through the same
+  `ExpressionSql` into one OR'd predicate; a criterion that cannot lower fails
+  closed (FORBIDDEN) rather than widening the dataset
+- hidden fields fail closed on aggregates — a grouped or aggregated hidden field
+  rejects (aggregates leak values, not rows)
+- suites: `ReportAggregateTests` (6 — golden aging corpus decimal-exact with the
+  30/60 bucket edges and the null-due row unbucketed, filters on aggregates,
+  owner/criteria sharing bounds, hidden-field fail-closed, and the role-scoped
+  internal surface incl. its service-client gate), `BucketedAggregateSqlTests`
+  (3 — the CASE goldens), `GoldenSqlTests` re-pinned
+
+**Implemented — T1/T3/T4 the Reporting Service (§2/§4/§6):**
+- `novaforge-reporting-service` (port 8089, gateway route `/api/v1/reports/**`,
+  Prometheus scrape + the Grafana baseline row; stateless by design — no per-service
+  DB): definitions through the Metadata Service's published read (in-process cache
+  keyed to a per-tenant epoch bumped on every `metadata.published`), results in Redis
+- `POST /api/v1/reports/{id}/run`: the object-level `report: execute` grant decides
+  first (default deny; platform admin/builder stay unrestricted), then the compiled
+  envelope executes **as the requesting actor** — the caller's token relays to the
+  runtime's public query surface, so matrix, field security, and sharing apply per
+  run with no reporting-side reimplementation; response `{columns, rows, totals,
+  chart}` with the ECharts-shaped projection
+- `ReportCompiler`: filters merge (params tighten — a param naming a filtered field
+  replaces its value, a new field appends), buckets/aggregates compile to the
+  envelope, the un-grouped totals twin stays a valid envelope for every legal shape;
+  `asOf` rides through
+- result cache: keyed (tenant, app, report, version, actor, **evaluation date**,
+  params) — role set alone is never a key (owner-based sharing differs between
+  same-role users), a day boundary never serves yesterday's buckets, a Redis hiccup
+  degrades to the uncached path; 60 s TTL. A latency tool, never an authorization
+  boundary
+- `GET /api/v1/reports/{id}/export`: synchronous CSV (RFC 4180) and XLSX (POI)
+  streams under the run's exact authorization, money columns locale-formatted with
+  the configured currency, totals row closing the file, **10k-row sync cap**
+  rejecting with async-export (File Service, Phase 6) guidance
+- suites: `ReportCompilerTests` (5), `ReportExporterTests` (4 — quoting, money,
+  cap-with-guidance, CSV/XLSX parity parsed cell-for-cell)
+
+**Implemented — T7 scheduled delivery (§7):**
+- the Scheduler's dormant `report` target activates: fires the Reporting Service's
+  internal delivery surface with the platform service client; failures propagate so
+  the run history records them audibly
+- the run executes under the job's `runAsRole` through the runtime's internal
+  role-scoped surface (`/api/v1/hooks/reports/query`, service-client gated):
+  `asRole`'s entity READ, field security, and sharing rules bound the dataset —
+  never system-principal-everything; an ungranted role fails closed exactly like an
+  ungranted actor
+- delivery through the Notification Service's new internal send surface
+  (`/api/v1/notifications/internal/send`): platform roles resolve to holders,
+  explicit users ride verbatim (deduped, order-stable), the same preference
+  filtering + inbox row + `notification.delivered` audit per channel, the export
+  streaming inline as an email attachment (no File Service dependency), the
+  built-in `report-delivery` category (V2 migration widens the CHECK); synthetic
+  actors skip; recipients resolving to nobody reject audibly
+- suites: `NotificationTests` +2 (role-holders + explicit users with attachment,
+  the service-client gate, no-recipient rejection)
+
+**Implemented — T8 harness growth (§9):**
+- `runReport {reportId (the step's entity), params, asRole}` rides the public run
+  surface as the step's actor (the candidate app is published in the scratch tenant,
+  so `report: execute` and sharing apply per run); the result lands in scope as the
+  next `${Report[n]}` carrying `{rowCount, totals}` — the §7 A/R-vs-ledger
+  reconciliation assertions read exactly those
+- `TestRunnerJourneyTests` grew the leg: POST-only transport, the app bound from the
+  candidate, params interpolated, `rowCount`/`totals.sum_amount` assertions
+
+**Phase 5 remainder:** T5 catalog components + T6 the report builder/dashboard
+composer UI (both ride the unstarted Phase 2 React surface — dashboards are
+metadata-only in v1 by spec §5); §10 item 4 (scheduled delivery end-to-end against
+the live stack with Mailpit); §12's 1M-row p95 < 2 s measurement; the §1 exit demo
+(A/R aging + executive dashboard, T9).
+
+## Phases 6–8 ⬜
 
 Not started. `requestApproval`/`callConnector` grammar notes live in the specs.

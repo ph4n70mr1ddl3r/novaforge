@@ -37,15 +37,18 @@ public class JobRunner {
     private final PublishedJobsSource source;
     private final FlowTarget flows;
     private final org.springframework.beans.factory.ObjectProvider<RestProcessTarget> processes;
+    private final org.springframework.beans.factory.ObjectProvider<RestReportTarget> reports;
     private final long leaseMs;
 
     public JobRunner(JdbcTemplate jdbc, PublishedJobsSource source, FlowTarget flows,
                      org.springframework.beans.factory.ObjectProvider<RestProcessTarget> processes,
+                     org.springframework.beans.factory.ObjectProvider<RestReportTarget> reports,
                      @Value("${novaforge.scheduler.lease-ms:60000}") long leaseMs) {
         this.jdbc = jdbc;
         this.source = source;
         this.flows = flows;
         this.processes = processes;
+        this.reports = reports;
         this.leaseMs = leaseMs;
     }
 
@@ -154,9 +157,27 @@ public class JobRunner {
                 LOG.error("scheduled process start failed for {}.{}: {}",
                         job.get("app"), job.get("name"), e.getMessage(), e);
             }
+        } else if ("report".equals(target)) {
+            // §7 activation (PHASE-5): the Reporting Service's internal delivery
+            // surface — the run executes under the job's runAsRole, the export
+            // delivers through the Notification Service.
+            try {
+                Map<String, Object> params = MAPPER.readValue(
+                        String.valueOf(job.get("params")), Map.class);
+                Map<String, Object> summary = reports.getObject().run(
+                        (UUID) job.get("tenant_id"), String.valueOf(job.get("app")), params);
+                status = "ok";
+                detail = summary == null ? null
+                        : String.valueOf(summary.getOrDefault("status", "delivered"));
+            } catch (Exception e) {
+                status = "failed";
+                detail = e.getMessage();
+                LOG.error("scheduled report delivery failed for {}.{}: {}",
+                        job.get("app"), job.get("name"), e.getMessage(), e);
+            }
         } else {
-            // script/report register but stay dormant (the Script Engine's service
-            // context / Phase 5's Reporting Service are their consumers).
+            // script registers but stays dormant (the Script Engine's service
+            // execution context is its consumer).
             status = "skipped";
             detail = "target '" + target + "' is registered but dormant";
         }

@@ -1,0 +1,67 @@
+spring:
+  application:
+    name: novaforge-reporting-service
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}
+  data:
+    redis:
+      host: ${NOVAFORGE_REDIS_HOST:localhost}
+      port: ${NOVAFORGE_REDIS_PORT:6379}
+
+server:
+  port: 8089
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  opentelemetry:
+    tracing:
+      # Tempo direct-to (PHASE-3 §9, §13 Q4 — no collector in between).
+      sampler: ${NOVAFORGE_TRACE_SAMPLER:always_on}
+      export:
+        otlp:
+          endpoint: ${NOVAFORGE_TEMPO_ENDPOINT:http://localhost:4318/v1/traces}
+
+logging:
+  file:
+    # Promtail tails this shared dir into Loki (PHASE-3 §9).
+    name: ${NOVAFORGE_LOG_DIR:/tmp/novaforge/logs}/${spring.application.name}.log
+  pattern:
+    level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
+
+novaforge:
+  auth:
+    issuer-uri: ${NOVAFORGE_AUTH_ISSUER:http://localhost:8082/realms/novaforge}
+    service-client:
+      id: ${NOVAFORGE_SERVICE_CLIENT_ID:novaforge-runtime}
+      secret: ${NOVAFORGE_SERVICE_CLIENT_SECRET:novaforge-runtime-secret}
+  metadata:
+    # Report/dashboard definitions are versioned metadata — the published read is
+    # the source, cached in-process and invalidated on metadata.published.
+    url: ${NOVAFORGE_METADATA_URL:http://localhost:8081}
+  data-runtime:
+    # Interactive runs relay the caller's token to the public query surface; the
+    # scheduled leg rides the service-client-gated role-scoped surface (§4/§7).
+    url: ${NOVAFORGE_DATA_RUNTIME_URL:http://localhost:8083}
+  notification:
+    # Scheduled delivery fans out through the Notification Service (§7) — the
+    # report-delivery category with the export riding inline.
+    url: ${NOVAFORGE_NOTIFICATION_URL:http://localhost:8088}
+  reporting:
+    # §4: the cache is a latency tool, never an authorization boundary — row
+    # filters re-evaluate per actor on every miss.
+    cache-ttl-seconds: ${NOVAFORGE_REPORT_CACHE_TTL:60}
+    # §6: the sync export cap — larger exports point at the Phase 6 async job.
+    export-max-rows: ${NOVAFORGE_REPORT_EXPORT_MAX:10000}
+    # §6 money formatting: v1's single-currency-per-app symbol; multi-currency
+    # arrives with the Phase 7 dogfood scope.
+    currency: ${NOVAFORGE_REPORT_CURRENCY:USD}

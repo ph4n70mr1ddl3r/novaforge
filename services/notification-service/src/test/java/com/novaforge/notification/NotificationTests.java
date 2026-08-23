@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.novaforge.notification.notify.Notifier;
 import com.novaforge.notification.notify.Notifier.EmailPort;
 import com.novaforge.notification.notify.RecipientResolver.RuntimeAdminPort;
 import com.novaforge.testsupport.PostgresTestBase;
@@ -36,6 +37,8 @@ import tools.jackson.databind.json.JsonMapper;
  * delivery, template token resolution, preference filtering (email observed through
  * the stubbed SMTP port), synthetic actors skipped with no
  * {@code notification.delivered} (ADR-010 #3), and the read API's own-data scope.
+ * The Phase 5 growth rides here too: the internal send surface (PHASE-5 §7) — the
+ * scheduled report-delivery leg with its inline attachment.
  */
 @SpringBootTest(properties = "novaforge.events.relay-interval-ms=3600000")
 @AutoConfigureMockMvc
@@ -50,6 +53,9 @@ class NotificationTests extends PostgresTestBase {
 
     /** Emails the stub observed (Mailpit's stand-in). */
     static final List<String> EMAILS = new CopyOnWriteArrayList<>();
+
+    /** Attachments the stub observed (the §7 report-delivery leg's inline export). */
+    static final List<String> ATTACHMENTS = new CopyOnWriteArrayList<>();
 
     @Autowired
     MockMvc mockMvc;
@@ -91,7 +97,20 @@ class NotificationTests extends PostgresTestBase {
         @Bean
         @Primary
         EmailPort emailPort() {
-            return (to, subject, body) -> EMAILS.add(to + "|" + subject + "|" + body);
+            return new EmailPort() {
+                @Override
+                public void send(String to, String subject, String body) {
+                    EMAILS.add(to + "|" + subject + "|" + body);
+                }
+
+                @Override
+                public void send(String to, String subject, String body,
+                                 Notifier.Attachment attachment) {
+                    EMAILS.add(to + "|" + subject + "|" + body);
+                    ATTACHMENTS.add(to + "|" + attachment.filename() + "|"
+                            + attachment.contentType() + "|" + attachment.content().length);
+                }
+            };
         }
     }
 
@@ -115,6 +134,7 @@ class NotificationTests extends PostgresTestBase {
         jdbc.update("DELETE FROM nf_notifications");
         jdbc.update("DELETE FROM nf_preferences");
         EMAILS.clear();
+        ATTACHMENTS.clear();
     }
 
     @Test
@@ -202,6 +222,58 @@ class NotificationTests extends PostgresTestBase {
                                 Integer.class)).isEqualTo(1));
     }
 
+    // --- PHASE-5 §7: the internal send surface (scheduled report delivery) ---
+
+    @Test
+    @DisplayName("internal/send: role holders + explicit users, attachment inline, gated (§7)")
+    void internalSendDelivers() throws Exception {
+        String body = MAPPER.writeValueAsString(Map.of(
+                "tenantId", TENANT.toString(),
+                "category", "report-delivery",
+                "title", "Report arAging (ArDesk)",
+                "body", "The scheduled report arAging of app ArDesk is attached (csv).",
+                "recipients", Map.of("roles", List.of("Purch.manager"),
+                        "users", List.of(CLERK.toString())),
+                "attachment", Map.of("filename", "arAging.csv", "contentType", "text/csv",
+                        "contentBase64", java.util.Base64.getEncoder()
+                                .encodeToString("customer,total\r\nacme,300.5\r\n"
+                                        .getBytes(java.nio.charset.StandardCharsets.UTF_8)))));
+        mockMvc.perform(post("/api/v1/notifications/internal/send")
+                        .with(serviceJwt()).contentType("application/json").content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.delivered").value(4))   // 2 users × inbox+email
+                .andExpect(jsonPath("$.recipients").value(2));
+        // the manager arrives via the role's holders, the clerk by explicit id —
+        // one inbox row each under the report-delivery category, attachments inline
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
+                "SELECT user_id FROM nf_notifications WHERE category = 'report-delivery' "
+                        + "ORDER BY user_id", UUID.class))
+                .containsExactly(CLERK, MANAGER);
+        org.assertj.core.api.Assertions.assertThat(ATTACHMENTS).hasSize(2);
+        org.assertj.core.api.Assertions.assertThat(ATTACHMENTS)
+                .anySatisfy(a -> org.assertj.core.api.Assertions.assertThat(a)
+                        .startsWith("demo@localhost|arAging.csv|text/csv|"))
+                .anySatisfy(a -> org.assertj.core.api.Assertions.assertThat(a)
+                        .startsWith("manager@localhost|arAging.csv|text/csv|"));
+
+        // user traffic never reaches the internal surface — the gate holds
+        mockMvc.perform(post("/api/v1/notifications/internal/send")
+                        .with(jwtFor(CLERK)).contentType("application/json").content(body))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("internal/send: recipients that resolve to nobody reject audibly (§7)")
+    void internalSendWithoutRecipientsRejects() throws Exception {
+        String body = MAPPER.writeValueAsString(Map.of(
+                "tenantId", TENANT.toString(), "category", "report-delivery",
+                "title", "t", "body", "b",
+                "recipients", Map.of("roles", List.of("Purch.ghost"))));
+        mockMvc.perform(post("/api/v1/notifications/internal/send")
+                        .with(serviceJwt()).contentType("application/json").content(body))
+                .andExpect(status().isBadRequest());
+    }
+
     // --- helpers ---
 
     static final String RECORD = UUID.randomUUID().toString();
@@ -220,6 +292,15 @@ class NotificationTests extends PostgresTestBase {
             .SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor jwtFor(UUID actor) {
         return jwt()
                 .jwt(token -> token.claim("tenant_id", TENANT.toString()).subject(actor.toString()))
+                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
+    }
+
+    /** The platform service client (azp) — the internal send surface's gate. */
+    private static org.springframework.security.test.web.servlet.request
+            .SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor serviceJwt() {
+        return jwt()
+                .jwt(token -> token.claim("azp", "novaforge-runtime")
+                        .subject("service-account-novaforge-runtime"))
                 .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
     }
 }
