@@ -177,6 +177,20 @@ class SchedulerTests extends PostgresTestBase {
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
                 "SELECT cron FROM sched_jobs WHERE name = 'nightlySweep'",
                 String.class)).isEqualTo("0 30 3 * * *");
+        // vanished definitions leave the registry — an orphan can never keep firing
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
+                "SELECT name FROM sched_jobs ORDER BY name", String.class))
+                .containsExactly("nightlySweep");
+    }
+
+    @Test
+    @DisplayName("an empty source listing never wipes the registry (outage-safe prune, §7)")
+    void emptySourceKeepsRegistry() {
+        runner.syncOnce();
+        published = List.of();   // a metadata outage shape — not an unpublish
+        runner.syncOnce();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM sched_jobs", Integer.class)).isEqualTo(5);
     }
 
     @Test

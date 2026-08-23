@@ -36,11 +36,36 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  frontend:
+    # The pnpm workspace (PHASE-2 §2 stack, scaffolded with Phase 5 T5): strict
+    # tsc + the vitest suites incl. the catalog gallery's axe checks.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Type-check and test
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm check
+          pnpm test
+
   integration-podman:
     # The PHASE-1 §8 Podman-socket runner (quay.io/podman/stable labels): the same
     # suites against rootless Podman — TESTCONTAINERS_* wiring documented in the README.
     runs-on: [self-hosted, podman]
-    needs: build
+    needs: [build, frontend]
     steps:
       - uses: actions/checkout@v4
 

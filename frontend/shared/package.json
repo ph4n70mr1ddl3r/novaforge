@@ -1,0 +1,26 @@
+{
+  "name": "@novaforge/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared frontend package: the versioned component catalog (ADR-009 L3), page-model types, and the lazily-loaded React registry the runtime renderer resolves from. Phase 5 T5 ships the four report catalog components (PHASE-5 §5).",
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "check": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "echarts": "^6.0.0",
+    "react": "~19.2.0",
+    "react-dom": "~19.2.0"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "axe-core": "^4.11.0",
+    "jsdom": "^26.1.0",
+    "vitest": "^3.2.4"
+  }
+}

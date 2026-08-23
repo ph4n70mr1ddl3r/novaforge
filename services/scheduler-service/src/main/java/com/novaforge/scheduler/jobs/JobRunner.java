@@ -59,7 +59,8 @@ public class JobRunner {
     }
 
     public void syncOnce() {
-        for (PublishedJobsSource.AppJobs app : source.all()) {
+        java.util.List<PublishedJobsSource.AppJobs> apps = source.all();
+        for (PublishedJobsSource.AppJobs app : apps) {
             for (com.novaforge.metadata.ScheduledJobDefinition job : app.jobs()) {
                 jdbc.update("""
                         INSERT INTO sched_jobs (id, tenant_id, app, name, cron, target,
@@ -77,6 +78,43 @@ public class JobRunner {
                         Timestamp.from(nextFire(job.cron(), Instant.now())));
             }
         }
+        prune(apps);
+    }
+
+    /**
+     * The registry mirrors published definitions — vanished jobs (unpublished,
+     * renamed, or synced under a key the definitions no longer carry) leave the
+     * registry, so an orphan can never keep firing and failing forever. Skipped when
+     * the source serves nothing at all: an empty listing can be a metadata outage,
+     * and wiping the registry on one is worse than a stale row (found live by the
+     * PHASE-5 §7 demo — a null-app orphan survived every later sync).
+     */
+    private void prune(java.util.List<PublishedJobsSource.AppJobs> apps) {
+        if (apps.isEmpty()) {
+            return;
+        }
+        StringBuilder keys = new StringBuilder("DELETE FROM sched_jobs WHERE NOT (");
+        java.util.List<Object> params = new java.util.ArrayList<>();
+        for (PublishedJobsSource.AppJobs app : apps) {
+            if (!app.jobs().isEmpty()) {
+                for (com.novaforge.metadata.ScheduledJobDefinition job : app.jobs()) {
+                    if (!params.isEmpty()) {
+                        keys.append(" OR ");
+                    }
+                    keys.append("(tenant_id = ? AND app = ? AND name = ?)");
+                    params.add(app.tenantId());
+                    params.add(app.appApiName());
+                    params.add(job.name());
+                }
+                continue;
+            }
+            // an app listed with no jobs: its whole registry partition goes
+            keys.append(params.isEmpty() ? "" : " OR ").append("(tenant_id = ? AND app = ?)");
+            params.add(app.tenantId());
+            params.add(app.appApiName());
+        }
+        keys.append(")");
+        jdbc.update(keys.toString(), params.toArray());
     }
 
     /** The scan pass — due, enabled jobs fire under lease. */

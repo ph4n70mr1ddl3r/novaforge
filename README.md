@@ -103,6 +103,8 @@ novaforge/
 │                        #   script-engine, audit-service, workflow-service,
 │                        #   scheduler-service, notification-service,
 │                        #   reporting-service
+├── frontend/            # pnpm workspace (PHASE-2 §2): shared/ = the versioned
+│                        #   component catalog + lazy registry (Phase 5 T5)
 ├── deploy/              # compose (Keycloak/PG/Redis/Kafka/Prometheus/Grafana
 │                        #   + Tempo/Loki/promtail, Mailpit), postgres-init,
 │                        #   kind/, helm/ (one chart per service + umbrella)
@@ -154,6 +156,10 @@ TOKEN=$(curl -s -X POST http://localhost:8082/realms/novaforge/protocol/openid-c
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 ```
 
+**Frontend workspace:** `corepack enable && (cd frontend && pnpm install && pnpm test)` —
+strict `tsc` via `pnpm check`; the catalog gallery's axe checks gate CI's `frontend`
+job. Node 22+ (pnpm 11 via corepack).
+
 Grafana (admin/admin) at http://localhost:3000 ships the seeded "NovaForge" dashboards
 (the Phase 0 service baseline plus the Phase 3 board: Kafka consumer lag, hook-duration
 histograms, script ratio per app version, suite pass rates, after-hook retry outcomes);
@@ -177,14 +183,15 @@ with transactional outbox, flow-IR hooks, the script sandbox, and the builder te
 harness (Phase 3), the workflow plane — state machines, approvals with durable
 suspension and SoD, SLAs with escalation, notifications, the scheduler, record-level
 sharing, BPMN execution with Flowable embedded and event-starts over the spine, and
-the grown harness vocabulary (Phase 4) — and the reporting plane (Phase 5 backend):
-report/dashboard metadata with bucketed group-by lowering to the aggregate pipeline,
-sharing-rule row filters enforced on aggregates exactly as on lists, the Reporting
-Service (run/export as the requesting actor, Redis-cached, scheduled delivery under
-an explicitly permissioned `runAsRole` through the Scheduler + Notification with
-inline attachments), the expression-to-SQL lowering with parity guards, and the
-harness `runReport` op. 225 tests green under `./mvnw verify`. The main
-remaining surfaces: the React builder/runtime UI (Phase 2's largest gap, which
-Phases 4/5's UI tasks ride), the Phase 5 report-perf measurement and exit demos,
-and the full-stack exit demos. Progress ledger:
-[IMPLEMENTATION.md](IMPLEMENTATION.md).
+the grown harness vocabulary (Phase 4) — and the reporting plane (Phase 5, verified
+live end to end incl. scheduled delivery into Mailpit and the 1M-row p95 < 2 s
+measurement): report/dashboard metadata with bucketed group-by lowering to the
+aggregate pipeline, sharing-rule row filters enforced on aggregates exactly as on
+lists, the Reporting Service (run/export as the requesting actor, Redis-cached,
+scheduled delivery under an explicitly permissioned `runAsRole`), the
+expression-to-SQL lowering with parity guards, the harness `runReport` op, and the
+first four versioned catalog components (React 19.2 workspace, axe-gated in CI).
+226 Java + 17 frontend tests green under `./mvnw verify` + `pnpm test`. The main
+remaining surfaces: the React builder/runtime UI shell (Phase 2's largest gap, which
+T6's report builder rides) and the later-phase full-stack exit demos. Progress
+ledger: [IMPLEMENTATION.md](IMPLEMENTATION.md).

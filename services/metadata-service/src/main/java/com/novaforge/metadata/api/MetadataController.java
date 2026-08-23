@@ -179,6 +179,9 @@ public class MetadataController {
                     index.add(Map.of(
                             "tenantId", tenantId.toString(),
                             "appId", appId.toString(),
+                            // the consumers (Scheduler's jobs source, Reporting's
+                            // definitions source) key off apiName — always carried
+                            "apiName", String.valueOf(store.apiNameOf(tenantId, appId)),
                             "version", latest.version())));
         }
         return index;

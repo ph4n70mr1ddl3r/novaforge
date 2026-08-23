@@ -60,6 +60,10 @@ inline children → 4 outbox rows published → `novaforge.record` carries the e
 
 ## Phase 2 — Builder UI & Security ◐ (spec: PHASE-2-UI-BUILDER.md)
 
+> The FE workspace scaffold (T1's stack: pnpm workspace, React 19.2.x, TS strict,
+> vitest + axe in CI) landed early with Phase 5 T5's catalog work — see the Phase 5
+> section. The builder shell itself (canvas, renderer, forms) remains unstarted.
+
 **Backend implemented:**
 - `expression-dsl` (expr/v1, §7/Annex A): the JVM parser/evaluator with the pinned
   grammar — exact BigDecimal semantics, null-aware operators, date arithmetic,
@@ -675,11 +679,64 @@ the §12 performance validation + §1 exit demo need the live stack.**
 - `TestRunnerJourneyTests` grew the leg: POST-only transport, the app bound from the
   candidate, params interpolated, `rowCount`/`totals.sum_amount` assertions
 
-**Phase 5 remainder:** T5 catalog components + T6 the report builder/dashboard
-composer UI (both ride the unstarted Phase 2 React surface — dashboards are
-metadata-only in v1 by spec §5); §10 item 4 (scheduled delivery end-to-end against
-the live stack with Mailpit); §12's 1M-row p95 < 2 s measurement; the §1 exit demo
-(A/R aging + executive dashboard, T9).
+**Implemented — T5 catalog components (§5, the frontend slice):**
+- the pnpm workspace scaffolded at `frontend/` (PHASE-2 §2's T1 stack pulled forward —
+  catalog work is frontend-only per the §11 dependency note): React 19.2 + TS strict +
+  vitest/jsdom, `frontend/shared` carrying the component registry
+- the four versioned catalog components per ADR-009 L3: `ChartWidget` (binds the §4
+  chart projection to ECharts through a lazily-loaded canvas wrapper — role=img +
+  aria-label over the chart region), `KpiTile` (a totals aggregate as a labeled
+  headline; money strings ride verbatim, the browser never re-rounds the server's
+  BigDecimal), `ReportTable` (grouped rows with the totals twin as the tfoot row,
+  unmatched buckets as em-dashes), `DashboardGrid`/`DashboardCell` (12-column grid,
+  span-clamped, one-column reflow under 720 px)
+- the catalog contract: draft-2020-12 props schemas per component, `CATALOG` manifest
+  with pinned versions, and the lazy `resolveComponent(id, version)` registry —
+  version mismatches and unknown ids reject loudly (ADR-009's "pages pin component
+  versions" from day one)
+- design tokens as DTCG-derived CSS variables (ADR-009 §5) — components consume
+  variables only, no literals
+- suites: 17 vitest tests — the gallery (every component axe-checked incl. the grid
+  composite), registry pinning, ChartWidget's projection→option wiring (echarts
+  mocked; real canvas is the Phase 2 Playwright layer), ReportTable/KpiTile shape
+  over the live arAging fixture; CI gains the `frontend` job (pnpm + strict tsc +
+  vitest) gating the Podman leg
+
+**Implemented — §12 performance validation** (measured 2026-08-23, record:
+`docs/loadtests/results-2026-08-23-report-perf.md`): 1M-row `PerfInvoice` fixture
+(generate_series into the trigger-maintained projection, the ADR-001 methodology),
+the bucketed aging report through the full gateway→Reporting→Runtime journey —
+**cache cold p95 1379.9 ms / warm p95 132.6 ms, both PASS (< 2 s)**; the driver
+(`docs/loadtests/report-perf.py`) deletes the Redis result keys per cold iteration,
+so the cache is proven a latency tool, not a load-bearing dependency.
+
+**Implemented — §10 item 4 + T1/§1 exit demo** (verified live 2026-08-23, same
+record): compose infra + the six services; the A/R app (`Invoice` + `arAging` +
+`exec` dashboard + `nightlyAging` job) authored and published through the definition
+APIs; the report run decimal-exact (bucket edges 30/60, DRAFT excluded, totals
+365.75) with the chart projection; CSV + XLSX exports verified; the scheduled
+delivery fired `ok` → inbox row + email leg → **Mailpit shows the report email with
+`arAging.xlsx` (3657 bytes) attached** and `notification.delivered` audits per
+channel; the job republished to its authored nightly cron moved `next_fire_at` on
+the next sync (the registry upsert, live).
+
+**Fixed at the live review — two integration defects the demo surfaced:**
+(1) the `published-apps` service-caller index omitted `apiName` — every
+service-consumer sync (Scheduler jobs, workflow processes/SLAs, Reporting
+definitions) keyed off a null/empty app: the workflow source silently skipped apps,
+the scheduler synced `app=null` rows that fired into 404s; the index now always
+carries `apiName` (store.apiNameOf). (2) the scheduler's registry never pruned
+vanished definitions — an orphaned row (here the null-app one) fired and failed
+forever; `syncOnce` now prunes to the published set, outage-safe (an empty listing
+never wipes the registry — a metadata outage must not, worse, disarm every job).
+Both pinned by `SchedulerTests` (prune + outage-safety, now 8 cases). Operational
+note: pre-Phase-4 compose volumes predate the init script's growth — the
+workflow/notification/scheduler databases are created for fresh volumes, existing
+ones need the three `CREATE DATABASE`s once (documented in the results record).
+
+**Phase 5 remainder:** T6's report builder/dashboard composer authoring UI (rides
+the Phase 2 builder shell — the workspace now exists, the shell does not yet);
+chart/export polish beyond the catalog contract is backlog until the dogfood asks.
 
 ## Phases 6–8 ⬜
 

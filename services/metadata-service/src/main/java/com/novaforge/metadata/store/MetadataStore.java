@@ -87,6 +87,16 @@ public class MetadataStore {
                 new UUID[] {rs.getObject("tenant_id", UUID.class), rs.getObject("id", UUID.class)});
     }
 
+    /**
+     * The app's apiName — the service-caller index must carry it (the Scheduler's and
+     * the Reporting Service's job/definition sources key off `apiName`; a missing
+     * field synced jobs with a null app — caught live by the PHASE-5 §7 demo).
+     */
+    public String apiNameOf(UUID tenantId, UUID appId) {
+        return jdbc.query("SELECT api_name FROM md_apps WHERE tenant_id = ? AND id = ?",
+                (rs, i) -> rs.getString(1), tenantId, appId).stream().findFirst().orElse(null);
+    }
+
     public Optional<AppDefinition> findApp(UUID tenantId, UUID appId) {
         return jdbc.query("""
                 SELECT api_name, label, label_i18n, description, permission_set, current_version

@@ -1,0 +1,13 @@
+{
+  "name": "novaforge-frontend",
+  "private": true,
+  "description": "NovaForge frontend workspace (PHASE-2 §2): runtime-ui, builder-ui, and the shared package (page-model types, expression runtime, component registry). Phase 5 T5 lands the component catalog here first — catalog work is frontend-only.",
+  "scripts": {
+    "test": "pnpm --filter @novaforge/shared test",
+    "build": "pnpm --filter @novaforge/shared build",
+    "check": "pnpm --filter @novaforge/shared check"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

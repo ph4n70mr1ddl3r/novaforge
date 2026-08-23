@@ -1,0 +1,23 @@
+/*
+ * NovaForge design tokens (W3C DTCG-derived) as CSS variables — ADR-009 §5:
+ * theming's single source for light/dark/tenant branding. The Phase 2 shell loads
+ * this once; catalog components consume only the variables, never hex literals.
+ */
+:root {
+  --nf-color-bg: #ffffff;
+  --nf-color-surface: #f6f7f9;
+  --nf-color-text: #1a1d21;
+  --nf-color-muted: #5b616e;
+  --nf-color-border: #d4d7dd;
+  --nf-color-accent: #2f6fed;
+  --nf-color-positive: #1c7d43;
+  --nf-color-negative: #b3261e;
+  --nf-font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --nf-font-size-base: 0.9375rem;
+  --nf-font-size-kpi: 1.75rem;
+  --nf-radius: 6px;
+  --nf-spacing-1: 0.25rem;
+  --nf-spacing-2: 0.5rem;
+  --nf-spacing-3: 0.75rem;
+  --nf-spacing-4: 1rem;
+}
