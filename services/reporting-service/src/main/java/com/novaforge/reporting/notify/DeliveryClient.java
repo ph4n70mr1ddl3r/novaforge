@@ -2,7 +2,7 @@ package com.novaforge.reporting.notify;
 
 import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
-import com.novaforge.reporting.auth.ServiceToken;
+import com.novaforge.security.ServiceTokenClient;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -31,10 +31,10 @@ public class DeliveryClient {
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     private final RestClient notification;
-    private final ServiceToken serviceToken;
+    private final ServiceTokenClient serviceToken;
 
     public DeliveryClient(@Value("${novaforge.notification.url:http://localhost:8088}") String url,
-                          ServiceToken serviceToken) {
+                          ServiceTokenClient serviceToken) {
         this.notification = RestClient.builder().baseUrl(url).build();
         this.serviceToken = serviceToken;
     }

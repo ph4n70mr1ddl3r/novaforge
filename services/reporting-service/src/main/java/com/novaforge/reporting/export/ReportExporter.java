@@ -98,13 +98,22 @@ public class ReportExporter {
                 Cell cell = headerRow.createCell(i);
                 cell.setCellValue(columns.get(i));
                 cell.setCellStyle(header);
-                sheet.autoSizeColumn(i);
             }
             int at = 1;
             for (List<String> rendered : table) {
                 Row sheetRow = sheet.createRow(at++);
                 for (int i = 0; i < rendered.size(); i++) {
                     sheetRow.createCell(i).setCellValue(rendered.get(i));
+                }
+            }
+            // sized after the data (autosizing over the header alone was a no-op);
+            // POI's autosize walks AWT fonts — a headless server without fontconfig
+            // must degrade to a fixed width, never lose the export (review fix)
+            for (int i = 0; i < columns.size(); i++) {
+                try {
+                    sheet.autoSizeColumn(i);
+                } catch (RuntimeException e) {
+                    sheet.setColumnWidth(i, 18 * 256);
                 }
             }
             workbook.write(buffer);

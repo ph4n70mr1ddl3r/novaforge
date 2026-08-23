@@ -4,8 +4,8 @@ import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
 import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.DefinitionParser;
-import com.novaforge.reporting.auth.ServiceToken;
 import com.novaforge.reporting.source.PublishedApps.PublishedApp;
+import com.novaforge.security.ServiceTokenClient;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -43,13 +43,13 @@ public class RestPublishedApps implements PublishedApps {
     private record Cached(long epoch, PublishedApp app) {
     }
 
-    private final ServiceToken serviceToken;
+    private final ServiceTokenClient serviceToken;
 
     public RestPublishedApps(
             @Value("${novaforge.metadata.url:http://localhost:8081}") String metadataUrl,
             org.springframework.data.redis.core.StringRedisTemplate redis,
             RedisConnectionFactory redisFactory,
-            ServiceToken serviceToken) {
+            ServiceTokenClient serviceToken) {
         this.metadata = RestClient.builder().baseUrl(metadataUrl).build();
         this.redis = redis;
         this.serviceToken = serviceToken;

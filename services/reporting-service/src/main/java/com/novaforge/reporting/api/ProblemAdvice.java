@@ -33,7 +33,8 @@ public class ProblemAdvice {
                 exception.detail().orElse(null));
     }
 
-    @ExceptionHandler({IllegalArgumentException.class, tools.jackson.databind.exc.MismatchedInputException.class})
+    @ExceptionHandler({IllegalArgumentException.class,
+            tools.jackson.core.JacksonException.class})
     public ResponseEntity<Map<String, Object>> badRequest(Exception exception) {
         return problem(HttpStatus.BAD_REQUEST, PlatformErrorCode.VALIDATION_FAILED.code(),
                 PlatformErrorCode.VALIDATION_FAILED.name(), exception.getMessage(), null);

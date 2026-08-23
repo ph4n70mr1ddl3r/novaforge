@@ -56,5 +56,5 @@ function cell(value: unknown): string {
   if (value === null || value === undefined) {
     return "—";   // unmatched buckets render as null rows, not blanks
   }
-  return typeof value === "number" ? String(value) : String(value);
+  return String(value);
 }

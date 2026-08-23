@@ -89,7 +89,9 @@ class SchedulerTests extends PostgresTestBase {
         @Primary
         com.novaforge.scheduler.jobs.RestProcessTarget processTarget() {
             return new com.novaforge.scheduler.jobs.RestProcessTarget(
-                    "http://localhost:1", "http://localhost:1", "id", "secret") {
+                    "http://localhost:1",
+                    new com.novaforge.security.ServiceTokenClient("http://localhost:1",
+                            "id", "secret")) {
                 @Override
                 public String run(UUID tenantId, String appApiName, String process,
                                   String recordId, Map<String, Object> variables) {
@@ -109,7 +111,9 @@ class SchedulerTests extends PostgresTestBase {
         @Primary
         com.novaforge.scheduler.jobs.RestReportTarget reportTarget() {
             return new com.novaforge.scheduler.jobs.RestReportTarget(
-                    "http://localhost:1", "http://localhost:1", "id", "secret") {
+                    "http://localhost:1",
+                    new com.novaforge.security.ServiceTokenClient("http://localhost:1",
+                            "id", "secret")) {
                 @Override
                 public Map<String, Object> run(UUID tenantId, String appApiName,
                                                Map<String, Object> params) {

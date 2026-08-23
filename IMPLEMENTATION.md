@@ -734,6 +734,26 @@ note: pre-Phase-4 compose volumes predate the init script's growth — the
 workflow/notification/scheduler databases are created for fresh volumes, existing
 ones need the three `CREATE DATABASE`s once (documented in the results record).
 
+**Fixed at the post-phase review — one service-token client, three smaller defects:**
+the client-credentials grant had been hand-rolled twelve times across five services
+(each its own cache, each its own RestClient) — eleven of the copies concatenated the
+raw secret into the form body, so a secret carrying `&`/`=` corrupted the grant (only
+the harness's TestRunner encoded). All twelve collapsed into one shared
+`ServiceTokenClient` in `security-context` (the outbound twin of the Phase 4
+`ServiceClientGate` consolidation): form-encoded credentials, one cached grant per
+JVM, 30 s-early refresh, 2 s/10 s timeouts — bound by library auto-configuration so
+no service wires it (the reporting service's local `ServiceToken` component went the
+same way; the metadata-service harness keeps its own correctly-encoded uncached
+fetch, and the runtime's `KeycloakUserProvisioner`/`RestMetadataClient` ride a
+distinct MultiValueMap variant that was already encoding-correct — left alone).
+`ServiceTokenClientTest` pins encoding, caching, and the loud no-token failure.
+Also: a malformed `params` query value on the export rendered 500 — the advice now
+maps `JacksonException` (malformed text, not just mapping) to 400 VALIDATION_FAILED
+(`ProblemAdviceTests`); the XLSX export called `autoSizeColumn` while only the header
+existed (a no-op in practice) and POI autosizing walks AWT fonts — sizing now runs
+after the data and degrades to a fixed width on a headless font failure instead of
+losing the export; and the `ReportTable`'s dead `typeof` ternary went.
+
 **Phase 5 remainder:** T6's report builder/dashboard composer authoring UI (rides
 the Phase 2 builder shell — the workspace now exists, the shell does not yet);
 chart/export polish beyond the catalog contract is backlog until the dogfood asks.

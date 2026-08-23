@@ -2,7 +2,7 @@ package com.novaforge.reporting.run;
 
 import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
-import com.novaforge.reporting.auth.ServiceToken;
+import com.novaforge.security.ServiceTokenClient;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -28,11 +28,11 @@ public class RuntimeReportGateway {
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     private final RestClient runtime;
-    private final ServiceToken serviceToken;
+    private final ServiceTokenClient serviceToken;
 
     public RuntimeReportGateway(
             @Value("${novaforge.data-runtime.url:http://localhost:8083}") String runtimeUrl,
-            ServiceToken serviceToken) {
+            ServiceTokenClient serviceToken) {
         this.runtime = RestClient.builder().baseUrl(runtimeUrl).build();
         this.serviceToken = serviceToken;
     }

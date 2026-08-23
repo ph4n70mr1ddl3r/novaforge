@@ -4,9 +4,10 @@ import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
 import com.novaforge.metadata.FlowStep;
 import com.novaforge.runtime.engine.hook.ApprovalClient;
+import com.novaforge.security.ServiceClientGate;
+import com.novaforge.security.ServiceTokenClient;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicReference;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -17,7 +18,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The {@link ApprovalClient} binding (PHASE-4 §4): {@code requestApproval} hands the
- * suspension to the Workflow Service's internal surface with the platform service
+ * suspension to the Workflow Service's internal surface with the shared service
  * client's token — engine-driven actions run as the per-app system principal, and the
  * initiating actor travels in the payload for segregation-of-duties filtering. The
  * Workflow Service maps problem bodies back (SOD_VIOLATION renders onto the write
@@ -29,29 +30,16 @@ public class RestApprovalClient implements ApprovalClient {
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     private final RestClient restClient;
-    private final RestClient tokenClient;
-    private final String clientId;
-    private final String clientSecret;
-    private final AtomicReference<Grant> grant = new AtomicReference<>();
-
-    private record Grant(String token, long refreshAt) {
-    }
+    private final ServiceTokenClient serviceToken;
 
     public RestApprovalClient(@Value("${novaforge.workflow.url:http://localhost:8086}")
                               String baseUrl,
-                              @Value("${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}")
-                              String issuer,
-                              @Value("${novaforge.auth.service-client.id:novaforge-runtime}")
-                              String clientId,
-                              @Value("${novaforge.auth.service-client.secret:novaforge-runtime-secret}")
-                              String clientSecret) {
+                              ServiceTokenClient serviceToken) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2_000);
         factory.setReadTimeout(10_000);
         this.restClient = RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
-        this.tokenClient = RestClient.builder().baseUrl(issuer).requestFactory(factory).build();
-        this.clientId = clientId;
-        this.clientSecret = clientSecret;
+        this.serviceToken = serviceToken;
     }
 
     @Override
@@ -60,7 +48,7 @@ public class RestApprovalClient implements ApprovalClient {
             restClient.post()
                     .uri("/api/v1/workflow/internal/approvals")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .headers(headers -> headers.setBearerAuth(serviceToken()))
+                    .headers(headers -> headers.setBearerAuth(serviceToken.token()))
                     .body(MAPPER.writeValueAsString(payload(suspension)))
                     .retrieve()
                     .toBodilessEntity();
@@ -117,32 +105,8 @@ public class RestApprovalClient implements ApprovalClient {
                 "approval request failed (status " + e.getStatusCode().value() + ")", null, e);
     }
 
-    @SuppressWarnings("unchecked")
-    private String serviceToken() {
-        Grant cached = grant.get();
-        if (cached != null && System.currentTimeMillis() < cached.refreshAt()) {
-            return cached.token();
-        }
-        Map<String, Object> granted = tokenClient.post()
-                .uri("/protocol/openid-connect/token")
-                .headers(headers -> headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED))
-                .body("grant_type=client_credentials&client_id=" + clientId
-                        + "&client_secret=" + clientSecret)
-                .retrieve()
-                .body(Map.class);
-        if (granted == null || granted.get("access_token") == null) {
-            throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "service token grant returned no token");
-        }
-        long seconds = granted.get("expires_in") instanceof Number number
-                ? number.longValue() : 0;
-        grant.set(new Grant(String.valueOf(granted.get("access_token")),
-                System.currentTimeMillis() + Math.max(0, seconds - 30) * 1000));
-        return String.valueOf(granted.get("access_token"));
-    }
-
     @Override
     public java.lang.String toString() {
-        return "RestApprovalClient(" + clientId + ")";
+        return "RestApprovalClient(" + ServiceClientGate.CLIENT_ID + ")";
     }
 }

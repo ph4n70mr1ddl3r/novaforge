@@ -191,7 +191,7 @@ lists, the Reporting Service (run/export as the requesting actor, Redis-cached,
 scheduled delivery under an explicitly permissioned `runAsRole`), the
 expression-to-SQL lowering with parity guards, the harness `runReport` op, and the
 first four versioned catalog components (React 19.2 workspace, axe-gated in CI).
-226 Java + 17 frontend tests green under `./mvnw verify` + `pnpm test`. The main
+239 Java + 17 frontend tests green under `./mvnw verify` + `pnpm test`. The main
 remaining surfaces: the React builder/runtime UI shell (Phase 2's largest gap, which
 T6's report builder rides) and the later-phase full-stack exit demos. Progress
 ledger: [IMPLEMENTATION.md](IMPLEMENTATION.md).
