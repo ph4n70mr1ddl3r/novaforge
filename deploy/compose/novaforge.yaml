@@ -192,6 +192,27 @@ services:
       - "8025:8025"   # web UI
     restart: unless-stopped
 
+  # Object storage (PHASE-6 §2/§8): the File Service's MinIO — API 9000, console
+  # 9001 — with a persistent volume. Buckets auto-create on first service start.
+  minio:
+    image: docker.io/minio/minio:RELEASE.2025-11-25T16-26-34Z
+    container_name: novaforge-minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: novaforge
+      MINIO_ROOT_PASSWORD: novaforge-secret
+    ports:
+      - "9000:9000"   # S3 API (presigned upload/download)
+      - "9001:9001"   # console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
   kafka-exporter:
     image: docker.io/danielqsj/kafka-exporter:v1.9.0
     container_name: novaforge-kafka-exporter
@@ -205,6 +226,7 @@ services:
 
 volumes:
   postgres-data:
+  minio-data:
   keycloak-data:
   redis-data:
   kafka-data:

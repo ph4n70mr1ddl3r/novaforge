@@ -257,7 +257,7 @@ public class AttachmentService {
                 UUID.randomUUID(), tenantId, eventType, MAPPER.writeValueAsString(envelope));
     }
 
-    static String sha256(byte[] content) {
+    public static String sha256(byte[] content) {
         try {
             return Base64.getEncoder().encodeToString(
                     MessageDigest.getInstance("SHA-256").digest(content));

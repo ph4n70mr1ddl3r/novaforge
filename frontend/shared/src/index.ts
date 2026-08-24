@@ -4,6 +4,7 @@ export {
 export { KpiTile } from "./catalog/KpiTile.tsx";
 export { ReportTable } from "./catalog/ReportTable.tsx";
 export { DashboardGrid, DashboardCell } from "./catalog/DashboardGrid.tsx";
+export { FileUpload } from "./catalog/FileUpload.tsx";
 export { CATALOG, type CatalogEntry } from "./catalog/schemas.ts";
 export { resolveComponent, catalogEntry } from "./registry.ts";
 export type {

@@ -41,14 +41,29 @@ class ScriptApiTests {
 
     static final List<String> CALLERS = new CopyOnWriteArrayList<>();
 
+    /** The connector-sandbox egress stub (PHASE-6 §4): records calls, returns a body. */
+    static final List<String> HTTP_CALLS = new CopyOnWriteArrayList<>();
+
     @TestConfiguration
     static class StubQuery {
+
         @Bean
         @Primary
         QueryProxy queryProxy() {
             return (caller, entity, queryJson) -> {
                 CALLERS.add(caller.tenantId() + "/" + caller.actorId());
                 return Map.of("rows", List.of(Map.of("sku", "WIDGET")), "total", 1L);
+            };
+        }
+
+        @Bean
+        @Primary
+        com.novaforge.script.engine.HttpProxy httpProxy() {
+            return (caller, app, connector, operation, template) -> {
+                HTTP_CALLS.add(caller.tenantId() + "/" + app + "/" + connector + "."
+                        + operation + "/" + template);
+                return Map.of("status", 200, "body", Map.of("object", "list", "data",
+                        List.of(Map.of("id", "txn_1"))));
             };
         }
     }
@@ -78,6 +93,40 @@ class ScriptApiTests {
                 .andExpect(jsonPath("$.value.sku").value("WIDGET"))
                 .andExpect(jsonPath("$.logs[0]").value("INFO rows=1"));
         org.assertj.core.api.Assertions.assertThat(CALLERS).containsExactly(TENANT + "/" + ACTOR);
+    }
+
+    @Test
+    @DisplayName("$http exists only in the connector sandbox: declared → egress; absent → undefined (§4)")
+    void httpGatedBySandboxContext() throws Exception {
+        HTTP_CALLS.clear();
+        // declared connector sandbox: $http routes through the proxy (the platform's
+        // circuit-breaker/credential machinery, never raw sockets)
+        mockMvc.perform(post("/api/v1/scripts/execute").with(engineJwt())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "app": "Erp", "hook": "pull", "trigger": "beforeSave",
+                                  "language": "js", "sandbox": "connector",
+                                  "script": "const feed = $http.call('con_stripe', 'listTransactions', { limit: 5 }); ({ first: feed.body.data[0].id })",
+                                  "record": {} }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.value.first").value("txn_1"));
+        org.assertj.core.api.Assertions.assertThat(HTTP_CALLS).hasSize(1);
+        org.assertj.core.api.Assertions.assertThat(HTTP_CALLS.getFirst())
+                .contains(TENANT + "/Erp/con_stripe.listTransactions");
+
+        // default sandbox: the egress does not exist at all — ReferenceError, a problem
+        mockMvc.perform(post("/api/v1/scripts/execute").with(engineJwt())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "app": "Erp", "hook": "pull", "trigger": "beforeSave",
+                                  "language": "js",
+                                  "script": "$http.call('con_stripe', 'listTransactions', {})",
+                                  "record": {} }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("4000"));
+        org.assertj.core.api.Assertions.assertThat(HTTP_CALLS).hasSize(1);
     }
 
     @Test

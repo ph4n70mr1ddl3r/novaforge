@@ -8,12 +8,13 @@ import { catalogEntry, resolveComponent } from "../src/registry.ts";
  * unknown ids are errors, not fallbacks.
  */
 describe("catalog registry", () => {
-  it("carries exactly the Phase 5 widget vocabulary, each with a props schema", () => {
+  it("carries exactly the catalog vocabulary (Phase 5 widgets + Phase 6 upload), each with a props schema", () => {
     expect(CATALOG.map((entry) => entry.id)).toEqual([
       "novaforge.chart-widget",
       "novaforge.kpi-tile",
       "novaforge.report-table",
       "novaforge.dashboard-grid",
+      "novaforge.file-upload",
     ]);
     for (const entry of CATALOG) {
       expect(entry.version).toBe("1.0.0");

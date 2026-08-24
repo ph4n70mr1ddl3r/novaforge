@@ -47,6 +47,13 @@ public class PublishedIntegrations {
     private final ServiceTokenClient serviceToken;
     private final Map<String, Cached> cache = new ConcurrentHashMap<>();
 
+    /** The hermetic base for tests and tools: no listener, no fetch — override the lookups. */
+    protected PublishedIntegrations() {
+        this.metadata = null;
+        this.redis = null;
+        this.serviceToken = null;
+    }
+
     public PublishedIntegrations(
             @Value("${novaforge.metadata.url:http://localhost:8081}") String metadataUrl,
             StringRedisTemplate redis,

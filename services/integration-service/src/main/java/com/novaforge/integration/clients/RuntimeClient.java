@@ -37,6 +37,12 @@ public class RuntimeClient {
         this.serviceToken = serviceToken;
     }
 
+    /** The hermetic base for tests — override the legs, no HTTP client underneath. */
+    protected RuntimeClient() {
+        this.runtime = null;
+        this.serviceToken = null;
+    }
+
     /** One per-item write outcome (the §6/§7 contract). */
     public record Outcome(String status, Map<String, Object> record, String code, String detail) {
 

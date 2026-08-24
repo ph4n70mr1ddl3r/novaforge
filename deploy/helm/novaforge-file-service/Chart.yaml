@@ -1,0 +1,6 @@
+apiVersion: v2
+name: novaforge-file-service
+description: NovaForge file-service service chart (PHASE-6 §2)
+type: application
+version: 0.1.0
+appVersion: "0.1.0-SNAPSHOT"

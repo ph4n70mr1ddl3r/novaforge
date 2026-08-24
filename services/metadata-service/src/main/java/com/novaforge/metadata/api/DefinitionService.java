@@ -144,6 +144,13 @@ public class DefinitionService {
                     }
                     default -> { }
                 }
+                if ("postWebhook".equals(step.op())
+                        && (step.template() == null
+                        || !(step.template().get("hookId") instanceof String)
+                        || !(step.template().get("body") instanceof Map))) {
+                    throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                            where + " requires template.hookId and template.body (§10)");
+                }
                 if ("deleteRecord".equals(step.op())
                         && (step.template() == null
                         || !(step.template().get("version") instanceof Number))) {

@@ -37,6 +37,24 @@ spring:
               uri: ${novaforge.upstreams.scheduler-service:http://localhost:8087}
               predicates:
                 - Path=/api/v1/scheduler/jobs
+            - id: integrations
+              # PHASE-6 §2/§9: the connector/webhook/job operational surface (builder+
+              # at the service) and — the one deliberately anonymous route —
+              # /api/v1/webhooks/inbound/** (HMAC at the service, §6; rate-limited at
+              # the gateway from its first day).
+              uri: ${novaforge.upstreams.integration-service:http://localhost:8090}
+              predicates:
+                - Path=/api/v1/integrations/**,/api/v1/webhooks/inbound/**
+            - id: files
+              # PHASE-6 §2/§9: presigned upload/download + attachment metadata (user+;
+              # attachment access governed by the owning record's authorization).
+              uri: ${novaforge.upstreams.file-service:http://localhost:8091}
+              predicates:
+                - Path=/api/v1/files/**
+  data:
+    redis:
+      host: ${NOVAFORGE_REDIS_HOST:localhost}
+      port: ${NOVAFORGE_REDIS_PORT:6379}
   security:
     oauth2:
       resourceserver:
@@ -72,6 +90,10 @@ logging:
     level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
 
 novaforge:
+  webhook:
+    # §6: the anonymous inbound-webhook prefix is rate-limited from its first day
+    # (Redis, enforced at the gateway — the PHASE-0 §6.1 deferral activating).
+    rate-limit-per-minute: ${NOVAFORGE_WEBHOOK_RATE_LIMIT:60}
   auth:
     # JWT validation reads the issuer through the same bridge every service uses —
     # without this entry NOVAFORGE_AUTH_ISSUER never reaches the gateway.

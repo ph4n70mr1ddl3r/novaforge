@@ -29,6 +29,13 @@
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
     <dependency>
+      <!-- Redis rate limiting (PHASE-6 §6): the anonymous inbound-webhook prefix —
+           the gateway's only public API path — is rate-limited from its first day
+           (the PHASE-0 §6.1 deferral activating with the route that needs it). -->
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+    <dependency>
       <groupId>io.micrometer</groupId>
       <artifactId>micrometer-registry-prometheus</artifactId>
     </dependency>

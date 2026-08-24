@@ -50,6 +50,16 @@ scrape_configs:
     static_configs:
       - targets: ["host.docker.internal:8087"]
 
+  - job_name: novaforge-integration-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8090"]
+
+  - job_name: novaforge-file-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8091"]
+
   # Kafka consumer lag (PHASE-3 §9): the spine's health as seen from the groups.
   - job_name: novaforge-kafka-lag
     static_configs:

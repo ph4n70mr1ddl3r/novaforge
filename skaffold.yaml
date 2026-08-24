@@ -1,6 +1,6 @@
 # Skaffold inner-loop (podman runner — ARCHITECTURE.md §6, PHASE-1 §8): build → kind load → helm upgrade.
 # Usage:  skaffold dev --platform=podman
-# One artifact per umbrella subchart — the build and deploy sets stay the same nine.
+# One artifact per umbrella subchart — the build and deploy sets stay the same eleven.
 apiVersion: skaffold/v4beta11
 kind: Config
 metadata:
@@ -39,6 +39,12 @@ build:
     - image: ghcr.io/novaforge/novaforge-reporting-service
       jib:
         project: services/reporting-service
+    - image: ghcr.io/novaforge/novaforge-integration-service
+      jib:
+        project: services/integration-service
+    - image: ghcr.io/novaforge/novaforge-file-service
+      jib:
+        project: services/file-service
 deploy:
   helm:
     releases:
@@ -72,5 +78,11 @@ deploy:
           novaforge-reporting-service:
             image:
               repository: ghcr.io/novaforge/novaforge-reporting-service
+          novaforge-integration-service:
+            image:
+              repository: ghcr.io/novaforge/novaforge-integration-service
+          novaforge-file-service:
+            image:
+              repository: ghcr.io/novaforge/novaforge-file-service
         imageStrategy:
           helm: {}

@@ -70,7 +70,7 @@ novaforge:
   secrets:
     # AES-GCM data key (32 bytes, base64) — locally a compose-provided dev key;
     # staging/prod hold it in KMS/Vault (ARCHITECTURE.md §5 item 6, PHASE-6 §9).
-    data-key: ${NOVAFORGE_SECRETS_DATA_KEY:ZGV2LW9ubHktZGF0YS1rZXktMzItYnl0ZXMhIQ==}
+    data-key: ${NOVAFORGE_SECRETS_DATA_KEY:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
   connector:
     # §4's pinned timeout: connector calls are synchronous — 10 s, no suspension.
     timeout-ms: 10000

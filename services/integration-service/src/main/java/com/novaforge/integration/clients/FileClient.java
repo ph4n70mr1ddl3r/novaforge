@@ -33,6 +33,12 @@ public class FileClient {
         this.serviceToken = serviceToken;
     }
 
+    /** The hermetic base for tests — override the legs, no HTTP client underneath. */
+    protected FileClient() {
+        this.files = null;
+        this.serviceToken = null;
+    }
+
     /** Uploads one complete job output (the chunked stream's final part, §7). */
     public UUID upload(UUID tenantId, String fileName, String contentType, byte[] content,
                        UUID initiatedBy) {

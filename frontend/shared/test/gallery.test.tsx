@@ -6,6 +6,7 @@ import { ChartWidget } from "../src/catalog/ChartWidget.tsx";
 import { KpiTile } from "../src/catalog/KpiTile.tsx";
 import { ReportTable } from "../src/catalog/ReportTable.tsx";
 import { DashboardCell, DashboardGrid } from "../src/catalog/DashboardGrid.tsx";
+import { FileUpload } from "../src/catalog/FileUpload.tsx";
 
 // the gallery asserts a11y semantics, not canvas rendering — ECharts stays mocked
 // (jsdom has no canvas; the real canvas is the Phase 2 Playwright layer, spec §2)
@@ -77,10 +78,17 @@ describe("catalog gallery — axe", () => {
     expect(await axeCheck(container)).toHaveNoViolations();
   });
 
+  it("FileUpload is axe-clean (the PHASE-2 §5 stub, activated by PHASE-6 §8)", async () => {
+    const { container } = render(
+      <FileUpload filesBase="http://files" bearerToken="token" />,
+    );
+    expect(await axeCheck(container)).toHaveNoViolations();
+  });
+
   it("every catalog id has an implementation mounted in this gallery", () => {
     // the gallery is exhaustive: a new catalog component without an axe mount
     // fails here, so a11y coverage cannot silently lag the catalog
-    expect(CATALOG.length).toBe(4);
+    expect(CATALOG.length).toBe(5);
   });
 });
 

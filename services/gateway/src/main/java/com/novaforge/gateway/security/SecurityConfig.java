@@ -24,6 +24,11 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/**").permitAll()
+                        // the one anonymous API route (PHASE-6 §2/§6): the gateway's
+                        // default JWT requirement lifts for exactly this prefix — the
+                        // Integration Service authenticates by HMAC, and the prefix is
+                        // rate-limited from its first day (WebhookRateLimitFilter).
+                        .requestMatchers("/api/v1/webhooks/inbound/**").permitAll()
                         .anyRequest().hasAuthority("SCOPE_novaforge.api"))
                 .exceptionHandling(errors -> errors.authenticationEntryPoint(entryPoint))
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> { }))

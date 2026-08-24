@@ -6,8 +6,6 @@ import java.io.ByteArrayInputStream;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
 
 /**
  * Object storage port (PHASE-6 §8): put/get bytes under an object key, plus
@@ -32,17 +30,13 @@ public interface StoragePort {
 
     enum Mode {UPLOAD, DOWNLOAD}
 
-    /** The MinIO/S3 binding (compose MinIO at API 9000, §2). */
-    @Component
+    /** The MinIO/S3 binding (compose MinIO at API 9000, §2) — wired by FileServiceConfig. */
     class MinioStorage implements StoragePort {
 
         private final io.minio.MinioClient client;
         private final String bucket;
 
-        public MinioStorage(@Value("${novaforge.storage.endpoint}") String endpoint,
-                            @Value("${novaforge.storage.access-key}") String accessKey,
-                            @Value("${novaforge.storage.secret-key}") String secretKey,
-                            @Value("${novaforge.storage.bucket}") String bucket) {
+        public MinioStorage(String endpoint, String accessKey, String secretKey, String bucket) {
             this.client = io.minio.MinioClient.builder()
                     .endpoint(endpoint)
                     .credentials(accessKey, secretKey)

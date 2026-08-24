@@ -178,7 +178,7 @@ public class InboundProcessor {
             for (String keyField : mapping.keyFields()) {
                 filter.put(keyField, body.get(keyField));
             }
-            RuntimeClient.ListPage found = runtime.list(tenantId, entity, null,
+            RuntimeClient.ListPage found = runtime.lookup(tenantId, entity,
                     Map.of("filter", filter, "page", Map.of("size", 1)));
             if (!found.rows().isEmpty()) {
                 Map<String, Object> existing = found.rows().getFirst();
@@ -231,8 +231,8 @@ public class InboundProcessor {
             return null;
         }
         if (template.startsWith("${") && template.endsWith("}")) {
-            JsonNode node = payload.at(template.substring(2, template.length() - 1)
-                    .replace('.', '/'));
+            String pointer = "/" + template.substring(2, template.length() - 1).replace('.', '/');
+            JsonNode node = payload.at(pointer);
             return node.isMissingNode() || node.isNull() ? null
                     : MAPPER.convertValue(node, Object.class);
         }

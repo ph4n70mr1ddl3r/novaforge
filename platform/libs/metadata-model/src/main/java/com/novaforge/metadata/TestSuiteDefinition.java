@@ -46,16 +46,15 @@ public record TestSuiteDefinition(
                        Map<String, Object> template, String expect) {
 
         /**
-         * The v1 vocabulary: the Phase 3 record ops plus Phase 4's growth (§12) —
-         * {@code queryRecord} (a filtered read as a role → {@code {count, ids}},
-         * remembered as {@code ${Query[n]}}; entity {@code Task} queries the
-         * workflow inbox with a v1 {@code {status}} filter and remembers rows as
-         * {@code ${Task[n]}}) and {@code resolveTask} (an approve/reject through
-         * the same inbox API synthetic actors use — the harness never gets a back
-         * door, ADR-010 #3).
+         * The v1 vocabulary: the Phase 3 record ops plus the growth — Phase 4's
+         * {@code queryRecord}/{@code resolveTask} (§12), Phase 5's {@code runReport}
+         * (§9), and Phase 6's {@code postWebhook} (§10: the harness signs with the
+         * scratch tenant's hook secret, so suites exercise the real HMAC path —
+         * expect {@code ok} or {@code error(SIGNATURE_INVALID)} for deliberately
+         * mangled signatures).
          */
         public static final java.util.Set<String> OPS =
                 java.util.Set.of("createRecord", "updateRecord", "deleteRecord",
-                        "queryRecord", "resolveTask");
+                        "queryRecord", "resolveTask", "runReport", "postWebhook");
     }
 }

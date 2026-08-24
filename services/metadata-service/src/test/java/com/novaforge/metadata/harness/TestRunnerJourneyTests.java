@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.novaforge.metadata.AppDefinition;
+import com.novaforge.metadata.DefinitionParser;
 import com.novaforge.metadata.TestSuiteDefinition;
 import com.novaforge.metadata.TestSuiteDefinition.Step;
 import com.sun.net.httpserver.HttpExchange;
@@ -82,6 +83,12 @@ class TestRunnerJourneyTests {
     private static final AtomicReference<String> THING_FILTER = new AtomicReference<>();
     private static final AtomicReference<String> REPORT_METHOD = new AtomicReference<>();
     private static final AtomicReference<String> REPORT_BODY = new AtomicReference<>();
+    private static final AtomicReference<String> WEBHOOK_PATH = new AtomicReference<>();
+    private static final AtomicReference<String> WEBHOOK_TIMESTAMP = new AtomicReference<>();
+    private static final AtomicReference<String> WEBHOOK_SIGNATURE = new AtomicReference<>();
+    private static final AtomicReference<String> WEBHOOK_BODY = new AtomicReference<>();
+    private static final AtomicReference<String> SECRET_PATH = new AtomicReference<>();
+    private static final AtomicReference<String> SECRET_BODY = new AtomicReference<>();
 
     @BeforeAll
     static void stubs() throws IOException {
@@ -162,12 +169,35 @@ class TestRunnerJourneyTests {
                     + exchange.getRequestMethod() + " " + path + "\"}");
         });
 
+        // integration (PHASE-6 §10): secret provisioning (the builder surface) and the
+        // anonymous inbound webhook route — both strict about method and shape
+        HttpServer integration = server((exchange, body) -> {
+            String path = exchange.getRequestURI().getPath();
+            if (path.startsWith("/api/v1/integrations/secrets/")) {
+                SECRET_PATH.set(path);
+                SECRET_BODY.set(body);
+                respond(exchange, 200, "{\"ref\":\"hook_wh_feed\",\"status\":\"provisioned\"}");
+                return;
+            }
+            if (path.startsWith("/api/v1/webhooks/inbound/")) {
+                WEBHOOK_PATH.set(path);
+                WEBHOOK_TIMESTAMP.set(exchange.getRequestHeaders().getFirst("X-NovaForge-Timestamp"));
+                WEBHOOK_SIGNATURE.set(exchange.getRequestHeaders().getFirst("X-NovaForge-Signature"));
+                WEBHOOK_BODY.set(body);
+                respond(exchange, 200, "{\"id\":\"pay-9\",\"reference\":\"pay-9\",\"amount\":42.5}");
+                return;
+            }
+            respond(exchange, 405, "{\"code\":\"4000\",\"detail\":\"unexpected \""
+                    + exchange.getRequestMethod() + " " + path + "\"}");
+        });
+
         runner = new TestRunner(
                 "http://127.0.0.1:" + runtime.getAddress().getPort(),
                 "http://127.0.0.1:" + metadata.getAddress().getPort(),
                 "http://127.0.0.1:" + auth.getAddress().getPort(),
                 "http://127.0.0.1:" + workflow.getAddress().getPort(),
                 "http://127.0.0.1:" + reporting.getAddress().getPort(),
+                "http://127.0.0.1:" + integration.getAddress().getPort(),
                 "novaforge-runtime", "novaforge-runtime-secret", new SimpleMeterRegistry());
     }
 
@@ -222,5 +252,55 @@ class TestRunnerJourneyTests {
         assertEquals(MAPPER.readValue(
                 "{\"app\":\"JourneyApp\",\"params\":{\"status\":\"POSTED\",\"asOf\":\"2026-08-23\"}}", Map.class),
                 MAPPER.readValue(REPORT_BODY.get(), Map.class));
+    }
+
+    @Test
+    @DisplayName("§10 webhook journey: the harness provisions the scratch secret and signs the real HMAC path")
+    void webhookJourneySigns() {
+        TestSuiteDefinition suite = new TestSuiteDefinition("webhooks", null, List.of(
+                new TestSuiteDefinition.TestCase("bank feed", List.of(), List.of(
+                        new Step("postWebhook", "Payment", "manager", null,
+                                Map.of("hookId", "wh_feed",
+                                       "body", Map.of("data", Map.of("id", "evt-9",
+                                               "ref", "pay-9", "amount", "42.50"))),
+                                "ok")),
+                        List.of("${Payment[0].amount} == 42.5"))));
+
+        // the candidate carries the inbound webhook + its secret reference
+        AppDefinition candidate = DefinitionParser.parseApp("""
+                { "apiName": "JourneyApp",
+                  "entities": [
+                    { "apiName": "Payment", "displayField": "reference",
+                      "fields": [
+                        { "apiName": "reference", "type": "text", "required": true },
+                        { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 } ] } ],
+                  "integrations": {
+                    "webhooks": [
+                      { "id": "wh_feed", "direction": "inbound", "entity": "Payment",
+                        "secretRef": "hook_wh_feed",
+                        "mapping": { "mode": "create",
+                                     "fields": { "reference": "${data.ref}", "amount": "${data.amount}" } } } ] } }
+                """);
+        Map<String, Object> artifact = runner.run(candidate, suite, null);
+        assertTrue(Boolean.TRUE.equals(artifact.get("green")),
+                () -> "webhook journey should be green: " + artifact.get("cases"));
+
+        // the scratch secret was provisioned through the builder surface (§10)
+        assertTrue(SECRET_PATH.get().endsWith("/api/v1/integrations/secrets/hook_wh_feed"),
+                SECRET_PATH.get());
+        assertTrue(SECRET_BODY.get().contains("\"material\":\"scratch-hook-"), SECRET_BODY.get());
+        // the post rode the anonymous route with the §5 HMAC scheme over the raw body
+        assertTrue(WEBHOOK_PATH.get().matches(
+                "/api/v1/webhooks/inbound/[0-9a-f-]{36}/Payment/wh_feed"), WEBHOOK_PATH.get());
+        String expected = TestRunner.hmac(provisionedMaterial(), WEBHOOK_TIMESTAMP.get(),
+                WEBHOOK_BODY.get());
+        assertEquals(expected, WEBHOOK_SIGNATURE.get());
+    }
+
+    /** Pulls the provisioned material back out of the provisioning call's body. */
+    private static String provisionedMaterial() {
+        return java.util.regex.Pattern.compile("\"material\":\"([^\"]+)\"")
+                .matcher(SECRET_BODY.get()).results().findFirst()
+                .map(match -> match.group(1)).orElseThrow();
     }
 }

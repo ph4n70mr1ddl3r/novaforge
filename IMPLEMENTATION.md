@@ -758,6 +758,50 @@ losing the export; and the `ReportTable`'s dead `typeof` ternary went.
 the Phase 2 builder shell — the workspace now exists, the shell does not yet);
 chart/export polish beyond the catalog contract is backlog until the dogfood asks.
 
-## Phases 6–8 ⬜
+## Phase 6 — Integration Layer ◐ (spec: PHASE-6-INTEGRATION.md)
 
-Not started. `requestApproval`/`callConnector` grammar notes live in the specs.
+**Status:** T1–T9 landed and suite-green; T10 (the live exit walkthrough — Stripe/bank feed → Payments visible in reports against the running stack) remains the exit-review leg, per the task table's own definition.
+
+**Implemented — T1 the Integration Service (§2):**
+- `novaforge-integration-service` (port 8090, gateway routes `/api/v1/integrations/**` and the one deliberately anonymous `/api/v1/webhooks/inbound/**`), its own `novaforge_integration` database on the shared Postgres (delivery log, DLQ, replay nonces, job ledger + per-row outcomes, spine outbox), Prometheus scrape + Helm chart + Skaffold artifact
+- spine contracts in-producer (the PHASE-3 §4 charter): `connector.delivered`, `webhook.dispatched`, `import.progress` — `import.*` keyed `tenant_id:job_id` (the job is the family's record; per-record ordering holds and the progress UI rides it, §7), `connector.*`/`webhook.*` tenant-scoped; the audit service consumes all three families so deliveries land in the append-only trail (§3)
+- `common-core`: `SIGNATURE_INVALID("4012", 401)` — the HMAC failure both directions render
+
+**Implemented — T2 the secret store (§9):**
+- AES-GCM at rest under a data key held in KMS/Vault in staging/prod (a compose-provided key locally); `CredentialDefinition`/`WebhookDefinition` carry references only — the schema cannot express the secret, so metadata exports never contain it (by construction, pinned by the validator's kind-shape rules)
+- rotation keeps two active secrets per reference (§9): verification tries every active version, retirement flips back to exactly one — the §11 item-1 rotation leg pins it
+
+**Implemented — T3 the connector framework (§3):**
+- `ConnectorExecutor`: REST executor with the shared `${…}` mapping convention (ADR-008 — path/query/header/body templates interpolate from the call context, deep-resolved for body maps), the v1 auth set (API-key header, HTTP basic, OAuth2 client-credentials with per-credential token caching — §13 Q1's resolved scope), Resilience4j circuit breaker per (tenant, connector) + bounded retries with exponential backoff, and the §4-pinned 10 s synchronous timeout
+- every delivery idempotent: a dedupe key (the provider event/call id) returns the recorded outcome, never a second call; terminal failure parks the request in the DLQ with the payload preserved; every outcome emits `connector.delivered` and lands in audit
+- runs are builder-authored metadata (§3): `ConnectorDefinition`/`WebhookDefinition`/`CredentialDefinition`/`ImportDefinition` live on the app definition's Integrations branch (kind-discriminated `md_definitions` rows, V6) with the same save-time schema/reference checking as the Phase 3 editors — ops/credential kinds, operation methods/paths, webhook direction shapes, import keyFields — and publish compiles `callConnector` steps (connector + operation resolve, templates resolve against the step context) and outbound webhook filter expressions
+
+**Implemented — T4 `callConnector` + the `$http` sandbox (§4):**
+- the last dormant primitive activates in the flow engine: a synchronous, bounded call through the Integration Service's service-gated execution surface; failure rides the unchanged §2 policy (before-hooks abort — pinned by test; after-hook failures ride the spine's retry leg — pinned by test); the step's record-scoped dedupe key makes after-hook retries collapse onto the recorded delivery instead of double-calling the provider
+- `$http` turns on only for scripts whose artifact declares the connector sandbox context (`ScriptDefinition.sandbox: "connector"`): the binding exists only when declared (a `ReferenceError` otherwise — pinned by test), and routes through the same executor — circuit breaker, credentials, timeout — never raw sockets (`IOAccess.NONE` holds)
+
+**Implemented — T5/T6 webhooks, both directions, one HMAC scheme (§5/§6):**
+- pinned scheme: hex HMAC-SHA256 over `timestamp + "." + raw body`, `X-NovaForge-Timestamp`/`X-NovaForge-Signature`, ±5-minute window; inbound replay nonces (a seen signature inside the window rejects) and provider-event-id idempotency (body hash when absent)
+- outbound: a pure spine consumer over every family topic — each enabled webhook's filter expression evaluates against the envelope (`event`, `entityId`, `recordId`, `actorId` + payload bindings); matches deliver signed with bounded retries to a terminal DLQ; delivery log per attempt (status, latency, response code) surfaced beside the editors
+- inbound: the anonymous route authenticates by the same scheme (wrong secret / stale timestamp / mangled or replayed signature → `SIGNATURE_INVALID`, indistinguishable); the mapping produces create/upsert payloads applied through the Data Runtime's single write path **as the per-app integration principal** (`integration:<app>` — a distinct principal from the engine's system principal, so audit provenance separates integration-sourced writes): validations, state machines, and hooks all fire (pinned by test — a webhook cannot smuggle a bad record); poison messages DLQ with the payload preserved and replay from the builder re-applies exactly-once
+- the gateway lifts its default JWT requirement for exactly the webhook prefix and rate-limits it from its first day (Redis fixed-window per client, PHASE-0 §6.1's deferral activating) — failing open only on a limiter outage (HMAC still gates every call)
+
+**Implemented — T7 the File Service (§8):**
+- `novaforge-file-service` (port 8091, route `/api/v1/files/**`, own database, MinIO joins the compose stack with a persistent volume): presigned upload/download (pinned 15-minute expiry, recorded server-side per grant), the attachment metadata entity (`fileId, entity, recordId, fileName, contentType, size, checksum, virusScan: pending|clean|infected|skipped`), server-side checksum verification over the stored bytes (mismatch rejects and deletes — pinned by test)
+- the config-gated ClamAV hook (§13 Q2): clamd INSTREAM binding when on; EICAR quarantines — download blocked, `file.quarantined` rides the spine to audit (pinned by test with the gate on; CI runs one config-on job so the scanning path stays tested); a skipped gate records `skipped`, never `clean`
+- the `file` field type's upload path: values are attachment ids; the catalog's `novaforge.file-upload` component activates (the PHASE-2 §5 stub, riding the real grant → PUT → complete-with-checksum flow, axe-clean); attachment access for bound records rides the owning record's authorization (the caller's token relays to the runtime's read)
+
+**Implemented — T8 async, resumable import/export (§7):**
+- `ImportDefinition` is promoted metadata; import *runs* are tenant data: the file lands via presigned upload, the run chunk-processes through the runtime's internal batch surface as the integration principal (per-item outcomes, field-scoped verdicts riding each), checkpointed — a killed run restarts from its last checkpoint and the per-row ledger skips every settled row, so a row applies exactly once (pinned by test: kill at chunk two → resume → all rows applied exactly once, ledger complete)
+- entity export jobs page the dataset under the job's pinned `runAsRole` (the scheduled-report scope, PHASE-5 §7 — an explicitly permissioned role, never system-principal-everything) and stream to the File Service; report exports ride the Reporting Service's new internal role-scoped render leg
+- PHASE-5 §6's designed handoff activates: over-cap sync exports answer **202 + the async job link** (Location header) instead of the cap error — pinned by test; progress rides `import.progress`; completion notifies the initiating user through the built-in `job-completed` category (the Notification Service's V3 migration — PHASE-4 §8's growth path, `report-delivery` was the first); every job audited with per-item outcomes retained
+
+**Implemented — T9 harness growth (§10):**
+- `postWebhook { hookId, body, headers? }`: the runner provisions the scratch tenant's hook secret through the builder surface and signs the §5 scheme itself, so suites exercise the real HMAC path — header overrides cover the deliberately-mangled/stale legs (`expect: error(SIGNATURE_INVALID)`); the applied record lands in scope as `${Entity[n]}` for assertions
+- the harness-provided mock connector: an in-process stub server binds every connector's baseUrl before the candidate publishes (hit counts + last path ride the run artifact) — the bank-feed journey runs offline; `runReport` joins `Step.OPS` (the Phase 5 gap this phase's growth surfaced — the runner knew the op, the save validator didn't)
+
+**Suites (§11):** `IntegrationWebhookTests` (7 — the full HMAC matrix incl. rotation + replay, idempotent application, outbound sign/filter/retry-to-DLQ/replay-exactly-once, poison DLQ with the write path's own verdict), `ConnectorExecutorTests` (4 — mock journey w/ credential + template legs, dedupe-collapse, terminal-failure DLQ, unknown-operation rejection), `ImportResumeTests` (kill/resume exactly-once), `IntegrationFlowTests` (+4 in the runtime — before-hook abort, after-hook spine retry, mock connector journey, and the integration write path firing validations/state machines/hooks with per-item field-scoped verdicts), `FileServiceTests` (5 — checksum verify/mismatch+delete, pinned presign expiry, EICAR quarantine + blocked download + outboxed event, internal upload leg), `ScriptApiTests` +$http gating, `AsyncExportHandoffTests` (202 + job link), `WebhookRateLimitFilterTest` (window enforcement, scoping, fail-open), `TestRunnerJourneyTests` +webhook journey (provisioning shape + signature equality over the raw body), frontend gallery/registry/FileUpload (+2, 20 total)
+
+## Phases 7–8 ⬜
+
+Not started. The ERP dogfood consumes the integration surface this phase shipped (connector-driven bank feed, webhooks, import/export); lifecycle/hardening follows.

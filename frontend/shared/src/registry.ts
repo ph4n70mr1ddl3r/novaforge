@@ -14,6 +14,7 @@ const IMPLEMENTATIONS: Readonly<Record<string, () => Promise<{ default: AnyCompo
   "novaforge.kpi-tile": () => import("./catalog/KpiTile.tsx") as never,
   "novaforge.report-table": () => import("./catalog/ReportTable.tsx") as never,
   "novaforge.dashboard-grid": () => import("./catalog/DashboardGrid.tsx") as never,
+  "novaforge.file-upload": () => import("./catalog/FileUpload.tsx") as never,
 };
 
 const RESOLVED = new Map<string, AnyComponent>();

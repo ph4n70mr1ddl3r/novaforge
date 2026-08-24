@@ -25,7 +25,8 @@ public class FileServiceConfig {
     }
 
     @Bean
-    @ConditionalOnMissingBean(StoragePort.class)
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+            value = "novaforge.storage.binding", havingValue = "minio", matchIfMissing = true)
     StoragePort storage(@Value("${novaforge.storage.endpoint}") String endpoint,
                         @Value("${novaforge.storage.access-key}") String accessKey,
                         @Value("${novaforge.storage.secret-key}") String secretKey,

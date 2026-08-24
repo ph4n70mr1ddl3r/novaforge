@@ -107,10 +107,25 @@ const dashboardGrid: CatalogEntry = {
   },
 };
 
+const fileUpload: CatalogEntry = {
+  id: "novaforge.file-upload",
+  version: "1.0.0",
+  schema: {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    type: "object",
+    properties: {
+      entity: { type: "string", pattern: "^[A-Z][A-Za-z0-9]*$" },
+      recordId: { type: "string", format: "uuid" },
+      filesBase: { type: "string" },
+    },
+  },
+};
+
 /** The catalog manifest — the versioned contract the builder pins pages against. */
 export const CATALOG: readonly CatalogEntry[] = Object.freeze([
   chartWidget,
   kpiTile,
   reportTable,
   dashboardGrid,
+  fileUpload,
 ]);

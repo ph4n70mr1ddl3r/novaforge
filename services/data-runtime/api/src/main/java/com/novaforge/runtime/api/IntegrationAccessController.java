@@ -84,7 +84,11 @@ public class IntegrationAccessController {
                 outcomes.add(Map.of("status", "ok", "record", result));
             } catch (PlatformException e) {
                 outcomes.add(Map.of("status", "error", "code", e.errorCode().code(),
-                        "detail", String.valueOf(e.getMessage())));
+                        "detail", String.valueOf(e.getMessage()),
+                        // §6/§7: the write path's field-scoped verdicts ride per item —
+                        // a webhook/import sees exactly which rule rejected
+                        "errors", e.detail().map(detail -> (Object) detail.errors())
+                                .orElse(List.of())));
             }
         }
         return Map.of("outcomes", outcomes);

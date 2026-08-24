@@ -61,11 +61,39 @@ jobs:
           pnpm check
           pnpm test
 
+  clamav-on:
+    # PHASE-6 §13 Q2 (resolved): one config-on job so the ClamAV scanning path stays
+    # tested — the file-service suite runs with the gate on (the in-JVM clamd stand-in
+    # speaks the INSTREAM contract; the EICAR sample quarantines exactly like a live
+    # detection, §11 item 5).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Temurin 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: File Service with the ClamAV gate on
+        run: ./mvnw -B -ntp -pl services/file-service -am verify -Dnovaforge.file.clamav.enabled=true
+
+      - name: Upload Surefire reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-clamav
+          path: "**/target/surefire-reports/"
+          if-no-files-found: ignore
+          retention-days: 7
+
   integration-podman:
     # The PHASE-1 §8 Podman-socket runner (quay.io/podman/stable labels): the same
     # suites against rootless Podman — TESTCONTAINERS_* wiring documented in the README.
     runs-on: [self-hosted, podman]
-    needs: [build, frontend]
+    needs: [build, frontend, clamav-on]
     steps:
       - uses: actions/checkout@v4
 

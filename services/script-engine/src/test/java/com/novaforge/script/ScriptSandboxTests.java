@@ -38,7 +38,7 @@ class ScriptSandboxTests {
     };
 
     private ScriptSandbox sandbox(long cpuMillis, long wallMillis, long heapMb, long statements) {
-        return new ScriptSandbox(proxy, cpuMillis, wallMillis, heapMb, statements, 4, 1000);
+        return new ScriptSandbox(proxy, null, cpuMillis, wallMillis, heapMb, statements, 4, 1000);
     }
 
     @Test
@@ -134,7 +134,7 @@ class ScriptSandboxTests {
             throw new PlatformException(PlatformErrorCode.FORBIDDEN,
                     "actor lacks read grants on " + entity);
         };
-        ScriptSandbox denyingSandbox = new ScriptSandbox(denying, 1000, 30000, 64, 10_000, 4, 1000);
+        ScriptSandbox denyingSandbox = new ScriptSandbox(denying, null, 1000, 30000, 64, 10_000, 4, 1000);
         assertThatThrownBy(() -> denyingSandbox.execute(
                 "$data.query('Ledger', '{}')", Map.of(), CALLER))
                 .isInstanceOf(PlatformException.class)

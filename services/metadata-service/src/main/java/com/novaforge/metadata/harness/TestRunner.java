@@ -8,7 +8,9 @@ import com.novaforge.metadata.EntityDefinition;
 import com.novaforge.metadata.TestSuiteDefinition;
 import com.novaforge.metadata.TestSuiteDefinition.Step;
 import com.novaforge.metadata.TestSuiteDefinition.TestCase;
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.net.InetSocketAddress;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -53,6 +55,7 @@ public class TestRunner {
     private final RestClient auth;
     private final RestClient workflow;
     private final RestClient reports;
+    private final RestClient integration;
     private final String clientId;
     private final String clientSecret;
     private final io.micrometer.core.instrument.MeterRegistry suiteRuns;
@@ -62,6 +65,7 @@ public class TestRunner {
                       @Value("${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}") String issuer,
                       @Value("${novaforge.workflow.url:http://localhost:8086}") String workflowUrl,
                       @Value("${novaforge.reporting.url:http://localhost:8089}") String reportingUrl,
+                      @Value("${novaforge.integration.url:http://localhost:8090}") String integrationUrl,
                       @Value("${novaforge.auth.service-client.id:novaforge-runtime}") String clientId,
                       @Value("${novaforge.auth.service-client.secret:novaforge-runtime-secret}") String clientSecret,
                       io.micrometer.core.instrument.MeterRegistry suiteRuns) {
@@ -70,6 +74,7 @@ public class TestRunner {
         this.auth = RestClient.builder().baseUrl(issuer).build();
         this.workflow = preEncoded(workflowUrl);
         this.reports = RestClient.builder().baseUrl(reportingUrl).build();
+        this.integration = preEncoded(integrationUrl);
         this.clientId = clientId;
         this.clientSecret = clientSecret;
         this.suiteRuns = suiteRuns;
@@ -95,6 +100,25 @@ public class TestRunner {
         String scratchName = "scratch-" + runId.substring(0, 8);
         String adminUsername = "scratch-admin-" + runId.substring(0, 8);
         String adminPassword = SCRATCH_PASSWORD_PREFIX + UUID.randomUUID();
+
+        // 0. the harness-provided mock connector (§10): a stub server in the scratch
+        //    environment binds every connector's baseUrl so the bank-feed journey
+        //    runs offline — nothing here reaches a real provider
+        MockConnector mock = MockConnector.start(candidate);
+        candidate = mock.rewrite(candidate);
+        try {
+            return runWithScratch(mock, candidate, suite, actorId, frozenAt, runId,
+                    scratchName, adminUsername, adminPassword);
+        } finally {
+            mock.stop();
+        }
+    }
+
+    private Map<String, Object> runWithScratch(MockConnector mock, AppDefinition candidate,
+                                                TestSuiteDefinition suite, UUID actorId,
+                                                Instant frozenAt, String runId,
+                                                String scratchName, String adminUsername,
+                                                String adminPassword) {
 
         // 1. scratch tenant with first admin (the admin API orchestrates Keycloak)
         Map<String, Object> tenant = adminCall(HttpMethod.POST, "/api/v1/admin/tenants",
@@ -125,10 +149,18 @@ public class TestRunner {
         //    the runtime-never-serves-drafts rule holds)
         publishCandidate(adminUsername, adminPassword, candidate);
 
+        // 3b. the scratch tenant's webhook secrets (§10): provisioned through the
+        //     Integration Service's builder surface as the scratch admin — the
+        //     harness then signs postWebhook steps with what it provisioned, so
+        //     suites exercise the real HMAC path
+        Map<String, String> hookSecrets = provisionHookSecrets(candidate,
+                passwordGrantAdmin(rolePasswords));
+
         // 4. cases — fixtures then steps as synthetic actors, assertions frozen-clock
         List<Map<String, Object>> caseResults = new ArrayList<>();
         for (TestCase testCase : suite.cases()) {
-            caseResults.add(runCase(testCase, rolePasswords, frozenAt, candidate.apiName()));
+            caseResults.add(runCase(testCase, rolePasswords, frozenAt, candidate.apiName(),
+                    tenantId, hookSecrets));
         }
         boolean green = caseResults.stream().allMatch(r -> Boolean.TRUE.equals(r.get("passed")));
         // §9 suite pass-rate telemetry — the promotion gate's health at a glance.
@@ -144,11 +176,16 @@ public class TestRunner {
         artifact.put("frozenAt", frozenAt.toString());
         artifact.put("green", green);
         artifact.put("cases", caseResults);
+        if (mock.serves()) {
+            artifact.put("mockConnector", Map.of("hits", mock.hits(),
+                    "lastPath", String.valueOf(mock.lastPath())));
+        }
         return artifact;
     }
 
     private Map<String, Object> runCase(TestCase testCase, Map<String, String> rolePasswords,
-                                        Instant frozenAt, String appApiName) {
+                                        Instant frozenAt, String appApiName, String tenantId,
+                                        Map<String, String> hookSecrets) {
         Map<String, Object> scope = new LinkedHashMap<>();   // "Entity[n]" → last record map
         List<String> failures = new ArrayList<>();
         try {
@@ -183,6 +220,7 @@ public class TestRunner {
                     case "queryRecord" -> queryRecord(step, token, scope);
                     case "resolveTask" -> resolveTask(step, token, scope);
                     case "runReport" -> runReport(step, token, scope, appApiName);
+                    case "postWebhook" -> postWebhook(step, scope, tenantId, hookSecrets);
                     default -> throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                             "unknown suite step op: " + step.op());
                 };
@@ -356,6 +394,98 @@ public class TestRunner {
                     && result.get("errors").toString().contains(rule);
         }
         return false;
+    }
+
+    /**
+     * postWebhook (PHASE-6 §10): the harness signs with the scratch tenant's hook
+     * secret — the real HMAC path — and posts to the anonymous inbound surface.
+     * Deliberately mangled signatures ride {@code template.headers} overrides
+     * ({@code X-NovaForge-Signature}/{@code X-NovaForge-Timestamp}); the applied
+     * record lands in scope under the hook's entity for assertions. Both success
+     * bodies and problem bodies are results ({@code expect: error(SIGNATURE_INVALID)}).
+     */
+    private JsonNode postWebhook(Step step, Map<String, Object> scope, String tenantId,
+                                 Map<String, String> hookSecrets) {
+        Map<String, Object> template = interpolate(step.template(), scope);
+        String hookId = String.valueOf(template.get("hookId"));
+        String body = MAPPER.writeValueAsString(template.get("body"));
+        String secret = hookSecrets.get(hookId);
+        if (secret == null) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "postWebhook hookId has no provisioned scratch secret: " + hookId);
+        }
+        String timestamp = String.valueOf(Instant.now().getEpochSecond());
+        String signature = hmac(secret, timestamp, body);
+        // header overrides: the mangled-signature and stale-timestamp legs of the matrix
+        Map<String, Object> headers = template.get("headers") instanceof Map<?, ?> overrides
+                ? MAPPER.convertValue(overrides, Map.class) : Map.of();
+        if (headers.get("X-NovaForge-Timestamp") instanceof String override) {
+            timestamp = override;
+        }
+        if (headers.get("X-NovaForge-Signature") instanceof String override) {
+            signature = override;
+        }
+        StringBuilder uri = new StringBuilder("/api/v1/webhooks/inbound/")
+                .append(url(tenantId)).append("/").append(url(step.entity()))
+                .append("/").append(url(hookId));
+        final String ts = timestamp;
+        final String sig = signature;
+        String response = integration.post()
+                .uri(uri.toString())
+                .header("X-NovaForge-Timestamp", ts)
+                .header("X-NovaForge-Signature", sig)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .exchange((request, clientResponse) -> clientResponse.bodyTo(String.class));
+        JsonNode result = MAPPER.readTree(response == null || response.isBlank()
+                ? "{}" : response);
+        if (result.isObject() && result.hasNonNull("id")) {
+            remember(scope, step.entity(), result);
+        }
+        return result;
+    }
+
+    /** The pinned scheme (§5): hex HMAC-SHA256 over {@code timestamp + "." + body}. */
+    static String hmac(String secret, String timestamp, String body) {
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(
+                    secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            mac.update(timestamp.getBytes(StandardCharsets.UTF_8));
+            mac.update((byte) '.');
+            byte[] digest = mac.doFinal(body.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                hex.append(Character.forDigit((b >> 4) & 0xF, 16))
+                        .append(Character.forDigit(b & 0xF, 16));
+            }
+            return hex.toString();
+        } catch (Exception e) {
+            throw new PlatformException(PlatformErrorCode.INTERNAL, "harness HMAC failed");
+        }
+    }
+
+    /** Provisions a secret per inbound webhook ref; returns hookId → material. */
+    private Map<String, String> provisionHookSecrets(AppDefinition candidate, String adminToken) {
+        Map<String, String> secrets = new HashMap<>();
+        for (com.novaforge.metadata.WebhookDefinition webhook
+                : candidate.integrations().webhooks()) {
+            if (!com.novaforge.metadata.WebhookDefinition.INBOUND.equals(webhook.direction())) {
+                continue;
+            }
+            if (secrets.containsKey(webhook.id())) {
+                continue;
+            }
+            String material = "scratch-hook-" + UUID.randomUUID();
+            integration.post()
+                    .uri("/api/v1/integrations/secrets/" + url(webhook.secretRef()))
+                    .headers(headers -> headers.setBearerAuth(adminToken))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(MAPPER.writeValueAsString(Map.of("material", material)))
+                    .exchange((request, clientResponse) -> clientResponse.bodyTo(String.class));
+            secrets.put(webhook.id(), material);
+        }
+        return secrets;
     }
 
     // --- scratch tenant machinery ---
@@ -587,5 +717,99 @@ public class TestRunner {
 
     private static String url(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * The harness-provided mock connector (PHASE-6 §10): an in-process stub server
+     * standing in for every provider — connector baseUrls rewrite to it before the
+     * candidate publishes, so callConnector journeys run offline. GETs answer with
+     * an empty page, POSTs echo the request body; hit counts and the last path ride
+     * the run artifact for journey verification.
+     */
+    static final class MockConnector {
+
+        private final com.sun.net.httpserver.HttpServer server;
+        private final java.util.concurrent.atomic.AtomicInteger hits =
+                new java.util.concurrent.atomic.AtomicInteger();
+        private final java.util.concurrent.atomic.AtomicReference<String> lastPath =
+                new java.util.concurrent.atomic.AtomicReference<>();
+
+        private MockConnector(com.sun.net.httpserver.HttpServer server) {
+            this.server = server;
+        }
+
+        static MockConnector start(AppDefinition candidate) {
+            if (candidate == null || candidate.integrations().connectors().isEmpty()) {
+                return new MockConnector(null);
+            }
+            try {
+                com.sun.net.httpserver.HttpServer server =
+                        com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+                MockConnector mock = new MockConnector(server);
+                server.createContext("/", exchange -> {
+                    mock.hits.incrementAndGet();
+                    mock.lastPath.set(exchange.getRequestURI().getPath());
+                    byte[] response = ("GET".equals(exchange.getRequestMethod())
+                            ? "{\"object\": \"list\", \"data\": []}"
+                            : new String(exchange.getRequestBody().readAllBytes(),
+                                    StandardCharsets.UTF_8))
+                            .getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.sendResponseHeaders(200, response.length);
+                    try (java.io.OutputStream out = exchange.getResponseBody()) {
+                        out.write(response);
+                    }
+                });
+                server.start();
+                return mock;
+            } catch (IOException e) {
+                throw new PlatformException(PlatformErrorCode.INTERNAL,
+                        "mock connector failed to start: " + e.getMessage());
+            }
+        }
+
+        /** The candidate with every connector's baseUrl pointed at the stub. */
+        AppDefinition rewrite(AppDefinition candidate) {
+            if (server == null) {
+                return candidate;
+            }
+            String base = "http://127.0.0.1:" + server.getAddress().getPort();
+            List<com.novaforge.metadata.ConnectorDefinition> connectors =
+                    candidate.integrations().connectors().stream()
+                            .map(connector -> new com.novaforge.metadata.ConnectorDefinition(
+                                    connector.id(), connector.type(), base + "/"
+                                            + connector.id(), connector.credential(),
+                                    connector.operations()))
+                            .toList();
+            return withIntegrations(candidate, new com.novaforge.metadata.IntegrationsDefinition(
+                    connectors, candidate.integrations().webhooks(),
+                    candidate.integrations().credentials(), candidate.integrations().imports()));
+        }
+
+        private static AppDefinition withIntegrations(AppDefinition app,
+                                                      com.novaforge.metadata.IntegrationsDefinition integrations) {
+            return new AppDefinition(app.id(), app.apiName(), app.label(), app.labelI18n(),
+                    app.description(), app.entities(), app.pages(), app.settings(),
+                    app.permissionSet(), app.testSuites(), app.stateMachines(), app.slas(),
+                    app.jobs(), app.workflows(), app.reports(), app.dashboards(), integrations);
+        }
+
+        boolean serves() {
+            return server != null;
+        }
+
+        int hits() {
+            return hits.get();
+        }
+
+        String lastPath() {
+            return lastPath.get();
+        }
+
+        void stop() {
+            if (server != null) {
+                server.stop(0);
+            }
+        }
     }
 }
