@@ -15,11 +15,13 @@ import { DashboardComposer } from "./dashboard-composer.tsx";
 import { Lifecycle, SuiteRuns } from "./lifecycle.tsx";
 import { LogicEditor } from "./logic-editor.tsx";
 import { SuitesEditor } from "./suites-editor.tsx";
+import { Automation } from "./automation.tsx";
 
 /**
  * The builder shell (PHASE-2 §8): design-time surface over the Metadata draft
  * APIs — entity builder, page builder, RBAC editors, tenant onboarding, plus the
- * Phase 8 lifecycle/i18n screens riding the same builder-gated APIs.
+ * Phase 4 automation screen (state machines, SLAs, scheduled jobs — §11), and
+ * the Phase 8 lifecycle/i18n screens riding the same builder-gated APIs.
  */
 
 export type BuilderScreen =
@@ -27,6 +29,7 @@ export type BuilderScreen =
     | "pages"
     | "logic"
     | "suites"
+    | "automation"
     | "rbac"
     | "reports"
     | "dashboards"
@@ -76,7 +79,7 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
             <header className="nf-topbar">
                 <h1>NovaForge Builder</h1>
                 <nav aria-label="Builder sections">
-                    {(["entities", "pages", "logic", "suites", "rbac", "reports", "dashboards", "i18n", "lifecycle", "onboarding"] as BuilderScreen[]).map((name) => (
+                    {(["entities", "pages", "logic", "suites", "automation", "rbac", "reports", "dashboards", "i18n", "lifecycle", "onboarding"] as BuilderScreen[]).map((name) => (
                         <button key={name} type="button" aria-current={screen === name} onClick={() => setScreen(name)} id={name === "entities" ? "entities" : undefined}>
                             {name}
                         </button>
@@ -139,6 +142,18 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                                     await reload();
                                 }}
                                 onRunSuite={async (apiName) => await client.runSuite(app.id ?? "", apiName)}
+                            />
+                        ) : null}
+                        {screen === "automation" ? (
+                            <Automation
+                                app={app}
+                                client={client}
+                                onSave={async (patch) => {
+                                    // state machines, SLAs, and jobs ride the app document
+                                    // (versioned, promoted — §3/§6/§7)
+                                    await client.patchApp(app.id ?? "", patch);
+                                    await reload();
+                                }}
                             />
                         ) : null}
                         {screen === "rbac" ? (

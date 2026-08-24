@@ -13,13 +13,15 @@ import {
     type RendererContextValue,
 } from "@novaforge/shared";
 import { Inbox } from "./inbox.tsx";
+import { Notifications } from "./notifications.tsx";
 import { Dashboards } from "./dashboards.tsx";
 
 /**
  * The runtime application shell (PHASE-2 §6): nav from published metadata
  * (module-grouped), pages through the shared renderer — the L1 default overlaid
- * with the app's saved page deltas — plus the Phase 4 approval inbox and the
- * Phase 5 dashboards. The renderer interprets; this shell supplies data + actions.
+ * with the app's saved page deltas — plus the Phase 4 approval inbox and
+ * notification inbox/preferences (§5/§8) and the Phase 5 dashboards. The renderer
+ * interprets; this shell supplies data + actions.
  */
 
 export interface RuntimeShellProps {
@@ -33,6 +35,7 @@ type Route =
     | { view: "home" }
     | { view: "entity"; entity: string; kind: "list" | "form" | "detail"; id?: string }
     | { view: "inbox" }
+    | { view: "notifications" }
     | { view: "dashboards" };
 
 function effectiveRole(app: AppDefinition, user: { roles: string[] }): string | undefined {
@@ -99,6 +102,7 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
                         </span>
                     ))}
                     <button type="button" onClick={() => setRoute({ view: "inbox" })}>Approvals</button>
+                    <button type="button" onClick={() => setRoute({ view: "notifications" })}>Notifications</button>
                     <button type="button" onClick={() => setRoute({ view: "dashboards" })}>Dashboards</button>
                 </nav>
                 <label className="nf-locale">
@@ -122,6 +126,8 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
                     <p className="nf-home">Select a record type to begin.</p>
                 ) : route.view === "inbox" ? (
                     <Inbox client={client} />
+                ) : route.view === "notifications" ? (
+                    <Notifications client={client} />
                 ) : route.view === "dashboards" ? (
                     <Dashboards client={client} appApiName={app.apiName} app={app} role={role} />
                 ) : (
@@ -232,10 +238,10 @@ function EntityPage(props: EntityPageProps): ReactNode {
         transitions: app.stateMachines
             .filter((machine) => machine.entity === entity.apiName && record)
             .flatMap((machine) => {
-                const current = String((record as Record<string, unknown>)?.[machine.field] ?? machine.initial);
+                const current = String((record as Record<string, unknown>)?.[machine.stateField] ?? machine.initial);
                 return machine.transitions
                     .filter((transition) => transition.from === current)
-                    .map((transition) => ({ to: transition.to, label: transition.label }));
+                    .map((transition) => ({ to: transition.to, label: transition.to, guard: transition.guard }));
             }),
     };
 
@@ -257,9 +263,10 @@ function EntityPage(props: EntityPageProps): ReactNode {
                             key={transition.to}
                             type="button"
                             disabled={busy}
+                            title={transition.guard ? `guard: ${transition.guard}` : undefined}
                             onClick={() => {
                                 const machine = app.stateMachines.find((m) => m.entity === entity.apiName)!;
-                                setRecord((current) => ({ ...(current ?? {}), [machine.field]: transition.to }));
+                                setRecord((current) => ({ ...(current ?? {}), [machine.stateField]: transition.to }));
                             }}
                         >
                             {transition.label ?? transition.to}

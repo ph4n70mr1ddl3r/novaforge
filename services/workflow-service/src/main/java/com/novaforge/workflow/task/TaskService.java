@@ -78,7 +78,7 @@ public class TaskService {
                     "task type must be approval or todo: " + type);
         }
         TaskStore.Task task = new TaskStore.Task(UUID.randomUUID(), tenantId, type, entityId,
-                recordId, assignee, role, "OPEN", null, dueAt, warnAt, createdBy,
+                recordId, assignee, role, "OPEN", null, dueAt, warnAt, false, createdBy,
                 contextRef == null ? null : contextRef, instance, escalateTo, Instant.now());
         tasks.insert(task);
         emit(task, "task.created", createdBy, null);

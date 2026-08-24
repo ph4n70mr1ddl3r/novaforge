@@ -130,7 +130,9 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                                     { "op": "resolveTask", "entity": "Task", "asRole": "manager",
                                       "recordId": "${Task[0].id}",
                                       "template": { "action": "reject" },
-                                      "expect": "error(SOD_VIOLATION)" } ],
+                                      "expect": "error(SOD_VIOLATION)" },
+                                    { "op": "scanSla",
+                                      "template": { "advance": "PT26H" }, "expect": "ok" } ],
                                   "assertExpressions": [ "${Task[0].status} != 'OPEN'" ] } ] }
                                 """))
                 .andExpect(status().isOk());
@@ -171,6 +173,34 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                                   "steps": [ { "op": "resolveTask", "entity": "Task",
                                   "recordId": "${Task[0].id}",
                                   "template": { "action": "delegate" }, "expect": "ok" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest());
+        // scanSla carries exactly one governing instant — neither rejects…
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/test-suites/no-clock")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "no-clock", "cases": [ { "name": "c",
+                                  "steps": [ { "op": "scanSla", "expect": "ok" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest());
+        // …both reject…
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/test-suites/two-clocks")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "two-clocks", "cases": [ { "name": "c",
+                                  "steps": [ { "op": "scanSla",
+                                  "template": { "advance": "PT26H", "asOf": "2026-08-24T00:00:00Z" },
+                                  "expect": "ok" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest());
+        // …and a malformed duration rejects at save, not as an aborted case
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/test-suites/bad-clock")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "bad-clock", "cases": [ { "name": "c",
+                                  "steps": [ { "op": "scanSla",
+                                  "template": { "advance": "in 26 hours" },
+                                  "expect": "ok" } ] } ] }
                                 """))
                 .andExpect(status().isBadRequest());
         // the inbox query's v1 filter is {status} — the record DSL leaf rejects on save

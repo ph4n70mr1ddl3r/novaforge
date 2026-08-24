@@ -47,14 +47,17 @@ public record TestSuiteDefinition(
 
         /**
          * The v1 vocabulary: the Phase 3 record ops plus the growth — Phase 4's
-         * {@code queryRecord}/{@code resolveTask} (§12), Phase 5's {@code runReport}
-         * (§9), and Phase 6's {@code postWebhook} (§10: the harness signs with the
-         * scratch tenant's hook secret, so suites exercise the real HMAC path —
-         * expect {@code ok} or {@code error(SIGNATURE_INVALID)} for deliberately
-         * mangled signatures).
+         * {@code queryRecord}/{@code resolveTask} (§12) and {@code scanSla} (the
+         * clock-advanced leg: the harness drives the scratch tenant's SLA scan as
+         * of a governing instant — {@code advance} an ISO-8601 duration past now,
+         * or an absolute {@code asOf} — so warn/breach/escalation assertions need
+         * no sleeps), Phase 5's {@code runReport} (§9), and Phase 6's
+         * {@code postWebhook} (§10: the harness signs with the scratch tenant's
+         * hook secret, so suites exercise the real HMAC path — expect {@code ok}
+         * or {@code error(SIGNATURE_INVALID)} for deliberately mangled signatures).
          */
         public static final java.util.Set<String> OPS =
                 java.util.Set.of("createRecord", "updateRecord", "deleteRecord",
-                        "queryRecord", "resolveTask", "runReport", "postWebhook");
+                        "queryRecord", "resolveTask", "runReport", "postWebhook", "scanSla");
     }
 }

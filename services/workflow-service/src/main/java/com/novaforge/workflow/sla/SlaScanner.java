@@ -22,6 +22,11 @@ import tools.jackson.databind.json.JsonMapper;
  * role resolved at creation, {@code sla.breach} rides the outbox, and the
  * {@code novaforge.sla.breach} counter increments. Tasks without timers stay open
  * until resolved or cancelled (§6). Single-level escalation in v1 (§6).
+ *
+ * <p>Two entry points: the wall-clock {@link #scanOnce()} the scheduler drives, and
+ * the as-of {@link #scanOnce(Instant, UUID)} the harness-facing scratch surface
+ * drives (§12's clock-advanced leg — warn/breach/escalation assertions with no
+ * sleeps; a scan path, never a write path, so ADR-010 #3's no-test-mode rule holds).</p>
  */
 @Component
 public class SlaScanner {
@@ -47,31 +52,50 @@ public class SlaScanner {
 
     /** One pass — public so tests drive it deterministically instead of waiting. */
     public void scanOnce() {
-        Instant now = Instant.now();
-        warn(now);
-        breach(now);
+        scanOnce(Instant.now(), null);
     }
 
-    private void warn(Instant now) {
-        List<Map<String, Object>> due = jdbc.queryForList("""
+    /**
+     * One pass as of a governing instant, optionally scoped to one tenant — the
+     * scratch surface's leg of §12: warn and breach fire exactly when the given
+     * clock passes their timers, deterministically, without touching wall clock.
+     * Returns the counts so suite verdicts can assert them.
+     */
+    public ScanCounts scanOnce(Instant asOf, UUID tenantId) {
+        return new ScanCounts(warn(asOf, tenantId), breach(asOf, tenantId));
+    }
+
+    /** What one deterministic pass did — the scratch surface answers with these. */
+    public record ScanCounts(int warned, int breached) {
+    }
+
+    private int warn(Instant now, UUID tenantId) {
+        String sql = """
                 SELECT id, tenant_id, id AS task_id, assignee, role, entity_id, record_id FROM wf_tasks
                  WHERE status = 'OPEN' AND sla_warned = false
-                   AND warn_at IS NOT NULL AND warn_at <= ?""", Timestamp.from(now));
+                   AND warn_at IS NOT NULL AND warn_at <= ?""";
+        List<Map<String, Object>> due = tenantId == null
+                ? jdbc.queryForList(sql, Timestamp.from(now))
+                : jdbc.queryForList(sql + " AND tenant_id = ?", Timestamp.from(now), tenantId);
         for (Map<String, Object> task : due) {
             jdbc.update("UPDATE wf_tasks SET sla_warned = true, updated_at = now() WHERE id = ?",
                     task.get("id"));
             emit(task, "sla.warn", null);
             LOG.info("sla warn: task {}", task.get("task_id"));
         }
+        return due.size();
     }
 
-    private void breach(Instant now) {
-        List<Map<String, Object>> due = jdbc.queryForList("""
+    private int breach(Instant now, UUID tenantId) {
+        String sql = """
                 SELECT id, tenant_id, id AS task_id, assignee, role, type, entity_id,
                        record_id, created_by, context_ref, instance_id, escalate_to
                   FROM wf_tasks
-                 WHERE status = 'OPEN' AND due_at IS NOT NULL AND due_at <= ?""",
-                Timestamp.from(now));
+                 WHERE status = 'OPEN' AND due_at IS NOT NULL AND due_at <= ?""";
+        List<Map<String, Object>> due = tenantId == null
+                ? jdbc.queryForList(sql, Timestamp.from(now))
+                : jdbc.queryForList(sql + " AND tenant_id = ?", Timestamp.from(now), tenantId);
+        int breached = 0;
         for (Map<String, Object> task : due) {
             int escalated = jdbc.update("""
                     UPDATE wf_tasks SET status = 'ESCALATED', updated_at = now()
@@ -79,6 +103,7 @@ public class SlaScanner {
             if (escalated == 0) {
                 continue;   // resolved between the query and the flip
             }
+            breached++;
             emit(task, "task.escalated", "ESCALATED");
             emit(task, "sla.breach", "ESCALATED");
             breaches.increment();
@@ -93,6 +118,7 @@ public class SlaScanner {
             }
             LOG.warn("sla breach: task {} escalated to {}", task.get("task_id"), escalateTo);
         }
+        return breached;
     }
 
     private void emit(Map<String, Object> task, String event, String status) {

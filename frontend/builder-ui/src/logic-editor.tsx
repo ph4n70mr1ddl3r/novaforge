@@ -294,9 +294,17 @@ function StepListEditor({
                             </select>
                         </td>
                         <td>
-                            <input aria-label={`Step params ${index}`} value={step.paramsText}
-                                onChange={(e) => update(index, { paramsText: e.target.value })}
-                                placeholder='{"field": "status", "expression": "..."}' />
+                            {step.op === "requestApproval" ? (
+                                <RequestApprovalParams
+                                    index={index}
+                                    paramsText={step.paramsText}
+                                    onChange={(paramsText) => update(index, { paramsText })}
+                                />
+                            ) : (
+                                <input aria-label={`Step params ${index}`} value={step.paramsText}
+                                    onChange={(e) => update(index, { paramsText: e.target.value })}
+                                    placeholder='{"field": "status", "expression": "..."}' />
+                            )}
                         </td>
                         <td>
                             <input aria-label={`Step next ${index}`} value={step.next}
@@ -311,6 +319,95 @@ function StepListEditor({
             </tbody>
         </table>
     );
+}
+
+/**
+ * requestApproval step properties (PHASE-4 §11): the §4 param set as guided fields —
+ * approvers (role or user list), mode, timeout, escalation — with the remaining
+ * params (the inline onReject subgraph) as JSON. The Metadata Service
+ * compile-checks approvers/mode/timeout and the onReject graph at publish.
+ */
+function RequestApprovalParams({
+    index,
+    paramsText,
+    onChange,
+}: {
+    index: number;
+    paramsText: string;
+    onChange: (paramsText: string) => void;
+}): ReactNode {
+    let params: Record<string, unknown> = {};
+    try {
+        params = paramsText.trim() ? (JSON.parse(paramsText) as Record<string, unknown>) : {};
+    } catch {
+        params = {};
+    }
+    const patch = (changes: Record<string, unknown>): void => {
+        const merged = { ...params, ...changes };
+        for (const key of Object.keys(merged)) {
+            const value = merged[key];
+            if (value === "" || value === undefined
+                    || (Array.isArray(value) && value.length === 0)) {
+                delete merged[key];
+            }
+        }
+        onChange(Object.keys(merged).length > 0 ? JSON.stringify(merged) : "");
+    };
+    const users = Array.isArray(params.approverUsers) ? (params.approverUsers as string[]).join(", ") : "";
+    return (
+        <div className="nf-approval-params">
+            <input aria-label={`Approvers role ${index}`} placeholder="approvers role, e.g. Purch.manager"
+                defaultValue={typeof params.approversRole === "string" ? params.approversRole : ""}
+                onBlur={(e) => patch({ approversRole: e.target.value })} />
+            <input aria-label={`Approver users ${index}`} placeholder="approver users (UUIDs, comma-separated)"
+                defaultValue={users}
+                onBlur={(e) => patch({
+                    approverUsers: e.target.value.split(",").map((part) => part.trim())
+                        .filter((part) => part.length > 0),
+                })} />
+            <select aria-label={`Approval mode ${index}`}
+                defaultValue={typeof params.mode === "string" ? params.mode : ""}
+                onChange={(e) => patch({ mode: e.target.value })}>
+                <option value="">mode…</option>
+                <option value="any">any (first resolution wins)</option>
+                <option value="all">all (parallel unanimity)</option>
+            </select>
+            <input aria-label={`Approval timeout ${index}`} placeholder="timeout, e.g. PT24H"
+                defaultValue={typeof params.timeout === "string" ? params.timeout : ""}
+                onBlur={(e) => patch({ timeout: e.target.value })} />
+            <input aria-label={`Approval escalateTo ${index}`} placeholder="escalateTo, e.g. role:Purch.seniorManager"
+                defaultValue={typeof params.escalateTo === "string" ? params.escalateTo : ""}
+                onBlur={(e) => patch({ escalateTo: e.target.value })} />
+            <input aria-label={`Step other params ${index}`} placeholder='other params JSON (onReject subgraph)'
+                defaultValue={otherParams(params)}
+                onBlur={(e) => {
+                    const text = e.target.value.trim();
+                    let rest: Record<string, unknown> = {};
+                    try {
+                        rest = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+                    } catch {
+                        return;   // malformed JSON stays uncommitted — save surfaces it
+                    }
+                    const guided: Record<string, unknown> = {};
+                    for (const key of ["approversRole", "approverUsers", "mode", "timeout", "escalateTo"]) {
+                        if (params[key] !== undefined) guided[key] = params[key];
+                    }
+                    const merged = { ...guided, ...rest };
+                    onChange(Object.keys(merged).length > 0 ? JSON.stringify(merged) : "");
+                }} />
+        </div>
+    );
+}
+
+/** The params outside the guided set, as editable JSON. */
+function otherParams(params: Record<string, unknown>): string {
+    const rest: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(params)) {
+        if (!["approversRole", "approverUsers", "mode", "timeout", "escalateTo"].includes(key)) {
+            rest[key] = value;
+        }
+    }
+    return Object.keys(rest).length > 0 ? JSON.stringify(rest) : "";
 }
 
 // --- field expressions (PHASE-3 §3): formula, roll-up, expression default ---

@@ -1,11 +1,19 @@
 import { useState, type ReactNode } from "react";
-import type { AppDefinition, FieldAccess, ObjectPermission } from "@novaforge/shared";
+import type {
+    AppDefinition,
+    FieldAccess,
+    ObjectPermission,
+    SharingRuleDefinition,
+} from "@novaforge/shared";
 
 /**
- * The RBAC + field-security editors (PHASE-2 §9): the app-defined role list, the
- * role × entity CRUD matrix (absent flags deny — the editor shows what the Data
- * Runtime enforces server-side), and per-role field security
- * (visible/read-only/hidden). Rendering only; enforcement never moves client-side.
+ * The RBAC + field-security editors (PHASE-2 §9) plus the sharing-rule editor of
+ * PHASE-4 §10 (the §9 remainder): the app-defined role list (with the numeric
+ * levels roleHierarchy rules read), the role × entity CRUD matrix (absent flags
+ * deny — the editor shows what the Data Runtime enforces server-side), per-role
+ * field security (visible/read-only/hidden), and record-level sharing rules
+ * (owner / roleHierarchy / criteria — versioned, promoted, compiled at publish).
+ * Rendering only; enforcement never moves client-side.
  */
 
 export interface RbacEditorProps {
@@ -64,10 +72,29 @@ export function RbacEditor({ app, onSave }: RbacEditorProps): ReactNode {
                     {draft.roles.map((role) => (
                         <li key={role.name}>
                             <code>{role.name}</code> {role.description ? <span>— {role.description}</span> : null}
-                            {role.level !== undefined ? <span> (level {role.level})</span> : null}
+                            <label className="nf-inline">
+                                <span className="nf-visually-hidden">level for {role.name}</span>
+                                <input aria-label={`Level for ${role.name}`} type="number" placeholder="level"
+                                    value={role.level ?? ""}
+                                    onChange={(event) => setDraft((current) => ({
+                                        ...current,
+                                        roles: current.roles.map((candidate) =>
+                                            candidate.name === role.name
+                                                ? {
+                                                    ...candidate,
+                                                    level: event.target.value === ""
+                                                        ? undefined
+                                                        : Number(event.target.value),
+                                                }
+                                                : candidate),
+                                    }))} />
+                            </label>
                         </li>
                     ))}
                 </ul>
+                <p className="nf-b-meta">
+                    Levels feed roleHierarchy sharing: lower = more senior (§10).
+                </p>
                 <form
                     onSubmit={(event) => {
                         event.preventDefault();
@@ -160,6 +187,12 @@ export function RbacEditor({ app, onSave }: RbacEditorProps): ReactNode {
                     ))}
                 </details>
             ))}
+            <SharingRulesEditor
+                entities={entities.map((entity) => entity.apiName)}
+                roles={draft.roles.map((role) => role.name)}
+                rules={draft.sharingRules ?? []}
+                onChange={(sharingRules) => setDraft((current) => ({ ...current, sharingRules }))}
+            />
             <button
                 type="button"
                 className="nf-action-primary"
@@ -178,5 +211,72 @@ export function RbacEditor({ app, onSave }: RbacEditorProps): ReactNode {
             </button>
             {flash ? <p role="status" aria-live="polite">{flash}</p> : null}
         </section>
+    );
+}
+
+// --- sharing rules (PHASE-4 §10): the record-level remainder of §9 ---
+
+function SharingRulesEditor({
+    entities,
+    roles,
+    rules,
+    onChange,
+}: {
+    entities: string[];
+    roles: string[];
+    rules: SharingRuleDefinition[];
+    onChange: (rules: SharingRuleDefinition[]) => void;
+}): ReactNode {
+    const update = (index: number, changes: Partial<SharingRuleDefinition>): void =>
+        onChange(rules.map((rule, i) => (i === index ? { ...rule, ...changes } : rule)));
+    const csv = (values: string[] | undefined): string => (values ?? []).join(", ");
+    const parseCsv = (text: string): string[] =>
+        text.split(",").map((part) => part.trim()).filter((part) => part.length > 0);
+    return (
+        <fieldset>
+            <legend>Sharing rules (record-level)</legend>
+            <p className="nf-b-meta">
+                No rules → full visibility under the CRUD matrix (no silent
+                tightening). Criteria compile at publish; roleHierarchy rules need
+                leveled roles.
+            </p>
+            {rules.map((rule, index) => (
+                <div key={index} className="nf-sharing-row" data-sharing={rule.entity}>
+                    <select aria-label={`Sharing entity ${index}`} value={rule.entity}
+                        onChange={(e) => update(index, { entity: e.target.value })}>
+                        <option value="">entity…</option>
+                        {entities.map((entity) => (
+                            <option key={entity} value={entity}>{entity}</option>
+                        ))}
+                    </select>
+                    <select aria-label={`Sharing type ${index}`} value={rule.type}
+                        onChange={(e) => update(index, { type: e.target.value as SharingRuleDefinition["type"] })}>
+                        <option value="owner">owner</option>
+                        <option value="roleHierarchy">roleHierarchy</option>
+                        <option value="criteria">criteria</option>
+                    </select>
+                    <input aria-label={`Sharing roles ${index}`} placeholder="roles (comma-separated)"
+                        value={csv(rule.roles)}
+                        onChange={(e) => update(index, { roles: parseCsv(e.target.value) })} />
+                    {rule.type === "owner" ? (
+                        <input aria-label={`Sharing ownerField ${index}`} placeholder="ownerField (default: creator)"
+                            value={rule.ownerField ?? ""}
+                            onChange={(e) => update(index, { ownerField: e.target.value || undefined })} />
+                    ) : null}
+                    {rule.type === "criteria" ? (
+                        <input aria-label={`Sharing criteria ${index}`} placeholder="criteria expression"
+                            value={rule.criteria ?? ""}
+                            onChange={(e) => update(index, { criteria: e.target.value || undefined })} />
+                    ) : null}
+                    <button type="button" aria-label={`Remove sharing rule ${index}`}
+                        onClick={() => onChange(rules.filter((_, i) => i !== index))}>×</button>
+                </div>
+            ))}
+            <button type="button"
+                onClick={() => onChange([...rules, { entity: "", type: "owner", roles: [] }])}>
+                Add sharing rule
+            </button>
+            {roles.length === 0 ? <p className="nf-b-meta">Add roles first — rules name them.</p> : null}
+        </fieldset>
     );
 }

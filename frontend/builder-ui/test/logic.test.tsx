@@ -86,6 +86,44 @@ describe("LogicEditor (PHASE-3 §8)", () => {
         const saved = onSaveEntity.mock.calls[0]![0] as EntityDefinition;
         expect(saved.fields.find((field) => field.apiName === "totalDebit")?.rollup).toBe("SUM(lines.debit)");
     });
+
+    it("configures requestApproval steps through the guided §4 param set (PHASE-4 §11)", async () => {
+        const onSaveEntity = vi.fn(async (_entity: EntityDefinition) => {});
+        render(createElement(LogicEditor, { app, onSaveEntity }));
+
+        // the existing hook's step becomes an approval request — the op swap turns
+        // the raw params JSON into the guided fields (the stale setField params ride
+        // the "other params" slot, cleared here)
+        fireEvent.change(screen.getByLabelText("Step id 0"), { target: { value: "approve" } });
+        fireEvent.change(screen.getByLabelText("Step op 0"), { target: { value: "requestApproval" } });
+        fireEvent.change(screen.getByLabelText("Step other params 0"), { target: { value: "" } });
+        fireEvent.blur(screen.getByLabelText("Step other params 0"));
+
+        // the guided fields replace the raw params JSON for the op (text slots commit on blur)
+        const fill = (label: string, value: string): void => {
+            fireEvent.change(screen.getByLabelText(label), { target: { value } });
+            fireEvent.blur(screen.getByLabelText(label));
+        };
+        fill("Approvers role 0", "Purch.manager");
+        fireEvent.change(screen.getByLabelText("Approval mode 0"), { target: { value: "all" } });
+        fill("Approval timeout 0", "PT24H");
+        fill("Approval escalateTo 0", "role:Purch.seniorManager");
+
+        fireEvent.click(screen.getByText("Save logic"));
+        await waitFor(() => expect(onSaveEntity).toHaveBeenCalledTimes(1));
+        const saved = onSaveEntity.mock.calls[0]![0] as EntityDefinition;
+        expect(saved.hooks[0]!.flow).toEqual({
+            id: "approve",
+            op: "requestApproval",
+            params: {
+                approversRole: "Purch.manager",
+                mode: "all",
+                timeout: "PT24H",
+                escalateTo: "role:Purch.seniorManager",
+            },
+            next: undefined,
+        });
+    });
 });
 
 describe("SuitesEditor (PHASE-3 §7/§8)", () => {

@@ -148,6 +148,7 @@ export const SUITE_OPS = [
     "resolveTask",
     "runReport",
     "postWebhook",
+    "scanSla",
 ] as const;
 
 export interface IndexDefinition {
@@ -208,12 +209,14 @@ export interface FieldSecurity {
 }
 
 export interface SharingRuleDefinition {
-    name: string;
     entity: string;
-    /** Sharing-rule criteria compile through the same expression grammar (PHASE-4 §10). */
+    type: "owner" | "roleHierarchy" | "criteria";
+    /** The roles the rule shares with (owner: see-everything roles; criteria: recipients). */
+    roles?: string[];
+    /** owner only: an explicit owner field (default: the creator). */
+    ownerField?: string;
+    /** criteria only: a record-context expression compiled at publish (PHASE-4 §10). */
     criteria?: string;
-    withRole?: string;
-    access?: "read" | "readWrite";
 }
 
 export interface PermissionSet {
@@ -223,15 +226,41 @@ export interface PermissionSet {
     sharingRules?: SharingRuleDefinition[];
 }
 
-// --- state machines (PHASE-4 §3) — read for render (transitions shown as actions) ---
+// --- state machines (PHASE-4 §3) — the write path's gate, rendered as record actions ---
 
 export interface StateMachineDefinition {
     id: string;
     entity: string;
-    field: string;
-    states: { name: string; terminal?: boolean }[];
-    transitions: { from: string; to: string; label?: string }[];
+    /** The enum field whose value is the record's state. */
+    stateField: string;
     initial: string;
+    states: { name: string; terminal?: boolean }[];
+    /** A listed edge; `guard` is a record-context expression compiled at publish. */
+    transitions: { from: string; to: string; guard?: string }[];
+}
+
+// --- SLAs (PHASE-4 §6) — the governed overlay over requestApproval's own timers ---
+
+export interface SlaDefinition {
+    id: string;
+    scope?: { taskType?: string; match?: string };
+    /** ISO-8601 duration from task createdAt to breach. */
+    target: string;
+    /** Fraction of target (0.8 = warn at 80%); null disables the warn timer. */
+    warnAt?: number | null;
+    onBreach?: { escalateTo?: string; notify?: boolean };
+}
+
+// --- scheduled jobs (PHASE-4 §7) — versioned metadata activated on publish ---
+
+export type ScheduledJobTarget = "flow" | "script" | "processStart" | "report";
+
+export interface ScheduledJobDefinition {
+    name: string;
+    cron: string;
+    target: ScheduledJobTarget;
+    params?: Record<string, unknown>;
+    enabled?: boolean;
 }
 
 // --- reports & dashboards (PHASE-5 §3/§5) ---
@@ -321,6 +350,8 @@ export interface AppDefinition {
     pages: PageDefinition[];
     permissionSet: PermissionSet;
     stateMachines: StateMachineDefinition[];
+    slas?: SlaDefinition[];
+    jobs?: ScheduledJobDefinition[];
     reports: ReportDefinition[];
     dashboards: DashboardDefinition[];
     testSuites?: TestSuiteDefinition[];

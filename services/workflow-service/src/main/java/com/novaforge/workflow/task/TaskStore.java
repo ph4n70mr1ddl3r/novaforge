@@ -23,22 +23,22 @@ public class TaskStore {
     /** The task model of §5, as stored. */
     public record Task(UUID id, UUID tenantId, String type, String entityId, UUID recordId,
                        UUID assignee, String role, String status, String comment,
-                       Instant dueAt, Instant warnAt, UUID createdBy, UUID contextRef,
-                       UUID instance, String escalateTo, Instant createdAt) {
+                       Instant dueAt, Instant warnAt, boolean slaWarned, UUID createdBy,
+                       UUID contextRef, UUID instance, String escalateTo, Instant createdAt) {
 
-        /** Pre-SLA shape (no escalation target resolved). */
+        /** Pre-SLA shape (no escalation target resolved; never yet warned). */
         public Task(UUID id, UUID tenantId, String type, String entityId, UUID recordId,
                     UUID assignee, String role, String status, String comment,
                     Instant dueAt, Instant warnAt, UUID createdBy, UUID contextRef,
                     UUID instance, Instant createdAt) {
             this(id, tenantId, type, entityId, recordId, assignee, role, status, comment,
-                    dueAt, warnAt, createdBy, contextRef, instance, null, createdAt);
+                    dueAt, warnAt, false, createdBy, contextRef, instance, null, createdAt);
         }
 
         public Task withStatus(String newStatus) {
             return new Task(id, tenantId, type, entityId, recordId, assignee, role,
-                    newStatus, comment, dueAt, warnAt, createdBy, contextRef, instance,
-                    escalateTo, createdAt);
+                    newStatus, comment, dueAt, warnAt, slaWarned, createdBy, contextRef,
+                    instance, escalateTo, createdAt);
         }
 
         public Map<String, Object> toJson() {
@@ -53,7 +53,8 @@ public class TaskStore {
             json.put("dueAt", dueAt == null ? null : dueAt.toString());
             json.put("sla", dueAt == null && warnAt == null ? null
                     : Map.of("warnAt", warnAt == null ? "" : warnAt.toString(),
-                             "breachAt", dueAt == null ? "" : dueAt.toString()));
+                             "breachAt", dueAt == null ? "" : dueAt.toString(),
+                             "warned", slaWarned));
             json.put("createdBy", createdBy.toString());
             json.put("contextRef", contextRef == null ? null : contextRef.toString());
             json.put("createdAt", createdAt.toString());
@@ -84,8 +85,8 @@ public class TaskStore {
     public Optional<Task> find(UUID tenantId, UUID id) {
         return jdbc.query("""
                         SELECT id, tenant_id, type, entity_id, record_id, assignee, role,
-                               status, comment, due_at, warn_at, created_by, context_ref,
-                               instance_id, created_at
+                               status, comment, due_at, warn_at, sla_warned, escalate_to,
+                               created_by, context_ref, instance_id, created_at
                           FROM wf_tasks WHERE tenant_id = ? AND id = ?""",
                 TaskStore::mapRow, tenantId, id).stream().findFirst();
     }
@@ -129,8 +130,8 @@ public class TaskStore {
     public List<Task> listForRecord(UUID tenantId, UUID recordId) {
         return jdbc.query("""
                         SELECT id, tenant_id, type, entity_id, record_id, assignee, role,
-                               status, comment, due_at, warn_at, created_by, context_ref,
-                               instance_id, created_at
+                               status, comment, due_at, warn_at, sla_warned, escalate_to,
+                               created_by, context_ref, instance_id, created_at
                           FROM wf_tasks WHERE tenant_id = ? AND record_id = ?
                          ORDER BY created_at""",
                 TaskStore::mapRow, tenantId, recordId);
@@ -160,8 +161,8 @@ public class TaskStore {
         paged.add(page * size);
         List<Task> rows = jdbc.query(
                 "SELECT id, tenant_id, type, entity_id, record_id, assignee, role, status,"
-                        + " comment, due_at, warn_at, created_by, context_ref, instance_id,"
-                        + " created_at"
+                        + " comment, due_at, warn_at, sla_warned, escalate_to, created_by,"
+                        + " context_ref, instance_id, created_at"
                         + " FROM wf_tasks WHERE tenant_id = ? AND " + filter
                         + " ORDER BY created_at LIMIT ? OFFSET ?",
                 TaskStore::mapRow, paged.toArray());
@@ -187,8 +188,9 @@ public class TaskStore {
                         : rs.getTimestamp("due_at").toInstant(),
                 rs.getTimestamp("warn_at") == null ? null
                         : rs.getTimestamp("warn_at").toInstant(),
+                rs.getBoolean("sla_warned"),
                 rs.getObject("created_by", UUID.class), rs.getObject("context_ref", UUID.class),
-                rs.getObject("instance_id", UUID.class),
+                rs.getObject("instance_id", UUID.class), rs.getString("escalate_to"),
                 rs.getTimestamp("created_at").toInstant());
     }
 }

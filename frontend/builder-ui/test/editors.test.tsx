@@ -54,6 +54,38 @@ describe("RbacEditor (T9)", () => {
         expect(saved.objectPermissions.find((p) => p.entity === "Invoice")?.delete).toBe(true);
         expect(saved.fieldSecurity).toEqual([]); // cycled back to visible = no override rows
     });
+
+    it("authors sharing rules beside the matrix and levels the roles (PHASE-4 §10/§11)", async () => {
+        const onSave = vi.fn<(permissionSet: import("@novaforge/shared").PermissionSet) => Promise<void>>(async () => {});
+        render(createElement(RbacEditor, { app, onSave }));
+
+        // roleHierarchy rules read numeric levels — the editor authors them
+        fireEvent.change(screen.getByLabelText("Level for arClerk"), { target: { value: "3" } });
+
+        // a criteria rule: records matching a compiled expression shared with roles
+        fireEvent.click(screen.getByText("Add sharing rule"));
+        fireEvent.change(screen.getByLabelText("Sharing entity 0"), { target: { value: "Invoice" } });
+        fireEvent.change(screen.getByLabelText("Sharing type 0"), { target: { value: "criteria" } });
+        fireEvent.change(screen.getByLabelText("Sharing roles 0"), { target: { value: "arClerk, controller" } });
+        fireEvent.change(screen.getByLabelText("Sharing criteria 0"), {
+            target: { value: "total > 1000" },
+        });
+
+        // an owner rule: the explicit owner-field slot appears for owner type
+        fireEvent.click(screen.getByText("Add sharing rule"));
+        fireEvent.change(screen.getByLabelText("Sharing entity 1"), { target: { value: "Invoice" } });
+        fireEvent.change(screen.getByLabelText("Sharing type 1"), { target: { value: "owner" } });
+        fireEvent.change(screen.getByLabelText("Sharing ownerField 1"), { target: { value: "salesRep" } });
+
+        screen.getByRole("button", { name: "Save permissions" }).click();
+        await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+        const saved = onSave.mock.calls[0]![0] as AppDefinition["permissionSet"];
+        expect(saved.roles).toEqual([{ name: "arClerk", description: "AR clerk", level: 3 }]);
+        expect(saved.sharingRules).toEqual([
+            { entity: "Invoice", type: "criteria", roles: ["arClerk", "controller"], criteria: "total > 1000" },
+            { entity: "Invoice", type: "owner", roles: [], ownerField: "salesRep" },
+        ]);
+    });
 });
 
 describe("Onboarding (T10)", () => {

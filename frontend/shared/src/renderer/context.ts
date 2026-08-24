@@ -76,7 +76,7 @@ export interface RendererContextValue {
     navigate(entity: string, view: "list" | "form" | "detail", id?: string): void;
     data?: RendererDataService;
     /** State-machine actions available on the current record (PHASE-4 §3). */
-    transitions?: { to: string; label?: string }[];
+    transitions?: { to: string; label?: string; guard?: string }[];
 }
 
 export const RendererContext = createContext<RendererContextValue | null>(null);

@@ -235,6 +235,34 @@ export class PlatformClient {
         )) as Record<string, unknown>;
     }
 
+    // --- scheduler visibility (PHASE-4 §2/§11): the one read-only registry route ---
+
+    schedulerJobs(): Promise<Record<string, unknown>[]> {
+        return this.request("GET", "/api/v1/scheduler/jobs") as Promise<Record<string, unknown>[]>;
+    }
+
+    // --- notifications (PHASE-4 §8): own inbox + channel preferences ---
+
+    notifications(page = 0, size = 25): Promise<{ rows: Record<string, unknown>[]; total: number }> {
+        const params = new URLSearchParams({ page: String(page), size: String(size) });
+        return this.request("GET", `/api/v1/notifications?${params.toString()}`) as Promise<{
+            rows: Record<string, unknown>[];
+            total: number;
+        }>;
+    }
+
+    markNotificationRead(id: string): Promise<Record<string, unknown>> {
+        return this.request("POST", `/api/v1/notifications/${id}/read`, {}) as Promise<Record<string, unknown>>;
+    }
+
+    notificationPreferences(): Promise<Record<string, unknown>[]> {
+        return this.request("GET", "/api/v1/notifications/preferences") as Promise<Record<string, unknown>[]>;
+    }
+
+    setNotificationPreference(category: string, inbox: boolean, email: boolean): Promise<Record<string, unknown>> {
+        return this.request("POST", "/api/v1/notifications/preferences", { category, inbox, email }) as Promise<Record<string, unknown>>;
+    }
+
     // --- reporting (PHASE-5 §4) ---
 
     async runReport(appApiName: string, reportId: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {

@@ -49,6 +49,13 @@ public class AdminController {
         return admin.createUser(tenantId, request.username(), request.password());
     }
 
+    /** The tenant row — the Workflow service's scratch gate (PHASE-4 §12). */
+    @GetMapping("/tenants/{tenantId}")
+    public Map<String, Object> tenant(@PathVariable UUID tenantId) {
+        requirePlatformAdmin();
+        return admin.tenant(tenantId);
+    }
+
     /** The user's username — the Notification fan-out's synthetic-actor check. */
     @GetMapping("/users/{userId}")
     public Map<String, Object> user(@PathVariable UUID userId) {

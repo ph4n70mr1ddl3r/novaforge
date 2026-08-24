@@ -268,6 +268,29 @@ public class DefinitionService {
                                 where + " action must be approve or reject: " + action);
                     }
                 }
+                // scanSla (§12's clock leg): exactly one governing instant — a duration
+                // to advance past now or an absolute asOf, both parse-checked at save
+                if ("scanSla".equals(step.op())) {
+                    Object advance = step.template() == null ? null : step.template().get("advance");
+                    Object asOf = step.template() == null ? null : step.template().get("asOf");
+                    boolean hasAdvance = advance instanceof String text && !text.isBlank();
+                    boolean hasAsOf = asOf instanceof String text && !text.isBlank();
+                    if (hasAdvance == hasAsOf) {
+                        throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                                where + " requires exactly one of template.advance"
+                                        + " (ISO-8601 duration) or template.asOf (instant)");
+                    }
+                    try {
+                        if (hasAdvance) {
+                            java.time.Duration.parse((String) advance);
+                        } else {
+                            java.time.Instant.parse((String) asOf);
+                        }
+                    } catch (Exception malformed) {
+                        throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                                where + " governing instant does not parse: " + malformed.getMessage());
+                    }
+                }
                 if ("queryRecord".equals(step.op()) && "Task".equals(step.entity())
                         && step.template() != null && step.template().get("filter") != null) {
                     Object filter = step.template().get("filter");

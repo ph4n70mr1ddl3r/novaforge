@@ -59,6 +59,13 @@ public class PlatformStore {
                 ON CONFLICT DO NOTHING""", tenantId, userId, role);
     }
 
+    /** The tenant's {@code apiName} — the scratch gate's lookup (PHASE-4 §12), or null. */
+    public String apiNameOf(UUID tenantId) {
+        return jdbc.queryForList(
+                "SELECT api_name FROM platform.tenants WHERE id = ?", String.class, tenantId)
+                .stream().findFirst().orElse(null);
+    }
+
     public boolean tenantExists(UUID tenantId) {
         Integer count = jdbc.queryForObject(
                 "SELECT count(*) FROM platform.tenants WHERE id = ?", Integer.class, tenantId);

@@ -39,6 +39,15 @@ public class AdminService {
         return platform.roles(tenantId, userId);
     }
 
+    /** The tenant row — the workflow service's scratch gate reads the name (PHASE-4 §12). */
+    public Map<String, Object> tenant(UUID tenantId) {
+        String apiName = platform.apiNameOf(tenantId);
+        if (apiName == null) {
+            throw new PlatformException(PlatformErrorCode.NOT_FOUND, "tenant " + tenantId + " not found");
+        }
+        return Map.of("tenantId", tenantId.toString(), "apiName", apiName);
+    }
+
     /** Tenant row + first-admin assignment in one flow (§10). */
     public Map<String, Object> createTenant(String apiName, String displayName,
                                             String adminUsername, String adminEmail) {

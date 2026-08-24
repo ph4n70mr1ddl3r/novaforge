@@ -89,6 +89,10 @@ class TestRunnerJourneyTests {
     private static final AtomicReference<String> WEBHOOK_BODY = new AtomicReference<>();
     private static final AtomicReference<String> SECRET_PATH = new AtomicReference<>();
     private static final AtomicReference<String> SECRET_BODY = new AtomicReference<>();
+    private static final AtomicReference<String> SCAN_METHOD = new AtomicReference<>();
+    private static final AtomicReference<String> SCAN_PATH = new AtomicReference<>();
+    private static final AtomicReference<String> SCAN_BODY = new AtomicReference<>();
+    private static final AtomicReference<String> SCAN_TOKEN = new AtomicReference<>();
 
     @BeforeAll
     static void stubs() throws IOException {
@@ -124,7 +128,8 @@ class TestRunnerJourneyTests {
         HttpServer metadata = server((exchange, body) ->
                 respond(exchange, 200, exchange.getRequestURI().getPath().endsWith("/publish")
                         ? "" : "{\"id\":\"33333333-3333-3333-3333-333333333333\"}"));
-        // workflow: the inbox — the list is GET-only (TaskController), resolutions POST
+        // workflow: the inbox — the list is GET-only (TaskController), resolutions POST;
+        // the internal SLA scan is POST-only with the service token (§12's clock leg)
         HttpServer workflow = server((exchange, body) -> {
             String path = exchange.getRequestURI().getPath();
             String method = exchange.getRequestMethod();
@@ -137,6 +142,19 @@ class TestRunnerJourneyTests {
                 }
                 respond(exchange, 200, "{\"rows\":[{\"id\":\"t-1\",\"type\":\"approval\","
                         + "\"status\":\"OPEN\",\"assignee\":\"actor-manager\"}],\"total\":1}");
+                return;
+            }
+            if (path.equals("/api/v1/workflow/internal/sla/scan")) {
+                SCAN_METHOD.set(method);
+                SCAN_PATH.set(path);
+                SCAN_BODY.set(body);
+                SCAN_TOKEN.set(exchange.getRequestHeaders().getFirst("Authorization"));
+                if (!"POST".equals(method)) {
+                    respond(exchange, 405, "{\"code\":\"4000\",\"detail\":\"sla scan is POST\"}");
+                    return;
+                }
+                respond(exchange, 200, "{\"scanned\":true,\"asOf\":\"2026-08-24T12:00:00Z\","
+                        + "\"warned\":1,\"breached\":1}");
                 return;
             }
             if (path.endsWith("/approve") && "POST".equals(method)) {
@@ -226,12 +244,16 @@ class TestRunnerJourneyTests {
                         new Step("runReport", "arAging", "manager", null,
                                 Map.of("status", "POSTED", "asOf", "2026-08-23"), "ok"),
                         new Step("resolveTask", "Task", "manager", "${Task[0].id}",
-                                Map.of("action", "reject"), "error(SOD_VIOLATION)")),
+                                Map.of("action", "reject"), "error(SOD_VIOLATION)"),
+                        new Step("scanSla", null, null, null,
+                                Map.of("advance", "PT26H"), "ok")),
                         List.of("${Task[0].status} == 'APPROVED'",
                                 "${Query[0].count} == 1",
                                 "${Query[1].count} == 1",
                                 "${Report[0].rowCount} == 1",
-                                "${Report[0].totals.sum_amount} == 300.5"))));
+                                "${Report[0].totals.sum_amount} == 300.5",
+                                "${Scan[0].warned} == 1",
+                                "${Scan[0].breached} == 1"))));
 
         AppDefinition candidate = new AppDefinition(null, "JourneyApp", null, null, null,
                 null, null, null, null, null, null, null, null);
@@ -252,6 +274,14 @@ class TestRunnerJourneyTests {
         assertEquals(MAPPER.readValue(
                 "{\"app\":\"JourneyApp\",\"params\":{\"status\":\"POSTED\",\"asOf\":\"2026-08-23\"}}", Map.class),
                 MAPPER.readValue(REPORT_BODY.get(), Map.class));
+        // §12's clock leg: the scan rode the internal surface, POST-only, with the
+        // service client's token — never an actor's — and the scratch tenant bound
+        assertEquals("POST", SCAN_METHOD.get());
+        assertEquals("/api/v1/workflow/internal/sla/scan", SCAN_PATH.get());
+        assertEquals(MAPPER.readValue(
+                "{\"tenantId\":\"11111111-1111-1111-1111-111111111111\",\"advance\":\"PT26H\"}", Map.class),
+                MAPPER.readValue(SCAN_BODY.get(), Map.class));
+        assertEquals("Bearer svc", SCAN_TOKEN.get());
     }
 
     @Test

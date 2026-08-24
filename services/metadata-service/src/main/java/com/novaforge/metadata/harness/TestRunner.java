@@ -221,6 +221,7 @@ public class TestRunner {
                     case "resolveTask" -> resolveTask(step, token, scope);
                     case "runReport" -> runReport(step, token, scope, appApiName);
                     case "postWebhook" -> postWebhook(step, scope, tenantId, hookSecrets);
+                    case "scanSla" -> scanSla(step, scope, tenantId);
                     default -> throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                             "unknown suite step op: " + step.op());
                 };
@@ -382,7 +383,8 @@ public class TestRunner {
             return result.isObject() && result.hasNonNull("id")
                     || (result.isObject() && result.has("status"))
                     || (result.isObject() && result.has("count"))   // queryRecord results
-                    || (result.isObject() && result.has("rowCount"));   // runReport results
+                    || (result.isObject() && result.has("rowCount"))   // runReport results
+                    || (result.isObject() && result.has("scanned"));   // scanSla results
         }
         if (expect.startsWith("error(") && expect.endsWith(")")) {
             String expected = registryCode(expect.substring(6, expect.length() - 1));
@@ -443,6 +445,35 @@ public class TestRunner {
             remember(scope, step.entity(), result);
         }
         return result;
+    }
+
+    /**
+     * scanSla (PHASE-4 §12's clock-advanced leg): drives the Workflow Service's
+     * scratch-scoped as-of scan with the platform service client — the same trusted
+     * leg every internal surface rides — so warn/breach/escalation fire
+     * deterministically at the governed instant, never by sleeping. The template
+     * carries {@code advance} (an ISO-8601 duration past now — tasks were created
+     * before the step, so an advance at or past the target breaches and one between
+     * {@code warnAt} and the target warns) or an absolute {@code asOf}; the counts
+     * land in scope as the next {@code ${Scan[n]}}.
+     */
+    private JsonNode scanSla(Step step, Map<String, Object> scope, String tenantId) {
+        Map<String, Object> template = interpolate(step.template() == null ? Map.of()
+                : step.template(), scope);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("tenantId", tenantId);
+        if (template.get("advance") instanceof String advance) {
+            body.put("advance", advance);
+        } else if (template.get("asOf") instanceof String asOf) {
+            body.put("asOf", asOf);
+        } else {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "scanSla requires template.advance or template.asOf");
+        }
+        JsonNode result = MAPPER.readTree(call(workflow, HttpMethod.POST,
+                "/api/v1/workflow/internal/sla/scan", serviceToken(),
+                MAPPER.writeValueAsString(body)));
+        return MAPPER.valueToTree(remember(scope, "Scan", result));
     }
 
     /** The pinned scheme (§5): hex HMAC-SHA256 over {@code timestamp + "." + body}. */

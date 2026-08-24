@@ -138,11 +138,13 @@ inline children → 4 outbox rows published → `novaforge.record` carries the e
   volume) with SPA deep-link fallback — asset paths anonymous, APIs still
   scope-gated; Vite dev proxies cover local development.
 
-**Suites:** 108 frontend tests (`pnpm -r test`: shared 82 — conformance 39, deltas,
-  goldens, validation, renderer, gallery-axe, client; runtime-ui 5 — nav/auto-list/
-  form journeys, inbox, axe, the L1→delta→persist round-trip; builder-ui 21 —
+**Suites:** 117 frontend tests (`pnpm -r test`: shared 82 — conformance 39, deltas,
+  goldens, validation, renderer, gallery-axe, client; runtime-ui 7 — nav/auto-list/
+  form journeys, inbox, notifications, axe, the L1→delta→persist round-trip;
+  builder-ui 28 —
   entity/page/RBAC/onboarding/i18n/reporting journeys incl. the 409 rebase, the
-  PHASE-3 §8 logic + suites authoring journeys), plus
+  PHASE-3 §8 logic + suites authoring journeys, and the PHASE-4 §11 automation/
+  sharing/guided-approval journeys), plus
   `DefinitionLifecycleTests.pageDefinitionLifecycle` (9 tests, real Postgres) and
   `GatewayApplicationTests` SPA hosting.
 
@@ -384,7 +386,8 @@ the spec, all closed:**
 - spine consumption (T1's leg): `record.deleted` on `novaforge.record` cancels the
   record's open tasks — verified through the real Kafka path
 - suites: `TaskApiTests` — inbox resolution, resolution + events, claim, delegation
-  chains + SoD, reassign gate, access checks, deletion-cancel
+  chains + SoD, reassign gate, access checks, deletion-cancel, and (at the review
+  closeout) the scratch as-of scan clock leg below
 - Flowable entered with §9 (below) — as the **Flowable 8 line** (8.0.0): ADR-004's
   "Flowable 7" was written against the Boot 3 assumption, and Flowable 7.2 does not
   run on Boot 4; 8.0.0 is the same engine on the Spring Framework 7/Boot 4 line this
@@ -545,14 +548,27 @@ the spec, all closed:**
   `error(SOD_VIOLATION)` matches a 4011 problem body, `${…}` references in
   filters interpolate before the query is sent, and the id-match scope holds.
   The live-stack §1 journey itself rides T12
-- clock-driven SLA suites deferred — an **open deviation from §12's
-  clock-advanced leg**: the SlaScanner runs on wall clock in the Workflow
-  Service, and the harness (a metadata-service HTTP client) has no as-of scan
-  surface to drive; PHASE-3 §7's controlled clock pins assertion-time
-  determinism, not cross-service timer control. A scratch-scoped as-of scan
-  endpoint would satisfy the spec (scan path, not write path — no ADR-010 #3
-  conflict); until it exists, SLA behavior is covered by the workflow-side
-  scanner suites
+- clock-driven SLA suites — §12's clock-advanced leg, landed at the 2026-08-24
+  review (was the phase's one open deviation): the Workflow Service grows the
+  internal as-of scan surface `POST /api/v1/workflow/internal/sla/scan`
+  (`{tenantId, advance | asOf}` — an ISO-8601 duration past now, or an absolute
+  instant), gated twice: `ServiceClientGate` (the platform service client only,
+  like every internal surface) and the scratch check — the tenant's `apiName`
+  must be `scratch-*` (read through a new runtime admin leg,
+  `GET /api/v1/admin/tenants/{id}`, riding the same trusted-service path as the
+  role lookup), so time can never be advanced against a real tenant. A scan
+  path, not a write path: ADR-010 #3's no-test-mode rule is untouched. The
+  scanner's `scanOnce(asOf, tenant)` is tenant-scoped and answers with counts
+  (`{scanned, asOf, warned, breached}`); the harness step op `scanSla` (OPS +
+  save-validation: exactly one parse-checked governing instant) drives it with
+  the service token and lands the counts in scope as `${Scan[n]}` — warn/breach/
+  escalation assertions with no sleeps, deterministically (tasks are created
+  before the step, so an advance between `warnAt` and the target warns, at or
+  past the target breaches). The warn leg's assertable surface: the task JSON's
+  `sla.warned` flag. Pinned by `TaskApiTests.scratchScanDrivesSlaClock` (both
+  gates, both authoring errors, warn-then-breach determinism, idempotent replay)
+  and the `TestRunnerJourneyTests` scanSla transport leg (POST-only, service
+  token, scratch tenant bound)
 
 **Implemented — §9 BPMN v1 (Flowable 8 embedded, event-starts, processStart):**
 - `WorkflowDefinition` rides the app definition (`{id, bpmn, eventStarts[]}` — the
@@ -644,15 +660,50 @@ workflow's suspension/process-start controllers collapsed into a single shared
 implementation; per-surface rejection wording preserved verbatim), with unit
 tests for the accept/reject/anonymous/no-auth cases.
 
+**Spec-review closeout (2026-08-24) — §11's authoring/runtime surfaces had never
+landed** (only the approval inbox and the transition buttons had; the rest of §11
+existed in the ledger's imagination, and the shared TS `StateMachineDefinition`
+was the wrong wire shape — `field` for the JVM's `stateField`, `label` for
+`guard` — so runtime transition rendering read a field that never exists and
+fell back to the initial state's edges). Closed:
+- **the wire-shape fix**: `stateField`/`guard` in the shared types, the renderer
+  context's transitions carry the guard (title-hinted), and the runtime shell
+  reads the real state field; `SharingRuleDefinition` re-typed to the JVM shape
+  (`{entity, type, roles[], ownerField?, criteria?}`) and the AppDefinition type
+  grows the `slas`/`jobs` branches
+- **the builder's automation screen** (`frontend/builder-ui/automation.tsx`):
+  the state-machine designer over the §3 schema (machine-per-entity picker over
+  enum fields, state rows with terminal flags, from/to/guard transition rows —
+  save-time compile feedback surfaces verbatim), the §6 SLA editor (taskType,
+  match, target, warnAt, escalateTo — the governed overlay), §7 scheduled-job
+  authoring (name, cron, target, params, enabled — definitions only; the
+  registry is never written), and the read-only scheduler status list riding
+  `GET /api/v1/scheduler/jobs`
+- **the flow editor's requestApproval properties (§11)**: the op's params render
+  as guided fields — approvers role/users, mode any|all, timeout, escalateTo —
+  with the remaining params (the inline `onReject` subgraph) as JSON
+- **the sharing-rule editor (§10)** joins the RBAC screen: owner/roleHierarchy/
+  criteria rows with role CSVs, the owner-field and criteria slots per type, and
+  numeric role levels authored beside their roles (roleHierarchy's seniority)
+- **the runtime notification inbox + preferences (§8)**: a Notifications view in
+  the runtime shell — paged own rows with mark-read, and the per-category
+  channel toggles riding `/api/v1/notifications/**` (the client grows the
+  scheduler + notification legs)
+- suites: `automation.test.tsx` (5 — machine round-trip incl. terminal/guard,
+  SLA, job, registry render, verbatim rejection), `editors.test.tsx` +sharing
+  rules + levels, `logic.test.tsx` +the guided approval params,
+  `notifications.test.tsx` (2 — inbox mark-read/reload, preference load/toggle)
+
 **Phase 4 remainder:** the §1 exit-journey demo (T12 — needs the full stack live;
-the §14 item 1 journey suite through the runner rides it too). T10's runtime UI
-landed with the Phase 2 builder/runtime shells: the approval inbox
-(`frontend/runtime-ui` — my tasks with server-side paging, approve/reject with
-comment) rides the §5 inbox API, and state-machine transitions render as record
-actions from published machine metadata. All backend machinery for the journey —
-state machines, approvals with suspension and SoD, SLA escalation, notifications,
-the scheduler, BPMN execution with event-starts — is implemented and covered by the
-service-level suites above.
+the §14 item 1 journey suite through the runner rides it too; its SLA leg is now
+expressible through `scanSla`). T10's surfaces all landed: the approval inbox and
+notification inbox/preferences in `frontend/runtime-ui`, state-machine
+transitions as record actions from published machine metadata (reading the real
+`stateField`), the automation screen, the sharing-rule editor, guided
+requestApproval config, and scheduler visibility in `frontend/builder-ui`. All
+backend machinery for the journey — state machines, approvals with suspension and
+SoD, SLA escalation, notifications, the scheduler, BPMN execution with
+event-starts — is implemented and covered by the service-level suites above.
 
 ## Phase 5 — Reporting & Dashboards ◐ (spec: PHASE-5-REPORTING.md)
 

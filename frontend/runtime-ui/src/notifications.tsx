@@ -1,0 +1,174 @@
+import { useEffect, useState, type ReactNode } from "react";
+import { PlatformClient } from "@novaforge/shared";
+
+/**
+ * The notification inbox + preferences (PHASE-4 §8's runtime UI): my platform
+ * inbox rows (paged, mark-read) and the per-category channel toggles — coarse v1,
+ * refined on demand. Own data only, enforced server-side; this only renders.
+ */
+
+/** The built-in categories v1 ships (§8) — later phases append as features land. */
+const CATEGORIES = ["task-assignment", "sla-warning", "report-delivery", "job-completed"];
+
+export function Notifications({ client }: { client: PlatformClient }): ReactNode {
+    const [rows, setRows] = useState<Record<string, unknown>[] | null>(null);
+    const [total, setTotal] = useState(0);
+    const [page, setPage] = useState(0);
+    const [preferences, setPreferences] = useState<Record<string, { inbox: boolean; email: boolean }>>({});
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [flash, setFlash] = useState<string | null>(null);
+    const size = 25;
+
+    const reload = (target: number): void => {
+        setBusy(true);
+        client
+            .notifications(target, size)
+            .then((result) => {
+                setRows(result.rows);
+                setTotal(result.total);
+            })
+            .catch((caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught)))
+            .finally(() => setBusy(false));
+    };
+
+    useEffect(() => {
+        let cancelled = false;
+        client
+            .notificationPreferences()
+            .then((saved) => {
+                if (cancelled) return;
+                const map: Record<string, { inbox: boolean; email: boolean }> = {};
+                for (const row of saved) {
+                    map[String(row.category)] = {
+                        inbox: row.inbox !== false,
+                        email: row.email !== false,
+                    };
+                }
+                setPreferences(map);
+            })
+            .catch(() => {
+                // both channels default on when nothing is saved yet (§8)
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [client]);
+
+    useEffect(() => {
+        reload(page);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [client, page]);
+
+    const markRead = async (id: string): Promise<void> => {
+        setBusy(true);
+        try {
+            await client.markNotificationRead(id);
+            reload(page);
+        } catch (caught) {
+            setError(caught instanceof Error ? caught.message : String(caught));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const toggle = async (category: string, channel: "inbox" | "email"): Promise<void> => {
+        const current = preferences[category] ?? { inbox: true, email: true };
+        const next = { ...current, [channel]: !current[channel] };
+        setPreferences((all) => ({ ...all, [category]: next }));
+        try {
+            await client.setNotificationPreference(category, next.inbox, next.email);
+            setFlash(`Preferences saved for ${category}`);
+        } catch (caught) {
+            setPreferences((all) => ({ ...all, [category]: current }));
+            setError(caught instanceof Error ? caught.message : String(caught));
+        }
+    };
+
+    return (
+        <section className="nf-notifications" aria-busy={busy} aria-label="My notifications">
+            <h2>My notifications</h2>
+            {error ? <p role="alert">{error}</p> : null}
+            {flash ? <p role="status" aria-live="polite">{flash}</p> : null}
+            <table className="nf-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Category</th>
+                        <th scope="col">Title</th>
+                        <th scope="col">Body</th>
+                        <th scope="col">Received</th>
+                        <th scope="col">Read</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {(rows ?? []).map((row) => (
+                        <tr key={String(row.id)} data-read={row.read_at != null ? "true" : "false"}>
+                            <td>{String(row.category ?? "")}</td>
+                            <td>{String(row.title ?? "")}</td>
+                            <td>{String(row.body ?? "")}</td>
+                            <td>{String(row.created_at ?? "")}</td>
+                            <td>
+                                {row.read_at != null ? (
+                                    String(row.read_at)
+                                ) : (
+                                    <button type="button" disabled={busy}
+                                        aria-label={`Mark read ${String(row.title ?? row.id)}`}
+                                        onClick={() => void markRead(String(row.id))}>
+                                        Mark read
+                                    </button>
+                                )}
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+            {rows !== null && rows.length === 0 && !busy ? (
+                <p role="status">No notifications yet.</p>
+            ) : null}
+            <div className="nf-pager">
+                <button type="button" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>
+                <span>{page * size + 1}–{Math.min((page + 1) * size, total)} / {total}</span>
+                <button type="button" disabled={(page + 1) * size >= total} onClick={() => setPage(page + 1)}>Next</button>
+            </div>
+            <fieldset>
+                <legend>Channel preferences</legend>
+                <table className="nf-table nf-preferences">
+                    <thead>
+                        <tr>
+                            <th scope="col">Category</th>
+                            <th scope="col">Inbox</th>
+                            <th scope="col">Email</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {CATEGORIES.map((category) => {
+                            const preference = preferences[category] ?? { inbox: true, email: true };
+                            return (
+                                <tr key={category} data-category={category}>
+                                    <th scope="row">{category}</th>
+                                    <td>
+                                        <label className="nf-inline">
+                                            <input type="checkbox"
+                                                aria-label={`${category} inbox channel`}
+                                                checked={preference.inbox}
+                                                onChange={() => void toggle(category, "inbox")} />
+                                        </label>
+                                    </td>
+                                    <td>
+                                        <label className="nf-inline">
+                                            <input type="checkbox"
+                                                aria-label={`${category} email channel`}
+                                                checked={preference.email}
+                                                onChange={() => void toggle(category, "email")} />
+                                        </label>
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+                <p className="nf-meta">Both channels default on (§8's coarse v1 shape).</p>
+            </fieldset>
+        </section>
+    );
+}

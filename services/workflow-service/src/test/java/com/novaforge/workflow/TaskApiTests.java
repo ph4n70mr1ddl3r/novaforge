@@ -57,6 +57,9 @@ class TaskApiTests extends PostgresTestBase {
     /** Actor → roles, per the stubbed lookup (platform + app-scoped). */
     static final Map<String, List<String>> ROLES = new ConcurrentHashMap<>();
 
+    /** Tenant → apiName, per the stubbed tenant lookup (the scratch gate, §12). */
+    static final Map<String, String> TENANT_NAMES = new ConcurrentHashMap<>();
+
     @Autowired
     MockMvc mockMvc;
 
@@ -91,6 +94,18 @@ class TaskApiTests extends PostgresTestBase {
         @Primary
         RoleLookup roleLookup() {
             return (tenantId, actor) -> ROLES.getOrDefault(actor.toString(), List.of());
+        }
+
+        /** Tenant names — the scratch gate's stand-in for the runtime admin read. */
+        @Bean
+        @Primary
+        com.novaforge.workflow.tenants.TenantLookup tenantLookup() {
+            return new com.novaforge.workflow.tenants.TenantLookup() {
+                @Override
+                public String apiNameOf(UUID tenantId) {
+                    return TENANT_NAMES.get(tenantId.toString());
+                }
+            };
         }
 
         @Bean
@@ -139,6 +154,8 @@ class TaskApiTests extends PostgresTestBase {
         ROLES.put(MANAGER.toString(), List.of("user", "Purch.manager"));
         ROLES.put(SENIOR.toString(), List.of("user", "Purch.seniorManager", "builder"));
         ROLES.put(OUTSIDER.toString(), List.of("user"));
+        TENANT_NAMES.clear();
+        TENANT_NAMES.put(TENANT.toString(), "scratch-run");   // the harness's naming
     }
 
     @Test
@@ -440,6 +457,98 @@ class TaskApiTests extends PostgresTestBase {
                 UUID.fromString(String.valueOf(result.get("instanceId"))));
         org.assertj.core.api.Assertions.assertThat(task.get("due_at")).isNull();
         org.assertj.core.api.Assertions.assertThat(task.get("warn_at")).isNull();
+    }
+
+    @Test
+    @DisplayName("§12 clock leg: the scratch as-of scan warns then breaches deterministically — "
+            + "gated twice, never wall clock")
+    void scratchScanDrivesSlaClock() throws Exception {
+        // a governed task: the canned SLA (PT1H target, warnAt 0.5 → warn at 30m,
+        // senior escalation) — timers are in the future relative to wall clock
+        var result = suspensions.request(TENANT, "Purch", "PurchaseOrder",
+                "Purch.PurchaseOrder", UUID.randomUUID(), "submit", "a1", "s2", null,
+                "Purch.manager", null, "any", "PT2H", "Purch.stepEscalator", CLERK);
+        UUID instance = UUID.fromString(String.valueOf(result.get("instanceId")));
+        UUID task = jdbc.queryForObject("SELECT id FROM wf_tasks WHERE instance_id = ?",
+                UUID.class, instance);
+
+        // gate 1 — service client only: a user JWT cannot drive the clock
+        mockMvc.perform(post("/api/v1/workflow/internal/sla/scan")
+                        .with(jwtFor(MANAGER)).contentType("application/json")
+                        .content("{\"tenantId\":\"" + TENANT + "\",\"advance\":\"PT50M\"}"))
+                .andExpect(status().isForbidden());
+        // gate 2 — scratch tenants only: a named production tenant answers 403
+        UUID prod = UUID.randomUUID();
+        TENANT_NAMES.put(prod.toString(), "acme-prod");
+        mockMvc.perform(post("/api/v1/workflow/internal/sla/scan")
+                        .with(serviceClient()).contentType("application/json")
+                        .content("{\"tenantId\":\"" + prod + "\",\"advance\":\"PT50M\"}"))
+                .andExpect(status().isForbidden());
+        // authoring errors: neither instant, or both
+        mockMvc.perform(post("/api/v1/workflow/internal/sla/scan")
+                        .with(serviceClient()).contentType("application/json")
+                        .content("{\"tenantId\":\"" + TENANT + "\"}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/v1/workflow/internal/sla/scan")
+                        .with(serviceClient()).contentType("application/json")
+                        .content("{\"tenantId\":\"" + TENANT
+                                + "\",\"advance\":\"PT50M\",\"asOf\":\"2026-08-24T00:00:00Z\"}"))
+                .andExpect(status().isBadRequest());
+
+        // the deterministic warn: 50m past now passes the 30m warn line, not the 1h
+        // breach line — the wall-clock scanner stays out of it (scan-interval parked)
+        mockMvc.perform(post("/api/v1/workflow/internal/sla/scan")
+                        .with(serviceClient()).contentType("application/json")
+                        .content("{\"tenantId\":\"" + TENANT + "\",\"advance\":\"PT50M\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scanned").value(true))
+                .andExpect(jsonPath("$.warned").value(1))
+                .andExpect(jsonPath("$.breached").value(0));
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_tasks WHERE id = ?", String.class, task))
+                .isEqualTo("OPEN");
+        assertThat(jdbc.queryForList(
+                "SELECT event_type FROM wf_event_outbox ORDER BY created_at", String.class))
+                .contains("sla.warn");
+        // the warn state is visible on the task — the warn leg's assertable surface
+        mockMvc.perform(get("/api/v1/workflow/tasks/" + task).with(jwtFor(MANAGER)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sla.warned").value(true))
+                .andExpect(jsonPath("$.status").value("OPEN"));
+
+        // the deterministic breach: 2h past now passes the 1h line — ESCALATED, a
+        // replacement for the senior role, warn-once holds (no second sla.warn)
+        mockMvc.perform(post("/api/v1/workflow/internal/sla/scan")
+                        .with(serviceClient()).contentType("application/json")
+                        .content("{\"tenantId\":\"" + TENANT + "\",\"advance\":\"PT2H\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.warned").value(0))
+                .andExpect(jsonPath("$.breached").value(1));
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_tasks WHERE id = ?", String.class, task))
+                .isEqualTo("ESCALATED");
+        Map<String, Object> replacement = jdbc.queryForMap(
+                "SELECT role, status, instance_id FROM wf_tasks "
+                        + "WHERE role = 'Purch.seniorManager'");
+        assertThat(replacement.get("status")).isEqualTo("OPEN");
+        assertThat(replacement.get("instance_id")).isEqualTo(instance);
+        assertThat(jdbc.queryForList(
+                "SELECT event_type FROM wf_event_outbox ORDER BY created_at", String.class))
+                .containsSubsequence("sla.warn", "task.escalated", "sla.breach");
+
+        // idempotent replay: the same governing instant escalates nothing further
+        mockMvc.perform(post("/api/v1/workflow/internal/sla/scan")
+                        .with(serviceClient()).contentType("application/json")
+                        .content("{\"tenantId\":\"" + TENANT + "\",\"asOf\":\"2999-01-01T00:00:00Z\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.warned").value(0))
+                .andExpect(jsonPath("$.breached").value(0));
+    }
+
+    private static org.springframework.security.test.web.servlet.request
+            .SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor serviceClient() {
+        return jwt().jwt(token -> token.claim("azp", "novaforge-runtime"))
+                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
     }
 
     private static org.springframework.security.test.web.servlet.request
