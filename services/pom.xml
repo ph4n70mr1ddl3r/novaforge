@@ -24,5 +24,7 @@
     <module>notification-service</module>
     <module>scheduler-service</module>
     <module>reporting-service</module>
+    <module>integration-service</module>
+    <module>file-service</module>
   </modules>
 </project>

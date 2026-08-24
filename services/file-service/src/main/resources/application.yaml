@@ -1,0 +1,77 @@
+spring:
+  application:
+    name: novaforge-file-service
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}
+  datasource:
+    url: jdbc:postgresql://${NOVAFORGE_POSTGRES_HOST:localhost}:${NOVAFORGE_POSTGRES_PORT:5432}/novaforge_file
+    username: novaforge
+    password: novaforge
+  flyway:
+    locations: classpath:db/migration
+  kafka:
+    bootstrap-servers: ${NOVAFORGE_KAFKA:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+    consumer:
+      group-id: novaforge-file
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+server:
+  port: 8091
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  opentelemetry:
+    tracing:
+      # Tempo direct-to (PHASE-3 §9, §13 Q4 — no collector in between).
+      sampler: ${NOVAFORGE_TRACE_SAMPLER:always_on}
+      export:
+        otlp:
+          endpoint: ${NOVAFORGE_TEMPO_ENDPOINT:http://localhost:4318/v1/traces}
+
+logging:
+  file:
+    # Promtail tails this shared dir into Loki (PHASE-3 §9).
+    name: ${NOVAFORGE_LOG_DIR:/tmp/novaforge/logs}/${spring.application.name}.log
+  pattern:
+    level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
+
+novaforge:
+  auth:
+    issuer-uri: ${NOVAFORGE_AUTH_ISSUER:http://localhost:8082/realms/novaforge}
+    service-client:
+      id: ${NOVAFORGE_SERVICE_CLIENT_ID:novaforge-runtime}
+      secret: ${NOVAFORGE_SERVICE_CLIENT_SECRET:novaforge-runtime-secret}
+  storage:
+    endpoint: ${NOVAFORGE_MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${NOVAFORGE_MINIO_USER:novaforge}
+    secret-key: ${NOVAFORGE_MINIO_PASSWORD:novaforge-secret}
+    bucket: ${NOVAFORGE_MINIO_BUCKET:novaforge-attachments}
+  file:
+    # §8's pinned expiry: presigned URLs live 15 minutes, no longer.
+    presign-expiry-seconds: 900
+    max-size-bytes: 52428800
+    clamav:
+      # §13 Q2, resolved: config-gated, off locally; CI runs one config-on job so
+      # the scanning path stays tested. On = clamd INSTREAM at the configured host.
+      enabled: ${NOVAFORGE_CLAMAV_ENABLED:false}
+      host: ${NOVAFORGE_CLAMAV_HOST:localhost}
+      port: ${NOVAFORGE_CLAMAV_PORT:3310}
+  events:
+    relay-interval-ms: ${NOVAFORGE_RELAY_INTERVAL_MS:500}
+    relay-batch: 100

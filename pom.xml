@@ -30,6 +30,10 @@
          amended: Flowable 7.2 does not run on Boot 4; 8.0.0 is the same engine on
          the pinned stack). -->
     <flowable.version>8.0.0</flowable.version>
+    <!-- Outbound call resilience (PHASE-6 §3) — Resilience4j 2.x on Java 21. -->
+    <resilience4j.version>2.2.0</resilience4j.version>
+    <!-- MinIO client (PHASE-6 §8) — presigned URLs against compose MinIO / S3. -->
+    <minio.version>8.5.17</minio.version>
   </properties>
 
   <modules>
@@ -106,6 +110,23 @@
         <groupId>org.flowable</groupId>
         <artifactId>flowable-spring-boot-starter-process</artifactId>
         <version>${flowable.version}</version>
+      </dependency>
+      <!-- Outbound resilience for the Integration Service's connector executor
+           (PHASE-6 §3): circuit breakers + bounded retries with exponential backoff. -->
+      <dependency>
+        <groupId>io.github.resilience4j</groupId>
+        <artifactId>resilience4j-circuitbreaker</artifactId>
+        <version>${resilience4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.resilience4j</groupId>
+        <artifactId>resilience4j-retry</artifactId>
+        <version>${resilience4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.minio</groupId>
+        <artifactId>minio</artifactId>
+        <version>${minio.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>

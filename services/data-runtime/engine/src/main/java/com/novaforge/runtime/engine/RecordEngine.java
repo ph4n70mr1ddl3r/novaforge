@@ -424,6 +424,176 @@ public class RecordEngine {
         return outcomes;
     }
 
+    // --- the integration principal's write/read paths (PHASE-6 §3/§6/§7) ---
+
+    /**
+     * The per-app integration principal (PHASE-6 §3): a distinct principal from the
+     * engine's per-app system principal (PHASE-4 §4), so audit provenance separates
+     * integration-sourced writes (webhook applications, imports) from engine actions.
+     */
+    static UUID appIntegrationPrincipal(EntityHandle handle) {
+        return UUID.nameUUIDFromBytes(("integration:" + handle.appApiName()).getBytes());
+    }
+
+    /**
+     * A webhook/import write (PHASE-6 §6/§7): the complete write path — defaults,
+     * coercions, validations, state machines, and hooks all fire; a webhook is just
+     * another writer and the single write path is absolute. The matrix is the flow
+     * principal's own bypass (PHASE-4 §13 Q1 — authorization is the integration's,
+     * not a user's); metadata-level enforcement (required/readonly/validations)
+     * applies to every writer.
+     */
+    @Transactional
+    public Map<String, Object> integrationCreate(UUID tenantId, String entityApiName,
+                                                 Map<String, Object> body) {
+        EntityHandle handle = resolver.resolve(tenantId, entityApiName);
+        AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        UUID principal = appIntegrationPrincipal(handle);
+
+        List<ProblemErrors.FieldError> errors = new ArrayList<>();
+        Map<String, Object> fields = new LinkedHashMap<>();
+        Map<String, List<Map<String, Object>>> children = new LinkedHashMap<>();
+        splitChildren(handle.entity(), body, children, fields, errors);
+        rejectReadonlyWrites(handle.entity(), body);
+        applyDefaults(tenantId, app, handle.entity(), fields, errors);
+        Map<String, Object> canonical = FieldCoercer.canonicalize(handle.entity(), fields,
+                externalChecks(tenantId, handle, app), null, errors);
+        FieldCoercer.checkRequired(handle.entity(), canonical, errors);
+        evaluateFormulas(handle.entity(), canonical);
+        evaluateValidationRules(handle.entity(), canonical, errors);
+        reject(errors, "integration create " + entityApiName + " failed validation");
+
+        UUID id = UUID.randomUUID();
+        runHooks(app, handle, tenantId, id, canonical, "beforeSave", appSystemPrincipal(handle),
+                principal);
+        enforceCreateState(app, handle, canonical);
+        evaluateRollupsFromChildren(app, handle, children, canonical);
+        persistWithChildren(tenantId, principal, app, handle, id, canonical, children, errors);
+        events.publish(event("record.created", tenantId, handle.entityKey(), id, principal));
+        runHooks(app, handle, tenantId, id, canonical, "afterSave", appSystemPrincipal(handle),
+                principal);
+        Map<String, Object> shaped = shape(handle.entity(),
+                records.find(tenantId, handle.entityKey(), id, false).orElseThrow(),
+                field -> false);
+        shaped.put("integration", true);
+        return shaped;
+    }
+
+    /** The update twin (§6): optimistic locking, transition guards, hooks — all fired. */
+    @Transactional
+    public Map<String, Object> integrationUpdate(UUID tenantId, String entityApiName, UUID id,
+                                                 int expectedVersion, Map<String, Object> body) {
+        EntityHandle handle = resolver.resolve(tenantId, entityApiName);
+        AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        UUID principal = appIntegrationPrincipal(handle);
+
+        RecordStore.StoredRecord existing = records.find(tenantId, handle.entityKey(), id, false)
+                .orElseThrow(() -> notFound(entityApiName, id));
+        rejectReadonlyWrites(handle.entity(), body);
+
+        List<ProblemErrors.FieldError> errors = new ArrayList<>();
+        Map<String, Object> fields = new LinkedHashMap<>();
+        Map<String, List<Map<String, Object>>> children = new LinkedHashMap<>();
+        Map<String, Object> fieldBody = new LinkedHashMap<>(body);
+        fieldBody.remove("version");
+        splitChildren(handle.entity(), fieldBody, children, fields, errors);
+
+        Map<String, Object> merged = new LinkedHashMap<>(existing.data());
+        Map<String, Object> canonical = FieldCoercer.canonicalize(handle.entity(), fields,
+                externalChecks(tenantId, handle, app), id, errors);
+        canonical.forEach(merged::put);
+        FieldCoercer.checkRequired(handle.entity(), merged, errors);
+        evaluateFormulas(handle.entity(), merged);
+        evaluateValidationRules(handle.entity(), merged, errors);
+        reject(errors, "integration update " + entityApiName + "/" + id + " failed validation");
+        runHooks(app, handle, tenantId, id, merged, "beforeSave", appSystemPrincipal(handle),
+                principal);
+        enforceTransition(app, handle, existing.data(), merged);
+
+        int newVersion = records.update(tenantId, handle.entityKey(), id, merged,
+                expectedVersion, principal);
+        replaceChildren(tenantId, principal, app, handle, id, children);
+        newVersion = recomputeRollupsIfChanged(tenantId, principal, app, handle, id, merged,
+                newVersion);
+        events.publish(event("record.updated", tenantId, handle.entityKey(), id, principal));
+        runHooks(app, handle, tenantId, id, merged, "afterSave", appSystemPrincipal(handle),
+                principal);
+        Map<String, Object> shaped = shape(handle.entity(),
+                records.find(tenantId, handle.entityKey(), id, false).orElseThrow(),
+                field -> false);
+        shaped.put("version", newVersion);
+        shaped.put("integration", true);
+        return shaped;
+    }
+
+    /**
+     * The export scope (PHASE-6 §7): an entity dataset pages under an explicitly
+     * permissioned role — {@code asRole} decides READ, field security, and sharing
+     * exactly as the scheduled-report scope does (PHASE-5 §7). Never a bypass: an
+     * ungranted role fails closed.
+     */
+    public QueryModel.QueryResult listAsRole(UUID tenantId, String entityApiName, String asRole,
+                                             String queryJson) {
+        EntityHandle handle = resolver.resolve(tenantId, entityApiName);
+        AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        var role = app.permissionSet().role(asRole == null ? "" : asRole);
+        if (role.isEmpty()) {
+            throw new PlatformException(PlatformErrorCode.FORBIDDEN,
+                    "runAsRole must resolve against the app's roles: " + asRole);
+        }
+        boolean granted = app.permissionSet().objectPermissions().stream()
+                .filter(p -> p.entity().equals(entityApiName))
+                .filter(p -> p.role().equals(asRole))
+                .anyMatch(p -> p.allows("read"));
+        if (!granted) {
+            throw new PlatformException(PlatformErrorCode.FORBIDDEN,
+                    "role " + asRole + " is not granted read on " + entityApiName);
+        }
+        QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
+        QueryLowering lowering = new QueryLowering(handle.entity());
+        QueryLowering.Lowered countSql = lowering.count(handle.entity().apiName(), tenantId,
+                query.filter());
+        QueryLowering.Lowered listSql = lowering.list(handle.entity().apiName(), tenantId, query);
+        var restriction = sharing.forRole(tenantId, handle.entity(), app, asRole);
+        if (restriction != null) {
+            String placeholders = restriction.visibleOwners().stream().map(o -> "?")
+                    .reduce((a, b) -> a + "," + b).orElse("?");
+            List<Object> owners = List.copyOf(restriction.visibleOwners());
+            countSql = countSql.and("created_by IN (" + placeholders + ")", owners);
+            listSql = listSql.and("created_by IN (" + placeholders + ")", owners);
+        }
+        RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
+                listSql.sql(), listSql.params());
+        java.util.function.Predicate<String> hidden = field ->
+                com.novaforge.metadata.PermissionSet.FieldSecurity.HIDDEN.equals(
+                        roleFieldAccess(app, entityApiName, field, asRole));
+        List<Map<String, Object>> rows = page.rows().stream()
+                .filter(row -> restriction == null || restriction.recordVisible().test(row))
+                .map(row -> stripHidden(row, hidden))
+                .toList();
+        return new QueryModel.QueryResult(rows, page.total());
+    }
+
+    /**
+     * The integration principal's bounded lookup (PHASE-6 §6): webhook upsert keys
+     * resolve through the same query lowering as every list — metadata-typed filters,
+     * no raw SQL. Reads, never mutations.
+     */
+    public QueryModel.QueryResult listAsIntegration(UUID tenantId, String entityApiName,
+                                                    String queryJson) {
+        EntityHandle handle = resolver.resolve(tenantId, entityApiName);
+        QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
+        QueryLowering lowering = new QueryLowering(handle.entity());
+        QueryLowering.Lowered countSql = lowering.count(handle.entity().apiName(), tenantId,
+                query.filter());
+        QueryLowering.Lowered listSql = lowering.list(handle.entity().apiName(), tenantId, query);
+        RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
+                listSql.sql(), listSql.params());
+        return new QueryModel.QueryResult(
+                page.rows().stream().map(row -> stripHidden(row, field -> false)).toList(),
+                page.total());
+    }
+
     // --- flow hooks (PHASE-3 §2) ---
 
     /**

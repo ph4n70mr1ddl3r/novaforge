@@ -28,7 +28,7 @@ public class ScriptController {
 
     /** What a hook asks the engine to run (the script artifact travels with the call). */
     public record ExecutionRequest(String app, Integer appVersion, String hook, String trigger,
-                                   String language, String script,
+                                   String language, String script, String sandbox,
                                    Map<String, Object> record) {
     }
 
@@ -73,10 +73,16 @@ public class ScriptController {
         var context = TenantContext.current().orElseThrow(() ->
                 new PlatformException(PlatformErrorCode.TENANT_MISSING,
                         "no tenant context bound"));
+        // the connector sandbox context (PHASE-6 §4): $http exists only for scripts
+        // whose artifact declares it — the declared context must name this app
+        String connectorApp = null;
+        if (ScriptDefinition.SANDBOX_CONNECTOR.equals(request.sandbox())) {
+            connectorApp = request.app();
+        }
         long start = System.nanoTime();
         String outcome = ScriptMetrics.OK;
         try {
-            return sandbox.execute(request.script(), request.record(), context);
+            return sandbox.execute(request.script(), request.record(), context, connectorApp);
         } catch (ScriptBudgetExceededException e) {
             outcome = ScriptMetrics.CAPPED;
             throw e;

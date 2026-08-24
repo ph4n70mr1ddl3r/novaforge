@@ -22,6 +22,12 @@
       <groupId>com.novaforge</groupId>
       <artifactId>novaforge-common-core</artifactId>
     </dependency>
+    <!-- ServiceTokenClient — the connector sandbox's $http egress rides the shared
+         service client's grant (PHASE-6 §4). -->
+    <dependency>
+      <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-security-context</artifactId>
+    </dependency>
     <dependency>
       <groupId>com.novaforge</groupId>
       <artifactId>novaforge-metadata-model</artifactId>

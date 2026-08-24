@@ -68,6 +68,7 @@ public class ScriptSandbox {
     }
 
     private final QueryProxy queryProxy;
+    private final HttpProxy httpProxy;
     private final long cpuBudgetNanos;
     private final long wallBudgetNanos;
     private final long heapLimitBytes;
@@ -79,6 +80,7 @@ public class ScriptSandbox {
     private final boolean cpuMetering;
 
     public ScriptSandbox(QueryProxy queryProxy,
+                         HttpProxy httpProxy,
                          @org.springframework.beans.factory.annotation.Value("${novaforge.scripts.cpu-budget-ms:1000}") long cpuBudgetMillis,
                          @org.springframework.beans.factory.annotation.Value("${novaforge.scripts.wall-budget-ms:30000}") long wallBudgetMillis,
                          @org.springframework.beans.factory.annotation.Value("${novaforge.scripts.heap-limit-mb:64}") long heapLimitMb,
@@ -90,6 +92,7 @@ public class ScriptSandbox {
             throw new IllegalArgumentException("script sandbox limits must be positive");
         }
         this.queryProxy = queryProxy;
+        this.httpProxy = httpProxy;
         this.cpuBudgetNanos = TimeUnit.MILLISECONDS.toNanos(cpuBudgetMillis);
         this.wallBudgetNanos = TimeUnit.MILLISECONDS.toNanos(wallBudgetMillis);
         this.heapLimitBytes = heapLimitMb * 1024 * 1024;
@@ -118,6 +121,17 @@ public class ScriptSandbox {
      */
     public ScriptResult execute(String script, Map<String, Object> record,
                                 TenantContext.Context caller) {
+        return execute(script, record, caller, null);
+    }
+
+    /**
+     * The connector-sandbox execution (PHASE-6 §4): when the artifact declares the
+     * connector sandbox context, {@code $http} joins the surface — routed through
+     * the Integration Service's circuit-breaker/credential machinery, never raw
+     * sockets (the PHASE-3 §6 deferral activating per its terms).
+     */
+    public ScriptResult execute(String script, Map<String, Object> record,
+                                TenantContext.Context caller, String connectorApp) {
         try {
             if (!lanes.tryAcquire(queueWaitMillis, TimeUnit.MILLISECONDS)) {
                 throw new PlatformException(PlatformErrorCode.INTERNAL,
@@ -129,14 +143,14 @@ public class ScriptSandbox {
                     "script execution interrupted while awaiting a lane");
         }
         try {
-            return runCapped(script, record == null ? Map.of() : record, caller);
+            return runCapped(script, record == null ? Map.of() : record, caller, connectorApp);
         } finally {
             lanes.release();
         }
     }
 
     private ScriptResult runCapped(String script, Map<String, Object> record,
-                                   TenantContext.Context caller) {
+                                   TenantContext.Context caller, String connectorApp) {
         List<String> logs = new CopyOnWriteArrayList<>();
         long startNanos = System.nanoTime();
         Thread executor = Thread.currentThread();
@@ -194,6 +208,11 @@ public class ScriptSandbox {
                 bindings.putMember("$record", Collections.unmodifiableMap(record));
                 bindings.putMember("$data", new DataSurface(queryProxy, caller));
                 bindings.putMember("$log", new LogSurface(logs));
+                // $http exists only inside the connector sandbox (§4): a script
+                // outside the declared context never sees the egress at all.
+                if (connectorApp != null) {
+                    bindings.putMember("$http", new HttpSurface(httpProxy, caller, connectorApp));
+                }
                 Value outcome = context.eval("js", script);
                 // conversion re-enters guest code (getters, Proxy traps run on member
                 // access) — the watchdog stays armed until the result is host-side
@@ -266,6 +285,42 @@ public class ScriptSandbox {
             }
             return proxy.query(caller, entity,
                     queryJson == null || queryJson.isBlank() ? "{}" : queryJson);
+        }
+    }
+
+    /**
+     * $http — the connector-sandbox egress (PHASE-6 §4): one named operation of one
+     * published connector, through the same circuit-breaker/credential machinery
+     * {@code callConnector} rides. Never a raw URL — the §4 pins apply to scripts
+     * exactly as to flows.
+     */
+    public static final class HttpSurface {
+
+        private static final java.util.regex.Pattern NAME =
+                java.util.regex.Pattern.compile("[a-zA-Z_][a-zA-Z0-9_-]*");
+
+        private final HttpProxy proxy;
+        private final TenantContext.Context caller;
+        private final String app;
+
+        HttpSurface(HttpProxy proxy, TenantContext.Context caller, String app) {
+            this.proxy = proxy;
+            this.caller = caller;
+            this.app = app;
+        }
+
+        @HostAccess.Export
+        public Object call(String connector, String operation, Object template) {
+            if (connector == null || !NAME.matcher(connector).matches()
+                    || operation == null || operation.isBlank()) {
+                throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                        "$http.call requires a connector id and an operation name");
+            }
+            Map<String, Object> params = template instanceof Map<?, ?> map
+                    ? new java.util.LinkedHashMap<>() {{
+                        map.forEach((key, value) -> put(String.valueOf(key), value));
+                    }} : Map.of();
+            return proxy.call(caller, app, connector, operation, params);
         }
     }
 

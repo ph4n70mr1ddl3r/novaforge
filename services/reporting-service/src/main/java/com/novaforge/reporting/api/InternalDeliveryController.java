@@ -100,6 +100,48 @@ public class InternalDeliveryController {
         return summary;
     }
 
+    /**
+     * The async export leg (PHASE-6 §7): renders the export under the job's
+     * {@code runAsRole} — bytes back, no notification, no delivery — the Integration
+     * Service's job streams them to the File Service and notifies the initiating
+     * user itself. Service-client gated like every internal surface.
+     */
+    @PostMapping("/export")
+    public Map<String, Object> export(@RequestBody DeliveryRequest request) {
+        ServiceClientGate.require("report-export");
+        if (request.tenantId() == null || request.app() == null || request.reportId() == null) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "exports require tenantId, app, and reportId");
+        }
+        UUID tenantId;
+        try {
+            tenantId = UUID.fromString(request.tenantId());
+        } catch (IllegalArgumentException e) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "tenantId must be a uuid: " + request.tenantId());
+        }
+        ReportRunner.Resolved resolved = runner.resolve(tenantId, request.app(),
+                request.reportId());
+        String format = request.effectiveFormat();
+        if (!format.equals("csv") && !format.equals("xlsx")) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "export format must be csv or xlsx: " + format);
+        }
+        Map<String, Object> run = runner.runScheduled(tenantId, request.app(),
+                request.reportId(), request.effectiveRunAsRole(), request.params());
+        Set<String> moneyColumns = ReportRunner.moneyColumns(resolved);
+        byte[] rendered = format.equals("xlsx")
+                ? exporter.xlsx(run, resolved.report(), moneyColumns, Locale.getDefault())
+                : exporter.csv(run, moneyColumns, Locale.getDefault());
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("contentBase64",
+                java.util.Base64.getEncoder().encodeToString(rendered));
+        summary.put("format", format);
+        summary.put("rows", ((List<?>) run.getOrDefault("rows", List.of())).size());
+        summary.put("runAsRole", request.effectiveRunAsRole());
+        return summary;
+    }
+
     private static List<String> recipientList(Map<String, Object> recipients, String key) {
         if (recipients == null || !(recipients.get(key) instanceof List<?> list)) {
             return List.of();

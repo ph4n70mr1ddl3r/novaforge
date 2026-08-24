@@ -1,0 +1,101 @@
+package com.novaforge.file.api;
+
+import com.novaforge.common.context.TenantContext;
+import java.util.Map;
+import java.util.UUID;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * The public file surface (PHASE-6 §8/§9, user+ at the route): upload grants
+ * (presigned PUT, 15-minute expiry), completion with server-side checksum
+ * verification and the config-gated ClamAV hook, metadata reads, and presigned
+ * downloads — attachment-scoped, denied for quarantined files, and governed by
+ * the owning record's authorization when the attachment is bound (§9).
+ */
+@RestController
+@RequestMapping("/api/v1/files")
+public class FileController {
+
+    private final AttachmentService attachments;
+    private final RecordReadGate recordGate;
+
+    public FileController(AttachmentService attachments, RecordReadGate recordGate) {
+        this.attachments = attachments;
+        this.recordGate = recordGate;
+    }
+
+    public record UploadRequest(String fileName, String contentType, Long size,
+                                String entity, UUID recordId) {
+    }
+
+    /** Opens the attachment + presigned PUT (the `file` field's upload path, §8). */
+    @PostMapping("/uploads")
+    public Map<String, Object> beginUpload(@RequestBody UploadRequest request) {
+        var grant = attachments.beginUpload(RecordReadGate.tenant(), actor(), request.fileName(),
+                request.contentType(), request.size(), request.entity(), request.recordId());
+        return Map.of(
+                "id", grant.id(),
+                "uploadUrl", grant.uploadUrl(),
+                "expiresAt", grant.expiresAt().toString(),
+                "method", "PUT");
+    }
+
+    public record CompleteRequest(String checksum, String entity, UUID recordId) {
+    }
+
+    /** Verifies the checksum server-side, scans (config-gated), quarantines (§8). */
+    @PostMapping("/{id}/complete")
+    public Map<String, Object> complete(@PathVariable UUID id,
+                                        @RequestBody(required = false) CompleteRequest request) {
+        var completion = attachments.complete(RecordReadGate.tenant(), id,
+                request == null ? null : request.checksum());
+        if (request != null && request.entity() != null && request.recordId() != null) {
+            attachments.bind(RecordReadGate.tenant(), id, request.entity(), request.recordId());
+        }
+        return Map.of(
+                "id", completion.id(),
+                "virusScan", completion.virusScan(),
+                "checksum", completion.checksum(),
+                "size", completion.size());
+    }
+
+    @GetMapping("/{id}")
+    public Map<String, Object> metadata(@PathVariable UUID id) {
+        return attachments.metadata(RecordReadGate.tenant(), id)
+                .orElseThrow(() -> new com.novaforge.common.error.PlatformException(
+                        com.novaforge.common.error.PlatformErrorCode.NOT_FOUND,
+                        "attachment " + id));
+    }
+
+    /** Presigned GET — owning-record authorization decides for bound attachments (§9). */
+    @PostMapping("/{id}/download")
+    public Map<String, Object> download(@PathVariable UUID id) {
+        var metadata = attachments.metadata(RecordReadGate.tenant(), id).orElseThrow(() ->
+                new com.novaforge.common.error.PlatformException(
+                        com.novaforge.common.error.PlatformErrorCode.NOT_FOUND,
+                        "attachment " + id));
+        String entity = (String) metadata.get("entity");
+        Object recordId = metadata.get("recordId");
+        if (!recordGate.canRead(entity, recordId == null ? null : UUID.fromString(
+                String.valueOf(recordId)))) {
+            throw new com.novaforge.common.error.PlatformException(
+                    com.novaforge.common.error.PlatformErrorCode.FORBIDDEN,
+                    "attachment access rides the owning record's authorization (§9)");
+        }
+        var grant = attachments.presignDownload(RecordReadGate.tenant(), id);
+        return Map.of(
+                "id", grant.id(),
+                "downloadUrl", grant.uploadUrl(),
+                "expiresAt", grant.expiresAt().toString(),
+                "method", "GET");
+    }
+
+    private static UUID actor() {
+        return UUID.fromString(TenantContext.require().actorId());
+    }
+}

@@ -56,6 +56,7 @@ public class RestScriptEngineClient implements ScriptClient {
                 "trigger", trigger,
                 "language", script.language(),
                 "script", script.source(),
+                "sandbox", script.sandbox() == null ? "default" : script.sandbox(),
                 "record", record == null ? Map.of() : record);
         try {
             Map<String, Object> response = restClient.post()

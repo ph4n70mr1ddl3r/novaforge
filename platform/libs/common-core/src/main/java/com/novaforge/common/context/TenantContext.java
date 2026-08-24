@@ -59,6 +59,21 @@ public final class TenantContext {
         return () -> with(context, action);
     }
 
+    /** Runs {@code action} with {@code context} bound, returning its value. */
+    public static <T> T call(Context context, java.util.function.Supplier<T> action) {
+        Context previous = HOLDER.get();
+        try {
+            HOLDER.set(context);
+            return action.get();
+        } finally {
+            if (previous == null) {
+                HOLDER.remove();
+            } else {
+                HOLDER.set(previous);
+            }
+        }
+    }
+
     /** Tenant + actor identity propagated through the request pipeline. */
     public record Context(String tenantId, String actorId) {
         public Context {

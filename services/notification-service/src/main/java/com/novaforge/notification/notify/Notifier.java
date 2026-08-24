@@ -34,6 +34,9 @@ public class Notifier {
     /** Scheduled report delivery (PHASE-5 §7) — the export rides inline. */
     public static final String REPORT_DELIVERY = "report-delivery";
 
+    /** Import/export job completion (PHASE-6 §7) — delivered to the initiating user. */
+    public static final String JOB_COMPLETED = "job-completed";
+
     private final JdbcTemplate jdbc;
     private final EmailPort email;
     private final RecipientResolver recipients;

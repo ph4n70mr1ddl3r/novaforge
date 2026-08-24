@@ -1,0 +1,95 @@
+spring:
+  application:
+    name: novaforge-integration-service
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}
+  datasource:
+    url: jdbc:postgresql://${NOVAFORGE_POSTGRES_HOST:localhost}:${NOVAFORGE_POSTGRES_PORT:5432}/novaforge_integration
+    username: novaforge
+    password: novaforge
+  flyway:
+    locations: classpath:db/migration
+  kafka:
+    bootstrap-servers: ${NOVAFORGE_KAFKA:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+    consumer:
+      group-id: novaforge-integration
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+server:
+  port: 8090
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  opentelemetry:
+    tracing:
+      # Tempo direct-to (PHASE-3 §9, §13 Q4 — no collector in between).
+      sampler: ${NOVAFORGE_TRACE_SAMPLER:always_on}
+      export:
+        otlp:
+          endpoint: ${NOVAFORGE_TEMPO_ENDPOINT:http://localhost:4318/v1/traces}
+
+logging:
+  file:
+    # Promtail tails this shared dir into Loki (PHASE-3 §9).
+    name: ${NOVAFORGE_LOG_DIR:/tmp/novaforge/logs}/${spring.application.name}.log
+  pattern:
+    level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
+
+novaforge:
+  auth:
+    issuer-uri: ${NOVAFORGE_AUTH_ISSUER:http://localhost:8082/realms/novaforge}
+    service-client:
+      id: ${NOVAFORGE_SERVICE_CLIENT_ID:novaforge-runtime}
+      secret: ${NOVAFORGE_SERVICE_CLIENT_SECRET:novaforge-runtime-secret}
+  metadata:
+    url: ${NOVAFORGE_METADATA_URL:http://localhost:8081}
+  data-runtime:
+    url: ${NOVAFORGE_DATA_RUNTIME_URL:http://localhost:8083}
+  file:
+    url: ${NOVAFORGE_FILE_URL:http://localhost:8091}
+  reporting:
+    url: ${NOVAFORGE_REPORTING_URL:http://localhost:8089}
+  notification:
+    url: ${NOVAFORGE_NOTIFICATION_URL:http://localhost:8088}
+  secrets:
+    # AES-GCM data key (32 bytes, base64) — locally a compose-provided dev key;
+    # staging/prod hold it in KMS/Vault (ARCHITECTURE.md §5 item 6, PHASE-6 §9).
+    data-key: ${NOVAFORGE_SECRETS_DATA_KEY:ZGV2LW9ubHktZGF0YS1rZXktMzItYnl0ZXMhIQ==}
+  connector:
+    # §4's pinned timeout: connector calls are synchronous — 10 s, no suspension.
+    timeout-ms: 10000
+    connect-timeout-ms: 2000
+    attempts: 4
+    backoff-initial-ms: 200
+    backoff-max-ms: 2000
+  webhook:
+    # §5's pinned scheme: ±5 minutes rejects replay.
+    timestamp-window-seconds: 300
+    attempts: 5
+    backoff-initial-ms: 200
+    backoff-max-ms: 2000
+    scan-interval-ms: 1000
+  events:
+    relay-interval-ms: ${NOVAFORGE_RELAY_INTERVAL_MS:500}
+    relay-batch: 100
+  jobs:
+    # §7's chunked import processing — the batch API's per-item outcomes ride chunks.
+    chunk-size: 100
+    poll-interval-ms: 1000
+    export-chunk-bytes: 262144

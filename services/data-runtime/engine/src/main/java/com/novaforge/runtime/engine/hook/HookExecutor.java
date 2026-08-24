@@ -41,12 +41,15 @@ public class HookExecutor {
 
     private final ScriptClient scripts;
     private final ApprovalClient approvals;
+    private final ConnectorPort connectors;
     private final io.micrometer.core.instrument.MeterRegistry meters;
 
     public HookExecutor(ScriptClient scripts, ApprovalClient approvals,
+                        ConnectorPort connectors,
                         io.micrometer.core.instrument.MeterRegistry meters) {
         this.scripts = scripts;
         this.approvals = approvals;
+        this.connectors = connectors;
         this.meters = meters;
     }
 
@@ -349,9 +352,24 @@ public class HookExecutor {
                         context.initiatingActor));
                 return null;   // suspended — the remainder runs on resolution
             }
-            case "callConnector" -> throw new PlatformException(
-                    PlatformErrorCode.VALIDATION_FAILED,
-                    "callConnector is grammar-fixed and activates with Phase 6 (PHASE-3 §2)");
+            case "callConnector" -> {
+                // Phase 6 activation (§4): a synchronous, bounded (10 s) call through
+                // the Integration Service's circuit-breaker/credential machinery — no
+                // flow suspension. Failure rides the §2 policy: before-hooks abort,
+                // after-hooks retry via the spine. The step's dedupe key scopes
+                // idempotency so a retried after-hook collapses onto the recorded
+                // delivery instead of double-calling the provider.
+                Map<String, Object> template = resolveTemplate(step.params().get("template"),
+                        context);
+                String dedupeKey = context.tenantId + ":" + context.handle.entityKey() + ":"
+                        + (context.recordId == null ? "new" : context.recordId) + ":"
+                        + context.currentHook + ":" + step.id();
+                var result = connectors.execute(context.tenantId.toString(),
+                        context.handle.appApiName(), step.param("connector"),
+                        step.param("operation"), template, dedupeKey);
+                context.connectorResults.put(step.id(), result);
+                return byName(context, step.next());
+            }
             default -> throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "unknown op at runtime: " + step.op());
         }
@@ -402,6 +420,7 @@ public class HookExecutor {
         String currentHook;
         private final Map<String, Object> overlay = new HashMap<>();
         private final Map<String, FlowStep> steps = new HashMap<>();
+        final Map<String, Object> connectorResults = new HashMap<>();
 
         Context(AppDefinition app, EntityHandle handle, UUID tenantId, UUID recordId,
                 Map<String, Object> data, UUID systemPrincipal, int depth, HookSink sink) {

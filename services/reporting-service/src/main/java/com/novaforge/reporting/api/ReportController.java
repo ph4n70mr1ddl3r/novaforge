@@ -3,6 +3,7 @@ package com.novaforge.reporting.api;
 import com.novaforge.common.context.TenantContext;
 import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
+import com.novaforge.reporting.export.AsyncExportClient;
 import com.novaforge.reporting.export.ReportExporter;
 import com.novaforge.reporting.run.ReportRunner;
 import java.util.Locale;
@@ -39,12 +40,15 @@ public class ReportController {
 
     private final ReportRunner runner;
     private final ReportExporter exporter;
+    private final AsyncExportClient asyncExports;
     private final long exportMaxRows;
 
     public ReportController(ReportRunner runner, ReportExporter exporter,
+                            AsyncExportClient asyncExports,
                             @Value("${novaforge.reporting.export-max-rows:10000}") long exportMaxRows) {
         this.runner = runner;
         this.exporter = exporter;
+        this.asyncExports = asyncExports;
         this.exportMaxRows = exportMaxRows;
     }
 
@@ -76,9 +80,24 @@ public class ReportController {
         ReportRunner.Resolved resolved = runner.resolve(tenant(ctx), app, id);
         Map<String, Object> run = runner.exportRows(tenant(ctx), actor(ctx), app, id,
                 runParams, callerToken());
-        // the §6 cap: the grouped result's row count is the export's row count
+        // the §6 cap activates the PHASE-6 handoff: over-cap runs answer 202 with
+        // the async export job's link instead of the Phase-5 cap error
         long rowCount = ((java.util.List<?>) run.getOrDefault("rows", java.util.List.of())).size();
-        exporter.requireWithinCap(rowCount, exportMaxRows);
+        if (rowCount > exportMaxRows) {
+            AsyncExportClient.AsyncJob job = asyncExports.create(tenant(ctx), app, id,
+                    format, runParams, actor(ctx));
+            return ResponseEntity.accepted()
+                    .header(HttpHeaders.LOCATION, job.jobLink())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(MAPPER.writeValueAsBytes(Map.of(
+                            "status", "accepted",
+                            "rows", rowCount,
+                            "jobId", job.jobId().toString(),
+                            "jobLink", job.jobLink(),
+                            "detail", "synchronous exports are capped at " + exportMaxRows
+                                    + " rows — the async export job runs it and notifies "
+                                    + "you on completion")));
+        }
         Set<String> moneyColumns = ReportRunner.moneyColumns(resolved);
         Locale locale = localeOf(acceptLanguage);
         byte[] body = format.equals("csv")
