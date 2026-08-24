@@ -1,0 +1,91 @@
+{
+  "apiName": "reconciliation",
+  "label": "ERP reconciliation — the Phase 7 exit (PHASE-7 §9 item 1)",
+  "cases": [
+    {
+      "name": "book-to-post",
+      "fixtures": [
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "1100", "name": "Accounts Receivable", "type": "ASSET" } },
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "4000", "name": "Sales Revenue", "type": "REVENUE" } },
+        { "entity": "Customer", "asRole": "arClerk", "template": { "name": "Acme Corp" } }
+      ],
+      "steps": [
+        { "op": "createRecord", "entity": "Invoice", "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "invoiceDate": "2026-09-01", "dueDate": "2026-09-30",
+            "amountOutstanding": "120.0000",
+            "lines": [ { "description": "Widgets", "quantity": "1", "unitPrice": "120.0000" } ] },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "Invoice", "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": { "version": "${Invoice[0].version}", "status": "SUBMITTED" },
+          "expect": "ok" },
+        { "op": "queryRecord", "entity": "Task", "asRole": "accountingManager",
+          "template": { "filter": { "status": "OPEN" } }, "expect": "ok" },
+        { "op": "resolveTask", "entity": "Task", "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": { "action": "approve", "comment": "approved" }, "expect": "ok" },
+        { "op": "createRecord", "entity": "JournalEntry", "asRole": "arClerk",
+          "template": {
+            "entryDate": "2026-09-01", "memo": "Invoice ${Invoice[0].number}",
+            "lines": [
+              { "account": "${Account[0].id}", "debit": "120.0000", "memo": "AR" },
+              { "account": "${Account[1].id}", "credit": "120.0000", "memo": "Revenue" } ] },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "JournalEntry", "asRole": "arClerk",
+          "recordId": "${JournalEntry[0].id}",
+          "template": { "version": "${JournalEntry[0].version}", "status": "SUBMITTED" },
+          "expect": "ok" },
+        { "op": "queryRecord", "entity": "Task", "asRole": "accountingManager",
+          "template": { "filter": { "status": "OPEN" } }, "expect": "ok" },
+        { "op": "resolveTask", "entity": "Task", "asRole": "accountingManager",
+          "recordId": "${Task[1].id}",
+          "template": { "action": "approve", "comment": "approved" }, "expect": "ok" },
+        { "op": "runReport", "entity": "trialBalance", "asRole": "controller",
+          "template": {}, "expect": "ok" },
+        { "op": "runReport", "entity": "arAging", "asRole": "controller",
+          "template": {}, "expect": "ok" }
+      ],
+      "assertExpressions": [
+        "${Invoice[0].status} == 'POSTED'",
+        "${JournalEntry[0].status} == 'POSTED'",
+        "${Report[0].totals.debitTotal} == ${Report[0].totals.creditTotal}",
+        "${Report[0].totals.debitTotal} == 120.0000",
+        "${Report[1].totals.outstanding} == 120.0000"
+      ]
+    },
+    {
+      "name": "sod-preparer-cannot-approve",
+      "fixtures": [
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "1100", "name": "Accounts Receivable", "type": "ASSET" } },
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "4000", "name": "Sales Revenue", "type": "REVENUE" } }
+      ],
+      "steps": [
+        { "op": "createRecord", "entity": "JournalEntry", "asRole": "accountingManager",
+          "template": {
+            "entryDate": "2026-09-01", "memo": "self-approval attempt",
+            "lines": [
+              { "account": "${Account[0].id}", "debit": "10.0000" },
+              { "account": "${Account[1].id}", "credit": "10.0000" } ] },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "JournalEntry", "asRole": "accountingManager",
+          "recordId": "${JournalEntry[0].id}",
+          "template": { "version": "${JournalEntry[0].version}", "status": "SUBMITTED" },
+          "expect": "ok" },
+        { "op": "queryRecord", "entity": "Task", "asRole": "accountingManager",
+          "template": { "filter": { "status": "OPEN" } }, "expect": "ok" },
+        { "op": "resolveTask", "entity": "Task", "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": { "action": "approve" }, "expect": "error(SOD_VIOLATION)" }
+      ],
+      "assertExpressions": [
+        "${JournalEntry[0].status} == 'SUBMITTED'"
+      ]
+    }
+  ]
+}

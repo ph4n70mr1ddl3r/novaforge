@@ -1,0 +1,96 @@
+{
+  "apiName": "controls",
+  "label": "Posting immutability + period lock (PHASE-7 §9 items 2–3)",
+  "cases": [
+    {
+      "name": "posted-entry-is-append-only",
+      "fixtures": [
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "1100", "name": "Accounts Receivable", "type": "ASSET" } },
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "4000", "name": "Sales Revenue", "type": "REVENUE" } }
+      ],
+      "steps": [
+        { "op": "createRecord", "entity": "JournalEntry", "asRole": "arClerk",
+          "template": {
+            "entryDate": "2026-09-01", "memo": "to be posted",
+            "lines": [
+              { "account": "${Account[0].id}", "debit": "75.0000" },
+              { "account": "${Account[1].id}", "credit": "75.0000" } ] },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "JournalEntry", "asRole": "arClerk",
+          "recordId": "${JournalEntry[0].id}",
+          "template": { "version": "${JournalEntry[0].version}", "status": "SUBMITTED" },
+          "expect": "ok" },
+        { "op": "queryRecord", "entity": "Task", "asRole": "accountingManager",
+          "template": { "filter": { "status": "OPEN" } }, "expect": "ok" },
+        { "op": "resolveTask", "entity": "Task", "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": { "action": "approve" }, "expect": "ok" },
+        { "op": "updateRecord", "entity": "JournalEntry", "asRole": "arClerk",
+          "recordId": "${JournalEntry[0].id}",
+          "template": { "version": "${JournalEntry[0].version}", "memo": "tampered" },
+          "expect": "error(RECORD_FROZEN)" },
+        { "op": "deleteRecord", "entity": "JournalEntry", "asRole": "arClerk",
+          "recordId": "${JournalEntry[0].id}",
+          "template": { "version": "${JournalEntry[0].version}" },
+          "expect": "error(RECORD_FROZEN)" },
+        { "op": "createRecord", "entity": "JournalLine", "asRole": "arClerk",
+          "template": { "entry": "${JournalEntry[0].id}", "account": "${Account[0].id}",
+                        "debit": "1.0000" },
+          "expect": "error(RECORD_FROZEN)" }
+      ],
+      "assertExpressions": [
+        "${JournalEntry[0].status} == 'POSTED'"
+      ]
+    },
+    {
+      "name": "closed-period-locks-dated-writes",
+      "fixtures": [
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "1100", "name": "Accounts Receivable", "type": "ASSET" } },
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "4000", "name": "Sales Revenue", "type": "REVENUE" } }
+      ],
+      "steps": [
+        { "op": "createRecord", "entity": "AccountingPeriod", "asRole": "accountingManager",
+          "template": { "name": "Aug 2026", "startDate": "2026-08-01", "endDate": "2026-08-31" },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "AccountingPeriod", "asRole": "accountingManager",
+          "recordId": "${AccountingPeriod[0].id}",
+          "template": { "version": "${AccountingPeriod[0].version}", "status": "CLOSING" },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "AccountingPeriod", "asRole": "accountingManager",
+          "recordId": "${AccountingPeriod[0].id}",
+          "template": { "version": "${AccountingPeriod[0].version}", "status": "CLOSED" },
+          "expect": "ok" },
+        { "op": "createRecord", "entity": "JournalEntry", "asRole": "arClerk",
+          "template": {
+            "entryDate": "2026-08-15", "memo": "into the closed period",
+            "lines": [
+              { "account": "${Account[0].id}", "debit": "5.0000" },
+              { "account": "${Account[1].id}", "credit": "5.0000" } ] },
+          "expect": "error(PERIOD_LOCKED)" },
+        { "op": "createRecord", "entity": "JournalEntry", "asRole": "arClerk",
+          "template": {
+            "entryDate": "2026-09-15", "memo": "september is open",
+            "lines": [
+              { "account": "${Account[0].id}", "debit": "5.0000" },
+              { "account": "${Account[1].id}", "credit": "5.0000" } ] },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "AccountingPeriod", "asRole": "accountingManager",
+          "recordId": "${AccountingPeriod[0].id}",
+          "template": { "version": "${AccountingPeriod[0].version}", "status": "OPEN" },
+          "expect": "ok" },
+        { "op": "createRecord", "entity": "JournalEntry", "asRole": "arClerk",
+          "template": {
+            "entryDate": "2026-08-15", "memo": "reopened period admits new dated writes",
+            "lines": [
+              { "account": "${Account[0].id}", "debit": "5.0000" },
+              { "account": "${Account[1].id}", "credit": "5.0000" } ] },
+          "expect": "ok" }
+      ],
+      "assertExpressions": []
+    }
+  ]
+}

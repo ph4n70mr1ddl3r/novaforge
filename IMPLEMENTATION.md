@@ -802,6 +802,183 @@ chart/export polish beyond the catalog contract is backlog until the dogfood ask
 
 **Suites (§11):** `IntegrationWebhookTests` (7 — the full HMAC matrix incl. rotation + replay, idempotent application, outbound sign/filter/retry-to-DLQ/replay-exactly-once, poison DLQ with the write path's own verdict), `ConnectorExecutorTests` (4 — mock journey w/ credential + template legs, dedupe-collapse, terminal-failure DLQ, unknown-operation rejection), `ImportResumeTests` (kill/resume exactly-once), `IntegrationFlowTests` (+4 in the runtime — before-hook abort, after-hook spine retry, mock connector journey, and the integration write path firing validations/state machines/hooks with per-item field-scoped verdicts), `FileServiceTests` (5 — checksum verify/mismatch+delete, pinned presign expiry, EICAR quarantine + blocked download + outboxed event, internal upload leg), `ScriptApiTests` +$http gating, `AsyncExportHandoffTests` (202 + job link), `WebhookRateLimitFilterTest` (window enforcement, scoping, fail-open), `TestRunnerJourneyTests` +webhook journey (provisioning shape + signature equality over the raw body), frontend gallery/registry/FileUpload (+2, 20 total)
 
-## Phases 7–8 ⬜
+## Phase 7 — ERP Dogfood ◐ (spec: PHASE-7-ERP-DOGFOOD.md)
 
-Not started. The ERP dogfood consumes the integration surface this phase shipped (connector-driven bank feed, webhooks, import/export); lifecycle/hardening follows.
+> The platform harvests (§3 — the only platform work the spec expects) are complete
+> and suite-green; the ERP app ships as authored metadata with its acceptance
+> suites and the binding gap log. The T12 live-stack walkthrough (the §1 exit
+> demo against the running compose stack — the same leg Phases 5/6 exercised) and
+> the builder-UI authoring surface (G-7, the tracked Phase 2 remainder) are the
+> remaining legs. The §9 suites are authored as the contract; their live
+> execution rides the full stack (as the Phase 5/6 exits did).
+
+**Implemented — T3 the two anticipated harvests (§3), confirmed by the dogfood:**
+- **`freezeOnTerminal` (§3.1)**: an `EntityDefinition` attribute (requiring a bound
+  machine with a terminal state — save-validated) — a record in a terminal state is
+  an immutable document: field updates and deletes reject with `RECORD_FROZEN`
+  (4013), master-detail child writes into it reject identically (direct child
+  create/update/delete naming the frozen parent through any lookup field targeting
+  a freeze-bound entity, and inline child arrays on a PATCH) — the freeze covers the
+  parent's whole document, and the check runs before roll-up evaluation so a child
+  write never recomputes a frozen parent (§3.1's ordering pin). Enforced on every
+  write path: user, integration-principal, and nested engine (hook) writes
+- **`PeriodLock` (§3.2)**: an `EntityDefinition.periodLock` binding
+  `{entity, dateField, from/to/statusField, closedStatus}` — a dated write resolves
+  its period by date-range lookup (the resolved §8 pin — documents carry dates, not
+  period pointers; re-dating re-resolves under the same gate); a date inside a
+  `closedStatus` period rejects with `PERIOD_LOCKED` (4014). The status value is
+  app metadata (`CLOSED` is the `AccountingPeriod` machine's state, §4) — the
+  platform reads configuration, never special-cases an app's enum. Runs after the
+  beforeSave hooks (like the state-machine check) so hook-dated writes ride the
+  gate; no period rows → no locks; reopen (§4's audited transition) deactivates the
+  lock and nothing is ever un-frozen — corrections inside a reopened period are
+  reversal entries
+- error codes 4013/4014 joined the registry (the PHASE-0 §5.2 floor grows per phase)
+- both features flag-gated per definition (attributes absent → zero behavior
+  change; §10 T3's "features flag-gated" satisfied by authoring, not deployment
+  flags — an unupgraded app never sees the codes)
+- suites: `FreezePeriodTests` (4 — §9 items 2/3 over the real Postgres write path:
+  posted-document immutability incl. inline arrays + delete, child writes naming
+  the frozen parent (create/update/delete), reversal-entries-post, closed-period
+  rejection + boundary dates + reopen deactivation) + six `DefinitionValidatorTest`
+  rules (machine-bound freeze, terminal-state presence, period entity resolution,
+  dateField typing, range-field typing, closedStatus ∈ enum)
+
+**Implemented — the ERP app as metadata (§2, `apps/erp/`):**
+- `erp-app.json`: GL (`Account` hierarchical, `JournalEntry`/`JournalLine` with the
+  balanced validation + gapless `JE-` sequence defaults + `DRAFT→SUBMITTED→POSTED`
+  with `freezeOnTerminal` + `PeriodLock`), AR (`Customer`, `Invoice` + formula-priced
+  lines + `total` roll-up + gapless `INV-`, machine + freeze — the invoice, not its
+  journal, so settlement decrements `amountOutstanding` per §2's pin; `Payment` as
+  the bank-feed webhook target), Inventory (`Item` with roll-up-maintained
+  `qtyOnHand`/`inventoryValue` — the running weighted average is exactly
+  value/qty; `StockLedger` append-only with terminal `POSTED` + freeze), periods
+  (`OPEN→CLOSING→CLOSED` with the audited `CLOSED→OPEN` reopen edge), reports
+  (trial balance, bucketed A/R aging, inventory valuation), the `exec` dashboard,
+  the `nightlyAging` scheduled delivery under the `reporting` role, roles + the
+  object matrix (arClerk/accountingManager/controller/inventoryClerk/reporting),
+  and the bankFeed connector + paymentsFeed inbound webhook (T8's wiring)
+- posting = the §5 shape: `afterSave` flows — branch → `requestApproval` (role
+  `accountingManager`, SoD fail-closed; rejection publishes `journal.rejected`/
+  `invoice.rejected` on the spine) → `transitionState` to POSTED through the
+  durable-suspension resume leg; zero scripts on the posting path
+- the one budgeted script (`costMovement`, beforeSave on `StockLedger`) — §5's
+  canonical escape-hatch case: issues cost at the running weighted average read
+  from the item's roll-ups, receipts stamp their extended value; script ratio ≤ 20%
+  holds (1 script of 3 hooks, the rest of the logic surface declarative — §9 item 7
+  reported in the gap log)
+- the acceptance-contract suites (`apps/erp/suites/`): `reconciliation` (§9 items
+  1/5: book → approval → POSTED → trial balance nets zero → aging reconciles →
+  TB debits == credits == 120.0000, aging outstanding == 120.0000; preparer cannot
+  approve own — `error(SOD_VIOLATION)`), `controls` (§9 items 2/3: posted-entry
+  PATCH/delete/child-create all `error(RECORD_FROZEN)`, closed-period create
+  `error(PERIOD_LOCKED)`, reopen admits new dated writes), `inventoryCosting`
+  (§9 item 4: receipt 10×5 → issue 4 at average — `unitCost == 5.0000`, qty 6,
+  value 30.0000 decimal-exact)
+- `apps/erp/GAP-LOG.md` — the binding rule-2 deliverable: 9 numbered gaps logged
+  BEFORE their workarounds, each with proposed primitive/flag + priority +
+  disposition (2 accept-as-platform-feature: created-record id capture + nested
+  template resolution for auto-journals; a `$decimal` sandbox binding for script
+  money fidelity), plus the two confirmed §3 harvests
+- `ErpAppArtifactTests` (7) gates the artifact in CI through the exact save/compile
+  checks the builder would run (save-clean, FlowCompiler, harvests bound, gapless
+  sequences, script budget, suite save-validation, ${…} reference shape) — it
+  caught two real authoring defects on landing (unpromoted report aggregate field;
+  deleteRecord's dynamic-version rejection)
+
+**Fixed while landing (found by the artifact gate + suites):**
+- `TestRunner.publishCandidate` published a REDUCED candidate into scratch tenants
+  (entities/settings/permissions/integrations only) — state machines, reports,
+  dashboards, jobs, SLAs, and workflows silently dropped, so any suite pinning
+  machine-enforced behavior ran against an unguarded write path; the candidate now
+  carries every branch
+- suite save-validation rejected `deleteRecord` templates whose `version` is a
+  `${…}` reference (only literal numbers passed) though the runner resolves them
+  exactly like every other slot — references now accepted
+- `MetadataStore.insertApp` silently dropped inline `testSuites` (only the dedicated
+  PUT endpoint persisted them) — inline suites now round-trip like entities
+
+## Phase 8 — Lifecycle & Hardening ◐ (spec: PHASE-8-LIFECYCLE.md)
+
+> T1–T7 implemented and suite-green (the code surface: environments, the gate,
+  rollback, change sets, artifacts, headless runs, templates, i18n). T8–T10 are the
+> operational exercises: the runbooks ship (`docs/runbooks/`), the live load pass,
+  pen test, and restore drill execute against the running stack (the Phases 5/6
+> live-exit pattern) — recorded when run.
+
+**Implemented — T1 environments + the promotion artifact (§2):**
+- the scratch mechanism grown up, one provisioning path: `md_environments` pins
+  promoted versions per (tenant, app, `staging|prod`) — `dev` stays the implicit
+  draft workspace; the first promotion provisions the environment's own tenant
+  through the platform-admin API (`EnvironmentProvisioner`, default HTTP impl riding
+  the same legs the harness does); later promotions re-import the bundle into that
+  tenant's app and publish — the environment's data plane survives promotions
+- the promotion artifact format (§2): `GET …/versions/{v}/artifact` — a versioned
+  ZIP (`manifest.json` + `definitions.json` + `signature.txt`), sha256-content-
+  hashed and HMAC-SHA256-signed (the signing key is deployment config — KMS/Vault in
+  staging/prod per PHASE-6 §9's stance); import verifies hash + signature, rejects
+  zip path escapes and unknown entries, and creates a new draft app (optional
+  `apiName` rename for same-workspace imports)
+
+**Implemented — T3/T4 the promotion gate, override, rollback (§4):**
+- version identity is content: publish records the bundle's sha256 on the version
+  row; every suite run (interactive or headless) records the candidate's hash — the
+  gate ("a recorded green run of all app suites against exactly V") is a mechanical
+  hash match, latest-first per suite; free when the app defines no suites
+  (ADR-010 #4's opt-in rule)
+- order: dev → staging → prod, each hop its own gated promotion; the prod hop
+  requires staging pinned to the same artifact hash AND is the explicit
+  platform-admin approval (§11 Q1 — no timed burn-in in v1); override is
+  admin-only + reason-required, audited in `md_promotions`, and rendered in
+  change-set review forever
+- rollback (§4 item 4): redeploying a prior version through the same gate; the
+  compatibility rule reuses the publish check — `breakingChanges(current, prior)`
+  non-empty (projection/field removals, type changes) blocks one-click rollback;
+  incompatible rollback requires admin override + explicit
+  `dataMigrationAcknowledged` (JSONB retains removed fields until a tenant-scoped
+  prune — nothing is destroyed at publish, §4 item 5)
+
+**Implemented — T2 change sets (§3):** `GET …/changeset?env=` renders the per-
+definition diff (entities/state machines/reports/suites/translations by apiName:
+  added/modified/removed; permissionSet changed flag) plus the review attachments:
+  suite results hash-bound to the exact draft under review, the script-ratio delta,
+  the credential references the target environment must re-bind (material never
+  rides the artifact), and the full promotion history with overrides visible
+
+**Implemented — T5 headless runs + CI (§5):** `POST …/apps/{id}/suite-runs`
+  (app-wide or subset) + `GET` artifacts, `POST/GET …/suites/{rowId}/runs` — all
+  builder-gated; the `novaforge-pipeline` realm client (client-credentials, builder
+  platform role, dev-workspace tenant attribute) joins the deployed realm; the
+  reusable `app-suite-gate` workflow ships the green-run→promote pattern and
+  `docs/ci-app-promotion.md` pins the wiring
+
+**Implemented — T6 templates (§6):** `POST /templates` snapshots a published
+  version (definitions + fixture suites; tenant data and secret material never
+  ride the artifact), `GET /templates` lists the catalog (name/publisher/version/
+  description — no commerce, §11 Q2), `POST /templates/{id}/install` creates a new
+  draft app; the ERP app is the first template (registered from its published
+  version — the README documents the one-liner)
+
+**Implemented — T7 i18n (§7):** the Translations branch — per-locale workspaces as
+  kind-discriminated metadata (`md_definitions`), versioned and promoted with the
+  app; the pinned fallback chain `label_i18n[locale] → label → apiName` (never
+  blank) lives as a pure function in `metadata-model` (`TranslationsDefinition`);
+  the missing-translation report keys the translatable universe
+  (`app.label`, `<Entity>.label`, `<Entity>.<field>.label`, `report.<id>.label`);
+  CSV/JSON export carries the full universe (missing rows empty), import merges
+  never wipes, unknown keys reject with guidance
+
+**Suites:** `LifecycleTests` (7 — the §9 promotion-gate suite: red gate blocks,
+  exact-content-hash matching (a stale-draft run does not admit), prod order +
+  admin hop + override-forever-rendered, rollback both branches with the ack gate,
+  artifact hash/signature/tamper + template round-trip, headless recording, i18n
+  workspace round-trip incl. publish promotion), `TranslationsDefinitionTest` (4),
+  `ErpAppArtifactTests` (7, Phase 7's CI gate)
+
+**T8–T10 (the operational exercises):** the runbooks ship —
+  `docs/runbooks/dr-restore-drill.md` (PITR + MinIO versioning + Kafka replay +
+  the quarterly drill's exit criteria + the secrets-rotation leg) and
+  `docs/runbooks/security-review-scope.md` (the §8 pen-test matrix mapped to the
+  owning suites); the live executions (load validation at full scale, the pen
+  pass, the restore drill) run against the live stack — the Phases 5/6
+  live-exit pattern — and record here when run.

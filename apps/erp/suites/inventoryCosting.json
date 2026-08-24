@@ -1,0 +1,38 @@
+{
+  "apiName": "inventoryCosting",
+  "label": "Weighted-average costing through the budgeted script (PHASE-7 §9 item 4, §11 Q1)",
+  "cases": [
+    {
+      "name": "receipt-then-issue-at-average",
+      "fixtures": [
+        { "entity": "Item", "asRole": "inventoryClerk",
+          "template": { "sku": "WIDGET", "name": "Widget" } }
+      ],
+      "steps": [
+        { "op": "createRecord", "entity": "StockLedger", "asRole": "inventoryClerk",
+          "template": { "item": "${Item[0].id}", "movementType": "RECEIPT",
+                        "movementDate": "2026-09-01", "qty": "10", "unitCost": "5.0000" },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "StockLedger", "asRole": "inventoryClerk",
+          "recordId": "${StockLedger[0].id}",
+          "template": { "version": "${StockLedger[0].version}", "status": "POSTED" },
+          "expect": "ok" },
+        { "op": "createRecord", "entity": "StockLedger", "asRole": "inventoryClerk",
+          "template": { "item": "${Item[0].id}", "movementType": "ISSUE",
+                        "movementDate": "2026-09-02", "qty": "-4" },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "StockLedger", "asRole": "inventoryClerk",
+          "recordId": "${StockLedger[1].id}",
+          "template": { "version": "${StockLedger[1].version}", "status": "POSTED" },
+          "expect": "ok" },
+        { "op": "runReport", "entity": "inventoryValuation", "asRole": "controller",
+          "template": {}, "expect": "ok" }
+      ],
+      "assertExpressions": [
+        "${StockLedger[1].unitCost} == 5.0000",
+        "${Report[0].totals.qtyTotal} == 6",
+        "${Report[0].totals.valueTotal} == 30.0000"
+      ]
+    }
+  ]
+}

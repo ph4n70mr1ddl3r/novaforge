@@ -1056,6 +1056,61 @@ public final class DefinitionValidator {
                 errors.add(field(scope + "indexes", "index requires at least one field", null));
             }
         }
+
+        // --- Phase 7 harvests (PHASE-7 §3): freezeOnTerminal + periodLock ---
+
+        if (entity.freezesOnTerminal()) {
+            var machine = app.stateMachineFor(entity.apiName());
+            if (machine.isEmpty()) {
+                errors.add(field(scope + "freezeOnTerminal",
+                        "freezeOnTerminal requires a bound state machine (PHASE-7 §3.1)",
+                        entity.apiName()));
+            } else if (machine.get().states().stream().noneMatch(StateMachineDefinition.State::terminalOn)) {
+                errors.add(field(scope + "freezeOnTerminal",
+                        "freezeOnTerminal requires the bound machine to declare at least one "
+                                + "terminal state (PHASE-7 §3.1)", machine.get().id()));
+            }
+        }
+
+        EntityDefinition.PeriodLock lock = entity.periodLock();
+        if (lock != null) {
+            String lockScope = scope + "periodLock.";
+            var period = app.entity(lock.entity() == null ? "" : lock.entity());
+            if (lock.entity() == null || period.isEmpty()) {
+                errors.add(field(lockScope + "entity",
+                        "periodLock must bind to a period entity of the app: " + lock.entity(),
+                        lock.entity()));
+            } else {
+                for (String rangeField : List.of(lock.from(), lock.to())) {
+                    var found = period.get().field(rangeField);
+                    if (found.isEmpty() || (found.get().type() != FieldType.DATE
+                            && found.get().type() != FieldType.DATETIME)) {
+                        errors.add(field(lockScope + (rangeField.equals(lock.from()) ? "fromField"
+                                        : "toField"),
+                                "the period entity's range field must be a date/datetime field: "
+                                        + period.get().apiName() + "." + rangeField, rangeField));
+                    }
+                }
+                var status = period.get().field(lock.status());
+                if (status.isEmpty() || status.get().type() != FieldType.ENUM) {
+                    errors.add(field(lockScope + "statusField",
+                            "the period entity's status field must be an enum field: "
+                                    + period.get().apiName() + "." + lock.status(), lock.status()));
+                } else if (!status.get().values().contains(lock.closed())) {
+                    errors.add(field(lockScope + "closedStatus",
+                            "closedStatus must be a value of " + period.get().apiName() + "."
+                                    + lock.status() + ": " + lock.closed(), lock.closed()));
+                }
+            }
+            var dateField = entity.field(lock.dateField() == null ? "" : lock.dateField());
+            if (lock.dateField() == null || dateField.isEmpty()
+                    || (dateField.get().type() != FieldType.DATE
+                    && dateField.get().type() != FieldType.DATETIME)) {
+                errors.add(field(lockScope + "dateField",
+                        "periodLock requires a date/datetime field on " + entity.apiName()
+                                + ": " + lock.dateField(), lock.dateField()));
+            }
+        }
     }
 
     private static void validatePrecision(FieldDefinition f, String scope,

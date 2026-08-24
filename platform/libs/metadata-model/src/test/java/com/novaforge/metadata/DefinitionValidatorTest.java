@@ -607,4 +607,95 @@ class DefinitionValidatorTest {
                         "\"mapping\": { \"ghost\": \"Ref\" }"))),
                 "mapped field must exist")).isTrue();
     }
+
+    // --- Phase 7 harvests (PHASE-7 §3): freezeOnTerminal + periodLock ---
+
+    /** The GL-shaped harvest: a posted journal freezes, dated writes lock to periods. */
+    private static final String HARVEST_APP = """
+            { "apiName": "Erp",
+              "entities": [
+                { "apiName": "AccountingPeriod",
+                  "fields": [
+                    { "apiName": "name", "type": "text", "required": true },
+                    { "apiName": "startDate", "type": "date", "required": true },
+                    { "apiName": "endDate", "type": "date", "required": true },
+                    { "apiName": "status", "type": "enum",
+                      "values": ["OPEN", "CLOSING", "CLOSED"] } ] },
+                { "apiName": "JournalEntry",
+                  "freezeOnTerminal": true,
+                  "periodLock": { "entity": "AccountingPeriod", "dateField": "entryDate" },
+                  "fields": [
+                    { "apiName": "label", "type": "text", "required": true },
+                    { "apiName": "entryDate", "type": "date", "required": true },
+                    { "apiName": "status", "type": "enum", "values": ["DRAFT", "POSTED"] } ] } ],
+              "stateMachines": [
+                { "id": "sm_je", "entity": "JournalEntry", "stateField": "status",
+                  "initial": "DRAFT",
+                  "states": [ { "name": "DRAFT" }, { "name": "POSTED", "terminal": true } ],
+                  "transitions": [ { "from": "DRAFT", "to": "POSTED" } ] },
+                { "id": "sm_period", "entity": "AccountingPeriod", "stateField": "status",
+                  "initial": "OPEN",
+                  "states": [ { "name": "OPEN" }, { "name": "CLOSING" }, { "name": "CLOSED" } ],
+                  "transitions": [
+                    { "from": "OPEN", "to": "CLOSING" },
+                    { "from": "CLOSING", "to": "CLOSED" },
+                    { "from": "CLOSED", "to": "OPEN" } ] } ] }
+            """;
+
+    private static AppDefinition harvestApp(String mutation) {
+        return DefinitionParser.parseApp(HARVEST_APP.replace("\"freezeOnTerminal\": true",
+                "\"freezeOnTerminal\": " + mutation));
+    }
+
+    @Test
+    @DisplayName("rule: the §3 harvest shape saves clean (machine-bound freeze + period lock)")
+    void harvestShapeValid() {
+        assertThat(validate(DefinitionParser.parseApp(HARVEST_APP)).isEmpty()).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: freezeOnTerminal requires a bound state machine")
+    void freezeRequiresMachine() {
+        AppDefinition broken = DefinitionParser.parseApp(HARVEST_APP.replace(
+                "\"stateMachines\": [", "\"ghostMachines\": ["));
+        assertThat(mentions(validate(broken), "freezeOnTerminal requires a bound state machine")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: freezeOnTerminal requires at least one terminal state")
+    void freezeRequiresTerminalState() {
+        AppDefinition broken = DefinitionParser.parseApp(HARVEST_APP.replace(
+                "{ \"name\": \"POSTED\", \"terminal\": true }", "{ \"name\": \"POSTED\" }"));
+        assertThat(mentions(validate(broken), "at least one terminal state")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: periodLock must bind to a period entity of the app")
+    void periodLockEntityResolves() {
+        AppDefinition broken = DefinitionParser.parseApp(HARVEST_APP.replace(
+                "\"entity\": \"AccountingPeriod\"", "\"entity\": \"GhostPeriod\""));
+        assertThat(mentions(validate(broken), "periodLock must bind to a period entity")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: periodLock's dateField must be a date/datetime field on the entity")
+    void periodLockDateFieldTyped() {
+        AppDefinition broken = DefinitionParser.parseApp(HARVEST_APP.replace(
+                "\"dateField\": \"entryDate\"", "\"dateField\": \"label\""));
+        assertThat(mentions(validate(broken), "date/datetime field")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: the period's range fields must be dates; closedStatus an enum value")
+    void periodLockRangeAndStatusShaped() {
+        AppDefinition rangeBroken = DefinitionParser.parseApp(HARVEST_APP.replace(
+                "{ \"apiName\": \"startDate\", \"type\": \"date\", \"required\": true },",
+                "{ \"apiName\": \"startDate\", \"type\": \"text\" },"));
+        assertThat(mentions(validate(rangeBroken), "range field must be a date/datetime")).isTrue();
+
+        AppDefinition statusBroken = DefinitionParser.parseApp(HARVEST_APP.replace(
+                "\"values\": [\"OPEN\", \"CLOSING\", \"CLOSED\"]",
+                "\"values\": [\"OPEN\", \"CLOSING\", \"LOCKED\"]"));
+        assertThat(mentions(validate(statusBroken), "closedStatus must be a value of")).isTrue();
+    }
 }

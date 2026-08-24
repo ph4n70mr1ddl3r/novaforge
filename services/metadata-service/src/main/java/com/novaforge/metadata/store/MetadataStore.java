@@ -9,6 +9,7 @@ import com.novaforge.metadata.EntityDefinition;
 import com.novaforge.metadata.PermissionSet;
 import com.novaforge.metadata.SequenceDefinition;
 import com.novaforge.metadata.TestSuiteDefinition;
+import com.novaforge.metadata.lifecycle.LifecycleHash;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -45,6 +46,9 @@ public class MetadataStore {
     public static final String KIND_WEBHOOK = "webhook";
     public static final String KIND_CREDENTIAL = "credential";
     public static final String KIND_IMPORT = "import_mapping";
+
+    /** The Translations branch (PHASE-8 §7) — one kind row per locale. */
+    public static final String KIND_TRANSLATION = "translation";
 
     private final JdbcTemplate jdbc;
 
@@ -177,9 +181,12 @@ public class MetadataStore {
                 patch.labelI18n().isEmpty() ? current.labelI18n() : patch.labelI18n(),
                 patch.displayField() != null ? patch.displayField() : current.displayField(),
                 patch.module() != null ? patch.module() : current.module(),
+                patch.freezeOnTerminal() != null ? patch.freezeOnTerminal() : current.freezeOnTerminal(),
+                patch.periodLock() != null ? patch.periodLock() : current.periodLock(),
                 patch.fields().isEmpty() ? current.fields() : patch.fields(),
                 patch.relationships().isEmpty() ? current.relationships() : patch.relationships(),
                 patch.validations().isEmpty() ? current.validations() : patch.validations(),
+                patch.hooks().isEmpty() ? current.hooks() : patch.hooks(),
                 patch.indexes().isEmpty() ? current.indexes() : patch.indexes());
         int updated = jdbc.update("""
                 UPDATE md_entities
@@ -264,13 +271,195 @@ public class MetadataStore {
                                AppDefinition bundle, List<String> breakingChanges,
                                boolean acknowledged) {
         jdbc.update("""
-                INSERT INTO md_versions (id, tenant_id, app_id, version, bundle, breaking_changes, acknowledged, published_by)
-                VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?)""",
+                INSERT INTO md_versions (id, tenant_id, app_id, version, bundle, breaking_changes, acknowledged, content_hash, published_by)
+                VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?)""",
                 UUID.randomUUID(), tenantId, appId, version, DefinitionParser.writeApp(bundle),
-                DefinitionParser.write(breakingChanges), acknowledged, actorId);
+                DefinitionParser.write(breakingChanges), acknowledged,
+                LifecycleHash.contentHash(bundle), actorId);
         jdbc.update("UPDATE md_apps SET current_version = ?, updated_at = now(), updated_by = ? WHERE tenant_id = ? AND id = ?",
                 version, actorId, tenantId, appId);
         return new VersionInfo(version, Instant.now(), breakingChanges, acknowledged);
+    }
+
+    // --- suite runs (PHASE-8 §4/§5): version-bound by content hash ---
+
+    /** Records one suite-run artifact; the hash binds it to the exact candidate (§4 item 1). */
+    public void recordSuiteRun(UUID tenantId, UUID appId, String suite, String contentHash,
+                               boolean green, Map<String, Object> artifact, UUID runBy) {
+        jdbc.update("""
+                INSERT INTO md_suite_runs (id, tenant_id, app_id, suite, content_hash, green, artifact, run_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?)""",
+                UUID.randomUUID(), tenantId, appId, suite, contentHash, green,
+                DefinitionParser.write(artifact), runBy);
+    }
+
+    public record SuiteRunInfo(UUID id, String suite, String contentHash, boolean green,
+                               Instant runAt, Map<String, Object> artifact) {
+    }
+
+    /** The recorded runs for one (app, suite) — latest first. */
+    public List<SuiteRunInfo> suiteRuns(UUID tenantId, UUID appId, String suite) {
+        return jdbc.query("""
+                SELECT id, suite, content_hash, green, run_at, artifact FROM md_suite_runs
+                 WHERE tenant_id = ? AND app_id = ? AND suite = ?
+                 ORDER BY run_at DESC""",
+                (rs, i) -> new SuiteRunInfo(rs.getObject("id", UUID.class), rs.getString("suite"),
+                        rs.getString("content_hash"), rs.getBoolean("green"),
+                        rs.getTimestamp("run_at").toInstant(),
+                        DefinitionParser.parse(rs.getString("artifact"), Map.class)),
+                tenantId, appId, suite);
+    }
+
+    public List<SuiteRunInfo> suiteRuns(UUID tenantId, UUID appId) {
+        return jdbc.query("""
+                SELECT id, suite, content_hash, green, run_at, artifact FROM md_suite_runs
+                 WHERE tenant_id = ? AND app_id = ?
+                 ORDER BY run_at DESC""",
+                (rs, i) -> new SuiteRunInfo(rs.getObject("id", UUID.class), rs.getString("suite"),
+                        rs.getString("content_hash"), rs.getBoolean("green"),
+                        rs.getTimestamp("run_at").toInstant(),
+                        DefinitionParser.parse(rs.getString("artifact"), Map.class)),
+                tenantId, appId);
+    }
+
+    /** The content hash of a published version — the gate's version identity (§4). */
+    public String contentHashOf(UUID tenantId, UUID appId, int version) {
+        return jdbc.query("SELECT content_hash FROM md_versions WHERE tenant_id = ? AND app_id = ? AND version = ?",
+                (rs, i) -> rs.getString(1), tenantId, appId, version).stream().findFirst().orElse(null);
+    }
+
+    /** The suite row's UUID — the headless single-suite handle (§5). */
+    public Optional<UUID> suiteRowId(UUID tenantId, UUID appId, String suiteApiName) {
+        return jdbc.query("SELECT id FROM md_test_suites WHERE tenant_id = ? AND app_id = ? AND api_name = ?",
+                (rs, i) -> rs.getObject(1, UUID.class), tenantId, appId, suiteApiName).stream().findFirst();
+    }
+
+    public record SuiteRow(UUID appId, String apiName) {
+    }
+
+    /** Resolves a headless suite handle to its owning (tenant, app, name). */
+    public Optional<SuiteRow> suiteRow(UUID suiteRowId) {
+        return jdbc.query("SELECT app_id, api_name FROM md_test_suites WHERE id = ?",
+                (rs, i) -> new SuiteRow(rs.getObject("app_id", UUID.class), rs.getString("api_name")),
+                suiteRowId).stream().findFirst();
+    }
+
+    // --- environments + promotions (PHASE-8 §2/§4) ---
+
+    public record EnvironmentRow(UUID appId, String env, int pinnedVersion,
+                                 UUID envTenantId, UUID envAppId) {
+    }
+
+    public Optional<EnvironmentRow> environment(UUID tenantId, UUID appId, String env) {
+        return jdbc.query("""
+                SELECT app_id, env, pinned_version, env_tenant_id, env_app_id FROM md_environments
+                 WHERE tenant_id = ? AND app_id = ? AND env = ?""",
+                (rs, i) -> new EnvironmentRow(rs.getObject("app_id", UUID.class), rs.getString("env"),
+                        rs.getInt("pinned_version"), rs.getObject("env_tenant_id", UUID.class),
+                        rs.getObject("env_app_id", UUID.class)),
+                tenantId, appId, env).stream().findFirst();
+    }
+
+    public List<EnvironmentRow> environments(UUID tenantId, UUID appId) {
+        return jdbc.query("""
+                SELECT app_id, env, pinned_version, env_tenant_id, env_app_id FROM md_environments
+                 WHERE tenant_id = ? AND app_id = ? ORDER BY env""",
+                (rs, i) -> new EnvironmentRow(rs.getObject("app_id", UUID.class), rs.getString("env"),
+                        rs.getInt("pinned_version"), rs.getObject("env_tenant_id", UUID.class),
+                        rs.getObject("env_app_id", UUID.class)),
+                tenantId, appId);
+    }
+
+    @Transactional
+    public void pinEnvironment(UUID tenantId, UUID appId, String env, int version,
+                               UUID envTenantId, UUID envAppId, UUID actorId) {
+        jdbc.update("""
+                INSERT INTO md_environments (id, tenant_id, app_id, env, pinned_version, env_tenant_id, env_app_id, created_by, updated_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (tenant_id, app_id, env) DO UPDATE
+                   SET pinned_version = EXCLUDED.pinned_version,
+                       env_tenant_id = EXCLUDED.env_tenant_id,
+                       env_app_id = EXCLUDED.env_app_id,
+                       updated_at = now(), updated_by = EXCLUDED.updated_by""",
+                UUID.randomUUID(), tenantId, appId, env, version, envTenantId, envAppId,
+                actorId, actorId);
+    }
+
+    public record PromotionRow(UUID id, String env, String kind, Integer fromVersion, int toVersion,
+                               boolean overridden, String reason, Instant promotedAt, UUID promotedBy) {
+    }
+
+    @Transactional
+    public void recordPromotion(UUID tenantId, UUID appId, String env, String kind,
+                                Integer fromVersion, int toVersion, boolean overridden,
+                                String reason, Map<String, Object> gateEvidence, UUID actorId) {
+        jdbc.update("""
+                INSERT INTO md_promotions (id, tenant_id, app_id, env, kind, from_version, to_version, overridden, reason, gate_evidence, promoted_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)""",
+                UUID.randomUUID(), tenantId, appId, env, kind, fromVersion, toVersion,
+                overridden, reason, DefinitionParser.write(gateEvidence), actorId);
+    }
+
+    public List<PromotionRow> promotions(UUID tenantId, UUID appId) {
+        return jdbc.query("""
+                SELECT id, env, kind, from_version, to_version, overridden, reason, promoted_at, promoted_by
+                  FROM md_promotions WHERE tenant_id = ? AND app_id = ?
+                 ORDER BY promoted_at DESC""",
+                (rs, i) -> new PromotionRow(rs.getObject("id", UUID.class), rs.getString("env"),
+                        rs.getString("kind"), rs.getObject("from_version", Integer.class),
+                        rs.getInt("to_version"), rs.getBoolean("overridden"), rs.getString("reason"),
+                        rs.getTimestamp("promoted_at").toInstant(),
+                        rs.getObject("promoted_by", UUID.class)),
+                tenantId, appId);
+    }
+
+    // --- templates (PHASE-8 §6) ---
+
+    public record TemplateRow(UUID id, String name, String publisher, String description,
+                              String version, String contentHash) {
+    }
+
+    @Transactional
+    public UUID insertTemplate(UUID tenantId, String name, String publisher, String description,
+                               String version, AppDefinition bundle, UUID actorId) {
+        UUID id = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO md_templates (id, tenant_id, name, publisher, description, version, bundle, content_hash, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)""",
+                id, tenantId, name, publisher, description, version,
+                DefinitionParser.writeApp(bundle), LifecycleHash.contentHash(bundle), actorId);
+        return id;
+    }
+
+    public List<TemplateRow> templates(UUID tenantId) {
+        return jdbc.query("""
+                SELECT id, name, publisher, description, version, content_hash FROM md_templates
+                 WHERE tenant_id = ? ORDER BY name, version""",
+                (rs, i) -> new TemplateRow(rs.getObject("id", UUID.class), rs.getString("name"),
+                        rs.getString("publisher"), rs.getString("description"),
+                        rs.getString("version"), rs.getString("content_hash")),
+                tenantId);
+    }
+
+    public Optional<AppDefinition> templateBundle(UUID tenantId, UUID templateId) {
+        return jdbc.query("SELECT bundle FROM md_templates WHERE tenant_id = ? AND id = ?",
+                (rs, i) -> DefinitionParser.parseApp(rs.getString("bundle")),
+                tenantId, templateId).stream().findFirst();
+    }
+
+    /** Upserts one locale workspace (PHASE-8 §7) — a kind-discriminated document row. */
+    @Transactional
+    public void putTranslation(UUID tenantId, UUID actorId, UUID appId, String locale,
+                               Map<String, String> entries) {
+        requireApp(tenantId, appId);
+        jdbc.update("""
+                INSERT INTO md_definitions (id, tenant_id, app_id, kind, api_name, document, created_by, updated_by)
+                VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?)
+                ON CONFLICT (tenant_id, app_id, kind, api_name) DO UPDATE
+                   SET document = EXCLUDED.document, updated_at = now(), updated_by = EXCLUDED.updated_by""",
+                UUID.randomUUID(), tenantId, appId, KIND_TRANSLATION, locale,
+                DefinitionParser.write(new com.novaforge.metadata.TranslationsDefinition(locale, entries)),
+                actorId, actorId);
     }
 
     // --- helpers ---
@@ -283,6 +472,13 @@ public class MetadataStore {
                     entity.id() == null ? UUID.randomUUID() : UUID.fromString(entity.id()),
                     tenantId, appId, entity.apiName(), DefinitionParser.write(entity),
                     actorId, actorId);
+        }
+        for (TestSuiteDefinition suite : app.testSuites()) {
+            jdbc.update("""
+                    INSERT INTO md_test_suites (id, tenant_id, app_id, api_name, document, created_by, updated_by)
+                    VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)""",
+                    UUID.randomUUID(), tenantId, appId, suite.apiName(),
+                    DefinitionParser.write(suite), actorId, actorId);
         }
         for (AppDefinition.PageDefinition page : app.pages()) {
             jdbc.update("""
@@ -351,6 +547,9 @@ public class MetadataStore {
         for (com.novaforge.metadata.ImportDefinition mapping : app.integrations().imports()) {
             insertBranch(tenantId, actorId, appId, KIND_IMPORT, mapping.apiName(), mapping);
         }
+        for (com.novaforge.metadata.TranslationsDefinition translations : app.translations()) {
+            insertBranch(tenantId, actorId, appId, KIND_TRANSLATION, translations.locale(), translations);
+        }
     }
 
     private void insertBranch(UUID tenantId, UUID actorId, UUID appId, String kind,
@@ -414,11 +613,15 @@ public class MetadataStore {
                                 com.novaforge.metadata.CredentialDefinition.class),
                         branchDocuments(tenantId, appId, KIND_IMPORT,
                                 com.novaforge.metadata.ImportDefinition.class));
+        List<com.novaforge.metadata.TranslationsDefinition> translations = branchDocuments(
+                tenantId, appId, KIND_TRANSLATION,
+                com.novaforge.metadata.TranslationsDefinition.class);
         return new AppDefinition(appId.toString(), apiName, label,
                 DefinitionParser.parse(labelI18nJson == null ? "{}" : labelI18nJson, Map.class),
                 description, entities, pages,
                 new AppDefinition.SettingsDefinition(sequences, null, null), permissionSet,
-                suites, stateMachines, slas, jobs, workflows, reports, dashboards, integrations);
+                suites, stateMachines, slas, jobs, workflows, reports, dashboards, integrations,
+                translations);
     }
 
     private <T> List<T> branchDocuments(UUID tenantId, UUID appId, String kind, Class<T> type) {
@@ -435,7 +638,7 @@ public class MetadataStore {
                 app.description(), app.entities(), app.pages(), app.settings(),
                 app.permissionSet(), app.testSuites(), app.stateMachines(), app.slas(),
                 app.jobs(), app.workflows(), app.reports(), app.dashboards(),
-                app.integrations());
+                app.integrations(), app.translations());
     }
 
     private static List<String> parseStrings(String json) {

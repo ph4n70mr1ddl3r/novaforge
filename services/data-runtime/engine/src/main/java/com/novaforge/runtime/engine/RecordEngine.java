@@ -98,7 +98,9 @@ public class RecordEngine {
 
         UUID id = UUID.randomUUID();
         runHooks(app, handle, tenantId, id, canonical, "beforeSave", appSystemPrincipal(handle), actorId);
+        requireParentsNotFrozen(tenantId, app, handle, canonical);
         enforceCreateState(app, handle, canonical);
+        enforcePeriodLock(tenantId, app, handle, canonical);
         evaluateRollupsFromChildren(app, handle, children, canonical);
         persistWithChildren(tenantId, actorId, app, handle, id, canonical, children, errors);
 
@@ -119,6 +121,7 @@ public class RecordEngine {
         RecordStore.StoredRecord existing = records.find(tenantId, handle.entityKey(), id, false)
                 .orElseThrow(() -> notFound(entityApiName, id));
         requireVisible(sharing.forActor(tenantId, actorId, handle.entity(), app), existing);
+        requireNotFrozen(app, handle, existing.data());
         rejectReadonlyWrites(handle.entity(), body);
         rejectFieldSecurityWrites(tenantId, actorId, handle, app, body);
 
@@ -140,7 +143,9 @@ public class RecordEngine {
         evaluateValidationRules(handle.entity(), merged, errors);
         reject(errors, "update " + entityApiName + "/" + id + " failed validation");
         runHooks(app, handle, tenantId, id, merged, "beforeSave", appSystemPrincipal(handle), actorId);
+        requireParentsNotFrozen(tenantId, app, handle, merged);
         enforceTransition(app, handle, existing.data(), merged);
+        enforcePeriodLock(tenantId, app, handle, merged);
 
         int newVersion = records.update(tenantId, handle.entityKey(), id, merged,
                 expectedVersion, actorId);
@@ -168,6 +173,8 @@ public class RecordEngine {
                 id, false).orElseThrow(() -> notFound(entityApiName, id));
         requireVisible(sharing.forActor(tenantId, actorId, handle.entity(), app), existingRecord);
         Map<String, Object> existingData = existingRecord.data();
+        requireNotFrozen(app, handle, existingData);
+        requireParentsNotFrozen(tenantId, app, handle, existingData);
         runHooks(app, handle, tenantId, id, existingData, "beforeDelete",
                 appSystemPrincipal(handle), actorId);
         records.softDelete(tenantId, handle.entityKey(), id, expectedVersion, actorId);
@@ -466,7 +473,9 @@ public class RecordEngine {
         UUID id = UUID.randomUUID();
         runHooks(app, handle, tenantId, id, canonical, "beforeSave", appSystemPrincipal(handle),
                 principal);
+        requireParentsNotFrozen(tenantId, app, handle, canonical);
         enforceCreateState(app, handle, canonical);
+        enforcePeriodLock(tenantId, app, handle, canonical);
         evaluateRollupsFromChildren(app, handle, children, canonical);
         persistWithChildren(tenantId, principal, app, handle, id, canonical, children, errors);
         events.publish(event("record.created", tenantId, handle.entityKey(), id, principal));
@@ -508,7 +517,10 @@ public class RecordEngine {
         reject(errors, "integration update " + entityApiName + "/" + id + " failed validation");
         runHooks(app, handle, tenantId, id, merged, "beforeSave", appSystemPrincipal(handle),
                 principal);
+        requireNotFrozen(app, handle, existing.data());
+        requireParentsNotFrozen(tenantId, app, handle, merged);
         enforceTransition(app, handle, existing.data(), merged);
+        enforcePeriodLock(tenantId, app, handle, merged);
 
         int newVersion = records.update(tenantId, handle.entityKey(), id, merged,
                 expectedVersion, principal);
@@ -647,9 +659,119 @@ public class RecordEngine {
         }
     }
 
+    /**
+     * Period locking (PHASE-7 §3.2): a dated write resolves its period by date-range
+     * lookup over the bound period entity (the resolved §8 pin — documents carry
+     * dates, not period pointers); a date inside a {@code closedStatus} period rejects
+     * with {@code PERIOD_LOCKED}. Runs after the beforeSave hooks, like the
+     * state-machine check, so hook-dated writes ride the same gate. No period rows →
+     * no locks (the absence of periods never blocks a tenant's writes); the period
+     * entity is app metadata, its {@code CLOSED} status an authored value — the
+     * platform reads the configuration, it never special-cases an app's enum.
+     */
+    private void enforcePeriodLock(UUID tenantId, AppDefinition app, EntityHandle handle,
+                                   Map<String, Object> data) {
+        EntityDefinition.PeriodLock lock = handle.entity().periodLock();
+        if (lock == null) {
+            return;
+        }
+        Object dateValue = data.get(lock.dateField());
+        if (dateValue == null) {
+            return;   // undated writes resolve no period; field-required rules own presence
+        }
+        String iso = String.valueOf(dateValue);
+        String date = iso.length() > 10 ? iso.substring(0, 10) : iso;
+        try {
+            java.time.LocalDate.parse(date);
+        } catch (RuntimeException malformed) {
+            return;   // coercion reports malformed dates with its own error
+        }
+        EntityHandle periodHandle = resolver.resolve(tenantId, lock.entity());
+        String queryJson = "{\"filter\":{\"and\":["
+                + "{\"field\":\"" + lock.from() + "\",\"op\":\"lte\",\"value\":\"" + date + "\"},"
+                + "{\"field\":\"" + lock.to() + "\",\"op\":\"gte\",\"value\":\"" + date + "\"},"
+                + "{\"field\":\"" + lock.status() + "\",\"op\":\"eq\",\"value\":\"" + lock.closed() + "\"}]}}";
+        QueryModel.ListQuery query = QueryParser.parseList(queryJson, periodHandle.entity());
+        QueryLowering lowering = new QueryLowering(periodHandle.entity());
+        QueryLowering.Lowered count = lowering.count(periodHandle.entity().apiName(), tenantId,
+                query.filter());
+        Long closed = records.countValue(count.sql(), count.params());
+        if (closed != null && closed > 0) {
+            throw new PlatformException(PlatformErrorCode.PERIOD_LOCKED,
+                    handle.entity().apiName() + " is dated " + date + " — inside a closed "
+                            + lock.entity() + " (PeriodLock, PHASE-7 §3.2); a closed period "
+                            + "only reopens through its own audited flow");
+        }
+    }
+
     /** The per-app system principal declarative flows run as (§13 Q1 — audited). */
     private static UUID appSystemPrincipal(EntityHandle handle) {
         return UUID.nameUUIDFromBytes(("system:" + handle.appApiName()).getBytes());
+    }
+
+    // --- Phase 7 harvests: freezeOnTerminal (§3.1) + PeriodLock (§3.2) ---
+
+    /**
+     * {@code freezeOnTerminal} (PHASE-7 §3.1): a record whose bound machine sits in a
+     * terminal state is an immutable document — every write to it (field updates,
+     * deletes, an inline child array on a PATCH) rejects with {@code RECORD_FROZEN}.
+     * Corrections are new reversal records, never edits. The check precedes everything
+     * else on the update path — including roll-up evaluation — so nothing recomputes
+     * a frozen document.
+     */
+    private void requireNotFrozen(AppDefinition app, EntityHandle handle,
+                                  Map<String, Object> existing) {
+        if (!handle.entity().freezesOnTerminal()) {
+            return;
+        }
+        var machine = app.stateMachineFor(handle.entity().apiName());
+        if (machine.isEmpty()) {
+            return;   // save validation requires a machine; the runtime stays fail-open
+        }           // on the pairing so republishing cannot wedge a tenant's writes
+        String stateField = machine.get().stateField();
+        Object state = existing.get(stateField);
+        if (state != null && machine.get().isTerminal(String.valueOf(state))) {
+            throw new PlatformException(PlatformErrorCode.RECORD_FROZEN,
+                    handle.entity().apiName() + " is frozen — its state machine sits in the "
+                            + "terminal state " + state
+                            + " (freezeOnTerminal, PHASE-7 §3.1); corrections are reversal "
+                            + "records, never edits");
+        }
+    }
+
+    /**
+     * The document scope of the freeze (§3.1): children are independently addressable
+     * records (PHASE-1 §5), but the freeze covers the parent's whole document — a child
+     * create, update, or delete naming a frozen parent (any lookup field targeting a
+     * freeze-bound entity) rejects identically. Runs before roll-up evaluation, so a
+     * child write never recomputes a frozen parent.
+     */
+    private void requireParentsNotFrozen(UUID tenantId, AppDefinition app, EntityHandle childHandle,
+                                         Map<String, Object> childData) {
+        for (FieldDefinition field : childHandle.entity().fields()) {
+            if (field.type() != FieldType.LOOKUP) {
+                continue;
+            }
+            var parentEntity = app.entity(field.target() == null ? "" : field.target());
+            if (parentEntity.isEmpty() || !parentEntity.get().freezesOnTerminal()) {
+                continue;
+            }
+            Object value = childData.get(field.apiName());
+            if (value == null) {
+                continue;
+            }
+            UUID parentId;
+            try {
+                parentId = UUID.fromString(String.valueOf(value));
+            } catch (IllegalArgumentException notAUuid) {
+                continue;   // coercion reports malformed lookups with its own error
+            }
+            String parentKey = childHandle.appApiName() + "." + field.target();
+            records.find(tenantId, parentKey, parentId, false).ifPresent(parent ->
+                    requireNotFrozen(app, new EntityHandle(childHandle.appId(),
+                            childHandle.appApiName(), childHandle.version(), parentEntity.get(),
+                            parentKey), parent.data()));
+        }
     }
 
     private void runHooks(AppDefinition app, EntityHandle handle, UUID tenantId, UUID recordId,
@@ -838,7 +960,9 @@ public class RecordEngine {
         evaluateValidationRules(handle.entity(), canonical, errors);
         reject(errors, "hook create " + entityApiName + " failed validation");
         UUID id = UUID.randomUUID();
+        requireParentsNotFrozen(tenantId, app, handle, canonical);
         enforceCreateState(app, handle, canonical);
+        enforcePeriodLock(tenantId, app, handle, canonical);
         persistWithChildren(tenantId, systemPrincipal, app, handle, id, canonical, children, errors);
         events.publish(event("record.created", tenantId, handle.entityKey(), id, systemPrincipal));
         return canonical;
@@ -856,6 +980,7 @@ public class RecordEngine {
                         UUID.fromString(recordId), false)
                 .orElseThrow(() -> new PlatformException(PlatformErrorCode.NOT_FOUND,
                         entityApiName + "/" + recordId + " not found"));
+        requireNotFrozen(app, handle, existing.data());
         Map<String, Object> merged = new LinkedHashMap<>(existing.data());
         body.forEach((key, value) -> {
             if (!key.equals("version") && handle.entity().field(key).isPresent()) {
@@ -863,7 +988,9 @@ public class RecordEngine {
             }
         });
         evaluateFormulas(handle.entity(), merged);
+        requireParentsNotFrozen(tenantId, app, handle, merged);
         enforceTransition(app, handle, existing.data(), merged);
+        enforcePeriodLock(tenantId, app, handle, merged);
         int version = body.get("version") instanceof Number number ? number.intValue()
                 : existing.version();
         records.update(tenantId, handle.entityKey(), UUID.fromString(recordId), merged,
@@ -1134,6 +1261,9 @@ public class RecordEngine {
                         externalChecks(tenantId, childHandle, app), null, errors);
                 FieldCoercer.checkRequired(childHandle.entity(), canonicalChild, errors);
                 UUID childId = UUID.randomUUID();
+                // An inline child may name frozen parents through its own lookup fields
+                // (the §3.1 document scope) — the check rides child inserts too.
+                requireParentsNotFrozen(tenantId, app, childHandle, canonicalChild);
                 records.insert(tenantId, childHandle.entityKey(), childId, canonicalChild, actorId);
                 events.publish(event("record.created", tenantId, childHandle.entityKey(), childId, actorId));
             }
@@ -1165,6 +1295,9 @@ public class RecordEngine {
                         childHandle.entity(), childFields,
                         externalChecks(tenantId, childHandle, app), null, errors);
                 FieldCoercer.checkRequired(childHandle.entity(), canonicalChild, errors);
+                // An inline child may name frozen parents through its own lookup fields
+                // (the §3.1 document scope) — the check rides child inserts too.
+                requireParentsNotFrozen(tenantId, app, childHandle, canonicalChild);
                 UUID childId = UUID.randomUUID();
                 records.insert(tenantId, childHandle.entityKey(), childId, canonicalChild, actorId);
                 events.publish(event("record.created", tenantId, childHandle.entityKey(), childId, actorId));

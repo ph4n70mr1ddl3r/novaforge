@@ -27,12 +27,14 @@ class PlatformErrorCodeTest {
     @DisplayName("registry = the PHASE-0 §5.2 seed plus the codes later phases append")
     void seedSet() {
         // The seed is a floor, not a ceiling (PHASE-4 §2 appends 4010/4011; PHASE-6 §2
-        // appends 4012 — SIGNATURE_INVALID).
+        // appends 4012 — SIGNATURE_INVALID; PHASE-7 §3 appends the harvest pair
+        // 4013 RECORD_FROZEN / 4014 PERIOD_LOCKED).
         assertThat(Arrays.stream(PlatformErrorCode.values()).map(PlatformErrorCode::name))
                 .containsExactlyInAnyOrder(
                         "VALIDATION_FAILED", "TENANT_MISSING", "FORBIDDEN",
                         "NOT_FOUND", "STATE_TRANSITION", "SOD_VIOLATION",
-                        "SIGNATURE_INVALID", "CONFLICT_VERSION", "INTERNAL");
+                        "SIGNATURE_INVALID", "RECORD_FROZEN", "PERIOD_LOCKED",
+                        "CONFLICT_VERSION", "INTERNAL");
     }
 
     @Test
@@ -53,6 +55,10 @@ class PlatformErrorCodeTest {
         assertThat(PlatformErrorCode.INTERNAL.code()).isEqualTo("5000");
         assertThat(PlatformErrorCode.SIGNATURE_INVALID.code()).isEqualTo("4012");
         assertThat(PlatformErrorCode.SIGNATURE_INVALID.httpStatus()).isEqualTo(401);
+        assertThat(PlatformErrorCode.RECORD_FROZEN.code()).isEqualTo("4013");
+        assertThat(PlatformErrorCode.RECORD_FROZEN.httpStatus()).isEqualTo(400);
+        assertThat(PlatformErrorCode.PERIOD_LOCKED.code()).isEqualTo("4014");
+        assertThat(PlatformErrorCode.PERIOD_LOCKED.httpStatus()).isEqualTo(400);
     }
 
     @Test

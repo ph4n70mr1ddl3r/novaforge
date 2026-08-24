@@ -1,0 +1,89 @@
+name: app-suite-gate
+
+# The per-app promotion pipeline pattern (PHASE-8 §5): the platform does not run
+# customer CI in v1 — this reusable workflow ships the green-run → promote shape as
+# code, dogfooding the headless APIs. The platform's own PR pipeline runs its own
+# suites via `./mvnw verify` (the build job) — the harness is the same either way.
+#
+# Usage from an app repo (or this repo's workflow_dispatch):
+#   jobs:
+#     promote:
+#       uses: novaforge/novaforge/.github/workflows/app-suite-gate.yml@main
+#       with:
+#         metadata-url: http://localhost:8081
+#         app-id: <uuid>
+#         version: 3
+#         environment: staging
+#       secrets:
+#         pipeline-client-id: novaforge-pipeline
+#         pipeline-client-secret: ${{ secrets.NOVAFORGE_PIPELINE_SECRET }}
+#         token-url: http://localhost:8082/realms/novaforge/protocol/openid-connect/token
+
+on:
+  workflow_call:
+    inputs:
+      metadata-url:
+        required: true
+        type: string
+      app-id:
+        required: true
+        type: string
+      version:
+        required: true
+        type: number
+      environment:
+        required: false
+        type: string
+        default: staging
+      promote:
+        description: Promote when green (false = run the gate only)
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      pipeline-client-id:
+        required: true
+      pipeline-client-secret:
+        required: true
+      token-url:
+        required: true
+
+jobs:
+  suite-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Authenticate the pipeline client (client credentials → builder)
+        env:
+          TOKEN_URL: ${{ secrets.token-url }}
+          CLIENT_ID: ${{ secrets.pipeline-client-id }}
+          CLIENT_SECRET: ${{ secrets.pipeline-client-secret }}
+        run: |
+          TOKEN=$(curl -sf -X POST "$TOKEN_URL" \
+            -d "grant_type=client_credentials&client_id=$CLIENT_ID&client_secret=$CLIENT_SECRET" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+          echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Headless suite run (green against exactly the candidate)
+        env:
+          METADATA: ${{ inputs.metadata-url }}
+          APP: ${{ inputs.app-id }}
+        run: |
+          OUT=$(curl -sf -X POST "$METADATA/api/v1/metadata/apps/$APP/suite-runs" \
+            -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}')
+          echo "$OUT" | python3 -c '
+          import json, sys
+          run = json.load(sys.stdin)
+          print(json.dumps({r["suite"]: r["green"] for r in run["runs"]}, indent=2))
+          sys.exit(0 if run["green"] else 1)'
+
+      - name: Promote through the gate
+        if: ${{ inputs.promote }}
+        env:
+          METADATA: ${{ inputs.metadata-url }}
+          APP: ${{ inputs.app-id }}
+          VERSION: ${{ inputs.version }}
+          ENV: ${{ inputs.environment }}
+        run: |
+          curl -sf -X POST "$METADATA/api/v1/metadata/apps/$APP/environments/$ENV/promote" \
+            -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+            -d "{\"version\": $VERSION}" | python3 -m json.tool

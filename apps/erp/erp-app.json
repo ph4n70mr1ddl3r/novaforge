@@ -1,0 +1,417 @@
+{
+  "apiName": "Erp",
+  "label": "NovaForge ERP (dogfood)",
+  "description": "The Phase 7 proving-ground app: GL, AR, inventory with weighted-average costing, period close — authored entirely as metadata (PHASE-7 §2). Zero handwritten application code; one budgeted script (§5).",
+
+  "settings": {
+    "sequences": [
+      { "apiName": "entryNumber", "mode": "gapless", "start": 1, "prefix": "JE-", "padding": 6 },
+      { "apiName": "invoiceNumber", "mode": "gapless", "start": 1, "prefix": "INV-", "padding": 6 },
+      { "apiName": "paymentNumber", "mode": "cached", "start": 1, "prefix": "PAY-", "padding": 5 }
+    ],
+    "currencies": [
+      { "code": "USD", "scale": 4 },
+      { "code": "EUR", "scale": 4 }
+    ]
+  },
+
+  "permissionSet": {
+    "roles": [
+      { "name": "controller", "description": "Financial control: reads everything, executes reports, owns period close", "level": 1 },
+      { "name": "accountingManager", "description": "Approves journals and invoices (SoD: never the preparer)", "level": 10 },
+      { "name": "arClerk", "description": "Books invoices, customers, and their journals (the preparer role)", "level": 20 },
+      { "name": "inventoryClerk", "description": "Items and stock movements", "level": 20 },
+      { "name": "reporting", "description": "Scheduled report delivery scope (explicitly permissioned, never admin)" }
+    ],
+    "objectPermissions": [
+      { "role": "arClerk", "entity": "Customer", "create": true, "read": true, "update": true, "delete": true },
+      { "role": "arClerk", "entity": "Invoice", "create": true, "read": true, "update": true },
+      { "role": "arClerk", "entity": "InvoiceLine", "create": true, "read": true, "update": true, "delete": true },
+      { "role": "arClerk", "entity": "JournalEntry", "create": true, "read": true, "update": true },
+      { "role": "arClerk", "entity": "JournalLine", "create": true, "read": true, "update": true, "delete": true },
+      { "role": "arClerk", "entity": "Payment", "create": true, "read": true, "update": true, "delete": true },
+      { "role": "arClerk", "entity": "Account", "read": true },
+      { "role": "arClerk", "entity": "AccountingPeriod", "read": true },
+
+      { "role": "accountingManager", "entity": "Account", "create": true, "read": true, "update": true, "delete": true },
+      { "role": "accountingManager", "entity": "AccountingPeriod", "create": true, "read": true, "update": true },
+      { "role": "accountingManager", "entity": "JournalEntry", "create": true, "read": true, "update": true, "delete": true },
+      { "role": "accountingManager", "entity": "JournalLine", "create": true, "read": true, "update": true, "delete": true },
+      { "role": "accountingManager", "entity": "Customer", "read": true },
+      { "role": "accountingManager", "entity": "Invoice", "read": true, "update": true },
+      { "role": "accountingManager", "entity": "Payment", "read": true },
+      { "role": "accountingManager", "entity": "Item", "read": true },
+      { "role": "accountingManager", "entity": "StockLedger", "read": true },
+
+      { "role": "controller", "entity": "Account", "read": true },
+      { "role": "controller", "entity": "AccountingPeriod", "read": true, "update": true },
+      { "role": "controller", "entity": "JournalEntry", "read": true },
+      { "role": "controller", "entity": "JournalLine", "read": true, "reportExecute": true },
+      { "role": "controller", "entity": "Customer", "read": true },
+      { "role": "controller", "entity": "Invoice", "read": true, "reportExecute": true },
+      { "role": "controller", "entity": "Payment", "read": true },
+      { "role": "controller", "entity": "Item", "read": true, "reportExecute": true },
+      { "role": "controller", "entity": "StockLedger", "read": true },
+
+      { "role": "inventoryClerk", "entity": "Item", "create": true, "read": true, "update": true, "delete": true },
+      { "role": "inventoryClerk", "entity": "StockLedger", "create": true, "read": true, "update": true, "delete": true },
+
+      { "role": "reporting", "entity": "Invoice", "read": true, "reportExecute": true },
+      { "role": "reporting", "entity": "JournalLine", "read": true },
+      { "role": "reporting", "entity": "Item", "read": true }
+    ]
+  },
+
+  "entities": [
+    {
+      "apiName": "AccountingPeriod",
+      "label": "Accounting Period",
+      "displayField": "name",
+      "module": "GL",
+      "fields": [
+        { "apiName": "name", "type": "text", "required": true },
+        { "apiName": "startDate", "type": "date", "required": true },
+        { "apiName": "endDate", "type": "date", "required": true },
+        { "apiName": "status", "type": "enum", "values": ["OPEN", "CLOSING", "CLOSED"] }
+      ],
+      "indexes": [ { "fields": ["startDate"] }, { "fields": ["endDate"] }, { "fields": ["status"] } ]
+    },
+    {
+      "apiName": "Account",
+      "label": "Account",
+      "displayField": "code",
+      "module": "GL",
+      "fields": [
+        { "apiName": "code", "type": "text", "required": true, "uniqueness": true },
+        { "apiName": "name", "type": "text", "required": true },
+        { "apiName": "type", "type": "enum", "required": true,
+          "values": ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"] },
+        { "apiName": "parentAccount", "type": "lookup", "target": "Account" }
+      ],
+      "indexes": [ { "fields": ["code"] }, { "fields": ["type"] } ]
+    },
+    {
+      "apiName": "JournalEntry",
+      "label": "Journal Entry",
+      "displayField": "reference",
+      "module": "GL",
+      "freezeOnTerminal": true,
+      "periodLock": { "entity": "AccountingPeriod", "dateField": "entryDate" },
+      "fields": [
+        { "apiName": "reference", "type": "text", "required": true, "uniqueness": true,
+          "default": { "sequence": "entryNumber" } },
+        { "apiName": "memo", "type": "text" },
+        { "apiName": "entryDate", "type": "date", "required": true },
+        { "apiName": "currency", "type": "enum", "values": ["USD", "EUR"],
+          "default": { "value": "USD" } },
+        { "apiName": "fxRate", "type": "decimal", "precision": 18, "scale": 6,
+          "default": { "value": 1 } },
+        { "apiName": "closeJournal", "type": "boolean", "default": { "value": false } },
+        { "apiName": "reversalOf", "type": "lookup", "target": "JournalEntry" },
+        { "apiName": "status", "type": "enum", "values": ["DRAFT", "SUBMITTED", "POSTED"] },
+        { "apiName": "totalDebit", "type": "money", "rollup": "SUM(lines.debit)" },
+        { "apiName": "totalCredit", "type": "money", "rollup": "SUM(lines.credit)" }
+      ],
+      "relationships": [
+        { "apiName": "lines", "type": "child", "target": "JournalLine", "cascadeDelete": true }
+      ],
+      "validations": [
+        { "name": "balanced", "scope": "record",
+          "expression": "totalDebit == totalCredit",
+          "message": "Entry must balance: total debit must equal total credit" }
+      ],
+      "hooks": [
+        { "name": "submitForPosting", "trigger": "afterSave",
+          "flow": {
+            "id": "b1", "op": "branch", "params": { "guard": "status == 'SUBMITTED' && totalDebit > 0" },
+            "onTrue": "a1", "onFalse": null,
+            "body": {
+              "id": "a1", "op": "requestApproval",
+              "params": { "approvers": "accountingManager", "mode": "any" },
+              "next": "p1",
+              "body": {
+                "id": "r1", "op": "publishEvent",
+                "params": { "name": "journal.rejected",
+                            "payload": { "reference": "${reference}", "reason": "approval rejected" } },
+                "body": {
+                  "id": "p1", "op": "transitionState", "params": { "to": "POSTED" } }
+              }
+            }
+          }
+        }
+      ],
+      "indexes": [ { "fields": ["entryDate"] }, { "fields": ["status"] } ]
+    },
+    {
+      "apiName": "JournalLine",
+      "label": "Journal Line",
+      "module": "GL",
+      "fields": [
+        { "apiName": "entry", "type": "lookup", "target": "JournalEntry", "required": true },
+        { "apiName": "account", "type": "lookup", "target": "Account", "required": true },
+        { "apiName": "debit", "type": "money" },
+        { "apiName": "credit", "type": "money" },
+        { "apiName": "memo", "type": "text" }
+      ],
+      "validations": [
+        { "name": "oneSideOnly", "scope": "record",
+          "expression": "(debit == null || credit == null) || !(debit > 0 && credit > 0)",
+          "message": "A line carries debit or credit, never both" }
+      ],
+      "indexes": [ { "fields": ["debit"] }, { "fields": ["credit"] }, { "fields": ["account"] } ]
+    },
+    {
+      "apiName": "Customer",
+      "label": "Customer",
+      "displayField": "name",
+      "module": "AR",
+      "fields": [
+        { "apiName": "name", "type": "text", "required": true },
+        { "apiName": "email", "type": "email" },
+        { "apiName": "creditLimit", "type": "money" }
+      ],
+      "indexes": [ { "fields": ["name"] } ]
+    },
+    {
+      "apiName": "Invoice",
+      "label": "Invoice",
+      "displayField": "number",
+      "module": "AR",
+      "freezeOnTerminal": true,
+      "fields": [
+        { "apiName": "number", "type": "text", "required": true, "uniqueness": true,
+          "default": { "sequence": "invoiceNumber" } },
+        { "apiName": "customer", "type": "lookup", "target": "Customer", "required": true },
+        { "apiName": "invoiceDate", "type": "date", "required": true },
+        { "apiName": "dueDate", "type": "date", "required": true },
+        { "apiName": "currency", "type": "enum", "values": ["USD", "EUR"],
+          "default": { "value": "USD" } },
+        { "apiName": "fxRate", "type": "decimal", "precision": 18, "scale": 6,
+          "default": { "value": 1 } },
+        { "apiName": "total", "type": "money", "rollup": "SUM(lines.amount)" },
+        { "apiName": "amountOutstanding", "type": "money" },
+        { "apiName": "status", "type": "enum", "values": ["DRAFT", "SUBMITTED", "POSTED"] }
+      ],
+      "relationships": [
+        { "apiName": "lines", "type": "child", "target": "InvoiceLine", "cascadeDelete": true }
+      ],
+      "validations": [
+        { "name": "dueNotBeforeInvoice", "scope": "record",
+          "expression": "dueDate >= invoiceDate",
+          "message": "Due date cannot precede the invoice date" }
+      ],
+      "hooks": [
+        { "name": "submitForPosting", "trigger": "afterSave",
+          "flow": {
+            "id": "b1", "op": "branch", "params": { "guard": "status == 'SUBMITTED'" },
+            "onTrue": "a1", "onFalse": null,
+            "body": {
+              "id": "a1", "op": "requestApproval",
+              "params": { "approvers": "accountingManager", "mode": "any" },
+              "next": "p1",
+              "body": {
+                "id": "r1", "op": "publishEvent",
+                "params": { "name": "invoice.rejected",
+                            "payload": { "number": "${number}", "reason": "approval rejected" } },
+                "body": {
+                  "id": "p1", "op": "transitionState", "params": { "to": "POSTED" } }
+              }
+            }
+          }
+        }
+      ],
+      "indexes": [ { "fields": ["status"] }, { "fields": ["dueDate"] },
+                   { "fields": ["amountOutstanding"] }, { "fields": ["invoiceDate"] },
+                   { "fields": ["total"] } ]
+    },
+    {
+      "apiName": "InvoiceLine",
+      "label": "Invoice Line",
+      "module": "AR",
+      "fields": [
+        { "apiName": "invoice", "type": "lookup", "target": "Invoice", "required": true },
+        { "apiName": "description", "type": "text" },
+        { "apiName": "quantity", "type": "decimal", "precision": 18, "scale": 6 },
+        { "apiName": "unitPrice", "type": "money" },
+        { "apiName": "amount", "type": "money", "formula": "quantity * unitPrice" }
+      ],
+      "indexes": [ { "fields": ["amount"] }, { "fields": ["invoice"] } ]
+    },
+    {
+      "apiName": "Payment",
+      "label": "Payment",
+      "displayField": "number",
+      "module": "AR",
+      "fields": [
+        { "apiName": "number", "type": "text", "required": true, "uniqueness": true,
+          "default": { "sequence": "paymentNumber" } },
+        { "apiName": "invoice", "type": "lookup", "target": "Invoice" },
+        { "apiName": "customer", "type": "lookup", "target": "Customer" },
+        { "apiName": "paymentDate", "type": "date", "required": true },
+        { "apiName": "amount", "type": "money", "required": true },
+        { "apiName": "currency", "type": "enum", "values": ["USD", "EUR"],
+          "default": { "value": "USD" } },
+        { "apiName": "fxRate", "type": "decimal", "precision": 18, "scale": 6,
+          "default": { "value": 1 } }
+      ],
+      "indexes": [ { "fields": ["paymentDate"] }, { "fields": ["amount"] }, { "fields": ["invoice"] } ]
+    },
+    {
+      "apiName": "Item",
+      "label": "Item",
+      "displayField": "sku",
+      "module": "Inventory",
+      "fields": [
+        { "apiName": "sku", "type": "text", "required": true, "uniqueness": true },
+        { "apiName": "name", "type": "text", "required": true },
+        { "apiName": "unitCost", "type": "money" },
+        { "apiName": "qtyOnHand", "type": "decimal", "precision": 18, "scale": 6,
+          "rollup": "SUM(movements.qty)" },
+        { "apiName": "inventoryValue", "type": "money", "rollup": "SUM(movements.value)" }
+      ],
+      "relationships": [
+        { "apiName": "movements", "type": "child", "target": "StockLedger", "cascadeDelete": true }
+      ],
+      "indexes": [ { "fields": ["sku"] }, { "fields": ["qtyOnHand"] }, { "fields": ["inventoryValue"] } ]
+    },
+    {
+      "apiName": "StockLedger",
+      "label": "Stock Ledger",
+      "displayField": "movementType",
+      "module": "Inventory",
+      "freezeOnTerminal": true,
+      "fields": [
+        { "apiName": "item", "type": "lookup", "target": "Item", "required": true },
+        { "apiName": "movementType", "type": "enum", "required": true,
+          "values": ["RECEIPT", "ISSUE"] },
+        { "apiName": "movementDate", "type": "date", "required": true },
+        { "apiName": "qty", "type": "decimal", "required": true, "precision": 18, "scale": 6 },
+        { "apiName": "unitCost", "type": "money" },
+        { "apiName": "value", "type": "money" },
+        { "apiName": "status", "type": "enum", "values": ["DRAFT", "POSTED"] }
+      ],
+      "validations": [
+        { "name": "receiptPositive", "scope": "record",
+          "expression": "movementType != 'RECEIPT' || qty > 0",
+          "message": "Receipts carry a positive quantity" },
+        { "name": "issueNegative", "scope": "record",
+          "expression": "movementType != 'ISSUE' || qty < 0",
+          "message": "Issues carry a negative quantity" },
+        { "name": "receiptPriced", "scope": "record",
+          "expression": "movementType != 'RECEIPT' || status != 'POSTED' || unitCost != null",
+          "message": "Posting a receipt requires its unit cost" }
+      ],
+      "hooks": [
+        { "name": "costMovement", "trigger": "beforeSave",
+          "script": {
+            "language": "js",
+            "source": "(function () { if ($record.status !== 'POSTED') { return {}; } if ($record.movementType === 'ISSUE' && $record.unitCost == null) { var page = $data.query('Item', '{}'); var item = null; for (var i = 0; i < page.rows.length; i++) { if (page.rows[i].id === $record.item) { item = page.rows[i]; break; } } if (item == null || item.inventoryValue == null || item.qtyOnHand == null) { return {}; } var avg = item.inventoryValue / item.qtyOnHand; return { unitCost: avg, value: $record.qty * avg }; } if ($record.movementType === 'RECEIPT' && $record.unitCost != null && $record.value == null) { return { value: $record.qty * $record.unitCost }; } return {}; })()"
+          }
+        }
+      ],
+      "indexes": [ { "fields": ["movementDate"] }, { "fields": ["status"] },
+                   { "fields": ["qty"] }, { "fields": ["value"] } ]
+    }
+  ],
+
+  "stateMachines": [
+    { "id": "sm_journal", "entity": "JournalEntry", "stateField": "status", "initial": "DRAFT",
+      "states": [ { "name": "DRAFT" }, { "name": "SUBMITTED" }, { "name": "POSTED", "terminal": true } ],
+      "transitions": [
+        { "from": "DRAFT", "to": "SUBMITTED" },
+        { "from": "SUBMITTED", "to": "POSTED" } ] },
+    { "id": "sm_invoice", "entity": "Invoice", "stateField": "status", "initial": "DRAFT",
+      "states": [ { "name": "DRAFT" }, { "name": "SUBMITTED" }, { "name": "POSTED", "terminal": true } ],
+      "transitions": [
+        { "from": "DRAFT", "to": "SUBMITTED" },
+        { "from": "SUBMITTED", "to": "POSTED" } ] },
+    { "id": "sm_movement", "entity": "StockLedger", "stateField": "status", "initial": "DRAFT",
+      "states": [ { "name": "DRAFT" }, { "name": "POSTED", "terminal": true } ],
+      "transitions": [ { "from": "DRAFT", "to": "POSTED" } ] },
+    { "id": "sm_period", "entity": "AccountingPeriod", "stateField": "status", "initial": "OPEN",
+      "states": [ { "name": "OPEN" }, { "name": "CLOSING" }, { "name": "CLOSED" } ],
+      "transitions": [
+        { "from": "OPEN", "to": "CLOSING" },
+        { "from": "CLOSING", "to": "CLOSED" },
+        { "from": "CLOSED", "to": "OPEN" } ] }
+  ],
+
+  "reports": [
+    {
+      "id": "trialBalance",
+      "entity": "JournalLine",
+      "label": "Trial Balance",
+      "groupBy": [ { "field": "account" } ],
+      "aggregates": [
+        { "op": "sum", "field": "debit", "alias": "debitTotal" },
+        { "op": "sum", "field": "credit", "alias": "creditTotal" } ],
+      "drillThrough": { "entity": "JournalLine", "carryFilters": false }
+    },
+    {
+      "id": "arAging",
+      "entity": "Invoice",
+      "label": "A/R Aging",
+      "filters": [ { "field": "status", "op": "eq", "value": "POSTED" } ],
+      "groupBy": [
+        { "field": "customer" },
+        { "field": "dueDate", "buckets": [
+          { "label": "current", "expression": "today() - dueDate < 0" },
+          { "label": "0-30", "expression": "today() - dueDate >= 0 && today() - dueDate <= 30" },
+          { "label": "31-60", "expression": "today() - dueDate > 30 && today() - dueDate <= 60" },
+          { "label": "60+", "expression": "today() - dueDate > 60" } ] } ],
+      "aggregates": [
+        { "op": "sum", "field": "amountOutstanding", "alias": "outstanding" },
+        { "op": "sum", "field": "total", "alias": "invoiced" } ],
+      "drillThrough": { "entity": "Invoice", "carryFilters": true }
+    },
+    {
+      "id": "inventoryValuation",
+      "entity": "Item",
+      "label": "Inventory Valuation (weighted average)",
+      "groupBy": [ { "field": "sku" } ],
+      "aggregates": [
+        { "op": "sum", "field": "qtyOnHand", "alias": "qtyTotal" },
+        { "op": "sum", "field": "inventoryValue", "alias": "valueTotal" } ],
+      "drillThrough": { "entity": "Item", "carryFilters": false }
+    }
+  ],
+
+  "dashboards": [
+    {
+      "id": "exec",
+      "label": "Executive",
+      "widgets": [
+        { "widget": "kpi", "reportRef": "arAging", "params": { "aggregate": "outstanding" }, "span": 4 },
+        { "widget": "chart", "reportRef": "arAging", "params": { "x": "bucket", "y": "outstanding" }, "span": 8 },
+        { "widget": "table", "reportRef": "trialBalance", "params": {}, "span": 12 } ],
+      "roles": ["controller", "accountingManager"]
+    }
+  ],
+
+  "jobs": [
+    { "name": "nightlyAging", "cron": "0 6 * * *", "target": "report",
+      "params": { "reportId": "arAging", "runAsRole": "reporting", "format": "xlsx",
+                  "recipients": { "roles": ["controller"] } },
+      "enabled": true }
+  ],
+
+  "integrations": {
+    "connectors": [
+      { "id": "bankFeed", "type": "rest", "baseUrl": "https://bank.example.local",
+        "credential": "bankFeedKey",
+        "operations": [
+          { "name": "listTransactions", "method": "GET", "path": "/v1/transactions",
+            "query": { "since": "${since}" } } ] } ],
+    "webhooks": [
+      { "id": "paymentsFeed", "direction": "inbound", "entity": "Payment",
+        "secretRef": "payments-feed",
+        "mapping": { "mode": "upsert", "keyFields": ["number"],
+                     "idempotencyKey": "${txn_id}",
+                     "fields": { "number": "${txn_id}", "amount": "${amount}",
+                                 "paymentDate": "${posted_date}" } },
+        "enabled": true } ],
+    "credentials": [
+      { "id": "bankFeedKey", "kind": "api_key", "header": "Authorization" } ],
+    "imports": []
+  }
+}

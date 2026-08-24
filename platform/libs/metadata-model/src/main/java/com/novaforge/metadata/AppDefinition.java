@@ -33,7 +33,8 @@ public record AppDefinition(
         List<WorkflowDefinition> workflows,
         List<ReportDefinition> reports,
         List<DashboardDefinition> dashboards,
-        IntegrationsDefinition integrations) {
+        IntegrationsDefinition integrations,
+        List<TranslationsDefinition> translations) {
 
     public AppDefinition {
         entities = entities == null ? List.of() : List.copyOf(entities);
@@ -49,12 +50,22 @@ public record AppDefinition(
         reports = reports == null ? List.of() : List.copyOf(reports);
         dashboards = dashboards == null ? List.of() : List.copyOf(dashboards);
         integrations = integrations == null ? new IntegrationsDefinition() : integrations;
+        translations = translations == null ? List.of() : List.copyOf(translations);
     }
 
     /** The Integrations branch (PHASE-6 §2) — connectors, webhooks, credentials, imports. */
     @Override
     public IntegrationsDefinition integrations() {
         return integrations;
+    }
+
+    /** The Translations branch (PHASE-8 §7) — one workspace per locale. */
+    public List<TranslationsDefinition> translations() {
+        return translations;
+    }
+
+    public java.util.Optional<TranslationsDefinition> translations(String locale) {
+        return translations.stream().filter(t -> t.locale().equals(locale)).findFirst();
     }
 
     public java.util.Optional<TestSuiteDefinition> testSuite(String apiName) {
@@ -189,7 +200,21 @@ public record AppDefinition(
                          List<DashboardDefinition> dashboards) {
         this(id, apiName, label, labelI18n, description, entities, pages, settings,
                 permissionSet, testSuites, stateMachines, slas, jobs, workflows,
-                reports, dashboards, new IntegrationsDefinition());
+                reports, dashboards, new IntegrationsDefinition(), List.of());
+    }
+
+    /** Constructor without the Translations branch (pre-Phase-8 drafts). */
+    public AppDefinition(String id, String apiName, String label, Map<String, String> labelI18n,
+                         String description, List<EntityDefinition> entities,
+                         List<PageDefinition> pages, SettingsDefinition settings,
+                         PermissionSet permissionSet, List<TestSuiteDefinition> testSuites,
+                         List<StateMachineDefinition> stateMachines,
+                         List<SlaDefinition> slas, List<ScheduledJobDefinition> jobs,
+                         List<WorkflowDefinition> workflows, List<ReportDefinition> reports,
+                         List<DashboardDefinition> dashboards, IntegrationsDefinition integrations) {
+        this(id, apiName, label, labelI18n, description, entities, pages, settings,
+                permissionSet, testSuites, stateMachines, slas, jobs, workflows,
+                reports, dashboards, integrations, List.of());
     }
 
     /** Page definition (reserved slot; authored from Phase 2 per PHASE-2 §3). */

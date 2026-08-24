@@ -115,11 +115,19 @@ public class DefinitionService {
         var suite = candidate.testSuite(suiteApiName).orElseThrow(() ->
                 new PlatformException(PlatformErrorCode.NOT_FOUND,
                         "test suite " + suiteApiName + " not found"));
-        return testRunner.run(candidate, suite, actorId);
+        Map<String, Object> artifact = testRunner.run(candidate, suite, actorId);
+        // PHASE-8 §4 item 1: run artifacts are version-bound — the candidate's content
+        // hash is what publish records on the version row, so the promotion gate
+        // matches runs to versions mechanically. Every run (interactive or headless)
+        // records evidence.
+        store.recordSuiteRun(tenantId, appId, suiteApiName,
+                com.novaforge.metadata.lifecycle.LifecycleHash.contentHash(candidate),
+                Boolean.TRUE.equals(artifact.get("green")), artifact, actorId);
+        return artifact;
     }
 
     /** Suite save-validation: ops known, expectations shaped, op params present (§7, §12). */
-    private static void validateSuite(com.novaforge.metadata.TestSuiteDefinition suite) {
+    static void validateSuite(com.novaforge.metadata.TestSuiteDefinition suite) {
         for (var testCase : suite.cases()) {
             for (var step : testCase.steps()) {
                 if (!com.novaforge.metadata.TestSuiteDefinition.Step.OPS.contains(step.op())) {
@@ -153,7 +161,10 @@ public class DefinitionService {
                 }
                 if ("deleteRecord".equals(step.op())
                         && (step.template() == null
-                        || !(step.template().get("version") instanceof Number))) {
+                        || !(step.template().get("version") instanceof Number
+                        // a ${…} reference resolves at run time — the runner
+                        // interpolates versions exactly like every other template slot
+                        || isReference(String.valueOf(step.template().get("version")))))) {
                     throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                             where + " requires template.version (optimistic locking)");
                 }
@@ -233,7 +244,8 @@ public class DefinitionService {
      * read the clock; formula fields may not (PHASE-3 §3 — determinism of stored
      * values). Slots stay inert until Phase 3 activates write-path evaluation.
      */
-    private static void compileCheckExpressions(AppDefinition app, ProblemErrors errors) {
+    /** Expression compile-check — package-private so the artifact tests ride the exact save-path check. */
+    static void compileCheckExpressions(AppDefinition app, ProblemErrors errors) {
         List<ProblemErrors.FieldError> found = new ArrayList<>(errors.errors());
         for (EntityDefinition entity : app.entities()) {
             java.util.Set<String> fields = new java.util.LinkedHashSet<>();
@@ -270,7 +282,7 @@ public class DefinitionService {
 
     // --- compatibility check (§4) ---
 
-    static List<String> breakingChanges(AppDefinition previous, AppDefinition next) {
+    public static List<String> breakingChanges(AppDefinition previous, AppDefinition next) {
         List<String> changes = new ArrayList<>();
         Map<String, EntityDefinition> nextEntities = new java.util.HashMap<>();
         next.entities().forEach(e -> nextEntities.put(e.apiName(), e));
@@ -330,7 +342,8 @@ public class DefinitionService {
                         && patch.integrations().webhooks().isEmpty()
                         && patch.integrations().credentials().isEmpty()
                         && patch.integrations().imports().isEmpty())
-                        ? current.integrations() : patch.integrations());
+                        ? current.integrations() : patch.integrations(),
+                patch.translations().isEmpty() ? current.translations() : patch.translations());
     }
 
     private static EntityDefinition mergeEntity(EntityDefinition current, EntityDefinition patch) {
@@ -341,9 +354,12 @@ public class DefinitionService {
                 patch.labelI18n().isEmpty() ? current.labelI18n() : patch.labelI18n(),
                 patch.displayField() != null ? patch.displayField() : current.displayField(),
                 patch.module() != null ? patch.module() : current.module(),
+                patch.freezeOnTerminal() != null ? patch.freezeOnTerminal() : current.freezeOnTerminal(),
+                patch.periodLock() != null ? patch.periodLock() : current.periodLock(),
                 patch.fields().isEmpty() ? current.fields() : patch.fields(),
                 patch.relationships().isEmpty() ? current.relationships() : patch.relationships(),
                 patch.validations().isEmpty() ? current.validations() : patch.validations(),
+                patch.hooks().isEmpty() ? current.hooks() : patch.hooks(),
                 patch.indexes().isEmpty() ? current.indexes() : patch.indexes());
     }
 
@@ -351,7 +367,12 @@ public class DefinitionService {
         return new AppDefinition(app.id(), app.apiName(), app.label(), app.labelI18n(),
                 app.description(), entities, app.pages(), app.settings(), app.permissionSet(),
                 app.testSuites(), app.stateMachines(), app.slas(), app.jobs(), app.workflows(),
-                app.reports(), app.dashboards(), app.integrations());
+                app.reports(), app.dashboards(), app.integrations(), app.translations());
+    }
+
+    /** A {@code ${…}} template reference — resolves at run time, validated for shape at save. */
+    private static boolean isReference(String value) {
+        return value != null && value.matches("\\$\\{[A-Za-z0-9_.\\[\\]]+}");
     }
 
     private static PlatformException validationFailure(String message, ProblemErrors errors) {

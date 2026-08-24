@@ -102,7 +102,9 @@ novaforge/
 │                        #   data-runtime (api/engine/storage/authorization),
 │                        #   script-engine, audit-service, workflow-service,
 │                        #   scheduler-service, notification-service,
-│                        #   reporting-service
+│                        #   reporting-service, integration-service, file-service
+├── apps/erp/            # the Phase 7 dogfood: the ERP app as metadata (entities,
+│                        #   flows, machines, reports, suites) + the binding gap log
 ├── frontend/            # pnpm workspace (PHASE-2 §2): shared/ = the versioned
 │                        #   component catalog + lazy registry (Phase 5 T5)
 ├── deploy/              # compose (Keycloak/PG/Redis/Kafka/Prometheus/Grafana
@@ -112,7 +114,8 @@ novaforge/
 │   ├── specs/           # Phase specifications (PHASE-0 … PHASE-8)
 │   ├── adr/             # ADR-001 … ADR-010
 │   ├── spikes/          # storage spike (ADR-001's evidence)
-│   └── loadtests/       # Phase 1 §10 measurements
+│   ├── loadtests/       # Phase 1 §10 measurements
+│   └── runbooks/        # DR restore drill + security-review scope (Phase 8 §8)
 └── .github/workflows/   # CI (build + Podman-socket integration)
 ```
 
@@ -174,8 +177,10 @@ transcript and `docs/loadtests/` for the measured read/list/write targets.
 
 ## Status
 
-**Phases 0–1 complete and verified live; Phases 2–5 partially implemented (all
-backend surfaces); Phases 6–8 not started.** The platform core (gateway, Metadata
+**Phases 0–1 complete and verified live; Phases 2–7 partially implemented (all
+backend surfaces + the Phase 7 harvests and dogfood artifacts); Phase 8's code
+surface landed (environments, gated promotion, rollback, change sets, artifacts,
+headless runs, templates, i18n) with the operational drills as runbooks.** The platform core (gateway, Metadata
 Service, Data Runtime — ADR-001 closed with measured numbers) shipped in Phases 0–1;
 since then: the expression DSL with server-side RBAC/field security and tenant
 onboarding (Phase 2 backend), the write-path evaluation chain, the Kafka event spine
@@ -191,7 +196,19 @@ lists, the Reporting Service (run/export as the requesting actor, Redis-cached,
 scheduled delivery under an explicitly permissioned `runAsRole`), the
 expression-to-SQL lowering with parity guards, the harness `runReport` op, and the
 first four versioned catalog components (React 19.2 workspace, axe-gated in CI).
-239 Java + 17 frontend tests green under `./mvnw verify` + `pnpm test`. The main
+Since then: the integration plane — connectors with `callConnector`, webhooks both
+directions behind one HMAC scheme, the AES-GCM secret store, resumable import/export,
+the File Service with presigned uploads and the ClamAV hook (Phase 6) — the two
+Phase 7 harvests (`freezeOnTerminal` posting immutability, `PeriodLock` period
+locking, error codes 4013/4014, enforced on every write path) plus the ERP dogfood
+app as pure metadata with its acceptance suites and the binding gap log
+(`apps/erp/`, CI-gated by `ErpAppArtifactTests`), and the Phase 8 lifecycle:
+content-hash version-bound suite runs gating promotion dev → staging → prod with
+audited admin overrides, compatibility-scoped rollback, change-set review payloads,
+the hashed+signed promotion artifact (ZIP), headless suite-run APIs + the
+`novaforge-pipeline` CI client and reusable workflow, the template catalog, and the
+i18n translation workspaces with the pinned fallback chain. 288 Java + 20 frontend
+tests green under `./mvnw verify` + `pnpm test`. The main
 remaining surfaces: the React builder/runtime UI shell (Phase 2's largest gap, which
 T6's report builder rides) and the later-phase full-stack exit demos. Progress
 ledger: [IMPLEMENTATION.md](IMPLEMENTATION.md).

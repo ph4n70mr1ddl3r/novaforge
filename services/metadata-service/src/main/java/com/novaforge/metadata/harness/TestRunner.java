@@ -494,13 +494,23 @@ public class TestRunner {
     private void publishCandidate(String adminUsername, String adminPassword,
                                   AppDefinition candidate) {
         String token = passwordGrant(adminUsername, adminPassword);
-        Map<String, Object> body = Map.of(
-                "apiName", candidate.apiName(),
-                "label", candidate.label() == null ? candidate.apiName() : candidate.label(),
-                "settings", MAPPER.convertValue(candidate.settings(), Map.class),
-                "entities", MAPPER.convertValue(candidate.entities(), List.class),
-                "permissionSet", MAPPER.convertValue(candidate.permissionSet(), Map.class),
-                "integrations", MAPPER.convertValue(candidate.integrations(), Map.class));
+        // The full candidate bundle — every branch the suites exercise rides the
+        // publish (state machines, reports, dashboards, jobs: PHASE-7's suites pin
+        // machine-enforced posting, freezeOnTerminal, and report assertions; a
+        // reduced candidate would silently drop them).
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("apiName", candidate.apiName());
+        body.put("label", candidate.label() == null ? candidate.apiName() : candidate.label());
+        body.put("settings", MAPPER.convertValue(candidate.settings(), Map.class));
+        body.put("entities", MAPPER.convertValue(candidate.entities(), List.class));
+        body.put("permissionSet", MAPPER.convertValue(candidate.permissionSet(), Map.class));
+        body.put("integrations", MAPPER.convertValue(candidate.integrations(), Map.class));
+        body.put("stateMachines", MAPPER.convertValue(candidate.stateMachines(), List.class));
+        body.put("slas", MAPPER.convertValue(candidate.slas(), List.class));
+        body.put("jobs", MAPPER.convertValue(candidate.jobs(), List.class));
+        body.put("workflows", MAPPER.convertValue(candidate.workflows(), List.class));
+        body.put("reports", MAPPER.convertValue(candidate.reports(), List.class));
+        body.put("dashboards", MAPPER.convertValue(candidate.dashboards(), List.class));
         Map<String, Object> created = metadata.post()
                 .uri("/api/v1/metadata/apps")
                 .headers(headers -> headers.setBearerAuth(token))
@@ -791,7 +801,8 @@ public class TestRunner {
             return new AppDefinition(app.id(), app.apiName(), app.label(), app.labelI18n(),
                     app.description(), app.entities(), app.pages(), app.settings(),
                     app.permissionSet(), app.testSuites(), app.stateMachines(), app.slas(),
-                    app.jobs(), app.workflows(), app.reports(), app.dashboards(), integrations);
+                    app.jobs(), app.workflows(), app.reports(), app.dashboards(), integrations,
+                    app.translations());
         }
 
         boolean serves() {
