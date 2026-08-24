@@ -802,6 +802,33 @@ class RecordApiTests extends PostgresTestBase {
                         .content("{\"userId\":\"" + ACTOR + "\",\"role\":\"Erp.clerk\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ok"));
+
+        // the permission change rides the outbox → novaforge.permission (ARCHITECTURE §5.5)
+        await().atMost(java.time.Duration.ofSeconds(10))
+                .until(() -> jdbc.queryForObject(
+                        "SELECT count(*) FROM event_outbox WHERE event_type = 'permission.role.assigned'",
+                        Integer.class) >= 1);
+        try (org.apache.kafka.clients.consumer.KafkaConsumer<String, String> consumer =
+                     new org.apache.kafka.clients.consumer.KafkaConsumer<>(java.util.Map.of(
+                             "bootstrap.servers", kafkaBootstrap,
+                             "group.id", "test-perm-" + System.nanoTime(),
+                             "auto.offset.reset", "earliest",
+                             "enable.auto.commit", "true",
+                             "key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer",
+                             "value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer"))) {
+            consumer.subscribe(java.util.List.of("novaforge.permission"));
+            long deadline = System.currentTimeMillis() + 30_000;
+            boolean seen = false;
+            while (System.currentTimeMillis() < deadline && !seen) {
+                for (var record : consumer.poll(java.time.Duration.ofSeconds(1))) {
+                    if (record.value().contains("\"permission.role.assigned\"")
+                            && record.value().contains("\"Erp.clerk\"")) {
+                        seen = true;
+                    }
+                }
+            }
+            assertThat(seen).as("permission.role.assigned relayed to novaforge.permission").isTrue();
+        }
     }
 
     @Test

@@ -244,6 +244,29 @@ function EntityPage(props: EntityPageProps): ReactNode {
                 const entityName = target.replace(/(Form|List|Detail)$/, "");
                 navigate(entityName, kindOf, targetId);
             },
+            runFlow: async (hook) => {
+                // PHASE-3 §8: the named flow runs server-side (system principal, the
+                // initiating actor recorded); the shell reloads the record's state after.
+                if (!record?.id) {
+                    setFlash("runFlow needs a saved record");
+                    return;
+                }
+                setBusy(true);
+                try {
+                    const fresh = await client.runHook(entity.apiName, String(record.id), hook);
+                    setRecord(fresh);
+                    setFlash(`Ran ${hook}`);
+                } catch (error) {
+                    if (error instanceof ApiError) {
+                        setErrors(error.fieldErrors());
+                        setFlash(error.message);
+                    } else {
+                        throw error;
+                    }
+                } finally {
+                    setBusy(false);
+                }
+            },
         },
         navigate,
         data,

@@ -123,6 +123,33 @@ public class HookExecutor {
     }
 
     /**
+     * The page-model {@code runFlow} action's leg (PHASE-2 §4 / PHASE-3 §8): runs
+     * one named flow on demand against the record's current state — the per-app
+     * system principal (declarative flows are reviewed artifacts, §13 Q1), the
+     * initiating human recorded as context (PHASE-4 §13). Flow hooks only: script
+     * hooks stay write-path caller-context (ADR-003 #2) and reject with guidance.
+     * Persistence is the flow's own — {@code setField} shapes the in-memory view
+     * exactly like the retry leg; anything the flow must keep it writes through its
+     * own {@code updateRecord} steps (the standard hook sink, guarded writes).
+     */
+    public void runManual(AppDefinition app, EntityHandle handle, UUID tenantId,
+                          UUID recordId, Map<String, Object> data, String hookName,
+                          UUID systemPrincipal, UUID initiatingActor, HookSink sink) {
+        HookRule hook = handle.entity().hooks().stream()
+                .filter(h -> hookName.equals(h.name()))
+                .findFirst()
+                .orElseThrow(() -> new PlatformException(PlatformErrorCode.NOT_FOUND,
+                        "hook " + hookName + " not found on " + handle.entityKey()));
+        if (hook.script() != null) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "runFlow targets flow hooks — script hooks run caller-context on the "
+                            + "write path (ADR-003 #2), never on demand");
+        }
+        runOne(app, handle, tenantId, recordId, data, "manual", hook,
+                systemPrincipal, initiatingActor, sink);
+    }
+
+    /**
      * The retry leg's entry point (§2 failure policy): re-drives one named after-hook
      * against the record's current state, as the per-app system principal — the
      * identical context to the original execution (§13 Q1). Returns false when the hook

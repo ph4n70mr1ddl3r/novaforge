@@ -4,7 +4,8 @@ import { PlatformClient } from "@novaforge/shared";
 /**
  * The approval inbox (PHASE-4 §5's runtime UI — the Phase 2 surface it rides):
  * my tasks (assigned or role-addressed), server-side paged, approve/reject with
- * comment. Access is enforced server-side; this only renders.
+ * comment, claim for role-addressed tasks, delegate (§11: "approve/reject with
+ * comment, delegate"). Access is enforced server-side; this only renders.
  */
 export function Inbox({ client }: { client: PlatformClient }): ReactNode {
     const [tasks, setTasks] = useState<Record<string, unknown>[]>([]);
@@ -36,20 +37,39 @@ export function Inbox({ client }: { client: PlatformClient }): ReactNode {
         };
     }, [client, page]);
 
-    const resolve = async (taskId: string, approve: boolean): Promise<void> => {
-        const comment = approve ? undefined : window.prompt("Rejection comment") ?? undefined;
+    const reload = async (): Promise<void> => {
+        const result = await client.myTasks(undefined, page, size);
+        setTasks(result.rows);
+        setTotal(result.total);
+    };
+
+    const run = async (op: () => Promise<unknown>): Promise<void> => {
         setBusy(true);
+        setError(null);
         try {
-            await client.resolveTask(taskId, approve, comment);
-            const result = await client.myTasks(undefined, page, size);
-            setTasks(result.rows);
-            setTotal(result.total);
+            await op();
+            await reload();
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : String(caught));
         } finally {
             setBusy(false);
         }
     };
+
+    const resolve = (taskId: string, approve: boolean): Promise<void> =>
+        run(async () => {
+            const comment = approve ? undefined : window.prompt("Rejection comment") ?? undefined;
+            await client.resolveTask(taskId, approve, comment);
+        });
+
+    const claim = (taskId: string): Promise<void> => run(() => client.claimTask(taskId));
+
+    const delegate = (taskId: string): Promise<void> =>
+        run(async () => {
+            const toUser = window.prompt("Delegate to (user id)") ?? undefined;
+            if (!toUser) return;
+            await client.delegateTask(taskId, toUser);
+        });
 
     return (
         <section className="nf-inbox" aria-busy={busy} aria-label="My approvals">
@@ -59,29 +79,42 @@ export function Inbox({ client }: { client: PlatformClient }): ReactNode {
                 <thead>
                     <tr>
                         <th scope="col">Record</th>
-                        <th scope="col">Action</th>
+                        <th scope="col">Addressed to</th>
                         <th scope="col">Requested by</th>
                         <th scope="col">Created</th>
                         <th scope="col">Resolve</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {tasks.map((task) => (
-                        <tr key={String(task.id)}>
-                            <td>{String(task.entityLabel ?? task.entity ?? "")}</td>
-                            <td>{String(task.action ?? "approve")}</td>
-                            <td>{String(task.createdBy ?? "")}</td>
-                            <td>{String(task.createdAt ?? "")}</td>
-                            <td>
-                                <button type="button" disabled={busy} onClick={() => void resolve(String(task.id), true)}>
-                                    Approve
-                                </button>
-                                <button type="button" disabled={busy} onClick={() => void resolve(String(task.id), false)}>
-                                    Reject
-                                </button>
-                            </td>
-                        </tr>
-                    ))}
+                    {tasks.map((task) => {
+                        const addressed = task.assignee
+                            ? String(task.assignee)
+                            : `role: ${String(task.role ?? "")}`;
+                        return (
+                            <tr key={String(task.id)}>
+                                <td>{String(task.entity ?? "")}{task.recordId ? ` (${String(task.recordId)})` : ""}</td>
+                                <td>{addressed}</td>
+                                <td>{String(task.createdBy ?? "")}</td>
+                                <td>{String(task.createdAt ?? "")}</td>
+                                <td>
+                                    <button type="button" disabled={busy} onClick={() => void resolve(String(task.id), true)}>
+                                        Approve
+                                    </button>
+                                    <button type="button" disabled={busy} onClick={() => void resolve(String(task.id), false)}>
+                                        Reject
+                                    </button>
+                                    {!task.assignee && task.role ? (
+                                        <button type="button" disabled={busy} onClick={() => void claim(String(task.id))}>
+                                            Claim
+                                        </button>
+                                    ) : null}
+                                    <button type="button" disabled={busy} onClick={() => void delegate(String(task.id))}>
+                                        Delegate
+                                    </button>
+                                </td>
+                            </tr>
+                        );
+                    })}
                 </tbody>
             </table>
             {tasks.length === 0 && !busy ? <p role="status">No pending approvals.</p> : null}

@@ -331,6 +331,11 @@ public class MetadataStore {
 
     // --- suite runs (PHASE-8 §4/§5): version-bound by content hash ---
 
+    /** The run-artifact retention window (PHASE-3 §7: "retained last N per definition") —
+     *  every record trims to the newest N runs per suite; the promotion gate reads the
+     *  latest only, so nothing observable changes. */
+    private static final int SUITE_RUN_RETENTION = 25;
+
     /** Records one suite-run artifact; the hash binds it to the exact candidate (§4 item 1). */
     public void recordSuiteRun(UUID tenantId, UUID appId, String suite, String contentHash,
                                boolean green, Map<String, Object> artifact, UUID runBy) {
@@ -339,6 +344,15 @@ public class MetadataStore {
                 VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?)""",
                 UUID.randomUUID(), tenantId, appId, suite, contentHash, green,
                 DefinitionParser.write(artifact), runBy);
+        // retained last N per suite (§7): trim beyond the newest SUITE_RUN_RETENTION rows
+        jdbc.update("""
+                DELETE FROM md_suite_runs
+                 WHERE tenant_id = ? AND app_id = ? AND suite = ?
+                   AND id NOT IN (SELECT id FROM md_suite_runs
+                                    WHERE tenant_id = ? AND app_id = ? AND suite = ?
+                                   ORDER BY run_at DESC LIMIT %d)"""
+                .formatted(SUITE_RUN_RETENTION),
+                tenantId, appId, suite, tenantId, appId, suite);
     }
 
     public record SuiteRunInfo(UUID id, String suite, String contentHash, boolean green,

@@ -107,4 +107,44 @@ describe("PageBuilder (T8)", () => {
         expect(screen.getByRole("alert").textContent).toContain("unresolved reference");
         expect(savePage).not.toHaveBeenCalled();
     });
+
+    it("authors the runFlow action (PHASE-3 §8): the ladder grows the entity's flow hooks", async () => {
+        const hookedApp: AppDefinition = {
+            ...app,
+            entities: app.entities.map((entity): import("@novaforge/shared").EntityDefinition =>
+                entity.apiName === "Order"
+                    ? {
+                          ...entity,
+                          hooks: [
+                              {
+                                  name: "stampCredit",
+                                  trigger: "beforeSave",
+                                  flow: { id: "s1", op: "setField" },
+                              },
+                          ] as import("@novaforge/shared").HookRule[],
+                      }
+                    : entity,
+            ),
+        };
+        const savePage = vi.fn<(page: Record<string, unknown>) => Promise<unknown>>(async () => {});
+        render(createElement(PageBuilder, { app: hookedApp, savePage }));
+
+        const add = await screen.findByLabelText(/add action/i) as HTMLSelectElement;
+        fireEvent.change(add, { target: { value: "runFlow" } });
+        // the hook picker offers the entity's named flow hooks
+        const hookPicker = screen.getByLabelText(/runflow hook/i) as HTMLSelectElement;
+        expect(Array.from(hookPicker.options).map((option) => option.value)).toContain("stampCredit");
+        fireEvent.change(hookPicker, { target: { value: "stampCredit" } });
+
+        screen.getByTestId("save-page").click();
+        await waitFor(() => expect(savePage).toHaveBeenCalledTimes(1));
+        const page = savePage.mock.calls[0]![0] as {
+            layout: { deltas: { op: string; action?: { type: string; props: { hook?: string } } }[] };
+        };
+        // the diff's v1 granularity replaces the ladder wholesale — the runFlow
+        // addition rides as addAction deltas with the L1 defaults re-added
+        const added = page.layout.deltas.filter((delta) => delta.op === "addAction");
+        expect(added.at(-1)!.action).toEqual({ type: "runFlow", props: { hook: "stampCredit" } });
+        expect(added.length).toBeGreaterThan(1);
+    });
 });

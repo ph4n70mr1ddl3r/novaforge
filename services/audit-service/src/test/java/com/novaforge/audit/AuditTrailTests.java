@@ -145,6 +145,75 @@ class AuditTrailTests extends PostgresTestBase {
         }
     }
 
+    @Test
+    @DisplayName("PHASE-3 §4/§5 + PHASE-4 §5/§13: the audit-side families land in the trail")
+    void auditSideFamiliesLandInTheTrail() throws Exception {
+        // definition publishes (metadata.published — no occurredAt, publishedAt rides instead)
+        UUID appId = UUID.randomUUID();
+        send(Map.of("eventId", UUID.randomUUID().toString(), "event", "metadata.published",
+                "tenantId", TENANT.toString(), "appId", appId.toString(), "version", 3,
+                "publishedAt", "2026-08-24T09:00:00.000Z", "actorId", ACTOR.toString()),
+                "novaforge.metadata");
+        // permission changes (the platform-admin API's writes, PHASE-2 §10)
+        UUID userId = UUID.randomUUID();
+        send(Map.of("eventId", UUID.randomUUID().toString(), "event", "permission.role.assigned",
+                "tenantId", TENANT.toString(), "userId", userId.toString(),
+                "actorId", ACTOR.toString(), "role", "accountingManager",
+                "occurredAt", "2026-08-24T09:01:00.000Z"), "novaforge.permission");
+        // auth events (the deployed Keycloak listener)
+        send(Map.of("eventId", UUID.randomUUID().toString(), "event", "auth.login",
+                "tenantId", TENANT.toString(), "userId", userId.toString(),
+                "username", "demo", "clientId", "novaforge-api",
+                "occurredAt", "2026-08-24T09:02:00.000Z"), "novaforge.auth");
+        // the human-task plane + scheduler fires + notification deliveries
+        UUID taskId = UUID.randomUUID();
+        send(Map.of("eventId", UUID.randomUUID().toString(), "event", "task.approved",
+                "tenantId", TENANT.toString(), "taskId", taskId.toString(),
+                "entityId", "Erp.JournalEntry", "actorId", ACTOR.toString(),
+                "occurredAt", "2026-08-24T09:03:00.000Z"), "novaforge.task");
+        send(Map.of("eventId", UUID.randomUUID().toString(), "event", "sla.breach",
+                "tenantId", TENANT.toString(), "taskId", taskId.toString(),
+                "occurredAt", "2026-08-24T09:04:00.000Z"), "novaforge.sla");
+        send(Map.of("eventId", UUID.randomUUID().toString(), "event", "scheduler.job.run",
+                "tenantId", TENANT.toString(), "app", "erp", "job", "nightlyAging",
+                "status", "ok", "occurredAt", "2026-08-24T09:05:00.000Z"),
+                "novaforge.scheduler");
+        send(Map.of("eventId", UUID.randomUUID().toString(), "event", "notification.delivered",
+                "tenantId", TENANT.toString(), "userId", userId.toString(),
+                "channel", "inbox", "category", "task-assignment",
+                "occurredAt", "2026-08-24T09:06:00.000Z"), "novaforge.notification");
+
+        // every family lands on its own record key, tenant-scoped
+        await().atMost(Duration.ofSeconds(30)).until(() ->
+                mockMvcPerform(taskId).contains("task.approved"));
+        assertThat(mockMvcPerform(appId)).contains("metadata.published");
+        assertThat(mockMvcPerform(userId)).contains("permission.role.assigned")
+                .contains("auth.login").contains("notification.delivered");
+        assertThat(mockMvcPerform(taskId)).contains("sla.breach");
+        // scheduler fires key on the event id (the payload carries job names, not ids)
+        // — assert through the store: the row exists exactly once per event id
+        try (var connection = java.sql.DriverManager.getConnection(
+                jdbcUrl(), jdbcUsername(), jdbcPassword());
+             var statement = connection.createStatement();
+             var rs = statement.executeQuery(
+                     "SELECT count(*) FROM audit_events WHERE event_type = 'scheduler.job.run'")) {
+            rs.next();
+            assertThat(rs.getInt(1)).isEqualTo(1);
+        }
+        // reads stay tenant-scoped: the other tenant sees nothing of any family
+        mockMvc.perform(get("/api/v1/audit/records/" + taskId)
+                        .with(jwt().jwt(token -> token.claim("tenant_id", OTHER_TENANT.toString())
+                                .subject(ACTOR.toString()))
+                                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isEmpty());
+    }
+
+    private void send(Map<String, Object> payload, String topic) throws Exception {
+        kafka.send(new ProducerRecord<>(topic,
+                TENANT + ":" + payload.get("eventId"), MAPPER.writeValueAsString(payload))).get();
+    }
+
     private String mockMvcPerform(UUID recordId) throws Exception {
         return mockMvc.perform(get("/api/v1/audit/records/" + recordId)
                         .with(jwt().jwt(token -> token.claim("tenant_id", TENANT.toString())

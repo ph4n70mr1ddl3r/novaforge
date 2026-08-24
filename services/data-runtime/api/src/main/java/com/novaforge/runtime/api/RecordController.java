@@ -144,6 +144,19 @@ public class RecordController {
     public record BatchRequest(List<Map<String, Object>> items) {
     }
 
+    /**
+     * The page-model {@code runFlow} action's surface (PHASE-2 §4 / PHASE-3 §8): one
+     * named flow on demand for a record the caller can read — flow hooks only, the
+     * per-app system principal with the initiating actor recorded (the engine leg).
+     */
+    @PostMapping("/{entity}/{id}/hooks/{hook}")
+    public ResponseEntity<String> runHook(@PathVariable String entity, @PathVariable UUID id,
+                                          @PathVariable String hook) {
+        var ctx = requireContext();
+        return ResponseEntity.ok(MAPPER.writeValueAsString(
+                engine.runManualHook(tenant(ctx), actor(ctx), entity, id, hook)));
+    }
+
     // --- helpers ---
 
     /**

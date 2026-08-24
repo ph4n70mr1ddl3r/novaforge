@@ -17,6 +17,7 @@ import { LogicEditor } from "./logic-editor.tsx";
 import { SuitesEditor } from "./suites-editor.tsx";
 import { Automation } from "./automation.tsx";
 import { Integrations } from "./integrations.tsx";
+import { Templates } from "./templates.tsx";
 
 /**
  * The builder shell (PHASE-2 §8): design-time surface over the Metadata draft
@@ -37,6 +38,7 @@ export type BuilderScreen =
     | "integrations"
     | "i18n"
     | "lifecycle"
+    | "templates"
     | "onboarding";
 
 export interface BuilderShellProps {
@@ -81,7 +83,7 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
             <header className="nf-topbar">
                 <h1>NovaForge Builder</h1>
                 <nav aria-label="Builder sections">
-                    {(["entities", "pages", "logic", "suites", "automation", "rbac", "reports", "dashboards", "integrations", "i18n", "lifecycle", "onboarding"] as BuilderScreen[]).map((name) => (
+                    {(["entities", "pages", "logic", "suites", "automation", "rbac", "reports", "dashboards", "integrations", "i18n", "lifecycle", "templates", "onboarding"] as BuilderScreen[]).map((name) => (
                         <button key={name} type="button" aria-current={screen === name} onClick={() => setScreen(name)} id={name === "entities" ? "entities" : undefined}>
                             {name}
                         </button>
@@ -217,6 +219,22 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                             </>
                         ) : null}
                     </>
+                ) : null}
+                {screen === "templates" ? (
+                    <Templates
+                        client={client}
+                        onInstalled={(apiName) => {
+                            setError(null);
+                            setScreen("entities");
+                            void (async () => {
+                                const apps = (await client.listApps()) as { id?: string }[];
+                                if (apps[0]?.id) {
+                                    const loaded = (await client.getApp(apps[0].id)) as AppDefinition;
+                                    setApp({ ...loaded, id: apps[0].id });
+                                }
+                            })();
+                        }}
+                    />
                 ) : null}
                 {screen === "onboarding" ? (
                     <Onboarding

@@ -125,7 +125,8 @@ export function validateSchema(
 
 // --- page validation ---
 
-const CLOSED_ACTIONS = new Set(["save", "cancel", "delete", "openPage"]);
+/** The closed action ladder (PHASE-2 §4; runFlow activated by PHASE-3 §8). */
+const CLOSED_ACTIONS = new Set(["save", "cancel", "delete", "openPage", "runFlow"]);
 
 /** Whether a component consumes a `bind` slot (its catalog contract, §6 item 1). */
 export function takesBinding(componentId: string): boolean {
@@ -225,6 +226,9 @@ export function validatePage(
         }
         if (action.type === "openPage" && !action.props.page) {
             issues.push({ path: `actions[${index}]`, message: "openPage requires props.page" });
+        }
+        if (action.type === "runFlow" && !action.props.hook) {
+            issues.push({ path: `actions[${index}]`, message: "runFlow requires props.hook" });
         }
     });
 

@@ -138,13 +138,14 @@ inline children → 4 outbox rows published → `novaforge.record` carries the e
   volume) with SPA deep-link fallback — asset paths anonymous, APIs still
   scope-gated; Vite dev proxies cover local development.
 
-**Suites:** 128 frontend tests (`pnpm -r test`: shared 86 — conformance 39, deltas,
+**Suites:** 138 frontend tests (`pnpm -r test`: shared 92 — conformance 39, deltas,
   goldens, validation, renderer, gallery-axe, client, report-table drill-through;
-  runtime-ui 10 — nav/auto-list/form journeys, inbox, notifications, axe, the
-  L1→delta→persist round-trip, dashboard drill/refresh; builder-ui 32 —
-  entity/page/RBAC/onboarding/i18n/reporting journeys incl. the 409 rebase, the
-  PHASE-3 §8 logic + suites authoring journeys, the PHASE-4 §11 automation/
-  sharing/guided-approval journeys, and the PHASE-6 §3 integrations editor), plus
+  runtime-ui 11 — nav/auto-list/form journeys, inbox (+claim/delegate),
+  notifications, axe, the L1→delta→persist round-trip, dashboard drill/refresh;
+  builder-ui 35 — entity/page/RBAC/onboarding/i18n/reporting journeys incl. the 409
+  rebase, the PHASE-3 §8 logic + suites authoring journeys, the PHASE-4 §11
+  automation/sharing/guided-approval journeys, the PHASE-6 §3 integrations editor,
+  and the PHASE-8 §6 template catalog), plus
   `DefinitionLifecycleTests.pageDefinitionLifecycle` (9 tests, real Postgres) and
   `GatewayApplicationTests` SPA hosting.
 
@@ -335,6 +336,60 @@ the spec, all closed:**
   vocabulary, run button riding the scratch-tenant runner API, the artifact's
   verdicts rendered beside the editor). Five vitest journeys pin the round-trips;
   the shell grows `logic` and `suites` screens.
+
+**Spec-review closeout (2026-08-24, second pass) — three more §4/§5/§7/§8 gaps
+found re-walking the code against the spec, all closed:**
+- **§8's `runFlow` action had never activated.** PHASE-2 §4 deferred it to "when
+  the flow engine lands" and §8 pins "the page-model `runFlow` action activates
+  once flows exist" — the engine landed in Phase 3, but the TS action ladder was
+  still exactly `save/cancel/delete/openPage` and no runtime surface executed a
+  flow on demand. Closed end to end: the ladder grows `runFlow {hook}` (TS model +
+  validation + `dispatchAction`; a `setAction` delta op joins the vocabulary for
+  in-place action edits), the Data Runtime grows the public
+  `POST /api/v1/runtime/{entity}/{id}/hooks/{hook}` — one named flow hook run on
+  demand against the record's current state in the `manual` trigger context, the
+  per-app system principal executing (§13 Q1) with the initiating human recorded
+  (PHASE-4 §13's audit shape), the caller's READ grant + sharing visibility gating
+  the surface, flow hooks only (script hooks reject with guidance — they stay
+  write-path caller-context, ADR-003 #2), unknown hooks 404; the metadata service
+  save path now enforces the closed action ladder server-side (encoding-agnostic:
+  resolved trees and `addAction` deltas both check — unknown types, hookless
+  `runFlow`, and page-less `openPage` reject, so the store can never hold an
+  action no runtime dispatches); the runtime shell dispatches and reloads the
+  record, and the page builder grows an Actions panel (ladder rows + the entity's
+  flow hooks as the runFlow picker). Pinned by `ManualHookTests` (on-demand flow
+  execution incl. its createRecord effect, script-hook rejection, 404/gates),
+  `DefinitionLifecycleTests` (the server-side ladder), and four vitest journeys.
+- **§4/§5's audit-side families existed only as `novaforge.record`.** The trail
+  consumed record events and (since Phase 6) the integration families — but
+  ARCHITECTURE §5 item 5's "auth events, permission changes, definition publishes
+  audited too" and §10 item 4's "permission-change and publish events captured"
+  had no producer or consumer anywhere: role assignments wrote silently, publishes
+  landed in no trail, and no Keycloak listener existed. Closed: the platform-admin
+  API's writes (tenant/user provisioning, role assignment) ride the runtime's
+  transactional outbox as `permission.*` events (the PHASE-2 §10/§9 shapes, defined
+  at landing: `permission.tenant.provisioned`/`permission.user.provisioned`/
+  `permission.role.assigned` — tenant-scoped keys, the acting admin audited, the
+  service client's internal provisioning as the platform system principal); the
+  audit service grows `PlatformEventConsumer` over `novaforge.metadata`
+  (definition publishes), `novaforge.permission`, `novaforge.auth`, `novaforge.task`,
+  `novaforge.sla`, `novaforge.scheduler`, and `novaforge.notification` (PHASE-4
+  §5/§13 and PHASE-5 §7's audited-due families — one envelope contract, dedupe on
+  the event id, the family's record key mapping to the trail); and **`auth.*` gets
+  its pinned producer**: `deploy/keycloak/auth-listener` — a Keycloak SPI provider
+  jar ("deployed config, not bespoke service code", §5) publishing the closed v1
+  set (`auth.login`/`auth.login.error`/`auth.logout`/`auth.logout.error`) to
+  `novaforge.auth`, tenant resolved from the provisioned `tenant_id` attribute,
+  fire-and-forget so a spine hiccup never fails a login — the realm export opts in
+  (`eventsListeners: novaforge-auth`) and compose mounts the providers dir.
+  Pinned by `AuditTrailTests.auditSideFamiliesLandInTheTrail` (all seven families,
+  tenant scoping), `RecordApiTests.adminApiGating` (+the outbox→Kafka round-trip
+  of `permission.role.assigned`), and `AuthEventsTest` (the listener's envelope
+  mapping, standalone module).
+- **§7's run-artifact retention was unbounded** ("retained last N per definition"
+  had no mechanism): `recordSuiteRun` now trims to the newest 25 rows per
+  (app, suite) — the promotion gate reads the latest only, so nothing observable
+  changes.
 
 ## Phase 4 — Workflow & Approvals ◐ (spec: PHASE-4-WORKFLOW-APPROVALS.md)
 
@@ -704,6 +759,17 @@ requestApproval config, and scheduler visibility in `frontend/builder-ui`. All
 backend machinery for the journey — state machines, approvals with suspension and
 SoD, SLA escalation, notifications, the scheduler, BPMN execution with
 event-starts — is implemented and covered by the service-level suites above.
+
+**Spec-review closeout (2026-08-24, second pass):** §11's inbox pin reads
+"approve/reject with comment, **delegate**" — the runtime inbox had resolution
+only (and the shared client no claim/delegate legs at all). The inbox grows
+Claim (role-addressed tasks) and Delegate (prompt → the §5 replacement-task
+chain) with the addresser column showing assignee-or-role, the client grows
+`claimTask`/`delegateTask`, and a vitest journey pins both against the stubbed
+§5 API. The audit leg of §5/§13 ("notifications and audit are pure consumers" of
+`task.*`; task lifecycle, SLA warn/breach, scheduler fires audited) landed with
+the Phase 3 closeout above — the trail now consumes `novaforge.task`/
+`novaforge.sla`/`novaforge.scheduler`.
 
 ## Phase 5 — Reporting & Dashboards ◐ (spec: PHASE-5-REPORTING.md)
 
@@ -1222,7 +1288,13 @@ definition diff (entities/state machines/reports/suites/translations by apiName:
   ride the artifact), `GET /templates` lists the catalog (name/publisher/version/
   description — no commerce, §11 Q2), `POST /templates/{id}/install` creates a new
   draft app; the ERP app is the first template (registered from its published
-  version — the README documents the one-liner)
+  version — the README documents the one-liner). **The §6 catalog surface ships in
+  the builder** (2026-08-24 second-pass review — the API had landed, the listing
+  never had): a Templates screen renders the catalog (name/publisher/version/
+  description) with install → new draft app, reachable before any app exists (the
+  first app in a fresh workspace installs from here) and landing in the entity
+  builder afterward; pinned by `templates.test.tsx` (listing, install round-trip,
+  failure surfacing)
 
 **Implemented — T7 i18n (§7):** the Translations branch — per-locale workspaces as
   kind-discriminated metadata (`md_definitions`), versioned and promoted with the

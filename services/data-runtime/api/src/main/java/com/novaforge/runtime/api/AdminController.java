@@ -20,8 +20,8 @@ import org.springframework.web.bind.annotation.RestController;
  * The platform-admin API (PHASE-2 §10, pinned): tenant provisioning and user→role
  * assignment over the platform-DB authorization data the runtime already reads at
  * request time (ADR-002's direction, ARCHITECTURE.md §2.2/§2.4). Gateway route
- * {@code /api/v1/admin/**}, platform-{@code admin}-gated; audited once the Phase 3
- * event spine lands (§9 defines the shapes).
+ * {@code /api/v1/admin/**}, platform-{@code admin}-gated; every permission-changing
+ * write emits a {@code permission.*} event on the spine (ARCHITECTURE.md §5 item 5).
  */
 @RestController
 @RequestMapping("/api/v1/admin")

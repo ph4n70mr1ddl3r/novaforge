@@ -72,6 +72,8 @@ export interface RendererContextValue {
         deleteRecord(): Promise<void>;
         openPage(page: string, id?: string): Promise<void>;
         transition?(to: string): Promise<void>;
+        /** The runFlow action's leg (PHASE-3 §8): run a named flow hook on demand. */
+        runFlow?(hook: string): Promise<void>;
     };
     navigate(entity: string, view: "list" | "form" | "detail", id?: string): void;
     data?: RendererDataService;
@@ -118,6 +120,12 @@ export function dispatchAction(
             const id = action.props.id ? interpolate(action.props.id, context.record) : undefined;
             return context.actions.openPage(interpolate(action.props.page, context.record), id);
         }
+        case "runFlow":
+            // The hook reference interpolates too — a flow may address the record (§4).
+            if (!context.actions.runFlow) {
+                return Promise.reject(new Error("runFlow is not available in this context"));
+            }
+            return context.actions.runFlow(interpolate(action.props.hook, context.record));
     }
 }
 

@@ -204,5 +204,11 @@
         "description": "NovaForge runtime user"
       }
     ]
-  }
+  },
+  "eventsListeners": [
+    "jboss-logging",
+    "novaforge-auth"
+  ],
+  "eventsEnabled": true,
+  "eventsExpiration": 86400
 }

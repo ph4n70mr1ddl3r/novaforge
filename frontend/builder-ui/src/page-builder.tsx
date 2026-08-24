@@ -141,6 +141,9 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
     }
 
     const selected = selectedKey ? findNode(current!.page.model.root, selectedKey) : null;
+    // runFlow targets: the bound entity's named flow hooks (PHASE-3 §8) — script
+    // hooks stay write-path caller-context and never surface here.
+    const runFlowTargets = entity.hooks.filter((hook) => hook.flow && hook.name);
 
     return (
         <section className="nf-b-page" aria-label="Page builder">
@@ -228,6 +231,73 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
                         onRemove={(key) => apply([{ op: "removeNode", key }])}
                     />
                 </div>
+                <div className="nf-b-actions" aria-label="Page actions">
+                    <h3>Actions</h3>
+                    {/* The declarative action ladder (§4) — runFlow activates with
+                        PHASE-3 §8: a named flow hook on the bound entity. */}
+                    <ul>
+                        {current!.page.model.actions.map((action, index) => (
+                            <li key={`${action.type}:${index}`}>
+                                <code>{action.type}</code>
+                                {action.type === "openPage" ? ` → ${action.props.page}` : ""}
+                                {action.type === "runFlow" ? ` → ${action.props.hook}` : ""}
+                                <button
+                                    type="button"
+                                    aria-label={`Remove ${action.type} action`}
+                                    onClick={() => apply([{ op: "removeAction", index }])}
+                                >
+                                    ×
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                    <label>
+                        Add action
+                        <select
+                            value=""
+                            onChange={(event) => {
+                                const type = event.target.value as ActionDef["type"];
+                                if (!type) return;
+                                if (type === "openPage") {
+                                    apply([{ op: "addAction", action: { type: "openPage", props: { page: pageApiName(entity.apiName, "detail") } } }]);
+                                } else if (type === "runFlow") {
+                                    const firstFlow = entity.hooks.find((hook) => hook.flow && hook.name);
+                                    apply([{ op: "addAction", action: { type: "runFlow", props: { hook: firstFlow?.name ?? "" } } }]);
+                                } else {
+                                    apply([{ op: "addAction", action: { type } as ActionDef }]);
+                                }
+                            }}
+                        >
+                            <option value="">— pick —</option>
+                            <option value="save">save</option>
+                            <option value="cancel">cancel</option>
+                            <option value="delete">delete</option>
+                            <option value="openPage">openPage</option>
+                            {entity.hooks.some((hook) => hook.flow && hook.name) ? (
+                                <option value="runFlow">runFlow</option>
+                            ) : null}
+                        </select>
+                    </label>
+                    {runFlowTargets.length > 0 ? (
+                        <label>
+                            Flow hook
+                            <select
+                                aria-label="runFlow hook"
+                                value={current!.page.model.actions.find((action) => action.type === "runFlow")?.props.hook ?? ""}
+                                onChange={(event) => {
+                                    const index = current!.page.model.actions.findIndex((action) => action.type === "runFlow");
+                                    if (index >= 0) {
+                                        apply([{ op: "setAction", index, action: { type: "runFlow", props: { hook: event.target.value } } }]);
+                                    }
+                                }}
+                            >
+                                {runFlowTargets.map((hook) => (
+                                    <option key={hook.name} value={hook.name}>{hook.name}</option>
+                                ))}
+                            </select>
+                        </label>
+                    ) : null}
+                </div>
                 <div className="nf-b-props" aria-label="Property panel">
                     <h3>Properties</h3>
                     {selected ? (
@@ -256,6 +326,7 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
                                 cancel: async () => {},
                                 deleteRecord: async () => {},
                                 openPage: async () => {},
+                                runFlow: async () => {},
                             },
                             navigate: () => {},
                         }}

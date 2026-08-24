@@ -26,6 +26,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class DefinitionService {
 
+    /** The page-model action ladder (PHASE-2 §4; runFlow activates with PHASE-3 §8). */
+    private static final java.util.Set<String> CLOSED_PAGE_ACTIONS =
+            java.util.Set.of("save", "cancel", "delete", "openPage", "runFlow");
+
     private final MetadataStore store;
     private final MetadataPublishEventPublisher events;
     private final TestRunner testRunner;
@@ -192,12 +196,55 @@ public class DefinitionService {
                     }
                 }
             }
+            checkAction(pageApiName, map.get("actions"), errors);
+            if ("addAction".equals(map.get("op"))) {
+                checkAction(pageApiName, map.get("action"), errors);
+            }
             for (Object value : map.values()) {
                 checkNodeSlots(pageApiName, value, fields, errors);
             }
         } else if (node instanceof java.util.List<?> list) {
             for (Object child : list) {
                 checkNodeSlots(pageApiName, child, fields, errors);
+            }
+        }
+    }
+
+    /**
+     * The closed action ladder (PHASE-2 §4 + PHASE-3 §8's runFlow activation): the
+     * persisted page may only carry actions from the versioned set — save rejects
+     * unknown types and shape errors the TS twin already guards, so the metadata
+     * store can never hold an action no runtime dispatches.
+     */
+    private static void checkAction(String pageApiName, Object actions, List<ProblemErrors.FieldError> errors) {
+        // resolved trees carry the ladder as a list; a structural delta's addAction op
+        // carries one action — both forms check identically (the encoding-agnostic walk)
+        java.util.List<?> entries;
+        if (actions instanceof java.util.List<?> list) {
+            entries = list;
+        } else if (actions instanceof java.util.Map<?, ?> single) {
+            entries = java.util.List.of(single);
+        } else {
+            return;
+        }
+        for (Object entry : entries) {
+            if (!(entry instanceof java.util.Map<?, ?> action)) {
+                continue;
+            }
+            String type = String.valueOf(action.get("type"));
+            if (!CLOSED_PAGE_ACTIONS.contains(type)) {
+                errors.add(new ProblemErrors.FieldError(pageApiName + ".actions",
+                        "unknown action type '" + type + "'", type));
+            } else if ("openPage".equals(type)
+                    && !(action.get("props") instanceof java.util.Map<?, ?> props
+                            && props.get("page") instanceof String page && !page.isBlank())) {
+                errors.add(new ProblemErrors.FieldError(pageApiName + ".actions",
+                        "openPage requires props.page", type));
+            } else if ("runFlow".equals(type)
+                    && !(action.get("props") instanceof java.util.Map<?, ?> props
+                            && props.get("hook") instanceof String hook && !hook.isBlank())) {
+                errors.add(new ProblemErrors.FieldError(pageApiName + ".actions",
+                        "runFlow requires props.hook (a named flow hook on the bound entity)", type));
             }
         }
     }

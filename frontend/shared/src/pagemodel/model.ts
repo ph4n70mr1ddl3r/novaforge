@@ -29,7 +29,9 @@ export type ActionDef =
     | { type: "save" }
     | { type: "cancel" }
     | { type: "delete" }
-    | { type: "openPage"; props: { page: string; id?: string } };
+    | { type: "openPage"; props: { page: string; id?: string } }
+    /** PHASE-3 §8's activation: a named flow hook run on demand for the record. */
+    | { type: "runFlow"; props: { hook: string } };
 
 /** The concrete page model carried in PageDefinition.layout. */
 export interface PageModel {
@@ -60,7 +62,8 @@ export type PageDelta =
     | { op: "setVersion"; key: string; version: string }
     | { op: "setBase"; base: "auto" | string }
     | { op: "addAction"; index?: number; action: ActionDef }
-    | { op: "removeAction"; index: number };
+    | { op: "removeAction"; index: number }
+    | { op: "setAction"; index: number; action: ActionDef };
 
 /** A delta that no longer applies after the entity (or base) changed — §11 item 4. */
 export interface StaleDelta {
@@ -230,6 +233,13 @@ export function applyDeltas(
                     break;
                 }
                 model.actions.splice(delta.index, 1);
+                break;
+            case "setAction":
+                if (delta.index < 0 || delta.index >= model.actions.length) {
+                    stale.push({ delta, reason: `action index ${delta.index} out of range` });
+                    break;
+                }
+                model.actions[delta.index] = delta.action;
                 break;
         }
     }

@@ -169,4 +169,29 @@ describe("page save/publish validation (§4)", () => {
         const issues = validatePage(broken, { entity, mode: "save" });
         expect(issues.some((issue) => issue.message.includes("unknown action type"))).toBe(true);
     });
+
+    it("runFlow joins the ladder (PHASE-3 §8) — and requires its hook reference", () => {
+        const page = resolveDefaultPage(entity, "form");
+        const withFlow = deepClone(page.model);
+        withFlow.actions.push({ type: "runFlow", props: { hook: "stampCredit" } });
+        expect(validatePage(withFlow, { entity, mode: "save" })
+            .filter((issue) => issue.message.includes("action"))).toEqual([]);
+
+        const hookless = deepClone(page.model);
+        hookless.actions.push({ type: "runFlow", props: { hook: "" } });
+        const issues = validatePage(hookless, { entity, mode: "save" });
+        expect(issues.some((issue) => issue.message === "runFlow requires props.hook")).toBe(true);
+    });
+
+    it("setAction replaces an action in place (the runFlow hook picker's delta)", () => {
+        const base = resolveDefaultPage(entity, "form");
+        const withFlow = applyDeltas(base, [
+            { op: "addAction", action: { type: "runFlow", props: { hook: "first" } } },
+            { op: "setAction", index: (base.model.actions.length), action: { type: "runFlow", props: { hook: "stampCredit" } } },
+        ]).page;
+        expect(withFlow.model.actions.at(-1)).toEqual({ type: "runFlow", props: { hook: "stampCredit" } });
+        // out-of-range setAction reports stale instead of corrupting (§11 item 4)
+        const stale = applyDeltas(base, [{ op: "setAction", index: 99, action: { type: "save" } }]);
+        expect(stale.stale).toHaveLength(1);
+    });
 });

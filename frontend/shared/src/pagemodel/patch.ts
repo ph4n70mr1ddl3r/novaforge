@@ -99,6 +99,8 @@ export function describeDelta(delta: PageDelta): string {
             return `add action ${(delta.action as { type: string }).type}`;
         case "removeAction":
             return `remove action #${delta.index}`;
+        case "setAction":
+            return `set action #${delta.index} to ${(delta.action as { type: string }).type}`;
     }
 }
 

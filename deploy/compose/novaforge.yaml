@@ -42,6 +42,10 @@ services:
     volumes:
       - keycloak-data:/opt/keycloak/data
       - ./keycloak:/opt/keycloak/data/import:ro,Z
+      # The auth-event listener (PHASE-3 §5): build deploy/keycloak/auth-listener
+      # and drop the shaded jar into ./keycloak/providers — the realm export opts in
+      # per realm (eventsListeners: novaforge-auth), publishing auth.* to the spine.
+      - ./keycloak/providers:/opt/keycloak/providers:ro,Z
     depends_on:
       postgres:
         condition: service_healthy

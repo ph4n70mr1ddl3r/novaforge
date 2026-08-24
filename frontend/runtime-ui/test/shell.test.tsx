@@ -127,6 +127,45 @@ describe("RuntimeShell", () => {
         await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
     });
 
+    it("the inbox claims role tasks and delegates (PHASE-4 §11's full ladder)", async () => {
+        const calls: string[] = [];
+        const roleTask = {
+            id: "t-1", type: "approval", entity: "Erp.JournalEntry", recordId: "r-9",
+            assignee: null, role: "accountingManager", status: "OPEN", createdBy: "u-2",
+            createdAt: "2026-08-24T10:00:00Z",
+        };
+        const fetchImpl = vi.fn(async (input: string | URL, init?: RequestInit) => {
+            const url = String(input);
+            calls.push(`${(init?.method ?? "GET").toUpperCase()} ${url}`);
+            if (url.includes("/workflow/tasks/t-1/claim")) {
+                return new Response(JSON.stringify({ ...roleTask, assignee: "u-1" }), {
+                    status: 200, headers: { "Content-Type": "application/json" } });
+            }
+            if (url.includes("/workflow/tasks/t-1/delegate")) {
+                return new Response(JSON.stringify({ id: "t-2", status: "OPEN" }), {
+                    status: 200, headers: { "Content-Type": "application/json" } });
+            }
+            if (url.includes("/workflow/tasks")) {
+                return new Response(JSON.stringify({ rows: [roleTask], total: 1 }), {
+                    status: 200, headers: { "Content-Type": "application/json" } });
+            }
+            return new Response(JSON.stringify({ title: "not stubbed", status: 404 }), { status: 404 });
+        });
+        const prompt = vi.spyOn(window, "prompt").mockReturnValue("u-9");
+        const client = new PlatformClient("", () => "t", fetchImpl as unknown as typeof fetch);
+
+        render(createElement(Inbox, { client }));
+        // role-addressed task renders its role and offers Claim; assigned offers Delegate
+        expect(await screen.findByText(/role: accountingManager/)).toBeTruthy();
+        screen.getByRole("button", { name: "Claim" }).click();
+        await waitFor(() => expect(calls.some((call) => call.includes("/tasks/t-1/claim"))).toBe(true));
+
+        screen.getByRole("button", { name: "Delegate" }).click();
+        await waitFor(() => expect(calls.some((call) => call.includes("/tasks/t-1/delegate"))).toBe(true));
+        expect(prompt).toHaveBeenCalled();
+        prompt.mockRestore();
+    });
+
     it("passes axe on the shell chrome", async () => {
         const { client } = stubClient();
         const { container } = render(shell(client));

@@ -158,16 +158,24 @@ export class PlatformClient {
         return this.request("POST", `/api/v1/metadata/apps/${appId}/test-suites/${suite}/run`);
     }
 
+    // --- templates (PHASE-8 §6): the catalog, listed and installed in the builder ---
+
+    templates(): Promise<Record<string, unknown>[]> {
+        return this.request("GET", "/api/v1/metadata/templates") as Promise<Record<string, unknown>[]>;
+    }
+
+    registerTemplate(appId: string, version: number, name: string, publisher?: string, description?: string): Promise<Record<string, unknown>> {
+        return this.request("POST", "/api/v1/metadata/templates", {
+            appId, version, name, publisher, description,
+        }) as Promise<Record<string, unknown>>;
+    }
+
+    installTemplate(templateId: string, apiName?: string): Promise<Record<string, unknown>> {
+        return this.request("POST", `/api/v1/metadata/templates/${templateId}/install`, apiName ? { apiName } : {}) as Promise<Record<string, unknown>>;
+    }
+
     putSuite(appId: string, apiName: string, suite: Record<string, unknown>): Promise<unknown> {
         return this.request("PUT", `/api/v1/metadata/apps/${appId}/test-suites/${apiName}`, suite);
-    }
-
-    templates(): Promise<unknown[]> {
-        return this.request("GET", "/api/v1/metadata/templates") as Promise<unknown[]>;
-    }
-
-    installTemplate(templateId: string, apiName?: string): Promise<unknown> {
-        return this.request("POST", `/api/v1/metadata/templates/${templateId}/install`, { apiName });
     }
 
     translations(appId: string): Promise<unknown[]> {
@@ -216,6 +224,11 @@ export class PlatformClient {
         return this.request("DELETE", `/api/v1/runtime/${entity}/${id}?version=${version}`) as Promise<null>;
     }
 
+    /** The runFlow page action's leg (PHASE-3 §8): one named flow hook on demand. */
+    runHook(entity: string, id: string, hook: string): Promise<Record<string, unknown>> {
+        return this.request("POST", `/api/v1/runtime/${entity}/${id}/hooks/${encodeURIComponent(hook)}`, {}) as Promise<Record<string, unknown>>;
+    }
+
     // --- workflow inbox (PHASE-4 §5) ---
 
     myTasks(status?: string, page = 0, size = 25): Promise<{ rows: Record<string, unknown>[]; total: number }> {
@@ -233,6 +246,16 @@ export class PlatformClient {
             `/api/v1/workflow/tasks/${taskId}/${approve ? "approve" : "reject"}`,
             comment ? { comment } : {},
         )) as Record<string, unknown>;
+    }
+
+    /** Claim a role-addressed task (PHASE-4 §5) — stays OPEN, assignee becomes mine. */
+    claimTask(taskId: string): Promise<Record<string, unknown>> {
+        return this.request("POST", `/api/v1/workflow/tasks/${taskId}/claim`, {}) as Promise<Record<string, unknown>>;
+    }
+
+    /** Delegate to another user (PHASE-4 §5): replacement task, original DELEGATED. */
+    delegateTask(taskId: string, toUser: string): Promise<Record<string, unknown>> {
+        return this.request("POST", `/api/v1/workflow/tasks/${taskId}/delegate`, { toUser }) as Promise<Record<string, unknown>>;
     }
 
     // --- scheduler visibility (PHASE-4 §2/§11): the one read-only registry route ---

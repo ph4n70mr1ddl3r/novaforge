@@ -723,6 +723,43 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors[0].field").value("badExpr.layout"));
 
+        // the closed action ladder, server-side (PHASE-2 §4 + PHASE-3 §8's runFlow):
+        // a runFlow action with its hook reference saves; a hookless one and an
+        // unknown type reject at save
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/withFlow")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "withFlow", "type": "form", "entity": "Order",
+                                  "layout": { "base": "auto", "kind": "form", "deltas": [
+                                    { "op": "addAction",
+                                      "action": { "type": "runFlow", "props": { "hook": "stampCredit" } } } ] } }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pages[1].apiName").value("withFlow"));
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/hooklessFlow")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "hooklessFlow", "type": "form", "entity": "Order",
+                                  "layout": { "base": "auto", "kind": "form", "deltas": [
+                                    { "op": "addAction",
+                                      "action": { "type": "runFlow", "props": { "hook": "" } } } ] } }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("hooklessFlow.actions"));
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/rogueAction")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "rogueAction", "type": "form", "entity": "Order",
+                                  "layout": { "base": "auto", "kind": "form", "deltas": [
+                                    { "op": "addAction",
+                                      "action": { "type": "runScript" } } ] } }
+                                """))
+                .andExpect(status().isBadRequest());
+        // drop the runFlow page again — the rest of the lifecycle walk below counts pages
+        mockMvc.perform(delete("/api/v1/metadata/apps/" + appId + "/pages/withFlow")
+                        .with(builderJwt()))
+                .andExpect(status().isOk());
+
         // concurrent edit protection (§8): a stale revision 409s; the rebased save succeeds
         MvcResult saved = mockMvc.perform(get("/api/v1/metadata/apps/" + appId).with(builderJwt()))
                 .andExpect(status().isOk()).andReturn();

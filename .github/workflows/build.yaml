@@ -27,6 +27,9 @@ jobs:
       - name: Build and verify
         run: ./mvnw -B -ntp verify
 
+      - name: Keycloak auth listener (deploy/keycloak — PHASE-3 §5)
+        run: ./mvnw -B -ntp -f deploy/keycloak/auth-listener/pom.xml verify
+
       - name: Upload Surefire reports on failure
         if: failure()
         uses: actions/upload-artifact@v4

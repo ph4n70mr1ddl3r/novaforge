@@ -79,4 +79,43 @@ describe("PlatformClient", () => {
         expect(url).toContain("/api/v1/metadata/apps/app-1/pages/Order_form");
         expect(init.method).toBe("PUT");
     });
+
+    it("runs a named flow hook on demand — the runFlow action's transport (PHASE-3 §8)", async () => {
+        const { client, fetchImpl } = stubClient({
+            "POST /hooks": { status: 200, body: { id: "r-1", status: "DRAFT" } },
+        });
+        const fresh = await client.runHook("Order", "r-1", "stampCredit");
+        const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+        expect(url).toContain("/api/v1/runtime/Order/r-1/hooks/stampCredit");
+        expect(init.method).toBe("POST");
+        expect(fresh).toMatchObject({ id: "r-1" });
+    });
+
+    it("claims and delegates inbox tasks through the §5 operations", async () => {
+        const { client, fetchImpl } = stubClient({
+            "POST /claim": { status: 200, body: { id: "t-1", status: "OPEN" } },
+            "POST /delegate": { status: 200, body: { id: "t-2", status: "OPEN" } },
+        });
+        await client.claimTask("t-1");
+        await client.delegateTask("t-1", "u-9");
+        const claim = fetchImpl.mock.calls[0] as [string, RequestInit];
+        expect(String(claim[0])).toContain("/api/v1/workflow/tasks/t-1/claim");
+        const delegate = fetchImpl.mock.calls[1] as [string, RequestInit];
+        expect(String(delegate[0])).toContain("/api/v1/workflow/tasks/t-1/delegate");
+        expect(JSON.parse(String(delegate[1].body))).toEqual({ toUser: "u-9" });
+    });
+
+    it("lists and installs templates through the §6 catalog", async () => {
+        const { client, fetchImpl } = stubClient({
+            "GET /templates": { status: 200, body: [{ id: "tpl-1", name: "ERP" }] },
+            "POST /install": { status: 200, body: { apiName: "erp2" } },
+        });
+        const templates = await client.templates();
+        expect(templates).toHaveLength(1);
+        const installed = await client.installTemplate("tpl-1", "erp2");
+        expect(installed).toMatchObject({ apiName: "erp2" });
+        const [url, init] = fetchImpl.mock.calls[1] as [string, RequestInit];
+        expect(url).toContain("/api/v1/metadata/templates/tpl-1/install");
+        expect(JSON.parse(String(init.body))).toEqual({ apiName: "erp2" });
+    });
 });

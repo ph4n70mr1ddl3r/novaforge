@@ -132,4 +132,32 @@ describe("actions and templates (§4)", () => {
         });
         expect(interpolate("No ${record.number} → ${record.status}", ctx.record)).toBe("No INV-000042 → DRAFT");
     });
+
+    it("runFlow dispatches through the context's leg — or rejects where unavailable", async () => {
+        let ran: string | undefined;
+        const ctx = context({
+            actions: {
+                save: async () => {},
+                cancel: async () => {},
+                deleteRecord: async () => {},
+                openPage: async () => {},
+                runFlow: async (hook: string) => {
+                    ran = hook;
+                },
+            },
+        });
+        await dispatchAction(ctx, { type: "runFlow", props: { hook: "stampCredit" } });
+        expect(ran).toBe("stampCredit");
+
+        const bare = context({
+            actions: {
+                save: async () => {},
+                cancel: async () => {},
+                deleteRecord: async () => {},
+                openPage: async () => {},
+            },
+        });
+        await expect(dispatchAction(bare, { type: "runFlow", props: { hook: "x" } }))
+            .rejects.toThrow("runFlow is not available");
+    });
 });

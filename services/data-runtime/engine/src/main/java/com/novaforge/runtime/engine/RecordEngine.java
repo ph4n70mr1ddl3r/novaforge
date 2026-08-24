@@ -882,6 +882,30 @@ public class RecordEngine {
                 appSystemPrincipal(handle), null, hookSink);
     }
 
+    /**
+     * The page-model {@code runFlow} action's execution leg (PHASE-3 §8): one named
+     * flow on demand against the record's current state. The calling user needs the
+     * entity READ grant and sharing visibility (the button renders on a page they can
+     * see); the flow itself runs as the per-app system principal with the initiating
+     * actor recorded (PHASE-4 §13's system-identity-with-human-context audit shape).
+     */
+    public Map<String, Object> runManualHook(UUID tenantId, UUID actorId, String entityApiName,
+                                             UUID recordId, String hookName) {
+        EntityHandle handle = resolver.resolve(tenantId, entityApiName);
+        AppDefinition app = resolver.bundle(tenantId, handle.appId());
+        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, entityApiName,
+                handle.appApiName(), app.permissionSet());
+        RecordStore.StoredRecord record = records.find(tenantId, handle.entityKey(), recordId,
+                        false)
+                .orElseThrow(() -> notFound(entityApiName, recordId));
+        requireVisible(sharing.forActor(tenantId, actorId, handle.entity(), app), record);
+        hooks.runManual(app, handle, tenantId, recordId, record.data(), hookName,
+                appSystemPrincipal(handle), actorId, hookSink);
+        return shape(handle.entity(),
+                records.find(tenantId, handle.entityKey(), recordId, false).orElse(record),
+                strip(tenantId, actorId, handle, app));
+    }
+
     /** The retry leg's terminal dispositions (§2) — the scanner maps these to row states. */
     public enum RetryOutcome {
 
