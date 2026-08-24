@@ -2,7 +2,6 @@ package com.novaforge.file.api;
 
 import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
-import com.novaforge.file.storage.StoragePort;
 import com.novaforge.security.ServiceClientGate;
 import java.util.Base64;
 import java.util.Map;
@@ -26,11 +25,9 @@ import org.springframework.web.bind.annotation.RestController;
 public class InternalFileController {
 
     private final AttachmentService attachments;
-    private final StoragePort storage;
 
-    public InternalFileController(AttachmentService attachments, StoragePort storage) {
+    public InternalFileController(AttachmentService attachments) {
         this.attachments = attachments;
-        this.storage = storage;
     }
 
     public record InternalUpload(String tenantId, String fileName, String contentType,

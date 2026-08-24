@@ -2,7 +2,6 @@ package com.novaforge.integration.store;
 
 import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
-import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -161,9 +160,5 @@ public class JobStore {
                 rs.getLong("processed_rows"), rs.getLong("failed_rows"),
                 MAPPER.readValue(rs.getString("checkpoint"), Map.class), rs.getString("error"),
                 rs.getTimestamp("created_at").toInstant());
-    }
-
-    static Timestamp timestamp(Instant instant) {
-        return Timestamp.from(instant);
     }
 }

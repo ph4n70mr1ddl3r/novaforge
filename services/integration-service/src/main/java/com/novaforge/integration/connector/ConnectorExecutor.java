@@ -59,19 +59,12 @@ public class ConnectorExecutor {
     private final DeliveryStore deliveries;
     private final CircuitBreakerRegistry breakers;
     private final RetryRegistry retries;
-    private final String serviceClientId;
-    private final String serviceClientSecret;
-    private final String issuer;
-
     public ConnectorExecutor(PublishedIntegrations definitions, SecretStore secrets,
                              DeliveryStore deliveries,
                              @Value("${novaforge.connector.timeout-ms:10000}") long timeoutMs,
                              @Value("${novaforge.connector.attempts:4}") int attempts,
                              @Value("${novaforge.connector.backoff-initial-ms:200}") long backoffInitial,
-                             @Value("${novaforge.connector.backoff-max-ms:2000}") long backoffMax,
-                             @Value("${novaforge.auth.service-client.id:novaforge-runtime}") String serviceClientId,
-                             @Value("${novaforge.auth.service-client.secret:novaforge-runtime-secret}") String serviceClientSecret,
-                             @Value("${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}") String issuer) {
+                             @Value("${novaforge.connector.backoff-max-ms:2000}") long backoffMax) {
         this.definitions = definitions;
         this.secrets = secrets;
         this.deliveries = deliveries;
@@ -83,9 +76,6 @@ public class ConnectorExecutor {
                 .intervalFunction(in -> Math.min(backoffInitial * (1L << (in - 1)), backoffMax))
                 .build();
         this.retries = RetryRegistry.of(config);
-        this.serviceClientId = serviceClientId;
-        this.serviceClientSecret = serviceClientSecret;
-        this.issuer = issuer;
     }
 
     /** A settled connector call: status, body, and the delivery id it logged. */
