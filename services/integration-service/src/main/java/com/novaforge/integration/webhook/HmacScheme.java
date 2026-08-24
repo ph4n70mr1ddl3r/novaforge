@@ -2,7 +2,6 @@ package com.novaforge.integration.webhook;
 
 import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
-import com.novaforge.integration.secrets.SecretStore;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
