@@ -69,10 +69,86 @@ export interface ValidationRule {
     message: string;
 }
 
+/**
+ * An event-hook rule (PHASE-3 §2): a trigger + a flow-IR step graph, record scope.
+ * Triggers v1: beforeSave | afterSave | beforeDelete | afterDelete. The body is
+ * either a flow or a script artifact (PHASE-3 §6) — exactly one is present.
+ */
 export interface HookRule {
+    name?: string;
     trigger: string;
-    flow: unknown;
+    flow?: FlowStep;
+    script?: { language: string; source: string; sandbox?: string };
 }
+
+/** One node of a flow-IR step graph (PHASE-3 §2): {id, op, params, next}. */
+export interface FlowStep {
+    id: string;
+    op: string;
+    params?: Record<string, unknown>;
+    next?: string;
+    onTrue?: string;
+    onFalse?: string;
+    body?: FlowStep;
+}
+
+/** The closed v1 primitive set (ADR-008 #2). */
+export const FLOW_OPS = [
+    "setField",
+    "createRecord",
+    "updateRecord",
+    "publishEvent",
+    "branch",
+    "iterate",
+    "transitionState",
+    "requestApproval",
+    "callConnector",
+] as const;
+
+/** The v1 hook triggers (PHASE-3 §2). */
+export const HOOK_TRIGGERS = ["beforeSave", "afterSave", "beforeDelete", "afterDelete"] as const;
+
+// --- builder test suites (PHASE-3 §7, ADR-010) ---
+
+export interface SuiteFixture {
+    entity: string;
+    asRole?: string;
+    template: Record<string, unknown>;
+}
+
+export interface SuiteStep {
+    op: string;
+    entity?: string;
+    asRole?: string;
+    recordId?: string;
+    template?: Record<string, unknown>;
+    expect?: string;
+}
+
+export interface SuiteCase {
+    name: string;
+    fixtures: SuiteFixture[];
+    steps: SuiteStep[];
+    assertExpressions: string[];
+}
+
+/** The Tests branch (ADR-010): fixtures → steps → assertions per PHASE-3 §7. */
+export interface TestSuiteDefinition {
+    apiName: string;
+    label?: string;
+    cases: SuiteCase[];
+}
+
+/** The suite step vocabulary v1 + the growth (§12/§9/§10). */
+export const SUITE_OPS = [
+    "createRecord",
+    "updateRecord",
+    "deleteRecord",
+    "queryRecord",
+    "resolveTask",
+    "runReport",
+    "postWebhook",
+] as const;
 
 export interface IndexDefinition {
     fields: string[];
@@ -247,6 +323,7 @@ export interface AppDefinition {
     stateMachines: StateMachineDefinition[];
     reports: ReportDefinition[];
     dashboards: DashboardDefinition[];
+    testSuites?: TestSuiteDefinition[];
     translations: TranslationsDefinition[];
 }
 

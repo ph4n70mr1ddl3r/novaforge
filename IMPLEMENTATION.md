@@ -138,10 +138,11 @@ inline children → 4 outbox rows published → `novaforge.record` carries the e
   volume) with SPA deep-link fallback — asset paths anonymous, APIs still
   scope-gated; Vite dev proxies cover local development.
 
-**Suites:** 104 frontend tests (`pnpm -r test`: shared 82 — conformance 39, deltas,
-  goldens, validation, renderer, gallery-axe, client; runtime-ui 6 — nav/auto-list/
-  form journeys, inbox, axe, the L1→delta→persist round-trip; builder-ui 16 —
-  entity/page/RBAC/onboarding/i18n/reporting journeys incl. the 409 rebase), plus
+**Suites:** 108 frontend tests (`pnpm -r test`: shared 82 — conformance 39, deltas,
+  goldens, validation, renderer, gallery-axe, client; runtime-ui 5 — nav/auto-list/
+  form journeys, inbox, axe, the L1→delta→persist round-trip; builder-ui 21 —
+  entity/page/RBAC/onboarding/i18n/reporting journeys incl. the 409 rebase, the
+  PHASE-3 §8 logic + suites authoring journeys), plus
   `DefinitionLifecycleTests.pageDefinitionLifecycle` (9 tests, real Postgres) and
   `GatewayApplicationTests` SPA hosting.
 
@@ -297,6 +298,41 @@ persist → event seam → shaped projection):
 **Phase 3 closed:** all §1–§9 surfaces implemented. The environment track's live
 Kind-cluster bring-up remains the one outstanding operational check (declaratively
 validated; carried from Phase 1).
+
+**Spec-review closeout (2026-08-24) — three gaps found reviewing the code against
+the spec, all closed:**
+- **§4's spine rebind had never landed.** `metadata.published` still rode the
+  Phase 1 Redis pub/sub channel (`novaforge.metadata.events`) — publisher and all
+  three consumers (runtime cache/materializer, Reporting epoch, Integration epoch)
+  — despite T1's acceptance pin ("Redis channel retired"). The publisher now emits
+  synchronously on the family topic `novaforge.metadata` keyed `tenantId:appId`
+  with the shared header conventions; a broker outage fails the publish audibly
+  rather than leaving consumers stale. The runtime subscriber is a `@KafkaListener`
+  (group `novaforge-runtime-metadata`); Reporting (`novaforge-reporting-definitions`)
+  and Integration (`novaforge-integration-definitions`) swap their Redis listeners
+  for spine listeners — same envelope, client-only change, exactly as pinned.
+  `DefinitionLifecycleTests` consumes the topic from a throwaway group and pins
+  both envelopes per publish; the metadata service no longer carries the Redis
+  starter at all.
+- **§5's mechanical append-only was convention, not mechanism.** Nothing denied
+  UPDATE/DELETE on `audit_events`. Now: a dedicated runtime role
+  `novaforge_audit_app` holds INSERT+SELECT and nothing else (V2 migration, granted
+  by the database owner Flyway connects as; compose init creates it for fresh
+  volumes); the service's pool connects as that role while migrations ride the
+  owner credentials (`spring.flyway.user`). `AuditTrailTests.appendOnlyIsMechanical`
+  pins it at the database — INSERT/SELECT succeed as the store role, UPDATE/DELETE
+  deny with `permission denied` — and every consumer write/read in the suite now
+  exercises the restricted role end to end.
+- **§8's authoring UI (T8) existed only in the ledger's imagination.** The builder
+  had no rule/hook/expression editors and no suite authoring or runner surface.
+  Two new screens close it: **Logic** (validation rules as expression+message rows,
+  hook rules as trigger + step-list forms over the flow IR with auto-linked
+  `next`, formula/roll-up/default-expression slots beside their fields — save-time
+  compile feedback surfaces verbatim through the draft APIs) and **Suites**
+  (fixture/step/assertion editors over the §7 encoding with the closed op
+  vocabulary, run button riding the scratch-tenant runner API, the artifact's
+  verdicts rendered beside the editor). Five vitest journeys pin the round-trips;
+  the shell grows `logic` and `suites` screens.
 
 ## Phase 4 — Workflow & Approvals ◐ (spec: PHASE-4-WORKFLOW-APPROVALS.md)
 
@@ -831,6 +867,18 @@ chart/export polish beyond the catalog contract is backlog until the dogfood ask
 ## Phase 6 — Integration Layer ◐ (spec: PHASE-6-INTEGRATION.md)
 
 **Status:** T1–T9 landed and suite-green; T10 (the live exit walkthrough — Stripe/bank feed → Payments visible in reports against the running stack) remains the exit-review leg, per the task table's own definition.
+
+**Fixed at the 2026-08-24 spec review — the secrets package was never committed.**
+`.gitignore`'s broad `secrets/` scratch pattern had silently excluded
+`integration/secrets/` (`SecretStore`, `SecretCipher`) and `reports/
+ReportExportClient` from every commit — fresh checkouts did not compile, while
+trees that predated the refactor built fine and hid it. The patterns are now
+anchored to the repo root (`/secrets/`, `/reports/`) and the sources are tracked;
+`SecretStore` was rewritten to the versioned `it_secrets` schema its callers,
+controller, and migration already coded against (each `put` lands a new active
+version so a rotation window verifies old + new, `retireEarlierVersions` closes
+it back to exactly one, `sha256` keys the inbound replay nonces) — the §9
+rotation semantics the suites pin, restored to a compiling tree.
 
 **Implemented — T1 the Integration Service (§2):**
 - `novaforge-integration-service` (port 8090, gateway routes `/api/v1/integrations/**` and the one deliberately anonymous `/api/v1/webhooks/inbound/**`), its own `novaforge_integration` database on the shared Postgres (delivery log, DLQ, replay nonces, job ledger + per-row outcomes, spine outbox), Prometheus scrape + Helm chart + Skaffold artifact

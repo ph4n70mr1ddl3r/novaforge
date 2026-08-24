@@ -13,6 +13,8 @@ import { I18nEditor } from "./i18n-editor.tsx";
 import { ReportBuilder } from "./report-builder.tsx";
 import { DashboardComposer } from "./dashboard-composer.tsx";
 import { Lifecycle, SuiteRuns } from "./lifecycle.tsx";
+import { LogicEditor } from "./logic-editor.tsx";
+import { SuitesEditor } from "./suites-editor.tsx";
 
 /**
  * The builder shell (PHASE-2 §8): design-time surface over the Metadata draft
@@ -20,7 +22,17 @@ import { Lifecycle, SuiteRuns } from "./lifecycle.tsx";
  * Phase 8 lifecycle/i18n screens riding the same builder-gated APIs.
  */
 
-export type BuilderScreen = "entities" | "pages" | "rbac" | "reports" | "dashboards" | "i18n" | "lifecycle" | "onboarding";
+export type BuilderScreen =
+    | "entities"
+    | "pages"
+    | "logic"
+    | "suites"
+    | "rbac"
+    | "reports"
+    | "dashboards"
+    | "i18n"
+    | "lifecycle"
+    | "onboarding";
 
 export interface BuilderShellProps {
     client: PlatformClient;
@@ -64,7 +76,7 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
             <header className="nf-topbar">
                 <h1>NovaForge Builder</h1>
                 <nav aria-label="Builder sections">
-                    {(["entities", "pages", "rbac", "reports", "dashboards", "i18n", "lifecycle", "onboarding"] as BuilderScreen[]).map((name) => (
+                    {(["entities", "pages", "logic", "suites", "rbac", "reports", "dashboards", "i18n", "lifecycle", "onboarding"] as BuilderScreen[]).map((name) => (
                         <button key={name} type="button" aria-current={screen === name} onClick={() => setScreen(name)} id={name === "entities" ? "entities" : undefined}>
                             {name}
                         </button>
@@ -108,6 +120,25 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                                         throw caught;
                                     }
                                 }}
+                            />
+                        ) : null}
+                        {screen === "logic" ? (
+                            <LogicEditor
+                                app={app}
+                                onSaveEntity={async (entity: EntityDefinition) => {
+                                    await client.putEntity(app.id ?? "", entity as unknown as Record<string, unknown>);
+                                    await reload();
+                                }}
+                            />
+                        ) : null}
+                        {screen === "suites" ? (
+                            <SuitesEditor
+                                app={app}
+                                onSaveSuite={async (suite) => {
+                                    await client.putSuite(app.id ?? "", suite.apiName, suite as unknown as Record<string, unknown>);
+                                    await reload();
+                                }}
+                                onRunSuite={async (apiName) => await client.runSuite(app.id ?? "", apiName)}
                             />
                         ) : null}
                         {screen === "rbac" ? (

@@ -62,6 +62,9 @@ export {
   resolveObjectAccess,
   FULL_ACCESS,
   NO_ACCESS,
+  FLOW_OPS,
+  HOOK_TRIGGERS,
+  SUITE_OPS,
   type AppDefinition,
   type DashboardDefinition,
   type EntityDefinition,
@@ -78,6 +81,13 @@ export {
   type ResolvedFieldAccess,
   type ResolvedObjectAccess,
   type StateMachineDefinition,
+  type SuiteCase,
+  type SuiteFixture,
+  type SuiteStep,
+  type TestSuiteDefinition,
+  type FlowStep,
+  type HookRule,
+  type ValidationRule,
   type TranslationsDefinition,
 } from "./metadata.ts";
 
