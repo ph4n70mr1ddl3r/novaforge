@@ -41,7 +41,7 @@ temp/
 *.local
 application-local.yml
 application-local.yaml
-secrets/
+/secrets/
 *.pem
 *.key
 
@@ -55,7 +55,7 @@ kubeconfig*
 # Reports & coverage
 coverage/
 .nyc_output/
-reports/
+/reports/
 
 # Compose env overrides (secrets — never commit)
 deploy/compose/.env
