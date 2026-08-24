@@ -369,7 +369,8 @@ public class TestRunner {
                 "label", candidate.label() == null ? candidate.apiName() : candidate.label(),
                 "settings", MAPPER.convertValue(candidate.settings(), Map.class),
                 "entities", MAPPER.convertValue(candidate.entities(), List.class),
-                "permissionSet", MAPPER.convertValue(candidate.permissionSet(), Map.class));
+                "permissionSet", MAPPER.convertValue(candidate.permissionSet(), Map.class),
+                "integrations", MAPPER.convertValue(candidate.integrations(), Map.class));
         Map<String, Object> created = metadata.post()
                 .uri("/api/v1/metadata/apps")
                 .headers(headers -> headers.setBearerAuth(token))

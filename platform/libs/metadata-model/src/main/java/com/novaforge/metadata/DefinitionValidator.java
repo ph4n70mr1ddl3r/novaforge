@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -25,6 +26,9 @@ public final class DefinitionValidator {
 
     /** State names (PHASE-4 §3) — the ERP convention (DRAFT, SUBMITTED, POSTED). */
     public static final Pattern UPPER_SNAKE = Pattern.compile("^[A-Z][A-Z0-9_]*$");
+
+    /** Integration ids (PHASE-6 §3): {@code con_stripe_tx}, {@code wh_stripe}. */
+    public static final Pattern LOWER_WORD = Pattern.compile("^[a-zA-Z_][a-zA-Z0-9_-]*$");
 
     /** One cron item: {@code * | n | n-m | n/m | name} (a structural save check). */
     private static final Pattern CRON_ITEM =
@@ -95,6 +99,7 @@ public final class DefinitionValidator {
         validateReports(app, errors);
         validateDashboards(app, errors);
         validatePermissionSet(app, errors);
+        validateIntegrations(app, errors);
         return new ProblemErrors(errors, globals);
     }
 
@@ -622,6 +627,237 @@ public final class DefinitionValidator {
      * visibility roles resolve. Roles govern composition only — every widget's run
      * still executes under the requesting actor's grants (§8).
      */
+    /**
+     * The Integrations branch (PHASE-6 §3/§5/§6/§7/§9): schema and in-app reference
+     * checks the builder's guided forms lean on — connector operations, webhook
+     * direction shape, credential references, import mappings. Secret material
+     * cannot ride metadata (§9): CredentialDefinition carries the reference only,
+     * and secretRefs name secret-store entries the Integration Service resolves.
+     */
+    private static void validateIntegrations(AppDefinition app,
+                                             List<ProblemErrors.FieldError> errors) {
+        IntegrationsDefinition integrations = app.integrations();
+
+        for (ConnectorDefinition connector : integrations.connectors()) {
+            String scope = "connectors." + (connector.id() == null ? "?" : connector.id());
+            if (connector.id() == null || !LOWER_WORD.matcher(connector.id()).matches()) {
+                errors.add(field(scope + ".id",
+                        "connector id must be a letter/underscore then word characters",
+                        connector.id()));
+                continue;
+            }
+            if (!ConnectorDefinition.TYPES.contains(connector.type())) {
+                errors.add(field(scope + ".type",
+                        "connector type must be one of " + ConnectorDefinition.TYPES
+                                + " in v1 (SOAP/DB/file join the same frame on dogfood demand, §1)",
+                        connector.type()));
+            }
+            if (connector.baseUrl() == null || !connector.baseUrl().matches("^https?://.+")) {
+                errors.add(field(scope + ".baseUrl",
+                        "connector baseUrl must be an http(s) URL", connector.baseUrl()));
+            }
+            if (connector.credential() != null
+                    && integrations.credential(connector.credential()).isEmpty()) {
+                errors.add(field(scope + ".credential",
+                        "connector credential must reference a credential of the app: "
+                                + connector.credential(), connector.credential()));
+            }
+            if (connector.operations().isEmpty()) {
+                errors.add(field(scope + ".operations",
+                        "a connector requires at least one operation", null));
+            }
+            Set<String> names = new HashSet<>();
+            for (ConnectorDefinition.Operation operation : connector.operations()) {
+                if (operation.name() == null || !CAMEL_CASE.matcher(operation.name()).matches()) {
+                    errors.add(field(scope + ".operations",
+                            "operation names must be camelCase: " + operation.name(),
+                            operation.name()));
+                } else if (!names.add(operation.name())) {
+                    errors.add(field(scope + ".operations",
+                            "operation names must be unique per connector: " + operation.name(),
+                            operation.name()));
+                }
+                if (!ConnectorDefinition.METHODS.contains(operation.method()))
+                    errors.add(field(scope + ".operations." + operation.name() + ".method",
+                            "operation method must be one of " + ConnectorDefinition.METHODS,
+                            operation.method()));
+                if (operation.path() == null || !operation.path().startsWith("/")) {
+                    errors.add(field(scope + ".operations." + operation.name() + ".path",
+                            "operation path must start with /", operation.path()));
+                }
+            }
+        }
+
+        for (CredentialDefinition credential : integrations.credentials()) {
+            String scope = "credentials." + (credential.id() == null ? "?" : credential.id());
+            if (credential.id() == null || !LOWER_WORD.matcher(credential.id()).matches()) {
+                errors.add(field(scope + ".id",
+                        "credential id must be a letter/underscore then word characters",
+                        credential.id()));
+                continue;
+            }
+            if (!CredentialDefinition.KINDS.contains(credential.kind())) {
+                errors.add(field(scope + ".kind",
+                        "credential kind must be one of " + CredentialDefinition.KINDS,
+                        credential.kind()));
+                continue;
+            }
+            switch (credential.kind()) {
+                case CredentialDefinition.KIND_API_KEY -> {
+                    if (credential.header() == null || credential.header().isBlank()) {
+                        errors.add(field(scope + ".header",
+                                "api_key credentials name the header they ride (e.g. Authorization)",
+                                credential.header()));
+                    }
+                }
+                case CredentialDefinition.KIND_BASIC -> {
+                    if (credential.username() == null || credential.username().isBlank()) {
+                        errors.add(field(scope + ".username",
+                                "basic credentials carry the username; the password is the secret",
+                                credential.username()));
+                    }
+                }
+                case CredentialDefinition.KIND_OAUTH2_CC -> {
+                    if (credential.tokenUrl() == null
+                            || !credential.tokenUrl().matches("^https?://.+")) {
+                        errors.add(field(scope + ".tokenUrl",
+                                "oauth2_client_credentials carry the token endpoint URL",
+                                credential.tokenUrl()));
+                    }
+                    if (credential.clientId() == null || credential.clientId().isBlank()) {
+                        errors.add(field(scope + ".clientId",
+                                "oauth2_client_credentials carry the client id; the secret is the secret",
+                                credential.clientId()));
+                    }
+                }
+                default -> { }
+            }
+        }
+
+        for (WebhookDefinition webhook : integrations.webhooks()) {
+            String scope = "webhooks." + (webhook.id() == null ? "?" : webhook.id());
+            if (webhook.id() == null || !LOWER_WORD.matcher(webhook.id()).matches()) {
+                errors.add(field(scope + ".id",
+                        "webhook id must be a letter/underscore then word characters",
+                        webhook.id()));
+                continue;
+            }
+            if (!WebhookDefinition.DIRECTIONS.contains(webhook.direction())) {
+                errors.add(field(scope + ".direction",
+                        "webhook direction must be one of " + WebhookDefinition.DIRECTIONS,
+                        webhook.direction()));
+                continue;
+            }
+            if (webhook.secretRef() == null || webhook.secretRef().isBlank()) {
+                errors.add(field(scope + ".secretRef",
+                        "webhooks reference a secret-store secret (secretRef)", null));
+            }
+            if (WebhookDefinition.OUTBOUND.equals(webhook.direction())) {
+                if (webhook.url() == null || !webhook.url().matches("^https?://.+")) {
+                    errors.add(field(scope + ".url",
+                            "outbound webhooks carry the target URL", webhook.url()));
+                }
+                if (webhook.events() == null || webhook.events().isBlank()) {
+                    errors.add(field(scope + ".events",
+                            "outbound webhooks carry a filter expression over spine events "
+                                    + "(bindings: " + WebhookDefinition.EVENT_BINDINGS + ")",
+                            webhook.events()));
+                }
+                if (webhook.mapping() != null) {
+                    errors.add(field(scope + ".mapping",
+                            "mapping is the inbound discriminator's payload — outbound carries "
+                                    + "url + events", webhook.mapping()));
+                }
+            } else {
+                var entity = webhook.entity() == null ? Optional.<EntityDefinition>empty()
+                        : app.entity(webhook.entity());
+                if (entity.isEmpty()) {
+                    errors.add(field(scope + ".entity",
+                            "inbound webhooks bind to an entity of the app", webhook.entity()));
+                }
+                if (webhook.url() != null || webhook.events() != null) {
+                    errors.add(field(scope + ".url",
+                            "url + events are the outbound discriminator's payload — inbound "
+                                    + "carries entity + mapping", webhook.url()));
+                }
+                WebhookDefinition.Mapping mapping = webhook.mapping();
+                if (mapping == null || mapping.fields().isEmpty()) {
+                    errors.add(field(scope + ".mapping",
+                            "inbound webhooks carry a field mapping (target field → ${…} templates)",
+                            mapping));
+                } else if (entity.isPresent()) {
+                    if (mapping.mode() != null
+                            && !WebhookDefinition.Mapping.MODE_CREATE.equals(mapping.mode())
+                            && !WebhookDefinition.Mapping.MODE_UPSERT.equals(mapping.mode())) {
+                        errors.add(field(scope + ".mapping.mode",
+                                "webhook mapping mode must be create or upsert", mapping.mode()));
+                    }
+                    for (String keyField : mapping.keyFields()) {
+                        if (entity.get().field(keyField).isEmpty()) {
+                            errors.add(field(scope + ".mapping.keyFields",
+                                    "key field must exist on " + entity.get().apiName() + ": "
+                                            + keyField, keyField));
+                        }
+                    }
+                    for (Map.Entry<String, Object> entry : mapping.fields().entrySet()) {
+                        if (entity.get().field(entry.getKey()).isEmpty()) {
+                            errors.add(field(scope + ".mapping.fields",
+                                    "mapped field must exist on " + entity.get().apiName() + ": "
+                                            + entry.getKey(), entry.getKey()));
+                        } else if (!(entry.getValue() instanceof String)) {
+                            errors.add(field(scope + ".mapping.fields",
+                                    "mapped values are ${…} templates over the provider payload: "
+                                            + entry.getKey(), entry.getValue()));
+                        }
+                    }
+                }
+            }
+        }
+
+        for (ImportDefinition mapping : integrations.imports()) {
+            String scope = "imports." + (mapping.apiName() == null ? "?" : mapping.apiName());
+            if (mapping.apiName() == null || !CAMEL_CASE.matcher(mapping.apiName()).matches()) {
+                errors.add(field(scope + ".apiName",
+                        "import mapping apiName must be camelCase", mapping.apiName()));
+                continue;
+            }
+            var entity = mapping.entity() == null ? Optional.<EntityDefinition>empty()
+                    : app.entity(mapping.entity());
+            if (entity.isEmpty()) {
+                errors.add(field(scope + ".entity",
+                        "import mappings bind to an entity of the app", mapping.entity()));
+                continue;
+            }
+            if (!ImportDefinition.MODES.contains(mapping.mode())) {
+                errors.add(field(scope + ".mode",
+                        "import mode must be one of " + ImportDefinition.MODES, mapping.mode()));
+            }
+            if (ImportDefinition.MODE_UPSERT.equals(mapping.mode())
+                    && mapping.keyFields().isEmpty()) {
+                errors.add(field(scope + ".keyFields",
+                        "upsert imports require key fields for per-row idempotency (§7)", null));
+            }
+            for (String keyField : mapping.keyFields()) {
+                if (entity.get().field(keyField).isEmpty()) {
+                    errors.add(field(scope + ".keyFields",
+                            "key field must exist on " + entity.get().apiName() + ": " + keyField,
+                            keyField));
+                }
+            }
+            if (mapping.mapping().isEmpty()) {
+                errors.add(field(scope + ".mapping",
+                        "import mappings carry target field → source column mappings", null));
+            }
+            for (String target : mapping.mapping().keySet()) {
+                if (entity.get().field(target).isEmpty()) {
+                    errors.add(field(scope + ".mapping",
+                            "mapped field must exist on " + entity.get().apiName() + ": " + target,
+                            target));
+                }
+            }
+        }
+    }
+
     private static void validateDashboards(AppDefinition app,
                                            List<ProblemErrors.FieldError> errors) {
         Set<String> ids = new HashSet<>();

@@ -521,4 +521,90 @@ class DefinitionValidatorTest {
                 REPORTING_APP.replace("{ \"name\": \"reporting\" }, ", ""))),
                 "default runAsRole")).isTrue();
     }
+
+    // --- integrations (PHASE-6 §3/§5/§6/§7/§9) ---
+
+    private static AppDefinition withIntegrations(AppDefinition app, String json) {
+        IntegrationsDefinition integrations =
+                DefinitionParser.parse(json, IntegrationsDefinition.class);
+        return new AppDefinition(app.id(), app.apiName(), app.label(), app.labelI18n(),
+                app.description(), app.entities(), app.pages(), app.settings(),
+                app.permissionSet(), app.testSuites(), app.stateMachines(), app.slas(),
+                app.jobs(), app.workflows(), app.reports(), app.dashboards(), integrations);
+    }
+
+    private static final String INTEGRATIONS_APP = """
+            { "connectors": [
+                { "id": "con_stripe", "type": "rest", "baseUrl": "https://api.stripe.com/v1",
+                  "credential": "cred_stripe",
+                  "operations": [
+                    { "name": "listTransactions", "method": "GET", "path": "/balance_transactions",
+                      "query": { "limit": "${limit}" } } ] } ],
+              "credentials": [
+                { "id": "cred_stripe", "kind": "api_key", "header": "Authorization" } ],
+              "webhooks": [
+                { "id": "wh_feed", "direction": "inbound", "entity": "JournalEntry",
+                  "secretRef": "hook_wh_feed",
+                  "mapping": { "mode": "upsert", "keyFields": ["reference"],
+                               "idempotencyKey": "${data.id}",
+                               "fields": { "reference": "${data.ref}" } } },
+                { "id": "wh_notify", "direction": "outbound", "url": "https://ops.example/hook",
+                  "events": "event == 'record.created' && entityId == 'JournalEntry'",
+                  "secretRef": "hook_wh_notify" } ],
+              "imports": [
+                { "apiName": "journalFeed", "entity": "JournalEntry", "mode": "upsert",
+                  "keyFields": ["reference"], "mapping": { "reference": "Ref" } } ] }
+            """;
+
+    @Test
+    @DisplayName("integrations: the §3 spec shape saves clean")
+    void integrationsBaselineValid() {
+        assertThat(validate(withIntegrations(baseApp(), INTEGRATIONS_APP)).isEmpty()).isTrue();
+    }
+
+    @Test
+    @DisplayName("integrations: connector/credential/webhook/import rule matrix")
+    void integrationsRuleMatrix() {
+        assertThat(mentions(validate(withIntegrations(baseApp(),
+                INTEGRATIONS_APP.replace("\"type\": \"rest\"", "\"type\": \"soap\""))),
+                "connector type")).isTrue();
+        assertThat(mentions(validate(withIntegrations(baseApp(),
+                INTEGRATIONS_APP.replace("\"baseUrl\": \"https://api.stripe.com/v1\"",
+                        "\"baseUrl\": \"ftp://x\""))),
+                "baseUrl")).isTrue();
+        assertThat(mentions(validate(withIntegrations(baseApp(),
+                INTEGRATIONS_APP.replace("\"credential\": \"cred_stripe\"",
+                        "\"credential\": \"cred_ghost\""))),
+                "credential must reference")).isTrue();
+        assertThat(mentions(validate(withIntegrations(baseApp(),
+                INTEGRATIONS_APP.replace("\"method\": \"GET\"", "\"method\": \"TRACE\""))),
+                "operation method")).isTrue();
+        // credentials never carry the secret: the kind shapes pin the non-secret half
+        assertThat(mentions(validate(withIntegrations(baseApp(),
+                INTEGRATIONS_APP.replace("\"kind\": \"api_key\", \"header\": \"Authorization\"",
+                        "\"kind\": \"basic\""))),
+                "basic credentials")).isTrue();
+        // webhook direction shape: outbound needs url+events, inbound entity+mapping
+        assertThat(mentions(validate(withIntegrations(baseApp(),
+                INTEGRATIONS_APP.replace("\"events\": \"event == 'record.created' "
+                        + "&& entityId == 'JournalEntry'\"", "\"events\": \"\""))),
+                "filter expression")).isTrue();
+        assertThat(mentions(validate(withIntegrations(baseApp(),
+                INTEGRATIONS_APP.replace("\"entity\": \"JournalEntry\"",
+                        "\"entity\": \"Ghost\""))),
+                "bind to an entity")).isTrue();
+        assertThat(mentions(validate(withIntegrations(baseApp(),
+                INTEGRATIONS_APP.replace("\"reference\": \"${data.ref}\"",
+                        "\"ghostField\": \"${data.ref}\""))),
+                "mapped field must exist")).isTrue();
+        // imports: upsert requires keys; mappings address real fields
+        assertThat(mentions(validate(withIntegrations(baseApp(),
+                INTEGRATIONS_APP.replace("\"keyFields\": [\"reference\"]",
+                        "\"keyFields\": []"))),
+                "per-row idempotency")).isTrue();
+        assertThat(mentions(validate(withIntegrations(baseApp(),
+                INTEGRATIONS_APP.replace("\"mapping\": { \"reference\": \"Ref\" }",
+                        "\"mapping\": { \"ghost\": \"Ref\" }"))),
+                "mapped field must exist")).isTrue();
+    }
 }

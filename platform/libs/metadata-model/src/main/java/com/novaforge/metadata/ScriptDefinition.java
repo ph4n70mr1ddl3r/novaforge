@@ -16,13 +16,34 @@ import com.fasterxml.jackson.annotation.JsonInclude;
  * <em>completion value</em> is the result — the beforeSave write-back form is an
  * expression, e.g. {@code ({ label: 'ENRICHED-' + $record.label })}. A top-level
  * {@code return} is not valid in a program and is rejected at execution.</p>
+ *
+ * <p>The {@code sandbox} context (PHASE-6 §4): {@code "connector"} declares the
+ * artifact may call REST through the platform's connector machinery — the Script
+ * Engine then (and only then) exposes {@code $http}, routed through the Integration
+ * Service's circuit-breaker/credential path, never raw sockets (the PHASE-3 §6
+ * deferral activating per its terms).</p>
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public record ScriptDefinition(String language, String source) {
+public record ScriptDefinition(String language, String source, String sandbox) {
 
     /** v0 ships GraalVM JS only (ADR-003 #1); additions are versioned platform features. */
     public static final java.util.Set<String> LANGUAGES = java.util.Set.of("js");
 
+    /** Sandbox contexts: {@code connector} unlocks {@code $http} (PHASE-6 §4). */
+    public static final String SANDBOX_CONNECTOR = "connector";
+
+    public static final java.util.Set<String> SANDBOXES =
+            java.util.Set.of("default", SANDBOX_CONNECTOR);
+
     /** 64 KiB of source — hooks are reviewed artifacts, not programs. */
     public static final int MAX_SOURCE_CHARS = 64 * 1024;
+
+    public ScriptDefinition(String language, String source) {
+        this(language, source, null);
+    }
+
+    /** True when the artifact declares the connector sandbox context. */
+    public boolean connectorSandbox() {
+        return SANDBOX_CONNECTOR.equals(sandbox);
+    }
 }

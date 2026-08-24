@@ -40,6 +40,12 @@ public class MetadataStore {
     public static final String KIND_REPORT = "report";
     public static final String KIND_DASHBOARD = "dashboard";
 
+    /** The Integration branches (PHASE-6 §2) — connectors, webhooks, credentials, imports. */
+    public static final String KIND_CONNECTOR = "connector";
+    public static final String KIND_WEBHOOK = "webhook";
+    public static final String KIND_CREDENTIAL = "credential";
+    public static final String KIND_IMPORT = "import_mapping";
+
     private final JdbcTemplate jdbc;
 
     public MetadataStore(JdbcTemplate jdbc) {
@@ -333,6 +339,18 @@ public class MetadataStore {
         for (com.novaforge.metadata.DashboardDefinition dashboard : app.dashboards()) {
             insertBranch(tenantId, actorId, appId, KIND_DASHBOARD, dashboard.id(), dashboard);
         }
+        for (com.novaforge.metadata.ConnectorDefinition connector : app.integrations().connectors()) {
+            insertBranch(tenantId, actorId, appId, KIND_CONNECTOR, connector.id(), connector);
+        }
+        for (com.novaforge.metadata.WebhookDefinition webhook : app.integrations().webhooks()) {
+            insertBranch(tenantId, actorId, appId, KIND_WEBHOOK, webhook.id(), webhook);
+        }
+        for (com.novaforge.metadata.CredentialDefinition credential : app.integrations().credentials()) {
+            insertBranch(tenantId, actorId, appId, KIND_CREDENTIAL, credential.id(), credential);
+        }
+        for (com.novaforge.metadata.ImportDefinition mapping : app.integrations().imports()) {
+            insertBranch(tenantId, actorId, appId, KIND_IMPORT, mapping.apiName(), mapping);
+        }
     }
 
     private void insertBranch(UUID tenantId, UUID actorId, UUID appId, String kind,
@@ -386,11 +404,21 @@ public class MetadataStore {
                 appId, KIND_REPORT, com.novaforge.metadata.ReportDefinition.class);
         List<com.novaforge.metadata.DashboardDefinition> dashboards = branchDocuments(tenantId,
                 appId, KIND_DASHBOARD, com.novaforge.metadata.DashboardDefinition.class);
+        com.novaforge.metadata.IntegrationsDefinition integrations =
+                new com.novaforge.metadata.IntegrationsDefinition(
+                        branchDocuments(tenantId, appId, KIND_CONNECTOR,
+                                com.novaforge.metadata.ConnectorDefinition.class),
+                        branchDocuments(tenantId, appId, KIND_WEBHOOK,
+                                com.novaforge.metadata.WebhookDefinition.class),
+                        branchDocuments(tenantId, appId, KIND_CREDENTIAL,
+                                com.novaforge.metadata.CredentialDefinition.class),
+                        branchDocuments(tenantId, appId, KIND_IMPORT,
+                                com.novaforge.metadata.ImportDefinition.class));
         return new AppDefinition(appId.toString(), apiName, label,
                 DefinitionParser.parse(labelI18nJson == null ? "{}" : labelI18nJson, Map.class),
                 description, entities, pages,
                 new AppDefinition.SettingsDefinition(sequences, null, null), permissionSet,
-                suites, stateMachines, slas, jobs, workflows, reports, dashboards);
+                suites, stateMachines, slas, jobs, workflows, reports, dashboards, integrations);
     }
 
     private <T> List<T> branchDocuments(UUID tenantId, UUID appId, String kind, Class<T> type) {
@@ -406,7 +434,8 @@ public class MetadataStore {
         return new AppDefinition(appId.toString(), app.apiName(), app.label(), app.labelI18n(),
                 app.description(), app.entities(), app.pages(), app.settings(),
                 app.permissionSet(), app.testSuites(), app.stateMachines(), app.slas(),
-                app.jobs(), app.workflows(), app.reports(), app.dashboards());
+                app.jobs(), app.workflows(), app.reports(), app.dashboards(),
+                app.integrations());
     }
 
     private static List<String> parseStrings(String json) {

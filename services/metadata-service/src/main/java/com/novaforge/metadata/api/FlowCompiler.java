@@ -44,6 +44,7 @@ final class FlowCompiler {
         checkSharingRules(app, findings);
         checkWorkflows(app, findings);
         checkReports(app, findings);
+        checkIntegrations(app, findings);
         if (!findings.isEmpty()) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "hook compilation failed", new ProblemErrors(findings, java.util.List.of()));
@@ -190,6 +191,32 @@ final class FlowCompiler {
                                         + e.getMessage(), bucket.expression()));
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * The Integrations branch compiles at publish (PHASE-6 §4/§5): outbound webhook
+     * event filters compile against the spine envelope (one binding set, both
+     * directions of authoring — the dispatch scan evaluates them at run time), and
+     * nothing more — connector/import shapes are save-validated, and their runtime
+     * resolution (credentials, secrets) happens in the Integration Service.
+     */
+    private static void checkIntegrations(AppDefinition app,
+                                          java.util.List<ProblemErrors.FieldError> findings) {
+        for (com.novaforge.metadata.WebhookDefinition webhook : app.integrations().webhooks()) {
+            if (!com.novaforge.metadata.WebhookDefinition.OUTBOUND.equals(webhook.direction())
+                    || webhook.events() == null || webhook.events().isBlank()) {
+                continue;
+            }
+            String scope = "webhook[" + webhook.id() + "].events";
+            try {
+                Expression.parse(webhook.events())
+                        .compileCheck(Expression.CompilePolicy.recordContext(
+                                com.novaforge.metadata.WebhookDefinition.EVENT_BINDINGS, true));
+            } catch (ExpressionException e) {
+                findings.add(new ProblemErrors.FieldError(scope,
+                        webhook.events() + " — " + e.getMessage(), webhook.events()));
             }
         }
     }
@@ -391,8 +418,49 @@ final class FlowCompiler {
                             "requestApproval mode must be any or all: " + mode, mode));
                 }
             }
+            case "callConnector" -> {
+                // Phase 6 activation (§4): the connector and its operation must exist in
+                // the app's Integrations branch, and the step's template must resolve
+                // against the step context (the record's fields + id) — compiled here
+                // so the runtime executes checked calls only.
+                String connectorId = step.param("connector");
+                String operation = step.param("operation");
+                var connector = connectorId == null
+                        ? java.util.Optional.<com.novaforge.metadata.ConnectorDefinition>empty()
+                        : app.connector(connectorId);
+                if (connector.isEmpty()) {
+                    errors.add(new ProblemErrors.FieldError(where,
+                            "callConnector targets a connector of the app: " + connectorId,
+                            connectorId));
+                    return;
+                }
+                if (operation == null || connector.get().operation(operation).isEmpty()) {
+                    errors.add(new ProblemErrors.FieldError(where,
+                            "callConnector operation must be one of "
+                                    + connector.get().id() + "'s operations: " + operation,
+                            operation));
+                    return;
+                }
+                Object template = step.params().get("template");
+                if (!(template instanceof Map<?, ?> map)) {
+                    errors.add(new ProblemErrors.FieldError(where,
+                            "callConnector requires a template map (operation params)", template));
+                    return;
+                }
+                for (Map.Entry<?, ?> entry : map.entrySet()) {
+                    if (entry.getValue() instanceof String text
+                            && text.startsWith("${") && text.endsWith("}")) {
+                        String reference = text.substring(2, text.length() - 1);
+                        if (!reference.equals("id") && entity.field(reference).isEmpty()) {
+                            errors.add(new ProblemErrors.FieldError(where,
+                                    "callConnector template reference must resolve on "
+                                            + entity.apiName() + ": " + reference, reference));
+                        }
+                    }   // plain values are constants — they trivially resolve
+                }
+            }
             default -> {
-                // callConnector: grammar-fixed; execution activates with Phase 6.
+                // every op of the closed v1 set is checked above
             }
         }
         if (!"branch".equals(step.op())

@@ -26,12 +26,13 @@ class PlatformErrorCodeTest {
     @Test
     @DisplayName("registry = the PHASE-0 §5.2 seed plus the codes later phases append")
     void seedSet() {
-        // The seed is a floor, not a ceiling (PHASE-4 §2 appends 4010/4011).
+        // The seed is a floor, not a ceiling (PHASE-4 §2 appends 4010/4011; PHASE-6 §2
+        // appends 4012 — SIGNATURE_INVALID).
         assertThat(Arrays.stream(PlatformErrorCode.values()).map(PlatformErrorCode::name))
                 .containsExactlyInAnyOrder(
                         "VALIDATION_FAILED", "TENANT_MISSING", "FORBIDDEN",
                         "NOT_FOUND", "STATE_TRANSITION", "SOD_VIOLATION",
-                        "CONFLICT_VERSION", "INTERNAL");
+                        "SIGNATURE_INVALID", "CONFLICT_VERSION", "INTERNAL");
     }
 
     @Test
@@ -50,6 +51,8 @@ class PlatformErrorCodeTest {
         assertThat(PlatformErrorCode.FORBIDDEN.code()).isEqualTo("4003");
         assertThat(PlatformErrorCode.TENANT_MISSING.code()).isEqualTo("4001");
         assertThat(PlatformErrorCode.INTERNAL.code()).isEqualTo("5000");
+        assertThat(PlatformErrorCode.SIGNATURE_INVALID.code()).isEqualTo("4012");
+        assertThat(PlatformErrorCode.SIGNATURE_INVALID.httpStatus()).isEqualTo(401);
     }
 
     @Test

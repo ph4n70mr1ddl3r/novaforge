@@ -32,7 +32,8 @@ public record AppDefinition(
         List<ScheduledJobDefinition> jobs,
         List<WorkflowDefinition> workflows,
         List<ReportDefinition> reports,
-        List<DashboardDefinition> dashboards) {
+        List<DashboardDefinition> dashboards,
+        IntegrationsDefinition integrations) {
 
     public AppDefinition {
         entities = entities == null ? List.of() : List.copyOf(entities);
@@ -47,6 +48,13 @@ public record AppDefinition(
         workflows = workflows == null ? List.of() : List.copyOf(workflows);
         reports = reports == null ? List.of() : List.copyOf(reports);
         dashboards = dashboards == null ? List.of() : List.copyOf(dashboards);
+        integrations = integrations == null ? new IntegrationsDefinition() : integrations;
+    }
+
+    /** The Integrations branch (PHASE-6 §2) — connectors, webhooks, credentials, imports. */
+    @Override
+    public IntegrationsDefinition integrations() {
+        return integrations;
     }
 
     public java.util.Optional<TestSuiteDefinition> testSuite(String apiName) {
@@ -77,6 +85,20 @@ public record AppDefinition(
     /** A report by id, if one exists (PHASE-5 §3). */
     public java.util.Optional<ReportDefinition> report(String id) {
         return reports.stream().filter(r -> r.id().equals(id)).findFirst();
+    }
+
+    /** A connector by id, if one exists (PHASE-6 §3). */
+    public java.util.Optional<ConnectorDefinition> connector(String id) {
+        return integrations.connector(id);
+    }
+
+    /** An inbound webhook bound to an entity, if one exists (PHASE-6 §6). */
+    public java.util.Optional<WebhookDefinition> inboundWebhook(String entity, String hookId) {
+        return integrations.webhooks().stream()
+                .filter(w -> WebhookDefinition.INBOUND.equals(w.direction()))
+                .filter(w -> hookId == null ? entity.equals(w.entity())
+                        : hookId.equals(w.id()) && entity.equals(w.entity()))
+                .findFirst();
     }
 
     /** A dashboard by id, if one exists (PHASE-5 §5). */
@@ -154,6 +176,20 @@ public record AppDefinition(
         this(id, apiName, label, labelI18n, description, entities, pages, settings,
                 permissionSet, testSuites, stateMachines, slas, jobs, workflows,
                 List.of(), List.of());
+    }
+
+    /** Constructor without the Integrations branch (pre-Phase-6 drafts). */
+    public AppDefinition(String id, String apiName, String label, Map<String, String> labelI18n,
+                         String description, List<EntityDefinition> entities,
+                         List<PageDefinition> pages, SettingsDefinition settings,
+                         PermissionSet permissionSet, List<TestSuiteDefinition> testSuites,
+                         List<StateMachineDefinition> stateMachines,
+                         List<SlaDefinition> slas, List<ScheduledJobDefinition> jobs,
+                         List<WorkflowDefinition> workflows, List<ReportDefinition> reports,
+                         List<DashboardDefinition> dashboards) {
+        this(id, apiName, label, labelI18n, description, entities, pages, settings,
+                permissionSet, testSuites, stateMachines, slas, jobs, workflows,
+                reports, dashboards, new IntegrationsDefinition());
     }
 
     /** Page definition (reserved slot; authored from Phase 2 per PHASE-2 §3). */

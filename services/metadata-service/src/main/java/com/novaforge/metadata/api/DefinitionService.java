@@ -317,7 +317,13 @@ public class DefinitionService {
                 patch.jobs().isEmpty() ? current.jobs() : patch.jobs(),
                 patch.workflows().isEmpty() ? current.workflows() : patch.workflows(),
                 patch.reports().isEmpty() ? current.reports() : patch.reports(),
-                patch.dashboards().isEmpty() ? current.dashboards() : patch.dashboards());
+                patch.dashboards().isEmpty() ? current.dashboards() : patch.dashboards(),
+                patch.integrations() == null
+                        || (patch.integrations().connectors().isEmpty()
+                        && patch.integrations().webhooks().isEmpty()
+                        && patch.integrations().credentials().isEmpty()
+                        && patch.integrations().imports().isEmpty())
+                        ? current.integrations() : patch.integrations());
     }
 
     private static EntityDefinition mergeEntity(EntityDefinition current, EntityDefinition patch) {
@@ -338,7 +344,7 @@ public class DefinitionService {
         return new AppDefinition(app.id(), app.apiName(), app.label(), app.labelI18n(),
                 app.description(), entities, app.pages(), app.settings(), app.permissionSet(),
                 app.testSuites(), app.stateMachines(), app.slas(), app.jobs(), app.workflows(),
-                app.reports(), app.dashboards());
+                app.reports(), app.dashboards(), app.integrations());
     }
 
     private static PlatformException validationFailure(String message, ProblemErrors errors) {
