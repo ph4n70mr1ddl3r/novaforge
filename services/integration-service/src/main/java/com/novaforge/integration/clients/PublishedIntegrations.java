@@ -5,7 +5,6 @@ import com.novaforge.common.error.PlatformException;
 import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.DefinitionParser;
 import com.novaforge.security.ServiceTokenClient;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -15,10 +14,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.listener.ChannelTopic;
-import org.springframework.data.redis.listener.RedisMessageListenerContainer;
+import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -29,9 +26,9 @@ import tools.jackson.databind.json.JsonMapper;
  * credentials resolve through the Metadata Service's published surface with the
  * shared service client's token — the runtime-never-serves-drafts rule holds for
  * integration definitions exactly as for entities. The in-process cache rides the
- * definitions epoch (the Reporting Service's pattern): a {@code
- * metadata.published} event on the Redis channel bumps the tenant's epoch key and
- * retires every cached bundle.
+ * definitions epoch (the Reporting Service's pattern): a {@code metadata.published}
+ * event on the spine ({@code novaforge.metadata}, PHASE-3 §4) bumps the tenant's
+ * epoch key and retires every cached bundle.
  */
 @Component
 public class PublishedIntegrations {
@@ -57,26 +54,28 @@ public class PublishedIntegrations {
     public PublishedIntegrations(
             @Value("${novaforge.metadata.url:http://localhost:8081}") String metadataUrl,
             StringRedisTemplate redis,
-            RedisConnectionFactory redisFactory,
             ServiceTokenClient serviceToken) {
         this.metadata = RestClient.builder().baseUrl(metadataUrl).build();
         this.redis = redis;
         this.serviceToken = serviceToken;
-        RedisMessageListenerContainer listener = new RedisMessageListenerContainer();
-        listener.setConnectionFactory(redisFactory);
-        listener.afterPropertiesSet();
-        listener.addMessageListener((message, pattern) -> {
-            try {
-                Map<String, Object> event = MAPPER.readValue(
-                        new String(message.getBody(), StandardCharsets.UTF_8), Map.class);
-                String tenant = String.valueOf(event.get("tenantId"));
-                redis.opsForValue().increment("novaforge:integration:epoch:" + tenant);
-                LOG.debug("metadata.published invalidated definitions for tenant {}", tenant);
-            } catch (Exception e) {
-                LOG.warn("invalid metadata.published payload ignored: {}", e.getMessage());
-            }
-        }, new ChannelTopic("novaforge.metadata.events"));
-        listener.start();
+    }
+
+    /**
+     * metadata.published invalidates: the epoch bump retires every cached bundle.
+     * PHASE-3 §4 rebind — the envelope rides the spine topic {@code novaforge.metadata}
+     * (the Phase 1 Redis pub/sub channel is retired); at-least-once redelivery is safe
+     * (an epoch increment is idempotent in effect).
+     */
+    @KafkaListener(topics = "novaforge.metadata", groupId = "novaforge-integration-definitions")
+    public void onMetadataPublished(String message) {
+        try {
+            Map<String, Object> event = MAPPER.readValue(message, Map.class);
+            String tenant = String.valueOf(event.get("tenantId"));
+            redis.opsForValue().increment("novaforge:integration:epoch:" + tenant);
+            LOG.debug("metadata.published invalidated definitions for tenant {}", tenant);
+        } catch (Exception e) {
+            LOG.warn("invalid metadata.published payload ignored: {}", e.getMessage());
+        }
     }
 
     /** The tenant's published app by apiName — cached until its epoch moves. */

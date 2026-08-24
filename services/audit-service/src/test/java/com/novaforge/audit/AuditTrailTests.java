@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -54,8 +55,11 @@ class AuditTrailTests extends PostgresTestBase {
     @DynamicPropertySource
     static void infrastructure(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", PostgresTestBase::jdbcUrl);
-        registry.add("spring.datasource.username", PostgresTestBase::jdbcUsername);
-        registry.add("spring.datasource.password", PostgresTestBase::jdbcPassword);
+        // The runtime pool rides the restricted role (yaml default novaforge_audit_app)
+        // — every consumer insert and read below goes through it; migrations alone
+        // connect as the container owner.
+        registry.add("spring.flyway.user", PostgresTestBase::jdbcUsername);
+        registry.add("spring.flyway.password", PostgresTestBase::jdbcPassword);
         registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
     }
 
@@ -101,6 +105,44 @@ class AuditTrailTests extends PostgresTestBase {
                                 .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").isEmpty());
+    }
+
+    @Test
+    @DisplayName("PHASE-3 §5: append-only enforced mechanically — the store role has no UPDATE/DELETE")
+    void appendOnlyIsMechanical() throws Exception {
+        UUID recordId = UUID.randomUUID();
+        try (var connection = java.sql.DriverManager.getConnection(
+                jdbcUrl(), "novaforge_audit_app", "novaforge")) {
+            // INSERT and SELECT are the whole surface
+            var insert = connection.prepareStatement("""
+                    INSERT INTO audit_events (event_id, tenant_id, entity_id, record_id,
+                                              event_type, actor_id, occurred_at, payload)
+                    VALUES (?, ?, 'Erp.JournalEntry', ?, 'record.created', ?, now(), '{}'::jsonb)
+                    """);
+            insert.setObject(1, UUID.randomUUID());
+            insert.setObject(2, TENANT);
+            insert.setObject(3, recordId);
+            insert.setObject(4, ACTOR);
+            insert.executeUpdate();
+            try (var rs = connection.createStatement().executeQuery(
+                    "SELECT count(*) FROM audit_events WHERE record_id = '" + recordId + "'::uuid")) {
+                rs.next();
+                assertThat(rs.getInt(1)).isEqualTo(1);
+            }
+            // everything else denies at the database — not by convention
+            try (var statement = connection.createStatement()) {
+                statement.executeUpdate("UPDATE audit_events SET payload = payload");
+                org.assertj.core.api.Assertions.fail("UPDATE must deny for the store role");
+            } catch (java.sql.SQLException expected) {
+                assertThat(expected.getMessage()).contains("permission denied");
+            }
+            try (var statement = connection.createStatement()) {
+                statement.executeUpdate("DELETE FROM audit_events");
+                org.assertj.core.api.Assertions.fail("DELETE must deny for the store role");
+            } catch (java.sql.SQLException expected) {
+                assertThat(expected.getMessage()).contains("permission denied");
+            }
+        }
     }
 
     private String mockMvcPerform(UUID recordId) throws Exception {

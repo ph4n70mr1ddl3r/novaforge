@@ -8,10 +8,16 @@ spring:
           issuer-uri: ${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}
   datasource:
     url: jdbc:postgresql://${NOVAFORGE_POSTGRES_HOST:localhost}:${NOVAFORGE_POSTGRES_PORT:5432}/novaforge_audit
-    username: novaforge
-    password: novaforge
+    # The runtime role: INSERT/SELECT only on the trail (PHASE-3 §5 — append-only
+    # enforced mechanically; V2 grants exactly those privileges and nothing else).
+    username: ${NOVAFORGE_AUDIT_DB_USER:novaforge_audit_app}
+    password: ${NOVAFORGE_AUDIT_DB_PASSWORD:novaforge}
   flyway:
     locations: classpath:db/migration
+    # Migrations run as the database owner — the owner creates/rotates partitions
+    # and maintains the restricted role's grants (V2); it never serves requests.
+    user: ${NOVAFORGE_AUDIT_DB_OWNER:novaforge}
+    password: ${NOVAFORGE_AUDIT_DB_OWNER_PASSWORD:novaforge}
   kafka:
     bootstrap-servers: ${NOVAFORGE_KAFKA:localhost:9092}
     consumer:

@@ -12,10 +12,12 @@ spring:
     password: novaforge
   flyway:
     locations: classpath:db/migration
-  data:
-    redis:
-      host: ${NOVAFORGE_REDIS_HOST:localhost}
-      port: ${NOVAFORGE_REDIS_PORT:6379}
+  kafka:
+    bootstrap-servers: ${NOVAFORGE_KAFKA:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
 
 server:
   port: 8081
@@ -67,6 +69,7 @@ novaforge:
     # The candidate publish into the scratch tenant (self-call, same spelling every
     # other metadata caller uses).
     url: ${NOVAFORGE_METADATA_URL:http://localhost:8081}
-    # redis (default) emits metadata.published on channel novaforge.metadata.events;
-    # noop disables emission for hermetic tests (PHASE-1 §4 transport note).
-    publish-transport: ${NOVAFORGE_METADATA_PUBLISH_TRANSPORT:redis}
+    # kafka (default) emits metadata.published on the spine topic novaforge.metadata
+    # (PHASE-3 §4 — the Phase 1 Redis pub/sub channel is retired); noop disables
+    # emission for hermetic tests.
+    publish-transport: ${NOVAFORGE_METADATA_PUBLISH_TRANSPORT:kafka}

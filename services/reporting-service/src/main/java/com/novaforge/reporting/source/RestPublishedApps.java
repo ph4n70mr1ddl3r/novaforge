@@ -15,10 +15,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.listener.ChannelTopic;
-import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.http.HttpMethod;
+import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.json.JsonMapper;
@@ -48,27 +46,28 @@ public class RestPublishedApps implements PublishedApps {
     public RestPublishedApps(
             @Value("${novaforge.metadata.url:http://localhost:8081}") String metadataUrl,
             org.springframework.data.redis.core.StringRedisTemplate redis,
-            RedisConnectionFactory redisFactory,
             ServiceTokenClient serviceToken) {
         this.metadata = RestClient.builder().baseUrl(metadataUrl).build();
         this.redis = redis;
         this.serviceToken = serviceToken;
-        // metadata.published invalidates: the epoch bump retires every cached bundle
-        RedisMessageListenerContainer listener = new RedisMessageListenerContainer();
-        listener.setConnectionFactory(redisFactory);
-        listener.afterPropertiesSet();
-        listener.addMessageListener((message, pattern) -> {
-            try {
-                Map<String, Object> event = MAPPER.readValue(
-                        new String(message.getBody(), java.nio.charset.StandardCharsets.UTF_8), Map.class);
-                String tenant = String.valueOf(event.get("tenantId"));
-                redis.opsForValue().increment("novaforge:reporting:epoch:" + tenant);
-                LOG.debug("metadata.published invalidated definitions for tenant {}", tenant);
-            } catch (Exception e) {
-                LOG.warn("invalid metadata.published payload ignored: {}", e.getMessage());
-            }
-        }, new ChannelTopic("novaforge.metadata.events"));
-        listener.start();
+    }
+
+    /**
+     * metadata.published invalidates: the epoch bump retires every cached bundle.
+     * PHASE-3 §4 rebind — the envelope rides the spine topic {@code novaforge.metadata}
+     * (the Phase 1 Redis pub/sub channel is retired); at-least-once redelivery is safe
+     * (an epoch increment is idempotent in effect).
+     */
+    @KafkaListener(topics = "novaforge.metadata", groupId = "novaforge-reporting-definitions")
+    public void onMetadataPublished(String message) {
+        try {
+            Map<String, Object> event = MAPPER.readValue(message, Map.class);
+            String tenant = String.valueOf(event.get("tenantId"));
+            redis.opsForValue().increment("novaforge:reporting:epoch:" + tenant);
+            LOG.debug("metadata.published invalidated definitions for tenant {}", tenant);
+        } catch (Exception e) {
+            LOG.warn("invalid metadata.published payload ignored: {}", e.getMessage());
+        }
     }
 
     @Override

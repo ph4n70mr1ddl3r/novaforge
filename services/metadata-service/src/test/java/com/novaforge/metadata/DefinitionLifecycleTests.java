@@ -13,44 +13,41 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.novaforge.testsupport.PostgresTestBase;
 import java.time.Duration;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
-import org.springframework.data.redis.listener.ChannelTopic;
-import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.kafka.KafkaContainer;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Definition lifecycle over the real stores (PHASE-1 §9 item 4): save-validation matrix
  * through the API, publish immutability, version list/export round-trip, breaking-change
- * acknowledgment, and the {@code metadata.published} envelope on Redis pub/sub (T4).
+ * acknowledgment, and the {@code metadata.published} envelope on the spine topic
+ * {@code novaforge.metadata} (PHASE-3 §4 — the Phase 1 Redis pub/sub channel is retired).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
 class DefinitionLifecycleTests extends PostgresTestBase {
 
-    private static final GenericContainer<?> REDIS = new GenericContainer<>("docker.io/library/redis:7.4.11")
-            .withExposedPorts(6379)
-            .waitingFor(Wait.forLogMessage(".*Ready to accept connections.*", 1));
+    private static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:4.3.1");
 
     static {
         // Class-load order: subscription (@BeforeAll) and property registration
         // (DynamicPropertySource) both need the container up first.
-        REDIS.start();
+        KAFKA.start();
     }
 
     private static final String TENANT = "11111111-1111-4111-8111-111111111111";
@@ -68,22 +65,34 @@ class DefinitionLifecycleTests extends PostgresTestBase {
         registry.add("spring.datasource.url", PostgresTestBase::jdbcUrl);
         registry.add("spring.datasource.username", PostgresTestBase::jdbcUsername);
         registry.add("spring.datasource.password", PostgresTestBase::jdbcPassword);
-        registry.add("spring.data.redis.host", REDIS::getHost);
-        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+        registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
     }
 
     @BeforeAll
-    static void subscribeToPublishChannel() {
-        LettuceConnectionFactory factory = new LettuceConnectionFactory(
-                new RedisStandaloneConfiguration(REDIS.getHost(), REDIS.getMappedPort(6379)));
-        factory.afterPropertiesSet();
-        RedisMessageListenerContainer container = new RedisMessageListenerContainer();
-        container.setConnectionFactory(factory);
-        container.addMessageListener(
-                (message, pattern) -> PUBLISHED_EVENTS.add(new String(message.getBody())),
-                new ChannelTopic(MetadataPublishEventPublisherFixtures.CHANNEL));
-        container.afterPropertiesSet();
-        container.start();
+    static void subscribeToPublishTopic() {
+        // A raw consumer from earliest on a throwaway group — every envelope the
+        // publisher emits during this class lands in the assertion queue.
+        Thread reader = new Thread(() -> {
+            try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(java.util.Map.of(
+                    ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers(),
+                    ConsumerConfig.GROUP_ID_CONFIG, "metadata-lifecycle-test-" + UUID.randomUUID(),
+                    ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest",
+                    ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
+                    org.apache.kafka.common.serialization.StringDeserializer.class.getName(),
+                    ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
+                    org.apache.kafka.common.serialization.StringDeserializer.class.getName()))) {
+                consumer.subscribe(java.util.List.of(
+                        com.novaforge.metadata.events.MetadataPublishEventPublisher.TOPIC));
+                while (!Thread.currentThread().isInterrupted()) {
+                    consumer.poll(Duration.ofMillis(200))
+                            .forEach(record -> PUBLISHED_EVENTS.add(record.value()));
+                }
+            } catch (Exception e) {
+                // container gone at JVM shutdown — nothing left to assert against
+            }
+        }, "metadata-published-reader");
+        reader.setDaemon(true);
+        reader.start();
     }
 
     @Test
@@ -279,8 +288,8 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                 .andExpect(jsonPath("$.version").value(2))
                 .andExpect(jsonPath("$.app.label").value("ERP"));
 
-        // 9. both publish envelopes rode the Redis channel (T4)
-        await().atMost(Duration.ofSeconds(5)).until(() -> PUBLISHED_EVENTS.size() >= 2);
+        // 9. both publish envelopes rode the spine topic (the PHASE-3 §4 rebind)
+        await().atMost(Duration.ofSeconds(10)).until(() -> PUBLISHED_EVENTS.size() >= 2);
         String first = PUBLISHED_EVENTS.poll();
         String second = PUBLISHED_EVENTS.poll();
         assertThat(MAPPER.readTree(first).get("event").asString()).isEqualTo("metadata.published");
@@ -760,6 +769,8 @@ class DefinitionLifecycleTests extends PostgresTestBase {
     }
 
     static final class MetadataPublishEventPublisherFixtures {
-        static final String CHANNEL = "novaforge.metadata.events";
+        /** The spine family topic (PHASE-3 §4) — the retired Redis channel is gone. */
+        static final String TOPIC =
+                com.novaforge.metadata.events.MetadataPublishEventPublisher.TOPIC;
     }
 }

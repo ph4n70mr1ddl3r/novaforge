@@ -11,29 +11,22 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /** PHASE-0 §6.3 metadata-service test slice (hermetic: stores mocked, infra excluded). */
 @SpringBootTest(properties = {
         "novaforge.metadata.publish-transport=noop",
-        // Boot 4 names: DataRedisAutoConfiguration (the RedisAutoConfiguration excludes
-        // predate the rename and silently no-op, leaving a live redis health indicator)
+        // The kafka starter's template builds lazily — no broker needed for a hermetic
+        // context (publish emission is disabled above).
         "spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
-                + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration,"
-                + "org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration,"
-                + "org.springframework.boot.data.redis.autoconfigure.health.DataRedisHealthContributorAutoConfiguration,"
-                + "org.springframework.boot.data.redis.autoconfigure.DataRedisRepositoriesAutoConfiguration"
+                + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration"
 })
 @AutoConfigureMockMvc
 class MetadataServiceApplicationTests {
 
     @MockitoBean
     MetadataStore metadataStore;
-
-    @MockitoBean
-    StringRedisTemplate stringRedisTemplate;
 
     @Autowired
     MockMvc mockMvc;

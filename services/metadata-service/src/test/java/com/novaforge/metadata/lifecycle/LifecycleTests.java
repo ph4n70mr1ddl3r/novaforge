@@ -24,15 +24,11 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
-import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.wait.strategy.Wait;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -43,7 +39,7 @@ import tools.jackson.databind.json.JsonMapper;
  * The scratch-tenant runner and the environment provisioner are stubbed (their HTTP
  * legs ride the live stack); every gate, store, and audit decision is the real path.
  */
-@SpringBootTest
+    @SpringBootTest(properties = "novaforge.metadata.publish-transport=noop")
 @AutoConfigureMockMvc
 class LifecycleTests extends PostgresTestBase {
 
@@ -107,21 +103,11 @@ class LifecycleTests extends PostgresTestBase {
         }
     }
 
-    private static final GenericContainer<?> REDIS = new GenericContainer<>("docker.io/library/redis:7.4.11")
-            .withExposedPorts(6379)
-            .waitingFor(Wait.forLogMessage(".*Ready to accept connections.*", 1));
-
-    static {
-        REDIS.start();
-    }
-
     @DynamicPropertySource
     static void infrastructure(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", PostgresTestBase::jdbcUrl);
         registry.add("spring.datasource.username", PostgresTestBase::jdbcUsername);
         registry.add("spring.datasource.password", PostgresTestBase::jdbcPassword);
-        registry.add("spring.data.redis.host", REDIS::getHost);
-        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
     }
 
     // --- helpers ---

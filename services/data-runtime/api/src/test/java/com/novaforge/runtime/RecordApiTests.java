@@ -15,6 +15,7 @@ import com.novaforge.metadata.DefinitionParser;
 import com.novaforge.runtime.engine.hook.ScriptClient;
 import com.novaforge.runtime.engine.metadata.EntityResolver;
 import com.novaforge.runtime.engine.metadata.MetadataClient;
+import com.novaforge.runtime.engine.metadata.MetadataPublishedSubscriber;
 import com.novaforge.runtime.storage.materializer.Materializer;
 import com.novaforge.testsupport.PostgresTestBase;
 import java.time.Duration;
@@ -171,6 +172,9 @@ class RecordApiTests extends PostgresTestBase {
 
     @Autowired
     StringRedisTemplate redis;
+
+    @Autowired
+    org.springframework.kafka.core.KafkaTemplate<String, String> kafkaTemplate;
 
     @Autowired
     EntityResolver resolver;
@@ -716,7 +720,9 @@ class RecordApiTests extends PostgresTestBase {
                 "version", 2,
                 "publishedAt", "2026-08-21T00:00:00.000Z",
                 "actorId", ACTOR.toString());
-        redis.convertAndSend("novaforge.metadata.events", MAPPER.writeValueAsString(envelope));
+        // PHASE-3 §4 rebind: the envelope rides the spine topic novaforge.metadata
+        kafkaTemplate.send(MetadataPublishedSubscriber.TOPIC,
+                APP_ID + ":" + TENANT, MAPPER.writeValueAsString(envelope)).get(10, java.util.concurrent.TimeUnit.SECONDS);
 
         await().atMost(Duration.ofSeconds(10)).until(() -> {
             try {

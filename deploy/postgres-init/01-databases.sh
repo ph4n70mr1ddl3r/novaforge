@@ -23,4 +23,9 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" <<-EOSQL
   -- must read across tenants; user paths stay tenant-parameterized in the engine and
   -- RLS remains the backstop for every other role (ADR-006 defense-in-depth).
   ALTER ROLE novaforge BYPASSRLS;
+  -- PHASE-3 §5 mechanical append-only: the audit trail's runtime role — INSERT and
+  -- SELECT only (V2__audit_append_only_role grants the exact privileges). Flyway
+  -- runs as the owner novaforge; requests never do.
+  CREATE ROLE novaforge_audit_app WITH LOGIN PASSWORD 'novaforge';
+  GRANT CONNECT ON DATABASE novaforge_audit TO novaforge_audit_app;
 EOSQL

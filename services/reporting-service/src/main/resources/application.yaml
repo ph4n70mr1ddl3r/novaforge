@@ -10,6 +10,11 @@ spring:
     redis:
       host: ${NOVAFORGE_REDIS_HOST:localhost}
       port: ${NOVAFORGE_REDIS_PORT:6379}
+  kafka:
+    bootstrap-servers: ${NOVAFORGE_KAFKA:localhost:9092}
+    consumer:
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
 
 server:
   port: 8089
