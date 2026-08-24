@@ -91,6 +91,21 @@ public class MetadataController {
         return definitions.deleteEntity(UUID.fromString(requireContext().tenantId()), appId, entityApiName);
     }
 
+    // --- pages (PHASE-2 §4/§8: the L2 overlay authoring path) ---
+
+    @PutMapping("/apps/{appId}/pages/{pageApiName}")
+    public AppDefinition putPage(@PathVariable UUID appId, @PathVariable String pageApiName,
+                                 @RequestBody AppDefinition.PageDefinition page) {
+        var ctx = requireContext();
+        return definitions.putPage(UUID.fromString(ctx.tenantId()), UUID.fromString(ctx.actorId()),
+                appId, pageApiName, page);
+    }
+
+    @DeleteMapping("/apps/{appId}/pages/{pageApiName}")
+    public AppDefinition deletePage(@PathVariable UUID appId, @PathVariable String pageApiName) {
+        return definitions.deletePage(UUID.fromString(requireContext().tenantId()), appId, pageApiName);
+    }
+
     // --- test suites (ADR-010) ---
 
     @PutMapping("/apps/{appId}/test-suites/{suiteApiName}")

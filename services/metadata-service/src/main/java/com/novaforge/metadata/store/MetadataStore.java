@@ -228,6 +228,54 @@ public class MetadataStore {
         return requireApp(tenantId, appId);
     }
 
+    // --- pages (draft — the PHASE-2 §4 authoring surface; persisted from Phase 2,
+    // replacing the create-only seeding of insertChildren) ---
+
+    /**
+     * Upsert with optimistic locking (PHASE-2 §8): an incoming {@code revision}
+     * must match the stored row's — the builder's 409 → rebase prompt. First
+     * saves (no revision) insert freely. The stored document carries the new
+     * revision so reads round-trip the token.
+     */
+    @Transactional
+    public AppDefinition putPage(UUID tenantId, UUID actorId, UUID appId,
+                                 AppDefinition.PageDefinition page) {
+        requireApp(tenantId, appId);
+        Integer current = jdbc.query("""
+                SELECT revision FROM md_pages WHERE tenant_id = ? AND app_id = ? AND api_name = ?""",
+                (rs, i) -> rs.getInt(1), tenantId, appId, page.apiName()).stream().findFirst().orElse(null);
+        if (current != null && page.revision() != null && !current.equals(page.revision())) {
+            throw new PlatformException(PlatformErrorCode.CONFLICT_VERSION,
+                    "page " + page.apiName() + " was modified by another editor (revision "
+                            + current + ", yours " + page.revision() + ") — rebase and retry");
+        }
+        UUID pageId = page.id() == null ? UUID.randomUUID() : UUID.fromString(page.id());
+        int revision = current == null ? 1 : current + 1;
+        AppDefinition.PageDefinition stamped = new AppDefinition.PageDefinition(page.id(),
+                page.apiName(), page.label(), page.labelI18n(), page.type(), page.entity(),
+                page.layout(), revision);
+        jdbc.update("""
+                INSERT INTO md_pages (id, tenant_id, app_id, api_name, document, created_by, updated_by)
+                VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)
+                ON CONFLICT (tenant_id, app_id, api_name) DO UPDATE
+                   SET document = EXCLUDED.document, updated_by = EXCLUDED.updated_by""",
+                pageId, tenantId, appId, page.apiName(),
+                DefinitionParser.write(stamped), actorId, actorId);
+        return requireApp(tenantId, appId);
+    }
+
+    @Transactional
+    public AppDefinition deletePage(UUID tenantId, UUID appId, String apiName) {
+        int deleted = jdbc.update("""
+                DELETE FROM md_pages WHERE tenant_id = ? AND app_id = ? AND api_name = ?""",
+                tenantId, appId, apiName);
+        if (deleted == 0) {
+            throw new PlatformException(PlatformErrorCode.NOT_FOUND,
+                    "page " + apiName + " not found");
+        }
+        return requireApp(tenantId, appId);
+    }
+
     // --- versions ---
 
     public record VersionInfo(int version, Instant publishedAt, List<String> breakingChanges,

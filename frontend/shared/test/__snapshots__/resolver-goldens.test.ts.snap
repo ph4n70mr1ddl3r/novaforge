@@ -1,0 +1,238 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`resolveDefaultPage goldens (L1, §5) > detail default: sections grouped by field group, everything readonly 1`] = `
+{
+  "apiName": "customerDetail",
+  "entity": "Customer",
+  "model": {
+    "actions": [
+      {
+        "props": {
+          "id": "\${record.id}",
+          "page": "customerForm",
+        },
+        "type": "openPage",
+      },
+      {
+        "type": "cancel",
+      },
+    ],
+    "base": "auto",
+    "kind": "detail",
+    "root": {
+      "children": [
+        {
+          "children": [
+            {
+              "bind": "name",
+              "key": "field:name",
+              "props": {
+                "field": "name",
+                "label": "name",
+              },
+              "readonly": "true",
+              "type": "novaforge.field-input",
+            },
+            {
+              "bind": "email",
+              "key": "field:email",
+              "props": {
+                "field": "email",
+                "inputType": "email",
+                "label": "email",
+              },
+              "readonly": "true",
+              "type": "novaforge.field-input",
+            },
+            {
+              "bind": "region",
+              "key": "field:region",
+              "props": {
+                "field": "region",
+                "label": "region",
+                "options": [
+                  "EU",
+                  "US",
+                  "APAC",
+                ],
+              },
+              "readonly": "true",
+              "type": "novaforge.field-select",
+            },
+            {
+              "bind": "active",
+              "key": "field:active",
+              "props": {
+                "field": "active",
+                "label": "active",
+              },
+              "readonly": "true",
+              "type": "novaforge.field-switch",
+            },
+            {
+              "bind": "creditLimit",
+              "key": "field:creditLimit",
+              "props": {
+                "currency": "USD",
+                "field": "creditLimit",
+                "label": "creditLimit",
+              },
+              "readonly": "true",
+              "type": "novaforge.field-number",
+            },
+          ],
+          "key": "section:0",
+          "props": {
+            "columns": 2,
+            "section": null,
+          },
+          "type": "novaforge.form-layout",
+        },
+        {
+          "children": [
+            {
+              "bind": "since",
+              "key": "field:since",
+              "props": {
+                "field": "since",
+                "label": "since",
+                "mode": "date",
+              },
+              "readonly": "true",
+              "type": "novaforge.field-date",
+            },
+          ],
+          "key": "section:Details",
+          "props": {
+            "columns": 2,
+            "section": "Details",
+          },
+          "type": "novaforge.form-layout",
+        },
+      ],
+      "key": "header",
+      "props": {
+        "displayField": "name",
+        "title": "Customer",
+      },
+      "type": "novaforge.record-header",
+    },
+  },
+  "type": "detail",
+}
+`;
+
+exports[`resolveDefaultPage goldens (L1, §5) > form default: field-type widget mapping + roll-up/formula readonly + related lists 1`] = `
+{
+  "apiName": "orderForm",
+  "entity": "Order",
+  "model": {
+    "actions": [
+      {
+        "type": "save",
+      },
+      {
+        "type": "cancel",
+      },
+    ],
+    "base": "auto",
+    "kind": "form",
+    "root": {
+      "children": [
+        {
+          "bind": "reference",
+          "key": "field:reference",
+          "props": {
+            "field": "reference",
+            "label": "reference",
+          },
+          "required": "true",
+          "type": "novaforge.field-input",
+        },
+        {
+          "bind": "status",
+          "key": "field:status",
+          "props": {
+            "field": "status",
+            "label": "status",
+            "options": [
+              "DRAFT",
+              "POSTED",
+            ],
+          },
+          "type": "novaforge.field-select",
+        },
+        {
+          "bind": "total",
+          "key": "field:total",
+          "props": {
+            "currency": "EUR",
+            "field": "total",
+            "label": "total",
+          },
+          "readonly": "true",
+          "type": "novaforge.field-number",
+        },
+        {
+          "bind": "customer",
+          "key": "field:customer",
+          "props": {
+            "field": "customer",
+            "label": "customer",
+            "minChars": 2,
+            "target": "Customer",
+          },
+          "type": "novaforge.field-lookup",
+        },
+        {
+          "bind": "memo",
+          "key": "field:memo",
+          "props": {
+            "field": "memo",
+            "label": "memo",
+            "multiline": true,
+          },
+          "type": "novaforge.field-input",
+        },
+        {
+          "bind": "createdAt",
+          "key": "field:createdAt",
+          "props": {
+            "field": "createdAt",
+            "label": "createdAt",
+            "mode": "datetime",
+          },
+          "type": "novaforge.field-date",
+        },
+        {
+          "bind": "tags",
+          "key": "field:tags",
+          "props": {
+            "field": "tags",
+            "label": "tags",
+          },
+          "readonly": "true",
+          "type": "novaforge.field-json",
+        },
+        {
+          "bind": "lines",
+          "key": "related:lines",
+          "props": {
+            "pageSize": 50,
+            "relationship": "lines",
+            "target": "OrderLine",
+          },
+          "type": "novaforge.related-list",
+        },
+      ],
+      "key": "form",
+      "props": {
+        "columns": 2,
+        "title": "Sales Order",
+      },
+      "type": "novaforge.form-layout",
+    },
+  },
+  "type": "form",
+}
+`;

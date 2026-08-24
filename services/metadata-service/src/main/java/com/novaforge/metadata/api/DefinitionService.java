@@ -109,6 +109,99 @@ public class DefinitionService {
         return store.putTestSuite(tenantId, actorId, appId, suite);
     }
 
+    /**
+     * Saves one page definition (PHASE-2 §4/§8 — pages are versioned metadata riding
+     * the same definition path as entities; the L2 overlay content is the author's,
+     * the service checks the slot contract: identity, entity reference, and the
+     * expression slots inside the layout compile against the entity's fields).
+     */
+    public AppDefinition putPage(UUID tenantId, UUID actorId, UUID appId, String apiName,
+                                 AppDefinition.PageDefinition page) {
+        AppDefinition current = store.requireApp(tenantId, appId);
+        AppDefinition.PageDefinition normalized = new AppDefinition.PageDefinition(
+                page.id(), apiName, page.label(), page.labelI18n(), page.type(),
+                page.entity(), page.layout(), page.revision());
+        ProblemErrors errors = DefinitionValidator.validate(withPage(current, normalized));
+        List<ProblemErrors.FieldError> found = new ArrayList<>(errors.errors());
+        validatePageSlots(normalized, current, found);
+        if (!found.isEmpty()) {
+            throw validationFailure("page definition failed save validation",
+                    new ProblemErrors(found, List.of()));
+        }
+        return store.putPage(tenantId, actorId, appId, normalized);
+    }
+
+    public AppDefinition deletePage(UUID tenantId, UUID appId, String apiName) {
+        return store.deletePage(tenantId, appId, apiName);
+    }
+
+    private static AppDefinition withPage(AppDefinition app, AppDefinition.PageDefinition page) {
+        List<AppDefinition.PageDefinition> pages = new ArrayList<>(app.pages().stream()
+                .filter(p -> !p.apiName().equals(page.apiName())).toList());
+        pages.add(page);
+        return new AppDefinition(app.id(), app.apiName(), app.label(), app.labelI18n(),
+                app.description(), app.entities(), List.copyOf(pages), app.settings(),
+                app.permissionSet(), app.testSuites(), app.stateMachines(), app.slas(),
+                app.jobs(), app.workflows(), app.reports(), app.dashboards(),
+                app.integrations(), app.translations());
+    }
+
+    /**
+     * Page slot contract (PHASE-2 §4/§7): the entity must exist, and every
+     * visibility/required/readonly binding in the layout tree compiles against the
+     * entity's field apiNames — the same compile-check every other expression slot
+     * passes; UI bindings are UX sugar, but they must at least parse and resolve.
+     */
+    @SuppressWarnings("unchecked")
+    private static void validatePageSlots(AppDefinition.PageDefinition page, AppDefinition app,
+                                          List<ProblemErrors.FieldError> errors) {
+        String entityApiName = page.entity();
+        if (entityApiName == null) {
+            return;
+        }
+        EntityDefinition entity = app.entity(entityApiName).orElse(null);
+        if (entity == null) {
+            errors.add(new ProblemErrors.FieldError(page.apiName() + ".entity",
+                    "page entity " + entityApiName + " not found", entityApiName));
+            return;
+        }
+        java.util.Set<String> fields = new java.util.LinkedHashSet<>();
+        entity.fields().forEach(f -> fields.add(f.apiName()));
+        entity.relationships().forEach(r -> fields.add(r.apiName()));
+        checkNodeSlots(page.apiName(), page.layout(), fields, errors);
+    }
+
+    /**
+     * Encoding-agnostic slot walk: the persisted layout is structural deltas (§13
+     * Q2) but the export/interchange form and builder previews carry resolved trees
+     * — every visibility/required/readonly string anywhere in the document
+     * compile-checks, whichever encoding authored it.
+     */
+    private static void checkNodeSlots(String pageApiName, Object node, java.util.Set<String> fields,
+                                       List<ProblemErrors.FieldError> errors) {
+        if (node instanceof java.util.Map<?, ?> map) {
+            for (String slot : java.util.List.of("visibility", "required", "readonly")) {
+                Object expression = map.get(slot);
+                if (expression instanceof String source && !source.isBlank()) {
+                    try {
+                        Expression.parse(source)
+                                .compileCheck(Expression.CompilePolicy.recordContext(fields, true));
+                    } catch (ExpressionException e) {
+                        errors.add(new ProblemErrors.FieldError(
+                                pageApiName + ".layout", source + " — " + e.getMessage(), source));
+                    }
+                }
+            }
+            for (Object value : map.values()) {
+                checkNodeSlots(pageApiName, value, fields, errors);
+            }
+        } else if (node instanceof java.util.List<?> list) {
+            for (Object child : list) {
+                checkNodeSlots(pageApiName, child, fields, errors);
+            }
+        }
+    }
+
     /** Runs the suite against the current draft candidate on a scratch tenant (ADR-010 #3). */
     public Map<String, Object> runSuite(UUID tenantId, UUID actorId, UUID appId, String suiteApiName) {
         AppDefinition candidate = store.requireApp(tenantId, appId);
@@ -247,6 +340,9 @@ public class DefinitionService {
     /** Expression compile-check — package-private so the artifact tests ride the exact save-path check. */
     static void compileCheckExpressions(AppDefinition app, ProblemErrors errors) {
         List<ProblemErrors.FieldError> found = new ArrayList<>(errors.errors());
+        for (AppDefinition.PageDefinition page : app.pages()) {
+            compileCheckPage(page, app, found);
+        }
         for (EntityDefinition entity : app.entities()) {
             java.util.Set<String> fields = new java.util.LinkedHashSet<>();
             entity.fields().forEach(f -> fields.add(f.apiName()));
@@ -267,6 +363,20 @@ public class DefinitionService {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "expression compile-check failed", new ProblemErrors(found, List.of()));
         }
+    }
+
+    /** The page slot compile-check from putPage, run app-wide at publish (§7). */
+    private static void compileCheckPage(AppDefinition.PageDefinition page, AppDefinition app,
+                                         List<ProblemErrors.FieldError> errors) {
+        if (page.entity() == null || !(page.layout() instanceof java.util.Map<?, ?>)) {
+            return;
+        }
+        app.entity(page.entity()).ifPresent(entity -> {
+            java.util.Set<String> fields = new java.util.LinkedHashSet<>();
+            entity.fields().forEach(f -> fields.add(f.apiName()));
+            entity.relationships().forEach(r -> fields.add(r.apiName()));
+            checkNodeSlots(page.apiName(), page.layout(), fields, errors);
+        });
     }
 
     private static void check(String source, EntityDefinition entity, java.util.Set<String> fields,

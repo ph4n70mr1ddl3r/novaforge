@@ -326,6 +326,7 @@
           "enum": [
             "form",
             "list",
+            "detail",
             "dashboard",
             "custom"
           ]
@@ -333,9 +334,11 @@
         "entity": {
           "type": "string"
         },
-        "layout": {}
+        "layout": {
+          "type": "object"
+        }
       },
-      "description": "Reserved from v0; authored from Phase 2 (PHASE-2 \u00a73)"
+      "description": "Authored from Phase 2 (PHASE-2 \u00a74): layout carries the page model (base/root/actions); the L2 artifact is structural deltas against the L1 default"
     },
     "settings": {
       "type": "object",

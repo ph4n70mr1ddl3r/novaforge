@@ -58,19 +58,14 @@ metadata → runtime with the outbox → Kafka → audit trail all observed live
 inline children → 4 outbox rows published → `novaforge.record` carries the events →
 `GET /api/v1/audit/records/{id}` serves the trail through the gateway).
 
-## Phase 2 — Builder UI & Security ◐ (spec: PHASE-2-UI-BUILDER.md)
+## Phase 2 — Builder UI & Security ✅ (spec: PHASE-2-UI-BUILDER.md)
 
-> The FE workspace scaffold (T1's stack: pnpm workspace, React 19.2.x, TS strict,
-> vitest + axe in CI) landed early with Phase 5 T5's catalog work — see the Phase 5
-> section. The builder shell itself (canvas, renderer, forms) remains unstarted.
-
-**Backend implemented:**
+**Backend implemented (landed in phases 1–6, unchanged):**
 - `expression-dsl` (expr/v1, §7/Annex A): the JVM parser/evaluator with the pinned
   grammar — exact BigDecimal semantics, null-aware operators, date arithmetic,
   membership, the closed function set, injectable clock — plus the shared conformance
   corpus (39 cases) and compile-check wired into the Metadata Service save/publish
-  (validations may read the clock; formula fields may not, PHASE-3 §3). Slots stay
-  inert until Phase 3 write-path evaluation.
+  (validations may read the clock; formula fields may not, PHASE-3 §3).
 - RBAC + field security (§9): PermissionSet as versioned, promoted metadata
   (roles, object CRUD matrix, field visible/readonly/hidden) with save-validation
   rules; server-side enforcement in the Data Runtime — the matrix decides
@@ -84,10 +79,79 @@ inline children → 4 outbox rows published → `novaforge.record` carries the e
 - Realm export: service account `service-account-novaforge-runtime` with
   manage-users; role-assignment check widened for app-scoped roles (V2 migration).
 
-**Not implemented:** the React builder/runtime UIs (§3–§6, §8 — the largest remaining
-Phase 2 surface: page model, component catalog, renderer, entity/page builders) and
-the TS evaluator twin for the conformance corpus. Backend surfaces are ready for it:
-published reads, expression bindings compile-checked, field security stripping.
+**The frontend implemented — the `frontend/` workspace (T1–T10):**
+- **T4 TS twin — 100% shared-fixture parity:** `@novaforge/shared`'s expression
+  engine (parser/evaluator mirroring the JVM semantics exactly — exact decimals on
+  BigInt with a 34-digit banker's context, tagged dates/instants, null-aware
+  operators) runs the *same* `expr-v1-corpus.json` the JVM test runs (39/39 in
+  both engines; additions ship fixtures first). Browser evaluation is UX sugar —
+  the write path evaluates server-side.
+- **T2 page model + registry core:** `PageModel` types (§4 — nodes with
+  `type/version/props/children/bind/visibility/required/readonly`), the closed
+  action ladder, **custom structural deltas** (§13 Q2: insert/remove/move/setProps/
+  setSlot/setVersion/setBase/action ops addressing the L1 default's stable node
+  keys) with apply/diff round-trip, stale-delta reporting (entity changed → the
+  overlay reports instead of corrupting — §11 item 4's regression suite), RFC 6902
+  JSON Patch export for interchange, and save/publish validation (props vs the
+  component's JSON Schema, bind↔`props.field`/`props.relationship` mismatch
+  rejection, version pinning — missing pins resolve at save, reject at publish,
+  unknown ids/versions are builder errors + runtime fallbacks).
+- **T3 catalog:** the §6 item-3 v1 set — AppShell, NavList, FormLayout, ListLayout,
+  RecordHeader, FieldInput, FieldNumber, FieldSelect, FieldSwitch, FieldDate,
+  FieldLookup, FieldMultiLookup, FieldRichText, FieldJson (readonly viewer),
+  FileUpload (the activated Phase 6 widget), RelatedList, RecordActions,
+  EmptyState — alongside the Phase 5 report widgets, all in the lazily-loaded
+  version-pinned registry; the gallery test mounts every catalog id with axe
+  checks (exhaustive — a new component without an a11y mount fails CI).
+- **T5 L1 resolver:** `resolveDefaultPage(entity, kind, role)` — the §5 mapping
+  table (21 field types → widgets), list defaults (display field + next 4
+  visible-by-role + role-gated RecordActions), detail defaults (group sections),
+  role-parameterized re-resolution, formula/rollup/uuid readonly, module-grouped
+  nav; golden snapshots per (entity, role) fixture.
+- **T6 renderer + runtime shell:** the recursive interpreter (ADR-009 L3 — never
+  branches on entity specifics), expression-slot evaluation through the shared
+  engine, safe fallbacks for unknown components, server-side paging only (the
+  list pages page through the Data Runtime DSL — `frontend/runtime-ui` with
+  PKCE OIDC against the deployed realm, locale preference riding the pinned i18n
+  fallback chain `label_i18n[locale] → label → apiName`, the Phase 4 approval
+  inbox, and Phase 5 dashboards rendering through the catalog widgets).
+- **T7/T8 builder shell** (`frontend/builder-ui`): entity builder (identity +
+  fields grid + type-specific constraint forms + target pickers over the draft
+  APIs), page builder (catalog palette, structural canvas tree, property panel
+  auto-generated from props schemas, live preview = the real renderer in preview
+  mode, full-snapshot undo/redo, saves persist delta-encoded version-pinned
+  pages), RBAC + field-security editors (matrix + tri-state field access), tenant
+  onboarding (§10's three-step journey), plus the Phase 5 T6 report builder (live
+  bucket-expression compile-checks) and dashboard composer, and the Phase 8
+  lifecycle screens (change-set review with suite results + override history,
+  gated promote/rollback, suite runs) and i18n translation editor (§7 — the
+  missing-translation report over the keyed universe + RFC 4180 CSV round-trip).
+- **Page metadata API:** `PUT/DELETE /api/v1/metadata/apps/{id}/pages/{apiName}`
+  (the reserved `pages` branch becomes authorable): schema v0 grows the `detail`
+  type + typed `layout`; save validation covers identity/type/entity resolution;
+  every expression slot in the layout compile-checks against the entity's fields
+  at save and publish (encoding-agnostic — deltas or resolved trees);
+  `md_pages.revision` (V8) gives pages optimistic locking — stale saves 409
+  (`4090`) and the builder's rebase prompt reloads the current draft.
+- **Same-origin hosting (§13 Q5):** the gateway serves the built bundles
+  (`pnpm package` → `dist/runtime` + `dist/builder`, classpath or `/static`
+  volume) with SPA deep-link fallback — asset paths anonymous, APIs still
+  scope-gated; Vite dev proxies cover local development.
+
+**Suites:** 104 frontend tests (`pnpm -r test`: shared 82 — conformance 39, deltas,
+  goldens, validation, renderer, gallery-axe, client; runtime-ui 6 — nav/auto-list/
+  form journeys, inbox, axe, the L1→delta→persist round-trip; builder-ui 16 —
+  entity/page/RBAC/onboarding/i18n/reporting journeys incl. the 409 rebase), plus
+  `DefinitionLifecycleTests.pageDefinitionLifecycle` (9 tests, real Postgres) and
+  `GatewayApplicationTests` SPA hosting.
+
+**Deviations (honest):** Playwright per-component stories + the scripted E2E golden
+  journey (§11 items 2–3) ride the vitest+axe pattern the Phase 5 catalog work
+  established (jsdom journeys + axe; browser-runner wiring lands with the live
+  Phase 2 exit demo against the compose stack); the page-builder canvas is a
+  structural tree editor with palette/canvas/property-panel/preview rather than a
+  free-form React-Flow graph (form trees are the v1 page shape; §2's React-Flow
+  pin joins when flow-graph authoring — Phase 3's designer — needs it).
 
 ## Phase 3 — Business Logic ◐ (spec: PHASE-3-BUSINESS-LOGIC.md)
 
@@ -544,18 +608,24 @@ workflow's suspension/process-start controllers collapsed into a single shared
 implementation; per-surface rejection wording preserved verbatim), with unit
 tests for the accept/reject/anonymous/no-auth cases.
 
-**Phase 4 remainder:** the builder/runtime UI (T10 — rides the unstarted Phase 2
-React surface) and the §1 exit-journey demo (T12 — needs the full stack live; the
-§14 item 1 journey suite through the runner rides it too). All backend machinery
-for the journey — state machines, approvals with suspension and SoD, SLA
-escalation, notifications, the scheduler, BPMN execution with event-starts — is
-implemented and covered by the service-level suites above.
+**Phase 4 remainder:** the §1 exit-journey demo (T12 — needs the full stack live;
+the §14 item 1 journey suite through the runner rides it too). T10's runtime UI
+landed with the Phase 2 builder/runtime shells: the approval inbox
+(`frontend/runtime-ui` — my tasks with server-side paging, approve/reject with
+comment) rides the §5 inbox API, and state-machine transitions render as record
+actions from published machine metadata. All backend machinery for the journey —
+state machines, approvals with suspension and SoD, SLA escalation, notifications,
+the scheduler, BPMN execution with event-starts — is implemented and covered by the
+service-level suites above.
 
 ## Phase 5 — Reporting & Dashboards ◐ (spec: PHASE-5-REPORTING.md)
 
-**Backend surfaces implemented (T1–T4, T7, T8); the UI tasks (T5 catalog components,
-T6 report builder/dashboard composer) ride the unstarted Phase 2 React surface, and
-the §12 performance validation + §1 exit demo need the live stack.**
+**Backend surfaces implemented (T1–T4, T7, T8); T5's catalog components landed with
+Phase 5 itself, and T6's report builder + dashboard composer now ride the Phase 2
+builder shell (`frontend/builder-ui`: the §3 guided form with live bucket-expression
+compile-checks through the shared TS engine, and the §5 widget grid with
+report-ref binding + role-visibility composition — both saving through the metadata
+app patch). The §12 performance validation + §1 exit demo still need the live stack.**
 
 **Implemented — the expression SQL lowering (§3's compile surface):**
 - `ExpressionSql` (`expression-dsl`): the grammar's second execution surface — compiles
@@ -966,7 +1036,10 @@ definition diff (entities/state machines/reports/suites/translations by apiName:
   the missing-translation report keys the translatable universe
   (`app.label`, `<Entity>.label`, `<Entity>.<field>.label`, `report.<id>.label`);
   CSV/JSON export carries the full universe (missing rows empty), import merges
-  never wipes, unknown keys reject with guidance
+  never wipes, unknown keys reject with guidance; **the editor ships in the builder**
+  (`frontend/builder-ui` — the side-by-side per-locale workspace over the keyed
+  universe, the missing-translation count, RFC 4180 CSV round-trip) and the
+  runtime shell carries the user-locale preference that selects the chain
 
 **Suites:** `LifecycleTests` (7 — the §9 promotion-gate suite: red gate blocks,
   exact-content-hash matching (a stale-draft run does not admit), prod order +

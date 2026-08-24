@@ -1,0 +1,110 @@
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createElement } from "react";
+import { ApiError, type AppDefinition } from "@novaforge/shared";
+import { PageBuilder } from "../src/page-builder.tsx";
+
+/**
+ * The page builder (PHASE-2 T8): palette → canvas → property panel → live preview
+ * through the real renderer; undo/redo; save persists pinned, delta-encoded pages;
+ * a 409 from a concurrent editor prompts the rebase flow.
+ */
+
+const app: AppDefinition = {
+    apiName: "Erp",
+    id: "app-1",
+    entities: [
+        {
+            apiName: "Order",
+            label: "Order",
+            displayField: "reference",
+            fields: [
+                { apiName: "reference", type: "text", required: true },
+                { apiName: "status", type: "enum", values: ["DRAFT", "POSTED"] },
+            ],
+            relationships: [],
+            validations: [],
+            hooks: [],
+            indexes: [],
+        },
+    ],
+    pages: [],
+    permissionSet: { roles: [], objectPermissions: [], fieldSecurity: [] },
+    stateMachines: [],
+    reports: [],
+    dashboards: [],
+    translations: [],
+};
+
+function builder(savePage: (page: Record<string, unknown>) => Promise<unknown>) {
+    return createElement(PageBuilder, { app, savePage });
+}
+
+describe("PageBuilder (T8)", () => {
+    it("customizes the form per §4's example: visibility overlay + reorder, undo restores", async () => {
+        render(builder(async () => {}));
+        // select the status field in the canvas, then author the visibility binding
+        fireEvent.click(await screen.findByRole("treeitem", { name: /status/ }));
+        const visibility = screen.getByLabelText(/visibility/) as HTMLInputElement;
+        fireEvent.change(visibility, { target: { value: "status != 'POSTED'" } });
+        await waitFor(() =>
+            expect(screen.getByTestId("save-page").textContent).toContain("•"),
+        );
+        // undo the overlay — the dirty marker clears
+        screen.getByRole("button", { name: "Undo" }).click();
+        await waitFor(() => expect(screen.getByTestId("save-page").textContent).not.toContain("•"));
+    });
+
+    it("saves a delta-encoded, version-pinned page against the L1 default", async () => {
+        const savePage = vi.fn<(page: Record<string, unknown>) => Promise<unknown>>(async () => {});
+        render(builder(savePage));
+        fireEvent.click(await screen.findByRole("treeitem", { name: /status/ }));
+        fireEvent.change(screen.getByLabelText(/visibility/), { target: { value: "status != 'POSTED'" } });
+        screen.getByTestId("save-page").click();
+        await waitFor(() => expect(savePage).toHaveBeenCalledTimes(1));
+        const page = savePage.mock.calls[0]![0] as {
+            apiName: string;
+            type: string;
+            layout: { base: string; kind: string; deltas: { op: string; slot?: string; value?: string }[] };
+        };
+        expect(page.apiName).toBe("orderForm");
+        expect(page.layout.base).toBe("auto");
+        const slot = page.layout.deltas.find((delta) => delta.op === "setSlot");
+        expect(slot?.slot).toBe("visibility");
+        expect(slot?.value).toBe("status != 'POSTED'");
+    });
+
+    it("a concurrent-edit 409 prompts the rebase (T8's acceptance)", async () => {
+        let calls = 0;
+        const savePage = vi.fn<(page: Record<string, unknown>) => Promise<unknown>>(async () => {
+            calls += 1;
+            if (calls === 1) {
+                throw new ApiError(409, {
+                    type: "x", title: "Conflict", status: 409, code: "4090",
+                    detail: "page orderForm was modified by another editor — rebase and retry",
+                });
+            }
+            return {};
+        });
+        render(builder(savePage));
+        fireEvent.click(await screen.findByRole("treeitem", { name: /status/ }));
+        fireEvent.change(screen.getByLabelText(/visibility/), { target: { value: "status != 'POSTED'" } });
+        screen.getByTestId("save-page").click();
+        const prompt = await screen.findByTestId("rebase-prompt");
+        expect(prompt.textContent).toContain("another editor");
+        // rebase resets onto the current draft (fresh revision) — visible in flash
+        prompt.querySelector("button")!.click();
+        expect(await screen.findByText(/Rebased onto the current draft/)).toBeTruthy();
+    });
+
+    it("rejects saves failing publish validation (unpinned or invalid)", async () => {
+        const savePage = vi.fn<(page: Record<string, unknown>) => Promise<unknown>>(async () => {});
+        render(builder(savePage));
+        fireEvent.click(await screen.findByRole("treeitem", { name: /status/ }));
+        fireEvent.change(screen.getByLabelText(/visibility/), { target: { value: "ghost > 1" } });
+        screen.getByTestId("save-page").click();
+        await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+        expect(screen.getByRole("alert").textContent).toContain("unresolved reference");
+        expect(savePage).not.toHaveBeenCalled();
+    });
+});

@@ -1,0 +1,334 @@
+/* The v1 page-catalog + shell styles (PHASE-2 §6) — tokens only, no hex literals. */
+
+/* --- fields --- */
+
+.nf-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nf-spacing-1);
+  padding: var(--nf-spacing-1) 0;
+}
+
+.nf-field > label {
+  font-size: var(--nf-font-size-base);
+  color: var(--nf-color-text);
+}
+
+.nf-required {
+  color: var(--nf-color-danger, currentColor);
+}
+
+.nf-field input,
+.nf-field select,
+.nf-field textarea {
+  font: inherit;
+  padding: var(--nf-spacing-1) var(--nf-spacing-2);
+  border: 1px solid var(--nf-color-border);
+  border-radius: var(--nf-radius);
+  background: var(--nf-color-surface);
+  color: var(--nf-color-text);
+}
+
+.nf-field input[readonly],
+.nf-field input:disabled {
+  background: var(--nf-color-muted);
+}
+
+.nf-field-error {
+  color: var(--nf-color-danger, inherit);
+  font-size: var(--nf-font-size-small);
+  margin: 0;
+}
+
+.nf-json {
+  background: var(--nf-color-muted);
+  border: 1px solid var(--nf-color-border);
+  border-radius: var(--nf-radius);
+  padding: var(--nf-spacing-2);
+  overflow: auto;
+  font-family: var(--nf-font-mono, monospace);
+}
+
+.nf-lookup-options {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--nf-color-border);
+  border-radius: var(--nf-radius);
+  background: var(--nf-color-surface);
+}
+
+.nf-lookup-options button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--nf-spacing-1) var(--nf-spacing-2);
+  background: none;
+  border: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.nf-lookup-options button:hover {
+  background: var(--nf-color-muted);
+}
+
+.nf-chips {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--nf-spacing-1);
+  padding: 0;
+  margin: 0;
+}
+
+.nf-chip {
+  display: inline-flex;
+  gap: var(--nf-spacing-1);
+  background: var(--nf-color-muted);
+  border-radius: var(--nf-radius);
+  padding: 0 var(--nf-spacing-2);
+}
+
+/* --- layouts --- */
+
+.nf-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.nf-shell-header {
+  display: flex;
+  align-items: center;
+  gap: var(--nf-spacing-3);
+  padding: var(--nf-spacing-2) var(--nf-spacing-3);
+  border-bottom: 1px solid var(--nf-color-border);
+}
+
+.nf-shell-body {
+  display: flex;
+  flex: 1;
+}
+
+.nf-nav {
+  min-width: 14rem;
+  border-right: 1px solid var(--nf-color-border);
+  padding: var(--nf-spacing-2);
+}
+
+.nf-nav ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.nf-form {
+  display: grid;
+  gap: var(--nf-spacing-2) var(--nf-spacing-3);
+  padding: var(--nf-spacing-3);
+}
+
+.nf-section-title {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.nf-record-header {
+  padding: var(--nf-spacing-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--nf-spacing-2);
+}
+
+.nf-record-id {
+  color: var(--nf-color-muted);
+}
+
+.nf-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nf-spacing-2);
+  padding: var(--nf-spacing-3);
+}
+
+.nf-list-toolbar {
+  display: flex;
+  align-items: baseline;
+  gap: var(--nf-spacing-3);
+}
+
+.nf-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.nf-table th,
+.nf-table td {
+  text-align: left;
+  padding: var(--nf-spacing-1) var(--nf-spacing-2);
+  border-bottom: 1px solid var(--nf-color-border);
+}
+
+.nf-pager {
+  display: flex;
+  align-items: center;
+  gap: var(--nf-spacing-2);
+}
+
+.nf-related-list {
+  padding: var(--nf-spacing-2) var(--nf-spacing-3);
+}
+
+.nf-record-actions {
+  display: flex;
+  gap: var(--nf-spacing-2);
+}
+
+.nf-empty {
+  padding: var(--nf-spacing-3);
+  color: var(--nf-color-muted);
+  border: 1px dashed var(--nf-color-border);
+  border-radius: var(--nf-radius);
+}
+
+.nf-fallback {
+  padding: var(--nf-spacing-2);
+  border: 1px dashed var(--nf-color-border);
+  border-radius: var(--nf-radius);
+  color: var(--nf-color-muted);
+}
+
+/* --- shells (runtime + builder) --- */
+
+.nf-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--nf-spacing-3);
+  padding: var(--nf-spacing-2) var(--nf-spacing-3);
+  border-bottom: 1px solid var(--nf-color-border);
+}
+
+.nf-topbar nav {
+  display: flex;
+  gap: var(--nf-spacing-2);
+  flex-wrap: wrap;
+}
+
+.nf-navgroup {
+  display: inline-flex;
+  gap: var(--nf-spacing-1);
+}
+
+.nf-builder,
+.nf-runtime {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.nf-builder main,
+.nf-runtime main {
+  flex: 1;
+  padding: var(--nf-spacing-3);
+}
+
+.nf-b-columns {
+  display: grid;
+  grid-template-columns: 12rem 1fr 18rem 1fr;
+  gap: var(--nf-spacing-3);
+  align-items: start;
+}
+
+.nf-b-palette,
+.nf-b-canvas,
+.nf-b-props,
+.nf-b-preview {
+  border: 1px solid var(--nf-color-border);
+  border-radius: var(--nf-radius);
+  padding: var(--nf-spacing-2);
+  min-height: 20rem;
+}
+
+.nf-b-palette {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nf-spacing-1);
+}
+
+.nf-tree,
+.nf-tree ul {
+  list-style: none;
+  padding-left: var(--nf-spacing-2);
+  margin: 0;
+}
+
+.nf-tree-row {
+  cursor: pointer;
+  display: inline-block;
+  padding: var(--nf-spacing-1);
+  border-radius: var(--nf-radius);
+}
+
+.nf-tree-row[aria-selected="true"] {
+  background: var(--nf-color-muted);
+  outline: 1px solid var(--nf-color-border);
+}
+
+.nf-props {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nf-spacing-1);
+}
+
+.nf-props label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nf-spacing-1);
+  font-size: var(--nf-font-size-small);
+}
+
+.nf-props input,
+.nf-props select {
+  font: inherit;
+  padding: var(--nf-spacing-1);
+  border: 1px solid var(--nf-color-border);
+  border-radius: var(--nf-radius);
+}
+
+.nf-b-toolbar,
+.nf-b-actions,
+.nf-list-toolbar {
+  display: flex;
+  gap: var(--nf-spacing-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.nf-action-primary {
+  font-weight: 600;
+}
+
+.nf-danger {
+  color: var(--nf-color-danger, inherit);
+}
+
+.nf-flash,
+.nf-stale {
+  padding: var(--nf-spacing-1) var(--nf-spacing-2);
+  border-radius: var(--nf-radius);
+}
+
+.nf-steps {
+  display: flex;
+  gap: var(--nf-spacing-3);
+  list-style: none;
+  padding: 0;
+}
+
+.nf-inline {
+  display: inline-flex;
+  gap: var(--nf-spacing-1);
+  align-items: center;
+  margin-right: var(--nf-spacing-2);
+}

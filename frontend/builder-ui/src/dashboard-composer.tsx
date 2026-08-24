@@ -1,0 +1,189 @@
+import { useState, type ReactNode } from "react";
+import type { AppDefinition, DashboardDefinition } from "@novaforge/shared";
+
+/**
+ * The dashboard composer (PHASE-5 §5/T6): a widget grid binding report refs with
+ * per-widget run params and grid span, plus role-visibility composition. Saves
+ * through the Metadata definition APIs (dashboards ride the app document); the
+ * runtime renders the composed grid — a dashboard never widens what its viewer
+ * may see (§8).
+ */
+
+export function DashboardComposer({
+    app,
+    saveDashboards,
+}: {
+    app: AppDefinition;
+    saveDashboards: (dashboards: DashboardDefinition[]) => Promise<void>;
+}): ReactNode {
+    const [selectedId, setSelectedId] = useState<string | null>(app.dashboards[0]?.id ?? null);
+    const draft = app.dashboards.find((dashboard) => dashboard.id === selectedId) ?? null;
+    const [flash, setFlash] = useState<string | null>(null);
+    const [busy, setBusy] = useState(false);
+
+    const update = (patch: Partial<DashboardDefinition>): void => {
+        if (!draft) return;
+        const next = app.dashboards.map((dashboard) =>
+            dashboard.id === draft.id ? { ...dashboard, ...patch } : dashboard,
+        );
+        void persist(next);
+    };
+
+    const persist = async (dashboards: DashboardDefinition[]): Promise<void> => {
+        setBusy(true);
+        try {
+            await saveDashboards(dashboards);
+            setFlash("Dashboard saved");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <section className="nf-b-dashboards" aria-label="Dashboard composer">
+            <h2>Dashboards</h2>
+            <div className="nf-b-toolbar">
+                <label>
+                    Dashboard
+                    <select value={selectedId ?? ""} onChange={(event) => setSelectedId(event.target.value || null)}>
+                        <option value="">—</option>
+                        {app.dashboards.map((dashboard) => (
+                            <option key={dashboard.id} value={dashboard.id}>{dashboard.label ?? dashboard.id}</option>
+                        ))}
+                    </select>
+                </label>
+                <button
+                    type="button"
+                    onClick={() => {
+                        const id = `dash${app.dashboards.length + 1}`;
+                        void persist([...app.dashboards, { id, label: id, widgets: [], roles: [] }]);
+                        setSelectedId(id);
+                    }}
+                >
+                    New dashboard
+                </button>
+            </div>
+            {flash ? <p role="status" aria-live="polite">{flash}</p> : null}
+            {draft ? (
+                <>
+                    <table className="nf-table">
+                        <caption>{draft.label ?? draft.id}</caption>
+                        <thead>
+                            <tr>
+                                <th scope="col">Widget</th>
+                                <th scope="col">Report</th>
+                                <th scope="col">Span (1–12)</th>
+                                <th scope="col">Remove</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {draft.widgets.map((widget, index) => (
+                                <tr key={index}>
+                                    <td>
+                                        <select
+                                            aria-label={`widget kind ${index}`}
+                                            value={widget.widget}
+                                            onChange={(event) =>
+                                                update({
+                                                    widgets: draft.widgets.map((candidate, i) =>
+                                                        i === index ? { ...candidate, widget: event.target.value as typeof candidate.widget } : candidate),
+                                                })
+                                            }
+                                        >
+                                            {["kpi", "chart", "table"].map((kind) => (
+                                                <option key={kind} value={kind}>{kind}</option>
+                                            ))}
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <select
+                                            aria-label={`widget report ${index}`}
+                                            value={widget.reportRef}
+                                            onChange={(event) =>
+                                                update({
+                                                    widgets: draft.widgets.map((candidate, i) =>
+                                                        i === index ? { ...candidate, reportRef: event.target.value } : candidate),
+                                                })
+                                            }
+                                        >
+                                            {app.reports.map((report) => (
+                                                <option key={report.id} value={report.id}>{report.id}</option>
+                                            ))}
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            max={12}
+                                            aria-label={`widget span ${index}`}
+                                            value={widget.span ?? 6}
+                                            onChange={(event) =>
+                                                update({
+                                                    widgets: draft.widgets.map((candidate, i) =>
+                                                        i === index ? { ...candidate, span: Number(event.target.value) } : candidate),
+                                                })
+                                            }
+                                        />
+                                    </td>
+                                    <td>
+                                        <button
+                                            type="button"
+                                            aria-label={`remove widget ${index}`}
+                                            onClick={() =>
+                                                update({ widgets: draft.widgets.filter((_, i) => i !== index) })
+                                            }
+                                        >
+                                            ×
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    <button
+                        type="button"
+                        disabled={app.reports.length === 0 || busy}
+                        onClick={() =>
+                            update({
+                                widgets: [...draft.widgets, { widget: "kpi", reportRef: app.reports[0]!.id, span: 4 }],
+                            })
+                        }
+                    >
+                        Add widget
+                    </button>
+                    <fieldset>
+                        <legend>Role visibility (composition only — §8)</legend>
+                        {app.permissionSet.roles.map((role) => (
+                            <label key={role.name} className="nf-inline">
+                                <input
+                                    type="checkbox"
+                                    checked={!draft.roles?.length || draft.roles.includes(role.name)}
+                                    onChange={(event) => {
+                                        // empty roles = implicitly every role — an uncheck makes the
+                                        // remaining selection explicit
+                                        const current = new Set(
+                                            draft.roles?.length
+                                                ? draft.roles
+                                                : app.permissionSet.roles.map((role) => role.name),
+                                        );
+                                        if (event.target.checked) {
+                                            current.add(role.name);
+                                        } else {
+                                            current.delete(role.name);
+                                        }
+                                        update({ roles: [...current] });
+                                    }}
+                                />
+                                {role.name}
+                            </label>
+                        ))}
+                        <p className="nf-hint">No roles selected = visible to every role of the app.</p>
+                    </fieldset>
+                </>
+            ) : (
+                <p>Select or create a dashboard.</p>
+            )}
+        </section>
+    );
+}

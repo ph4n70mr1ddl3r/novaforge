@@ -37,8 +37,9 @@ jobs:
           retention-days: 7
 
   frontend:
-    # The pnpm workspace (PHASE-2 §2 stack, scaffolded with Phase 5 T5): strict
-    # tsc + the vitest suites incl. the catalog gallery's axe checks.
+    # The pnpm workspace (PHASE-2 §2): shared (page model, expr/v1 TS twin, catalog,
+    # resolver, renderer) + runtime-ui + builder-ui — strict tsc + the vitest suites
+    # incl. the shared conformance corpus and the catalog gallery's axe checks.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

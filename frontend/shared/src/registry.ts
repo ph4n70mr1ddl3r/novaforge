@@ -15,6 +15,23 @@ const IMPLEMENTATIONS: Readonly<Record<string, () => Promise<{ default: AnyCompo
   "novaforge.report-table": () => import("./catalog/ReportTable.tsx") as never,
   "novaforge.dashboard-grid": () => import("./catalog/DashboardGrid.tsx") as never,
   "novaforge.file-upload": () => import("./catalog/FileUpload.tsx") as never,
+  "novaforge.field-input": async () => ({ default: (await import("./catalog/fields.tsx")).FieldInput }) as never,
+  "novaforge.field-number": async () => ({ default: (await import("./catalog/fields.tsx")).FieldNumber }) as never,
+  "novaforge.field-select": async () => ({ default: (await import("./catalog/fields.tsx")).FieldSelect }) as never,
+  "novaforge.field-switch": async () => ({ default: (await import("./catalog/fields.tsx")).FieldSwitch }) as never,
+  "novaforge.field-date": async () => ({ default: (await import("./catalog/fields.tsx")).FieldDate }) as never,
+  "novaforge.field-lookup": async () => ({ default: (await import("./catalog/fields.tsx")).FieldLookup }) as never,
+  "novaforge.field-multi-lookup": async () => ({ default: (await import("./catalog/fields.tsx")).FieldMultiLookup }) as never,
+  "novaforge.field-rich-text": async () => ({ default: (await import("./catalog/fields.tsx")).FieldRichText }) as never,
+  "novaforge.field-json": async () => ({ default: (await import("./catalog/fields.tsx")).FieldJson }) as never,
+  "novaforge.app-shell": async () => ({ default: (await import("./catalog/layouts.tsx")).AppShell }) as never,
+  "novaforge.nav-list": async () => ({ default: (await import("./catalog/layouts.tsx")).NavList }) as never,
+  "novaforge.form-layout": async () => ({ default: (await import("./catalog/layouts.tsx")).FormLayout }) as never,
+  "novaforge.list-layout": async () => ({ default: (await import("./catalog/layouts.tsx")).ListLayout }) as never,
+  "novaforge.record-header": async () => ({ default: (await import("./catalog/layouts.tsx")).RecordHeader }) as never,
+  "novaforge.related-list": async () => ({ default: (await import("./catalog/layouts.tsx")).RelatedList }) as never,
+  "novaforge.record-actions": async () => ({ default: (await import("./catalog/layouts.tsx")).RecordActions }) as never,
+  "novaforge.empty-state": async () => ({ default: (await import("./catalog/layouts.tsx")).EmptyState }) as never,
 };
 
 const RESOLVED = new Map<string, AnyComponent>();

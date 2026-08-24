@@ -37,6 +37,21 @@ class GatewayApplicationTests {
     }
 
     @Test
+    @DisplayName("SPA hosting (PHASE-2 §13 Q5): shells + deep links serve anonymously from the bundle tree")
+    void spaShellsServeAnonymously() throws Exception {
+        // the test classpath ships a marker bundle so the fallback path is observable
+        mockMvc.perform(get("/"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("<!doctype html>")));
+        mockMvc.perform(get("/runtime/orders/123"))   // deep link → runtime shell
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("<!doctype html>")));
+        mockMvc.perform(get("/builder/entities"))     // builder shell by prefix
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("<!doctype html>")));
+    }
+
+    @Test
     @DisplayName("no token → 401 problem+json")
     void unauthenticatedIsProblemJson() throws Exception {
         mockMvc.perform(get("/api/v1/metadata/ping"))

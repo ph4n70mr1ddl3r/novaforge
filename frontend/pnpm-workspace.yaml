@@ -1,4 +1,6 @@
 packages:
   - shared
+  - runtime-ui
+  - builder-ui
 allowBuilds:
   esbuild: true

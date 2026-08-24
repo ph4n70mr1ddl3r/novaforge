@@ -91,6 +91,7 @@ public final class DefinitionValidator {
         for (EntityDefinition entity : app.entities()) {
             validateEntity(app, entity, errors);
         }
+        validatePages(app, errors);
         validateStateMachines(app, errors);
         validateSlas(app, errors);
         validateSharingRules(app, errors);
@@ -200,6 +201,35 @@ public final class DefinitionValidator {
      * outgoing edges, one machine per entity. Guard expressions compile at publish
      * (the FlowCompiler rides the same JVM engine as every other slot).
      */
+    /** The page types schema v0 admits (the JSON Schema enum — kept in one line with it). */
+    private static final Set<String> PAGE_TYPES =
+            Set.of("form", "list", "detail", "dashboard", "custom");
+
+    /**
+     * Pages (PHASE-2 §4, authored from Phase 2): identity, the closed type set, and
+     * entity references that resolve in-app. The layout's expression slots compile
+     * in the Metadata Service's save path (same as every other expression slot).
+     */
+    private static void validatePages(AppDefinition app, List<ProblemErrors.FieldError> errors) {
+        Set<String> apiNames = new HashSet<>();
+        for (AppDefinition.PageDefinition page : app.pages()) {
+            String where = "pages." + page.apiName();
+            if (page.apiName() == null || !CAMEL_CASE.matcher(page.apiName()).matches()) {
+                errors.add(field("pages", "page apiName must be camelCase", page.apiName()));
+                continue;
+            }
+            if (!apiNames.add(page.apiName())) {
+                errors.add(field(where, "page apiName must be unique per app", page.apiName()));
+            }
+            if (page.type() == null || !PAGE_TYPES.contains(page.type())) {
+                errors.add(field(where, "page type must be one of " + PAGE_TYPES, page.type()));
+            }
+            if (page.entity() != null && app.entity(page.entity()).isEmpty()) {
+                errors.add(field(where, "page entity " + page.entity() + " not found", page.entity()));
+            }
+        }
+    }
+
     private static void validateStateMachines(AppDefinition app,
                                               List<ProblemErrors.FieldError> errors) {
         Set<String> boundEntities = new HashSet<>();

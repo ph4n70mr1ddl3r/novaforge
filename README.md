@@ -106,7 +106,10 @@ novaforge/
 ├── apps/erp/            # the Phase 7 dogfood: the ERP app as metadata (entities,
 │                        #   flows, machines, reports, suites) + the binding gap log
 ├── frontend/            # pnpm workspace (PHASE-2 §2): shared/ = the versioned
-│                        #   component catalog + lazy registry (Phase 5 T5)
+│                        #   catalog + registry, the expr/v1 TS twin, page model,
+│                        #   L1 resolver, renderer, gateway client; runtime-ui =
+│                        #   the metadata-driven app shell; builder-ui = the
+│                        #   entity/page/RBAC/report/i18n/lifecycle builders
 ├── deploy/              # compose (Keycloak/PG/Redis/Kafka/Prometheus/Grafana
 │                        #   + Tempo/Loki/promtail, Mailpit), postgres-init,
 │                        #   kind/, helm/ (one chart per service + umbrella)
@@ -159,8 +162,9 @@ TOKEN=$(curl -s -X POST http://localhost:8082/realms/novaforge/protocol/openid-c
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 ```
 
-**Frontend workspace:** `corepack enable && (cd frontend && pnpm install && pnpm test)` —
-strict `tsc` via `pnpm check`; the catalog gallery's axe checks gate CI's `frontend`
+**Frontend workspace:** `corepack enable && (cd frontend && pnpm install && pnpm -r test)` —
+strict `tsc` via `pnpm -r check`; the expr/v1 conformance corpus (shared with the JVM
+engine) and the catalog gallery's axe checks gate CI's `frontend`
 job. Node 22+ (pnpm 11 via corepack).
 
 Grafana (admin/admin) at http://localhost:3000 ships the seeded "NovaForge" dashboards
@@ -207,8 +211,16 @@ content-hash version-bound suite runs gating promotion dev → staging → prod 
 audited admin overrides, compatibility-scoped rollback, change-set review payloads,
 the hashed+signed promotion artifact (ZIP), headless suite-run APIs + the
 `novaforge-pipeline` CI client and reusable workflow, the template catalog, and the
-i18n translation workspaces with the pinned fallback chain. 288 Java + 20 frontend
-tests green under `./mvnw verify` + `pnpm test`. The main
-remaining surfaces: the React builder/runtime UI shell (Phase 2's largest gap, which
-T6's report builder rides) and the later-phase full-stack exit demos. Progress
-ledger: [IMPLEMENTATION.md](IMPLEMENTATION.md).
+i18n translation workspaces with the pinned fallback chain — and the Phase 2
+builder/runtime UIs landed: the `frontend/` workspace ships the expr/v1 TS twin
+(100% shared-corpus parity), the page model with structural-delta overlays, the
+18-component v1 catalog, the role-parameterized L1 resolver, the renderer
+interpreter, the runtime app shell (auto list/form/detail pages, approval inbox,
+dashboards, locale fallback), and the builder shell (entity builder, page builder
+with live preview + rebase, RBAC editors, tenant onboarding, report builder +
+dashboard composer, translation editor, change-set review/promotion) — pages are
+authorable metadata (`PUT …/pages/{apiName}`) with optimistic locking, served
+same-origin by the gateway. Java + 104 frontend tests green under `./mvnw verify` +
+`pnpm -r test`. The main remaining surfaces: the later-phase full-stack exit demos
+(Phases 4/5/8 live exercises). Progress ledger:
+[IMPLEMENTATION.md](IMPLEMENTATION.md).

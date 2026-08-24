@@ -630,6 +630,98 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                 .andExpect(jsonPath("$.code").value("4004"));
     }
 
+    @Test
+    @DisplayName("page definitions (PHASE-2 §4/§8): save-validate, round-trip, publish with the bundle, delete")
+    void pageDefinitionLifecycle() throws Exception {
+        MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps")
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "apiName": "Pages", "entities": [
+                                  { "apiName": "Order", "displayField": "reference",
+                                    "fields": [
+                                      { "apiName": "reference", "type": "text", "required": true },
+                                      { "apiName": "status", "type": "enum",
+                                        "values": ["DRAFT", "POSTED"] } ] } ] }
+                                """))
+                .andExpect(status().isOk()).andReturn();
+        String appId = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+
+        // the §4 example shape: an L2 overlay page with expression slots
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/orderForm")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "orderForm", "label": "Order Form", "type": "form",
+                                  "entity": "Order",
+                                  "layout": {
+                                    "base": "auto", "kind": "form",
+                                    "deltas": [
+                                      { "op": "setProps", "key": "form", "props": { "columns": 2 } },
+                                      { "op": "setSlot", "key": "field:status",
+                                        "slot": "visibility", "value": "status != 'POSTED'" } ] } }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pages[0].apiName").value("orderForm"))
+                .andExpect(jsonPath("$.pages[0].layout.deltas[1].value").value("status != 'POSTED'"));
+
+        // bad type rejects; unresolved entity rejects; bad expression slot rejects
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/bad_type")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("{ \"apiName\": \"bad_type\", \"type\": \"wizard\" }"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/bad_entity")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("{ \"apiName\": \"bad_entity\", \"type\": \"form\", \"entity\": \"Ghost\" }"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/badExpr")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "badExpr", "type": "form", "entity": "Order",
+                                  "layout": { "root": { "type": "novaforge.field-input",
+                                    "props": { "field": "reference" }, "bind": "reference",
+                                    "visibility": "ghostField > 1" } } }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("badExpr.layout"));
+
+        // concurrent edit protection (§8): a stale revision 409s; the rebased save succeeds
+        MvcResult saved = mockMvc.perform(get("/api/v1/metadata/apps/" + appId).with(builderJwt()))
+                .andExpect(status().isOk()).andReturn();
+        int revision = MAPPER.readTree(saved.getResponse().getContentAsString())
+                .get("pages").get(0).get("revision").asInt();
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/orderForm")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "orderForm", "type": "form", "entity": "Order",
+                                  "layout": { "base": "auto", "kind": "form", "deltas": [] },
+                                  "revision": %d }
+                                """.formatted(revision - 1)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("4090"));
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/orderForm")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "orderForm", "type": "form", "entity": "Order",
+                                  "layout": { "base": "auto", "kind": "form", "deltas": [] },
+                                  "revision": %d }
+                                """.formatted(revision)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pages[0].revision").value(revision + 1));
+
+        // the page rides the published bundle (versioned metadata like everything else)
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/publish").with(builderJwt()))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/metadata/apps/" + appId + "/published").with(userJwt()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.app.pages[0].apiName").value("orderForm"));
+
+        // delete removes the page from the draft
+        mockMvc.perform(delete("/api/v1/metadata/apps/" + appId + "/pages/orderForm")
+                        .with(builderJwt()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pages.length()").value(0));
+    }
+
     // Small fixtures kept local to this suite.
     static final class JournalAppFixtures {
         static final String JSON = """

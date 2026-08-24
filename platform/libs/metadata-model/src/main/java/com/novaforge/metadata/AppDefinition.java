@@ -217,7 +217,11 @@ public record AppDefinition(
                 reports, dashboards, integrations, List.of());
     }
 
-    /** Page definition (reserved slot; authored from Phase 2 per PHASE-2 §3). */
+    /**
+     * Page definition (authored from Phase 2 per PHASE-2 §3/§4): identity + entity +
+     * the page model in {@code layout}. {@code revision} is the optimistic-lock
+     * token (PHASE-2 §8 — concurrent page edits 409 → rebase in the builder).
+     */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record PageDefinition(
             String id,
@@ -226,7 +230,14 @@ public record AppDefinition(
             @JsonProperty("label_i18n") Map<String, String> labelI18n,
             String type,
             String entity,
-            Object layout) {
+            Object layout,
+            Integer revision) {
+
+        public PageDefinition(String id, String apiName, String label,
+                              @JsonProperty("label_i18n") Map<String, String> labelI18n,
+                              String type, String entity, Object layout) {
+            this(id, apiName, label, labelI18n, type, entity, layout, null);
+        }
     }
 
     /** App-scoped settings (Settings branch, PLAN.md §2). */
