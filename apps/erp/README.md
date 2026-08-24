@@ -7,10 +7,11 @@ application code and exactly one budgeted escape-hatch script (§5, rule 3).
 
 | File | What it is |
 |------|------------|
-| `erp-app.json` | The app definition (GL, AR, Inventory, Periods, Settings, Permissions, reports, dashboard, job, integrations) |
+| `erp-app.json` | The app definition (GL, AR, Inventory, Periods, Settings, Permissions, reports, dashboard, job, integrations, close-checklist workflow) |
 | `suites/reconciliation.json` | The §9 item 1/5 exit contract: book → approval → POSTED → trial balance nets zero, aging reconciles, SoD |
-| `suites/controls.json` | §9 items 2–3: posting immutability (`RECORD_FROZEN`) + period locking (`PERIOD_LOCKED`) + reopen |
+| `suites/controls.json` | §9 items 2–3: posting immutability (`RECORD_FROZEN`) + period locking (`PERIOD_LOCKED`, incl. §4's soft close — `CLOSING` blocks postings unless `closeJournal`) + reopen |
 | `suites/inventoryCosting.json` | §9 item 4: receipt → issue at weighted average, decimal-exact through the rounding chain |
+| `suites/bankFeed.json` | PHASE-6 T10 / §5 T8: webhook payment (real HMAC path) → settlement → aging reflects it, decimal-exact |
 | `GAP-LOG.md` | The binding phase deliverable (§1 rule 2): every gap logged before any workaround, with dispositions |
 
 ## Module map (§2)
@@ -32,8 +33,15 @@ application code and exactly one budgeted escape-hatch script (§5, rule 3).
   script** (`costMovement`, beforeSave) costs issues at the running average and stamps
   receipt values — §5's canonical ADR-008 escape-hatch case.
 - **Periods** — `AccountingPeriod` `OPEN → CLOSING → CLOSED` with the audited
-  `CLOSED → OPEN` reopen edge (§4); `CLOSED` activates `PeriodLock`; nothing is ever
-  un-frozen — corrections inside a reopened period are reversal entries.
+  `CLOSED → OPEN` reopen edge (§4); `CLOSING` blocks postings unless the entry
+  carries `closeJournal: true` (§4's soft close — the `PeriodLock`
+  `restrictedStatus`/`exemptField` binding); `CLOSED` activates the absolute lock;
+  nothing is ever un-frozen — corrections inside a reopened period are reversal
+  entries. The **`closeChecklist` workflow** (§4) starts when a period enters
+  `CLOSING`: parallel close tasks per role (AR clerk, inventory clerk, accounting
+  manager) join before the controller's `confirmClose` — the checklist completes
+  only with all tasks resolved (the reopen-approval and checklist-suite legs are
+  gap-logged: G-10/G-11).
 - **Reports** — `trialBalance`, `arAging` (bucketed aging over POSTED invoices, the
   Phase 5 exit artifact), `inventoryValuation`; the `exec` dashboard; `nightlyAging`
   scheduled delivery under the `reporting` role.
@@ -41,13 +49,13 @@ application code and exactly one budgeted escape-hatch script (§5, rule 3).
   `report`/`flow` targets drive it; there is no `connector` target by design, §5) and
   the `paymentsFeed` inbound webhook (`Payment` upsert, HMAC per PHASE-6 §5).
 
-## Loading (the builder, until the builder UI exists — G-7)
+## Loading (through the definition APIs, or the builder's entity/integration editors — G-7 closed)
 
 ```bash
 TOKEN=<builder token>   # scratch tenant admin, or the dev workspace builder
 APP_ID=$(curl -s -X POST $MD/api/v1/metadata/apps -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d @apps/erp/erp-app.json | jq -r .id)
-for s in reconciliation controls inventoryCosting; do
+for s in reconciliation controls inventoryCosting bankFeed; do
   curl -s -X PUT $MD/api/v1/metadata/apps/$APP_ID/test-suites/$s \
     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
     -d @apps/erp/suites/$s.json > /dev/null

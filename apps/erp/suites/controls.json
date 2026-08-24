@@ -91,6 +91,39 @@
           "expect": "ok" }
       ],
       "assertExpressions": []
+    },
+    {
+      "name": "closing-period-blocks-postings-except-close-journals",
+      "fixtures": [
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "1100", "name": "Accounts Receivable", "type": "ASSET" } },
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "4000", "name": "Sales Revenue", "type": "REVENUE" } }
+      ],
+      "steps": [
+        { "op": "createRecord", "entity": "AccountingPeriod", "asRole": "accountingManager",
+          "template": { "name": "Jul 2026", "startDate": "2026-07-01", "endDate": "2026-07-31" },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "AccountingPeriod", "asRole": "accountingManager",
+          "recordId": "${AccountingPeriod[0].id}",
+          "template": { "version": "${AccountingPeriod[0].version}", "status": "CLOSING" },
+          "expect": "ok" },
+        { "op": "createRecord", "entity": "JournalEntry", "asRole": "arClerk",
+          "template": {
+            "entryDate": "2026-07-10", "memo": "a normal posting into a closing period",
+            "lines": [
+              { "account": "${Account[0].id}", "debit": "8.0000" },
+              { "account": "${Account[1].id}", "credit": "8.0000" } ] },
+          "expect": "error(PERIOD_LOCKED)" },
+        { "op": "createRecord", "entity": "JournalEntry", "asRole": "accountingManager",
+          "template": {
+            "entryDate": "2026-07-10", "memo": "the accrual close journal", "closeJournal": true,
+            "lines": [
+              { "account": "${Account[0].id}", "debit": "8.0000" },
+              { "account": "${Account[1].id}", "credit": "8.0000" } ] },
+          "expect": "ok" }
+      ],
+      "assertExpressions": [ "${JournalEntry[0].closeJournal} == true" ]
     }
   ]
 }

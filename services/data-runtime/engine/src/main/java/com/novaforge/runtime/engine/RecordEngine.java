@@ -668,6 +668,13 @@ public class RecordEngine {
      * no locks (the absence of periods never blocks a tenant's writes); the period
      * entity is app metadata, its {@code CLOSED} status an authored value — the
      * platform reads the configuration, it never special-cases an app's enum.
+     *
+     * <p>PHASE-7 §4's soft close rides the same lookup: a date inside a
+     * {@code restrictedStatus} period (the period's {@code CLOSING}) rejects
+     * identically <em>unless</em> the written record's boolean {@code exemptField}
+     * carries {@code true} (the app's {@code closeJournal} flag — app metadata, no
+     * platform special-casing). The closed leg stays absolute: nothing exempts a
+     * closed period.</p>
      */
     private void enforcePeriodLock(UUID tenantId, AppDefinition app, EntityHandle handle,
                                    Map<String, Object> data) {
@@ -686,22 +693,45 @@ public class RecordEngine {
         } catch (RuntimeException malformed) {
             return;   // coercion reports malformed dates with its own error
         }
-        EntityHandle periodHandle = resolver.resolve(tenantId, lock.entity());
-        String queryJson = "{\"filter\":{\"and\":["
-                + "{\"field\":\"" + lock.from() + "\",\"op\":\"lte\",\"value\":\"" + date + "\"},"
-                + "{\"field\":\"" + lock.to() + "\",\"op\":\"gte\",\"value\":\"" + date + "\"},"
-                + "{\"field\":\"" + lock.status() + "\",\"op\":\"eq\",\"value\":\"" + lock.closed() + "\"}]}}";
-        QueryModel.ListQuery query = QueryParser.parseList(queryJson, periodHandle.entity());
-        QueryLowering lowering = new QueryLowering(periodHandle.entity());
-        QueryLowering.Lowered count = lowering.count(periodHandle.entity().apiName(), tenantId,
-                query.filter());
-        Long closed = records.countValue(count.sql(), count.params());
-        if (closed != null && closed > 0) {
+        if (blockingPeriodCount(tenantId, lock, date, lock.closed()) > 0) {
             throw new PlatformException(PlatformErrorCode.PERIOD_LOCKED,
                     handle.entity().apiName() + " is dated " + date + " — inside a closed "
                             + lock.entity() + " (PeriodLock, PHASE-7 §3.2); a closed period "
                             + "only reopens through its own audited flow");
         }
+        if (lock.restrictedStatus() != null
+                && !exemptFromRestriction(lock, data)
+                && blockingPeriodCount(tenantId, lock, date, lock.restrictedStatus()) > 0) {
+            throw new PlatformException(PlatformErrorCode.PERIOD_LOCKED,
+                    handle.entity().apiName() + " is dated " + date + " — inside a "
+                            + lock.restrictedStatus() + " " + lock.entity()
+                            + " (PeriodLock, PHASE-7 §4); only records carrying "
+                            + lock.exemptField() + " = true may post into it");
+        }
+    }
+
+    /** The exempt field reads the merged record state — defaults included (§4). */
+    private static boolean exemptFromRestriction(EntityDefinition.PeriodLock lock,
+                                                 Map<String, Object> data) {
+        if (lock.exemptField() == null) {
+            return false;
+        }
+        return Boolean.parseBoolean(String.valueOf(data.get(lock.exemptField())));
+    }
+
+    private long blockingPeriodCount(UUID tenantId, EntityDefinition.PeriodLock lock,
+                                     String date, String statusValue) {
+        EntityHandle periodHandle = resolver.resolve(tenantId, lock.entity());
+        String queryJson = "{\"filter\":{\"and\":["
+                + "{\"field\":\"" + lock.from() + "\",\"op\":\"lte\",\"value\":\"" + date + "\"},"
+                + "{\"field\":\"" + lock.to() + "\",\"op\":\"gte\",\"value\":\"" + date + "\"},"
+                + "{\"field\":\"" + lock.status() + "\",\"op\":\"eq\",\"value\":\"" + statusValue + "\"}]}}";
+        QueryModel.ListQuery query = QueryParser.parseList(queryJson, periodHandle.entity());
+        QueryLowering lowering = new QueryLowering(periodHandle.entity());
+        QueryLowering.Lowered count = lowering.count(periodHandle.entity().apiName(), tenantId,
+                query.filter());
+        Long countValue = records.countValue(count.sql(), count.params());
+        return countValue == null ? 0 : countValue;
     }
 
     /** The per-app system principal declarative flows run as (§13 Q1 — audited). */

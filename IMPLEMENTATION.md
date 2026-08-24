@@ -138,13 +138,13 @@ inline children → 4 outbox rows published → `novaforge.record` carries the e
   volume) with SPA deep-link fallback — asset paths anonymous, APIs still
   scope-gated; Vite dev proxies cover local development.
 
-**Suites:** 117 frontend tests (`pnpm -r test`: shared 82 — conformance 39, deltas,
-  goldens, validation, renderer, gallery-axe, client; runtime-ui 7 — nav/auto-list/
-  form journeys, inbox, notifications, axe, the L1→delta→persist round-trip;
-  builder-ui 28 —
+**Suites:** 128 frontend tests (`pnpm -r test`: shared 86 — conformance 39, deltas,
+  goldens, validation, renderer, gallery-axe, client, report-table drill-through;
+  runtime-ui 10 — nav/auto-list/form journeys, inbox, notifications, axe, the
+  L1→delta→persist round-trip, dashboard drill/refresh; builder-ui 32 —
   entity/page/RBAC/onboarding/i18n/reporting journeys incl. the 409 rebase, the
-  PHASE-3 §8 logic + suites authoring journeys, and the PHASE-4 §11 automation/
-  sharing/guided-approval journeys), plus
+  PHASE-3 §8 logic + suites authoring journeys, the PHASE-4 §11 automation/
+  sharing/guided-approval journeys, and the PHASE-6 §3 integrations editor), plus
   `DefinitionLifecycleTests.pageDefinitionLifecycle` (9 tests, real Postgres) and
   `GatewayApplicationTests` SPA hosting.
 
@@ -911,13 +911,43 @@ existed (a no-op in practice) and POI autosizing walks AWT fonts — sizing now 
 after the data and degrades to a fixed width on a headless font failure instead of
 losing the export; and the `ReportTable`'s dead `typeof` ternary went.
 
-**Phase 5 remainder:** T6's report builder/dashboard composer authoring UI (rides
-the Phase 2 builder shell — the workspace now exists, the shell does not yet);
-chart/export polish beyond the catalog contract is backlog until the dogfood asks.
+**Phase 5 remainder:** chart/export polish beyond the catalog contract is backlog
+until the dogfood asks. T6's report builder + dashboard composer landed with the
+builder shell (above), and the §12 performance validation + §1 exit demo ran live
+2026-08-23.
+
+**Spec-review closeout (2026-08-24) — two §5 surfaces and the §9 cache pin had
+never landed:**
+- **Drill-through deep links (§5, §10 item 2's round-trip):** the definition's
+  `drillThrough` binding now renders — `ReportTable` rows carry a drill anchor
+  lowering the row to a query-DSL payload (non-bucket group-by columns as `eq`
+  leaves — a bucket label is a derived value and never filters; the report's saved
+  filters join when `carryFilters` is set), the runtime shell deep-links the bound
+  entity's list, and the list page consumes the payload natively — the renderer
+  context grows a `listFilter` slot ListLayout splices into every server-paged
+  request (never client slicing), with a visible "(filtered)" count. Pinned by the
+  shared drill suite (leaf lowering, carryFilters, the click payload, the
+  no-binding static default) and the runtime journey (click → the list request
+  carries exactly the row's filters — §10 item 2 green).
+- **Per-widget auto-refresh (§5):** `DashboardDefinition.Widget.refreshSeconds`
+  (bounded 5..3600 at save, null = static — the default) drives a per-widget client
+  timer in the runtime dashboards view; the composer authors it beside span. No
+  server push in v1, exactly as pinned. Pinned with fake timers (the timered
+  widget re-runs per interval; the static one never does).
+- **`ReportRunnerTests` (§4/§8/§9's cache + grant pins):** the run path had no
+  direct suite — the actor dimension of the cache key (same-role users never share
+  results; the evaluation date keys time-relative runs), the repeat-run cache hit,
+  `report: execute` default-deny with the admin/builder bypass, and the
+  Redis-outage degradation to the uncached path are now all pinned at the runner.
 
 ## Phase 6 — Integration Layer ◐ (spec: PHASE-6-INTEGRATION.md)
 
-**Status:** T1–T9 landed and suite-green; T10 (the live exit walkthrough — Stripe/bank feed → Payments visible in reports against the running stack) remains the exit-review leg, per the task table's own definition.
+**Status:** T1–T9 landed and suite-green (T3's builder leg included — the 2026-08-24
+review closeout below); T10 (the live exit walkthrough — Stripe/bank feed →
+Payments visible in reports against the running stack) remains the exit-review leg,
+per the task table's own definition. The authored `bankFeed` suite
+(`apps/erp/suites/`) is T10's journey as a runnable contract — its live execution
+rides the walkthrough.
 
 **Fixed at the 2026-08-24 spec review — the secrets package was never committed.**
 `.gitignore`'s broad `secrets/` scratch pattern had silently excluded
@@ -971,15 +1001,57 @@ rotation semantics the suites pin, restored to a compiling tree.
 
 **Suites (§11):** `IntegrationWebhookTests` (7 — the full HMAC matrix incl. rotation + replay, idempotent application, outbound sign/filter/retry-to-DLQ/replay-exactly-once, poison DLQ with the write path's own verdict), `ConnectorExecutorTests` (4 — mock journey w/ credential + template legs, dedupe-collapse, terminal-failure DLQ, unknown-operation rejection), `ImportResumeTests` (kill/resume exactly-once), `IntegrationFlowTests` (+4 in the runtime — before-hook abort, after-hook spine retry, mock connector journey, and the integration write path firing validations/state machines/hooks with per-item field-scoped verdicts), `FileServiceTests` (5 — checksum verify/mismatch+delete, pinned presign expiry, EICAR quarantine + blocked download + outboxed event, internal upload leg), `ScriptApiTests` +$http gating, `AsyncExportHandoffTests` (202 + job link), `WebhookRateLimitFilterTest` (window enforcement, scoping, fail-open), `TestRunnerJourneyTests` +webhook journey (provisioning shape + signature equality over the raw body), frontend gallery/registry/FileUpload (+2, 20 total)
 
+**Spec-review closeout (2026-08-24) — the builder's integrations surface had never
+landed.** T3's acceptance pins "connector authorable in the builder" and §3's
+ledger claim "delivery log … surfaced beside the editors" — but the builder shell
+had no integrations screen at all (the branch was JSON-only through the definition
+APIs). Closed:
+- **`frontend/builder-ui` integrations screen**: connector authoring (id/base URL/
+  credential reference + named operations with method/path), credential references
+  (the v1 auth set's binding slots — api-key header, basic username, OAuth2
+  client-credentials token URL/client id), webhooks both directions (inbound: target
+  entity + upsert key fields + `${…}` field templates; outbound: URL + spine-event
+  filter), and import mappings (entity/mode/keys/mapping) — all saving through the
+  app PATCH's `integrations` branch like every other definition
+- **secret provisioning is store-direct (§9):** the editor's secret inputs PUT the
+  material straight to `/api/v1/integrations/secrets/{ref}` — the value never
+  touches the app document or its exports (pinned: the saved patch's JSON carries
+  no material)
+- **the operational surfaces beside the editors:** the delivery log (kind/target/
+  status/attempts/last response/latency) and the DLQ with per-entry replay riding
+  the read/replay APIs; the shared client grows the four legs
+- the shared TS `AppDefinition` grows the `integrations` branch types (the JVM
+  shapes, mirrored)
+- suites: `integrations.test.tsx` (4 — connector op authoring + patch shape,
+  credential authoring with store-only provisioning, outbound webhook beside the
+  inbound one, delivery log render + DLQ replay)
+- **the authored bank-feed suite** (`apps/erp/suites/bankFeed.json` — T9's artifact
+  leg, the acceptance corpus's fourth suite): book → approve → POSTED → aging 120 →
+  `postWebhook paymentsFeed` (the real HMAC path, TX-9001 @ 70.0000) → Payment
+  query lands → settlement decrements `amountOutstanding` → aging 50 decimal-exact
+  — T8's "Payments sync visible in aging" as a runnable contract (its live leg
+  rides the full-stack exit walkthrough)
+
 ## Phase 7 — ERP Dogfood ◐ (spec: PHASE-7-ERP-DOGFOOD.md)
 
-> The platform harvests (§3 — the only platform work the spec expects) are complete
-> and suite-green; the ERP app ships as authored metadata with its acceptance
-> suites and the binding gap log. The T12 live-stack walkthrough (the §1 exit
-> demo against the running compose stack — the same leg Phases 5/6 exercised) and
-> the builder-UI authoring surface (G-7, the tracked Phase 2 remainder) are the
-> remaining legs. The §9 suites are authored as the contract; their live
-> execution rides the full stack (as the Phase 5/6 exits did).
+> The platform harvests (§3 + §4's soft close) are complete and suite-green; the
+> ERP app ships as authored metadata with its acceptance suites and the binding
+> gap log. The live-stack walkthrough (the §1 exit demo against the running
+> compose stack — the same leg Phases 5/6 exercised) is the remaining leg; the
+> builder-UI authoring surface (G-7) closed when the Phase 2 shells landed. The
+> §9 suites are authored as the contract; their live execution rides the full
+> stack (as the Phase 5/6 exits did).
+>
+> **Spec-review closeout (2026-08-24):** reviewing the artifact against §2/§4/§9
+> found and closed four gaps — §4's CLOSING-unless-close-journal gate had no
+> platform expression (the soft-close harvest above), §4's close-checklist
+> workflow was never authored (the `closeChecklist` BPMN now rides the app), the
+> `Invoice` carried `freezeOnTerminal` against §2's explicit pin (settlement on a
+> POSTED invoice was impossible — removed; the bankFeed suite pins the decrement),
+> and the bank-feed acceptance suite itself was missing (authored — the corpus's
+> fourth suite). Two newly-found platform/harness limits are gap-logged (G-10
+> reopen approval needs prior-state guards; G-11 the checklist suite leg needs a
+> poll op) rather than silently worked around.
 
 **Implemented — T3 the two anticipated harvests (§3), confirmed by the dogfood:**
 - **`freezeOnTerminal` (§3.1)**: an `EntityDefinition` attribute (requiring a bound
@@ -1002,31 +1074,51 @@ rotation semantics the suites pin, restored to a compiling tree.
   gate; no period rows → no locks; reopen (§4's audited transition) deactivates the
   lock and nothing is ever un-frozen — corrections inside a reopened period are
   reversal entries
+- **§4's soft close (landed at the 2026-08-24 review)**: `periodLock` grows
+  `restrictedStatus` + `exemptField` — a date inside a `restrictedStatus` period
+  rejects identically *unless* the written record's boolean `exemptField` carries
+  `true` (the app's `closeJournal` flag — authored metadata, no platform
+  special-casing); the closed leg stays absolute, nothing exempts it. Save rules:
+  the restricted status is an enum value distinct from `closedStatus`, the exempt
+  field is a boolean on the locked entity, and an orphaned `exemptField` rejects
 - error codes 4013/4014 joined the registry (the PHASE-0 §5.2 floor grows per phase)
 - both features flag-gated per definition (attributes absent → zero behavior
   change; §10 T3's "features flag-gated" satisfied by authoring, not deployment
   flags — an unupgraded app never sees the codes)
-- suites: `FreezePeriodTests` (4 — §9 items 2/3 over the real Postgres write path:
+- suites: `FreezePeriodTests` (5 — §9 items 2/3 over the real Postgres write path:
   posted-document immutability incl. inline arrays + delete, child writes naming
   the frozen parent (create/update/delete), reversal-entries-post, closed-period
-  rejection + boundary dates + reopen deactivation) + six `DefinitionValidatorTest`
-  rules (machine-bound freeze, terminal-state presence, period entity resolution,
-  dateField typing, range-field typing, closedStatus ∈ enum)
+  rejection + boundary dates + reopen deactivation, and §4's soft close — CLOSING
+  blocks a normal posting, `closeJournal: true` posts, CLOSED stays absolute) +
+  nine `DefinitionValidatorTest` rules (machine-bound freeze, terminal-state
+  presence, period entity resolution, dateField typing, range-field typing,
+  closedStatus ∈ enum, restrictedStatus shape/distinctness, exemptField typing,
+  orphaned exemptField)
 
 **Implemented — the ERP app as metadata (§2, `apps/erp/`):**
 - `erp-app.json`: GL (`Account` hierarchical, `JournalEntry`/`JournalLine` with the
   balanced validation + gapless `JE-` sequence defaults + `DRAFT→SUBMITTED→POSTED`
-  with `freezeOnTerminal` + `PeriodLock`), AR (`Customer`, `Invoice` + formula-priced
-  lines + `total` roll-up + gapless `INV-`, machine + freeze — the invoice, not its
-  journal, so settlement decrements `amountOutstanding` per §2's pin; `Payment` as
-  the bank-feed webhook target), Inventory (`Item` with roll-up-maintained
+  with `freezeOnTerminal` + `PeriodLock` — the §4 soft close binds too:
+  `CLOSING` blocks postings unless `closeJournal` is set), AR (`Customer`,
+  `Invoice` + formula-priced lines + `total` roll-up + gapless `INV-`, machine —
+  **no freeze on the invoice, per §2's pin**: freeze binds the journal entry, not
+  the invoice, so settlement decrements `amountOutstanding` on the POSTED invoice
+  (the 2026-08-24 review removed a freeze the app had carried against the pin —
+  the bankFeed suite's settlement leg pinned it); `Payment` as the bank-feed
+  webhook target), Inventory (`Item` with roll-up-maintained
   `qtyOnHand`/`inventoryValue` — the running weighted average is exactly
   value/qty; `StockLedger` append-only with terminal `POSTED` + freeze), periods
   (`OPEN→CLOSING→CLOSED` with the audited `CLOSED→OPEN` reopen edge), reports
   (trial balance, bucketed A/R aging, inventory valuation), the `exec` dashboard,
   the `nightlyAging` scheduled delivery under the `reporting` role, roles + the
   object matrix (arClerk/accountingManager/controller/inventoryClerk/reporting),
-  and the bankFeed connector + paymentsFeed inbound webhook (T8's wiring)
+  the bankFeed connector + paymentsFeed inbound webhook (T8's wiring), and the
+  **`closeChecklist` workflow (§4)**: a BPMN process starting on
+  `record.updated AccountingPeriod status == 'CLOSING'` whose parallel user tasks
+  (arClose/arClerk, invClose/inventoryClerk, glClose/accountingManager) join
+  before the controller's `confirmClose` — the checklist completes only with all
+  tasks resolved, structurally; the reopen-approval and checklist-suite legs are
+  gap-logged (G-10/G-11 — prior-state guards and a harness poll op)
 - posting = the §5 shape: `afterSave` flows — branch → `requestApproval` (role
   `accountingManager`, SoD fail-closed; rejection publishes `journal.rejected`/
   `invoice.rejected` on the spine) → `transitionState` to POSTED through the
@@ -1041,10 +1133,14 @@ rotation semantics the suites pin, restored to a compiling tree.
   TB debits == credits == 120.0000, aging outstanding == 120.0000; preparer cannot
   approve own — `error(SOD_VIOLATION)`), `controls` (§9 items 2/3: posted-entry
   PATCH/delete/child-create all `error(RECORD_FROZEN)`, closed-period create
-  `error(PERIOD_LOCKED)`, reopen admits new dated writes), `inventoryCosting`
+  `error(PERIOD_LOCKED)`, reopen admits new dated writes, and §4's soft close —
+  a normal posting into `CLOSING` rejects `error(PERIOD_LOCKED)` while the
+  `closeJournal` accrual posts), `inventoryCosting`
   (§9 item 4: receipt 10×5 → issue 4 at average — `unitCost == 5.0000`, qty 6,
-  value 30.0000 decimal-exact)
-- `apps/erp/GAP-LOG.md` — the binding rule-2 deliverable: 9 numbered gaps logged
+  value 30.0000 decimal-exact), and `bankFeed` (PHASE-6 T10/T8's leg: webhook
+  payment through the real HMAC path → Payment lands → settlement decrements
+  `amountOutstanding` on the POSTED invoice → aging 50.0000 decimal-exact)
+- `apps/erp/GAP-LOG.md` — the binding rule-2 deliverable: 11 numbered gaps logged
   BEFORE their workarounds, each with proposed primitive/flag + priority +
   disposition (2 accept-as-platform-feature: created-record id capture + nested
   template resolution for auto-journals; a `$decimal` sandbox binding for script

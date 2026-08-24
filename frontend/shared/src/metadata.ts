@@ -287,6 +287,12 @@ export interface ReportAggregate {
     alias: string;
 }
 
+/** The §5 drill-through binding: rows deep-link the bound entity's list. */
+export interface DrillThrough {
+    entity: string;
+    carryFilters?: boolean;
+}
+
 export interface ReportDefinition {
     id: string;
     label?: string;
@@ -297,6 +303,7 @@ export interface ReportDefinition {
     aggregates?: ReportAggregate[];
     groupBy?: ReportGroupBy[];
     filters?: ReportFilter[];
+    drillThrough?: DrillThrough;
     params?: unknown[];
 }
 
@@ -305,6 +312,8 @@ export interface DashboardWidget {
     reportRef: string;
     params?: Record<string, unknown>;
     span?: number;
+    /** §5 auto-refresh: the client-timer interval in seconds — absent = static. */
+    refreshSeconds?: number;
 }
 
 export interface DashboardDefinition {
@@ -320,6 +329,71 @@ export interface DashboardDefinition {
 export interface TranslationsDefinition {
     locale: string;
     entries: Record<string, string>;
+}
+
+// --- integrations (PHASE-6 §2): connectors, webhooks, credential references, imports ---
+
+export interface ConnectorOperation {
+    name: string;
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+    path: string;
+    query?: Record<string, unknown>;
+    headers?: Record<string, unknown>;
+    body?: unknown;
+}
+
+export interface ConnectorDefinition {
+    id: string;
+    type: "rest";
+    baseUrl: string;
+    credential?: string;
+    operations?: ConnectorOperation[];
+}
+
+export interface WebhookMapping {
+    mode: "create" | "upsert";
+    keyFields?: string[];
+    idempotencyKey?: string;
+    fields?: Record<string, unknown>;
+}
+
+export interface WebhookDefinition {
+    id: string;
+    direction: "inbound" | "outbound";
+    /** outbound: the target URL + spine-event filter expression. */
+    url?: string;
+    events?: string;
+    /** inbound: the target entity + its mapping onto the write path. */
+    entity?: string;
+    mapping?: WebhookMapping;
+    secretRef?: string;
+    enabled?: boolean;
+}
+
+/** A credential reference — the secret material never rides metadata (§9). */
+export interface CredentialDefinition {
+    id: string;
+    kind: "api_key" | "basic" | "oauth2_client_credentials";
+    header?: string;
+    username?: string;
+    tokenUrl?: string;
+    clientId?: string;
+    scopes?: string[];
+}
+
+export interface ImportDefinition {
+    apiName: string;
+    entity: string;
+    mapping?: Record<string, unknown>;
+    mode: "create" | "upsert";
+    keyFields?: string[];
+}
+
+export interface IntegrationsDefinition {
+    connectors?: ConnectorDefinition[];
+    webhooks?: WebhookDefinition[];
+    credentials?: CredentialDefinition[];
+    imports?: ImportDefinition[];
 }
 
 // --- the app bundle ---
@@ -354,6 +428,7 @@ export interface AppDefinition {
     jobs?: ScheduledJobDefinition[];
     reports: ReportDefinition[];
     dashboards: DashboardDefinition[];
+    integrations?: IntegrationsDefinition;
     testSuites?: TestSuiteDefinition[];
     translations: TranslationsDefinition[];
 }

@@ -698,4 +698,70 @@ class DefinitionValidatorTest {
                 "\"values\": [\"OPEN\", \"CLOSING\", \"LOCKED\"]"));
         assertThat(mentions(validate(statusBroken), "closedStatus must be a value of")).isTrue();
     }
+
+    // --- PHASE-7 §4: the soft-close restriction (CLOSING unless exempt) ---
+
+    /** The harvest app with §4's soft close bound: CLOSING unless closeJournal. */
+    private static final String SOFT_CLOSE_APP = HARVEST_APP.replace(
+            "\"periodLock\": { \"entity\": \"AccountingPeriod\", \"dateField\": \"entryDate\" },",
+            "\"periodLock\": { \"entity\": \"AccountingPeriod\", \"dateField\": \"entryDate\",\n"
+                    + "                \"restrictedStatus\": \"CLOSING\", \"exemptField\": \"closeJournal\" },")
+            .replace("{ \"apiName\": \"entryDate\", \"type\": \"date\", \"required\": true },",
+                    "{ \"apiName\": \"entryDate\", \"type\": \"date\", \"required\": true },\n"
+                            + "                    { \"apiName\": \"closeJournal\", \"type\": \"boolean\" },");
+
+    @Test
+    @DisplayName("rule: the §4 soft close saves clean — restrictedStatus an enum value, exemptField boolean")
+    void softCloseShapeValid() {
+        assertThat(validate(DefinitionParser.parseApp(SOFT_CLOSE_APP)).isEmpty()).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: restrictedStatus must be an enum value and differ from closedStatus")
+    void softCloseStatusShaped() {
+        // a value the period's enum never declares
+        assertThat(mentions(validate(DefinitionParser.parseApp(SOFT_CLOSE_APP.replace(
+                        "\"restrictedStatus\": \"CLOSING\"", "\"restrictedStatus\": \"HALFWAY\""))),
+                "restrictedStatus must be a value of")).isTrue();
+        // the closed leg is absolute — the restriction may not collapse onto CLOSED
+        assertThat(mentions(validate(DefinitionParser.parseApp(SOFT_CLOSE_APP.replace(
+                        "\"restrictedStatus\": \"CLOSING\"", "\"restrictedStatus\": \"CLOSED\""))),
+                "restrictedStatus must differ from closedStatus")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: restrictedStatus requires a boolean exemptField on the locked entity")
+    void softCloseExemptFieldTyped() {
+        AppDefinition missing = DefinitionParser.parseApp(SOFT_CLOSE_APP.replace(
+                "\"restrictedStatus\": \"CLOSING\", \"exemptField\": \"closeJournal\" },",
+                "\"restrictedStatus\": \"CLOSING\" },"));
+        assertThat(mentions(validate(missing), "restrictedStatus requires a boolean exempt field")).isTrue();
+
+        AppDefinition mistyped = DefinitionParser.parseApp(SOFT_CLOSE_APP.replace(
+                "{ \"apiName\": \"closeJournal\", \"type\": \"boolean\" },",
+                "{ \"apiName\": \"closeJournal\", \"type\": \"text\" },"));
+        assertThat(mentions(validate(mistyped), "restrictedStatus requires a boolean exempt field")).isTrue();
+
+        // the exemption never applies beside a closed-only lock
+        AppDefinition orphan = DefinitionParser.parseApp(HARVEST_APP.replace(
+                "\"periodLock\": { \"entity\": \"AccountingPeriod\", \"dateField\": \"entryDate\" },",
+                "\"periodLock\": { \"entity\": \"AccountingPeriod\", \"dateField\": \"entryDate\", \"exemptField\": \"closeJournal\" },"));
+        assertThat(mentions(validate(orphan), "exemptField applies only beside a restrictedStatus")).isTrue();
+    }
+
+    // --- PHASE-5 §5: widget refreshSeconds bounds ---
+
+    @Test
+    @DisplayName("rule: widget refreshSeconds is bounded; null stays the static default")
+    void widgetRefreshSecondsBounded() {
+        String dashboards = ", \"dashboards\": [ { \"id\": \"dash\", \"widgets\": [ "
+                + "{ \"widget\": \"kpi\", \"reportRef\": \"arAging\", \"span\": 6__EXTRA__ } ] } ]";
+        String branches = VALID_REPORT + dashboards;
+        AppDefinition valid = reportingApp(branches.replace("__EXTRA__", ", \"refreshSeconds\": 30"));
+        assertThat(validate(valid).isEmpty()).isTrue();
+        assertThat(mentions(validate(reportingApp(branches.replace("__EXTRA__",
+                ", \"refreshSeconds\": 1"))), "refreshSeconds is")).isTrue();
+        assertThat(mentions(validate(reportingApp(branches.replace("__EXTRA__",
+                ", \"refreshSeconds\": 7200"))), "refreshSeconds is")).isTrue();
+    }
 }

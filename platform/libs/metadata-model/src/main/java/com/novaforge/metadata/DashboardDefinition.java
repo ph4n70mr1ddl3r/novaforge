@@ -42,13 +42,19 @@ public record DashboardDefinition(
     /**
      * One grid cell: a widget of a {@link #WIDGET_TYPES} kind bound to a report of
      * the same app ({@code reportRef}), with run-param overrides and a grid span.
+     * {@code refreshSeconds} is the §5 client-timer auto-refresh interval — null
+     * (the default) keeps the widget static; the server never pushes in v1.
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record Widget(String widget, String reportRef, Map<String, Object> params,
-                         Integer span) {
+                         Integer span, Integer refreshSeconds) {
 
         public Widget {
             params = params == null ? Map.of() : Map.copyOf(params);
         }
+
+        /** The §5 auto-refresh bounds: a floor against timer churn, a ceiling against drift. */
+        public static final int REFRESH_FLOOR_SECONDS = 5;
+        public static final int REFRESH_CEILING_SECONDS = 3600;
     }
 }

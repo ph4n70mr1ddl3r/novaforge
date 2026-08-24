@@ -3,6 +3,7 @@ import {
     ApiError,
     PlatformClient,
     type PageDefinition,
+    type QueryFilter,
     type RendererDataService,
     resolvePage,
     resolveNav,
@@ -33,7 +34,9 @@ export interface RuntimeShellProps {
 
 type Route =
     | { view: "home" }
-    | { view: "entity"; entity: string; kind: "list" | "form" | "detail"; id?: string }
+    | { view: "entity"; entity: string; kind: "list" | "form" | "detail"; id?: string;
+        /** A drill-through deep link's query-DSL payload (PHASE-5 §5). */
+        filter?: QueryFilter }
     | { view: "inbox" }
     | { view: "notifications" }
     | { view: "dashboards" };
@@ -70,6 +73,12 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
 
     const navigate = (entity: string, kind: "list" | "form" | "detail", id?: string) => {
         setRoute({ view: "entity", entity, kind, id });
+    };
+
+    // the drill-through deep link (PHASE-5 §5): the report row's filters ride the
+    // route as a query-DSL payload the list page consumes natively
+    const drillTo = (entity: string, filter: QueryFilter) => {
+        setRoute({ view: "entity", entity, kind: "list", filter });
     };
 
     const nav = resolveNav(app, { role, locale });
@@ -129,13 +138,14 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
                 ) : route.view === "notifications" ? (
                     <Notifications client={client} />
                 ) : route.view === "dashboards" ? (
-                    <Dashboards client={client} appApiName={app.apiName} app={app} role={role} />
+                    <Dashboards client={client} appApiName={app.apiName} app={app} role={role} onDrill={drillTo} />
                 ) : (
                     <EntityPage
                         client={client}
                         entity={entities.get(route.entity) as EntityDefinition}
                         kind={route.kind}
                         id={route.id}
+                        filter={route.filter}
                         savedPages={savedPages}
                         app={app}
                         role={role}
@@ -154,6 +164,8 @@ interface EntityPageProps {
     entity: EntityDefinition;
     kind: "list" | "form" | "detail";
     id?: string;
+    /** The drill-through payload (§5) — the list page splices it into every request. */
+    filter?: QueryFilter;
     savedPages: Map<string, PageDefinition>;
     app: AppDefinition;
     role?: string;
@@ -163,7 +175,7 @@ interface EntityPageProps {
 }
 
 function EntityPage(props: EntityPageProps): ReactNode {
-    const { client, entity, kind, id, savedPages, app, role, locale, data, navigate } = props;
+    const { client, entity, kind, id, filter, savedPages, app, role, locale, data, navigate } = props;
     const saved = savedPages.get(`${entity.apiName}:${kind}`);
     const { page, stale } = resolvePage(saved, entity, { role, permissions: app.permissionSet, locale, kind });
     const [record, setRecord] = useState<Record<string, unknown> | null>(null);
@@ -235,6 +247,7 @@ function EntityPage(props: EntityPageProps): ReactNode {
         },
         navigate,
         data,
+        listFilter: filter,
         transitions: app.stateMachines
             .filter((machine) => machine.entity === entity.apiName && record)
             .flatMap((machine) => {

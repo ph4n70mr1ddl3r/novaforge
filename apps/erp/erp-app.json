@@ -96,7 +96,8 @@
       "displayField": "reference",
       "module": "GL",
       "freezeOnTerminal": true,
-      "periodLock": { "entity": "AccountingPeriod", "dateField": "entryDate" },
+      "periodLock": { "entity": "AccountingPeriod", "dateField": "entryDate",
+                     "restrictedStatus": "CLOSING", "exemptField": "closeJournal" },
       "fields": [
         { "apiName": "reference", "type": "text", "required": true, "uniqueness": true,
           "default": { "sequence": "entryNumber" } },
@@ -177,7 +178,6 @@
       "label": "Invoice",
       "displayField": "number",
       "module": "AR",
-      "freezeOnTerminal": true,
       "fields": [
         { "apiName": "number", "type": "text", "required": true, "uniqueness": true,
           "default": { "sequence": "invoiceNumber" } },
@@ -393,6 +393,14 @@
       "params": { "reportId": "arAging", "runAsRole": "reporting", "format": "xlsx",
                   "recipients": { "roles": ["controller"] } },
       "enabled": true }
+  ],
+
+  "workflows": [
+    { "id": "closeChecklist",
+      "bpmn": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><definitions xmlns=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:flowable=\"http://flowable.org/bpmn\" targetNamespace=\"novaforge\"><process id=\"closeChecklist\" name=\"Period close checklist\"><startEvent id=\"start\"/><parallelGateway id=\"fork\"/><userTask id=\"arClose\" name=\"Reconcile A/R\" flowable:candidateGroups=\"arClerk\"/><userTask id=\"invClose\" name=\"Reconcile inventory\" flowable:candidateGroups=\"inventoryClerk\"/><userTask id=\"glClose\" name=\"Post close journals (accruals)\" flowable:candidateGroups=\"accountingManager\"/><parallelGateway id=\"join\"/><userTask id=\"confirmClose\" name=\"Confirm period close (transition to CLOSED)\" flowable:candidateGroups=\"controller\"/><endEvent id=\"done\"/><sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"fork\"/><sequenceFlow id=\"f2\" sourceRef=\"fork\" targetRef=\"arClose\"/><sequenceFlow id=\"f3\" sourceRef=\"fork\" targetRef=\"invClose\"/><sequenceFlow id=\"f4\" sourceRef=\"fork\" targetRef=\"glClose\"/><sequenceFlow id=\"f5\" sourceRef=\"arClose\" targetRef=\"join\"/><sequenceFlow id=\"f6\" sourceRef=\"invClose\" targetRef=\"join\"/><sequenceFlow id=\"f7\" sourceRef=\"glClose\" targetRef=\"join\"/><sequenceFlow id=\"f8\" sourceRef=\"join\" targetRef=\"confirmClose\"/><sequenceFlow id=\"f9\" sourceRef=\"confirmClose\" targetRef=\"done\"/></process></definitions>",
+      "eventStarts": [
+        { "event": "record.updated", "entity": "AccountingPeriod",
+          "filter": "status == 'CLOSING'" } ] }
   ],
 
   "integrations": {

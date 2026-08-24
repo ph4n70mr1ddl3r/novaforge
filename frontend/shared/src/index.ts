@@ -3,7 +3,7 @@ export {
   ChartWidget,
 } from "./catalog/ChartWidget.tsx";
 export { KpiTile } from "./catalog/KpiTile.tsx";
-export { ReportTable } from "./catalog/ReportTable.tsx";
+export { ReportTable, drillFilters, type DrillFilter, type DrillThroughBinding } from "./catalog/ReportTable.tsx";
 export { DashboardGrid, DashboardCell } from "./catalog/DashboardGrid.tsx";
 export { FileUpload } from "./catalog/FileUpload.tsx";
 export {
@@ -67,6 +67,7 @@ export {
   SUITE_OPS,
   type AppDefinition,
   type DashboardDefinition,
+  type DashboardWidget,
   type EntityDefinition,
   type FieldAccess,
   type FieldDefinition,
@@ -78,6 +79,7 @@ export {
   type PublishedApp,
   type RelationshipDefinition,
   type ReportDefinition,
+  type DrillThrough,
   type ResolvedFieldAccess,
   type ResolvedObjectAccess,
   type ScheduledJobDefinition,
@@ -93,6 +95,13 @@ export {
   type HookRule,
   type ValidationRule,
   type TranslationsDefinition,
+  type ConnectorDefinition,
+  type ConnectorOperation,
+  type WebhookDefinition,
+  type WebhookMapping,
+  type CredentialDefinition,
+  type ImportDefinition,
+  type IntegrationsDefinition,
 } from "./metadata.ts";
 
 // --- page model v0 + structural deltas (§4 / §13 Q2) ---

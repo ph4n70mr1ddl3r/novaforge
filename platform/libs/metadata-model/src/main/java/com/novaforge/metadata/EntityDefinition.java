@@ -132,6 +132,16 @@ public record EntityDefinition(
      * @param toField      the period's range end (default {@code endDate})
      * @param statusField  the period's status field (default {@code status})
      * @param closedStatus the status value activating the lock (default {@code CLOSED})
+     * @param restrictedStatus an optional second blocking status — PHASE-7 §4's soft
+     *                         close: a date inside a {@code restrictedStatus} period
+     *                         rejects like a closed one <em>unless</em> the written
+     *                         record's {@code exemptField} carries {@code true}. The
+     *                         closed leg stays absolute — nothing exempts a closed
+     *                         period (nothing is ever un-frozen, §4)
+     * @param exemptField  the locked entity's boolean field naming the exemption
+     *                     (e.g. an app's {@code closeJournal: true} flag — app
+     *                     metadata, no platform special-casing); required when
+     *                     {@code restrictedStatus} is set
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record PeriodLock(
@@ -140,7 +150,9 @@ public record EntityDefinition(
             String fromField,
             String toField,
             String statusField,
-            String closedStatus) {
+            String closedStatus,
+            String restrictedStatus,
+            String exemptField) {
 
         public String from() {
             return fromField == null ? "startDate" : fromField;

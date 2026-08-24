@@ -69,11 +69,14 @@ class FreezePeriodTests extends PostgresTestBase {
                 { "apiName": "LedgerEntry",
                   "displayField": "label",
                   "freezeOnTerminal": true,
-                  "periodLock": { "entity": "AccountingPeriod", "dateField": "entryDate" },
+                  "periodLock": { "entity": "AccountingPeriod", "dateField": "entryDate",
+                                  "restrictedStatus": "CLOSING",
+                                  "exemptField": "closeJournal" },
                   "fields": [
                     { "apiName": "label", "type": "text", "required": true },
                     { "apiName": "entryDate", "type": "date", "required": true },
                     { "apiName": "amount", "type": "money" },
+                    { "apiName": "closeJournal", "type": "boolean" },
                     { "apiName": "status", "type": "enum", "values": ["DRAFT", "POSTED"] } ],
                   "relationships": [
                     { "apiName": "lines", "type": "child", "target": "LedgerLine",
@@ -262,6 +265,41 @@ class FreezePeriodTests extends PostgresTestBase {
                         .contentType("application/json")
                         .content("{\"label\":\"after-reopen\",\"entryDate\":\"2026-08-15\"}"))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("§4: a CLOSING period blocks postings unless closeJournal is set; CLOSED stays absolute")
+    void closingPeriodBlocksPostingsExceptCloseJournals() throws Exception {
+        String closing = createPeriod("2026-07-closing", "2026-07-01", "2026-07-31");
+        mockMvc.perform(patch("/api/v1/runtime/AccountingPeriod/" + closing).with(jwtFor())
+                        .contentType("application/json")
+                        .content("{\"version\":1,\"status\":\"CLOSING\"}"))
+                .andExpect(status().isOk());
+        // a normal posting dated into the CLOSING period rejects 4014
+        mockMvc.perform(post("/api/v1/runtime/LedgerEntry").with(jwtFor())
+                        .contentType("application/json")
+                        .content("{\"label\":\"normal\",\"entryDate\":\"2026-07-15\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("4014"));
+        // the close journal carries the app-defined exemption flag and posts (§4)
+        mockMvc.perform(post("/api/v1/runtime/LedgerEntry").with(jwtFor())
+                        .contentType("application/json")
+                        .content("{\"label\":\"accrual\",\"entryDate\":\"2026-07-15\","
+                                + "\"closeJournal\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.closeJournal").value(true));
+        // once CLOSED, nothing exempts — the close journal itself rejects (§4:
+        // corrections inside a closed period are reversal entries after reopen)
+        mockMvc.perform(patch("/api/v1/runtime/AccountingPeriod/" + closing).with(jwtFor())
+                        .contentType("application/json")
+                        .content("{\"version\":2,\"status\":\"CLOSED\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/runtime/LedgerEntry").with(jwtFor())
+                        .contentType("application/json")
+                        .content("{\"label\":\"late\",\"entryDate\":\"2026-07-20\","
+                                + "\"closeJournal\":true}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("4014"));
     }
 
     // --- helpers ---

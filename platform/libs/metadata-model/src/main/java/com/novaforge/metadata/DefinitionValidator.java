@@ -926,6 +926,16 @@ public final class DefinitionValidator {
                     errors.add(field(wScope + ".span",
                             "widget span is 1..12 grid columns: " + widget.span(), widget.span()));
                 }
+                if (widget.refreshSeconds() != null
+                        && (widget.refreshSeconds() < DashboardDefinition.Widget.REFRESH_FLOOR_SECONDS
+                        || widget.refreshSeconds() > DashboardDefinition.Widget.REFRESH_CEILING_SECONDS)) {
+                    errors.add(field(wScope + ".refreshSeconds",
+                            "widget refreshSeconds is "
+                                    + DashboardDefinition.Widget.REFRESH_FLOOR_SECONDS + ".."
+                                    + DashboardDefinition.Widget.REFRESH_CEILING_SECONDS
+                                    + " seconds (null = static, PHASE-5 §5): "
+                                    + widget.refreshSeconds(), widget.refreshSeconds()));
+                }
             }
             for (String role : dashboard.roles()) {
                 if (app.permissionSet().role(role).isEmpty()) {
@@ -1130,6 +1140,32 @@ public final class DefinitionValidator {
                     errors.add(field(lockScope + "closedStatus",
                             "closedStatus must be a value of " + period.get().apiName() + "."
                                     + lock.status() + ": " + lock.closed(), lock.closed()));
+                }
+                // PHASE-7 §4's soft close: a restricted status blocks unless the
+                // record's boolean exempt field is set (the app's closeJournal flag)
+                if (lock.restrictedStatus() != null) {
+                    if (!status.get().values().contains(lock.restrictedStatus())) {
+                        errors.add(field(lockScope + "restrictedStatus",
+                                "restrictedStatus must be a value of " + period.get().apiName()
+                                        + "." + lock.status() + ": " + lock.restrictedStatus(),
+                                lock.restrictedStatus()));
+                    } else if (lock.restrictedStatus().equals(lock.closed())) {
+                        errors.add(field(lockScope + "restrictedStatus",
+                                "restrictedStatus must differ from closedStatus — the closed "
+                                        + "leg is absolute, nothing exempts it (PHASE-7 §4)",
+                                lock.restrictedStatus()));
+                    }
+                    var exempt = entity.field(lock.exemptField() == null ? "" : lock.exemptField());
+                    if (exempt.isEmpty() || exempt.get().type() != FieldType.BOOLEAN) {
+                        errors.add(field(lockScope + "exemptField",
+                                "restrictedStatus requires a boolean exempt field on "
+                                        + entity.apiName() + ": " + lock.exemptField(),
+                                lock.exemptField()));
+                    }
+                } else if (lock.exemptField() != null) {
+                    errors.add(field(lockScope + "exemptField",
+                            "exemptField applies only beside a restrictedStatus (PHASE-7 §4)",
+                            lock.exemptField()));
                 }
             }
             var dateField = entity.field(lock.dateField() == null ? "" : lock.dateField());

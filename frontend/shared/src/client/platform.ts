@@ -241,6 +241,31 @@ export class PlatformClient {
         return this.request("GET", "/api/v1/scheduler/jobs") as Promise<Record<string, unknown>[]>;
     }
 
+    // --- integrations (PHASE-6 §3/§9): delivery log, DLQ, secret provisioning ---
+
+    integrationDeliveries(kind?: string, limit = 100): Promise<Record<string, unknown>[]> {
+        const params = new URLSearchParams({ limit: String(limit) });
+        if (kind) params.set("kind", kind);
+        return this.request("GET", `/api/v1/integrations/deliveries?${params.toString()}`) as Promise<Record<string, unknown>[]>;
+    }
+
+    integrationDlq(kind?: string): Promise<Record<string, unknown>[]> {
+        const params = kind ? `?kind=${encodeURIComponent(kind)}` : "";
+        return this.request("GET", `/api/v1/integrations/dlq${params}`) as Promise<Record<string, unknown>[]>;
+    }
+
+    replayDlqEntry(id: string): Promise<Record<string, unknown>> {
+        return this.request("POST", `/api/v1/integrations/dlq/${id}/replay`, {}) as Promise<Record<string, unknown>>;
+    }
+
+    /** The secret material goes to the encrypted store — never into metadata (§9). */
+    putSecret(ref: string, material: string, retireEarlier = false): Promise<Record<string, unknown>> {
+        return this.request("POST", `/api/v1/integrations/secrets/${encodeURIComponent(ref)}`, {
+            material,
+            retireEarlier,
+        }) as Promise<Record<string, unknown>>;
+    }
+
     // --- notifications (PHASE-4 §8): own inbox + channel preferences ---
 
     notifications(page = 0, size = 25): Promise<{ rows: Record<string, unknown>[]; total: number }> {

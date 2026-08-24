@@ -16,6 +16,7 @@ import { Lifecycle, SuiteRuns } from "./lifecycle.tsx";
 import { LogicEditor } from "./logic-editor.tsx";
 import { SuitesEditor } from "./suites-editor.tsx";
 import { Automation } from "./automation.tsx";
+import { Integrations } from "./integrations.tsx";
 
 /**
  * The builder shell (PHASE-2 §8): design-time surface over the Metadata draft
@@ -33,6 +34,7 @@ export type BuilderScreen =
     | "rbac"
     | "reports"
     | "dashboards"
+    | "integrations"
     | "i18n"
     | "lifecycle"
     | "onboarding";
@@ -79,7 +81,7 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
             <header className="nf-topbar">
                 <h1>NovaForge Builder</h1>
                 <nav aria-label="Builder sections">
-                    {(["entities", "pages", "logic", "suites", "automation", "rbac", "reports", "dashboards", "i18n", "lifecycle", "onboarding"] as BuilderScreen[]).map((name) => (
+                    {(["entities", "pages", "logic", "suites", "automation", "rbac", "reports", "dashboards", "integrations", "i18n", "lifecycle", "onboarding"] as BuilderScreen[]).map((name) => (
                         <button key={name} type="button" aria-current={screen === name} onClick={() => setScreen(name)} id={name === "entities" ? "entities" : undefined}>
                             {name}
                         </button>
@@ -180,6 +182,16 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                                 app={app}
                                 saveDashboards={async (dashboards) => {
                                     await client.patchApp(app.id ?? "", { dashboards } as Record<string, unknown>);
+                                    await reload();
+                                }}
+                            />
+                        ) : null}
+                        {screen === "integrations" ? (
+                            <Integrations
+                                app={app}
+                                client={client}
+                                onSave={async (patch) => {
+                                    await client.patchApp(app.id ?? "", patch);
                                     await reload();
                                 }}
                             />

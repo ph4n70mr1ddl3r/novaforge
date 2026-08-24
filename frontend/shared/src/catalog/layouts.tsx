@@ -108,7 +108,7 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
     const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
     const [loading, setLoading] = useState(false);
 
-    const { data, entity, mode } = renderer;
+    const { data, entity, mode, listFilter } = renderer;
     useEffect(() => {
         let cancelled = false;
         if (!entity || !data || mode === "preview") {
@@ -117,6 +117,7 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
         setLoading(true);
         data.list({
             entity,
+            filter: listFilter,
             size: pageSize,
             offset,
             sort: sortField ? [{ field: sortField, dir: sortDir }] : undefined,
@@ -132,7 +133,7 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
         return () => {
             cancelled = true;
         };
-    }, [data, entity, mode, offset, pageSize, sortDir, sortField]);
+    }, [data, entity, mode, listFilter, offset, pageSize, sortDir, sortField]);
 
     const columns = (props.columns as string[] | undefined) ?? [];
     const fieldLabels = columns.filter((field) => renderer.fields[field] !== undefined || field !== "actions");
@@ -143,6 +144,7 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
                 <h2>{props.title}</h2>
                 <span className="nf-list-count" aria-live="polite">
                     {state.total} record{state.total === 1 ? "" : "s"}
+                    {listFilter ? " (filtered)" : ""}
                 </span>
                 {(renderer.pageActions ?? []).map((action, index) => (
                     <button

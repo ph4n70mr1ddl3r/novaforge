@@ -53,17 +53,33 @@ class ErpAppArtifactTests {
     }
 
     @Test
-    @DisplayName("the §3 harvests are pinned: JE/Invoice/StockLedger freeze, JE period-locks")
+    @DisplayName("the §3 harvests are pinned: JE/StockLedger freeze, JE period-locks (soft close)")
     void harvestsBound() throws Exception {
         AppDefinition app = app();
         assertThat(app.entity("JournalEntry").orElseThrow().freezesOnTerminal()).isTrue();
         assertThat(app.entity("JournalEntry").orElseThrow().periodLock()).isNotNull();
-        assertThat(app.entity("Invoice").orElseThrow().freezesOnTerminal()).isTrue();
+        // §2's pin: freeze binds the journal entry, NOT the invoice — settlement
+        // decrements amountOutstanding on the POSTED invoice (the bankFeed suite's leg)
+        assertThat(app.entity("Invoice").orElseThrow().freezesOnTerminal()).isFalse();
         assertThat(app.entity("StockLedger").orElseThrow().freezesOnTerminal()).isTrue();
+        // §4's soft close: CLOSING blocks postings unless the close-journal flag is set
+        var lock = app.entity("JournalEntry").orElseThrow().periodLock();
+        assertThat(lock.restrictedStatus()).isEqualTo("CLOSING");
+        assertThat(lock.exemptField()).isEqualTo("closeJournal");
         // the period machine's reopen edge (§4): CLOSED is deliberately non-terminal
         var period = app.stateMachineFor("AccountingPeriod").orElseThrow();
         assertThat(period.isTerminal("CLOSED")).isFalse();
         assertThat(period.transition("CLOSED", "OPEN")).isPresent();
+        // §4's close checklist: a workflow starts when a period enters CLOSING, its
+        // confirm task reachable only through the parallel join of the role tasks
+        var checklist = app.workflows().stream()
+                .filter(workflow -> workflow.id().equals("closeChecklist")).findFirst().orElseThrow();
+        assertThat(checklist.eventStarts()).hasSize(1);
+        assertThat(checklist.eventStarts().getFirst().entity()).isEqualTo("AccountingPeriod");
+        assertThat(checklist.eventStarts().getFirst().filter()).isEqualTo("status == 'CLOSING'");
+        assertThat(checklist.bpmn()).contains("flowable:candidateGroups=\"arClerk\"");
+        assertThat(checklist.bpmn()).contains("flowable:candidateGroups=\"controller\"");
+        assertThat(checklist.bpmn()).contains("<parallelGateway id=\"join\"/>");
     }
 
     @Test
@@ -101,8 +117,8 @@ class ErpAppArtifactTests {
         try (Stream<Path> files = Files.list(ERP.resolve("suites"))) {
             suites = files.filter(path -> path.toString().endsWith(".json")).sorted().toList();
         }
-        assertThat(suites).as("the acceptance corpus: reconciliation + controls + costing")
-                .hasSizeGreaterThanOrEqualTo(3);
+        assertThat(suites).as("the acceptance corpus: reconciliation + controls + costing + bank feed")
+                .hasSizeGreaterThanOrEqualTo(4);
         for (Path suitePath : suites) {
             TestSuiteDefinition suite = DefinitionParser.parse(
                     Files.readString(suitePath), TestSuiteDefinition.class);

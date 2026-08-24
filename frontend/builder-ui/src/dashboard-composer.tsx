@@ -73,6 +73,7 @@ export function DashboardComposer({
                                 <th scope="col">Widget</th>
                                 <th scope="col">Report</th>
                                 <th scope="col">Span (1–12)</th>
+                                <th scope="col">Refresh (s)</th>
                                 <th scope="col">Remove</th>
                             </tr>
                         </thead>
@@ -122,6 +123,27 @@ export function DashboardComposer({
                                                 update({
                                                     widgets: draft.widgets.map((candidate, i) =>
                                                         i === index ? { ...candidate, span: Number(event.target.value) } : candidate),
+                                                })
+                                            }
+                                        />
+                                    </td>
+                                    <td>
+                                        <input
+                                            type="number"
+                                            min={5}
+                                            max={3600}
+                                            aria-label={`widget refresh seconds ${index}`}
+                                            title="client-timer auto-refresh — blank keeps the widget static (§5)"
+                                            value={widget.refreshSeconds ?? ""}
+                                            onChange={(event) =>
+                                                update({
+                                                    widgets: draft.widgets.map((candidate, i) =>
+                                                        i === index
+                                                            ? { ...candidate,
+                                                                refreshSeconds: event.target.value
+                                                                    ? Number(event.target.value)
+                                                                    : undefined }
+                                                            : candidate),
                                                 })
                                             }
                                         />

@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { ReportTable } from "../src/catalog/ReportTable.tsx";
+import { ReportTable, drillFilters } from "../src/catalog/ReportTable.tsx";
 import { KpiTile } from "../src/catalog/KpiTile.tsx";
 import type { ReportRun } from "../src/report.ts";
 
@@ -43,6 +43,58 @@ describe("ReportTable", () => {
       />,
     );
     expect(screen.getByRole("columnheader", { name: "Customer" })).toBeDefined();
+  });
+});
+
+describe("drill-through (PHASE-5 §5/§10 item 2)", () => {
+  const binding = {
+    entity: "Invoice",
+    groupFields: ["customer"],   // dueDate is bucketed — it never filters
+  };
+
+  it("lowers a row to eq leaves over its non-bucket group-by values", () => {
+    expect(drillFilters(binding, { customer: "acme", due_date: "0-30" }))
+      .toEqual({ op: "and", children: [{ field: "customer", op: "eq", value: "acme" }] });
+  });
+
+  it("joins the report's saved filters when carryFilters is set", () => {
+    const carried = {
+      ...binding,
+      carryFilters: true,
+      filters: [{ field: "status", op: "eq" as const, value: "POSTED" }],
+    };
+    expect(drillFilters(carried, { customer: "globex" }))
+      .toEqual({
+        op: "and",
+        children: [
+          { field: "status", op: "eq", value: "POSTED" },
+          { field: "customer", op: "eq", value: "globex" },
+        ],
+      });
+  });
+
+  it("hands the row's filter payload to the shell on click — the deep link's shape", () => {
+    const onDrill = vi.fn();
+    render(
+      <ReportTable
+        reportRef="arAging"
+        run={run}
+        drillThrough={{ ...binding, groupFields: ["customerName"] }}
+        onDrill={onDrill}
+      />,
+    );
+    const link = screen.getAllByRole("link", { name: /view \w+ records/i })[0]!;
+    expect(link.getAttribute("href")).toBe("#/Invoice");
+    link.click();   // onClick preventDefaults and hands the payload over
+    expect(onDrill).toHaveBeenCalledWith(
+      expect.anything(),
+      { op: "and", children: [{ field: "customerName", op: "eq", value: "acme" }] },
+    );
+  });
+
+  it("renders no drill column without a binding — the static default", () => {
+    render(<ReportTable reportRef="arAging" run={run} />);
+    expect(screen.queryByRole("link")).toBeNull();
   });
 });
 

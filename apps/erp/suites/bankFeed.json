@@ -1,0 +1,62 @@
+{
+  "apiName": "bankFeed",
+  "label": "Bank feed → Payments → aging (PHASE-6 T10 / PHASE-7 §5 T8)",
+  "cases": [
+    {
+      "name": "webhook-payment-lands-and-reaches-aging",
+      "fixtures": [
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "1100", "name": "Accounts Receivable", "type": "ASSET" } },
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "4000", "name": "Sales Revenue", "type": "REVENUE" } },
+        { "entity": "Customer", "asRole": "arClerk",
+          "template": { "name": "Acme Corp" } }
+      ],
+      "steps": [
+        { "op": "createRecord", "entity": "Invoice", "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "invoiceDate": "2026-09-01", "dueDate": "2026-09-30",
+            "amountOutstanding": "120.0000",
+            "lines": [
+              { "description": "Widgets", "quantity": "1", "unitPrice": "120.0000" } ] },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "Invoice", "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": { "version": "${Invoice[0].version}", "status": "SUBMITTED" },
+          "expect": "ok" },
+        { "op": "queryRecord", "entity": "Task", "asRole": "accountingManager",
+          "template": { "filter": { "status": "OPEN" } },
+          "expect": "ok" },
+        { "op": "resolveTask", "entity": "Task", "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": { "action": "approve" },
+          "expect": "ok" },
+        { "op": "runReport", "entity": "arAging", "asRole": "controller",
+          "template": {},
+          "expect": "ok" },
+        { "op": "postWebhook", "entity": "paymentsFeed",
+          "template": {
+            "hookId": "paymentsFeed",
+            "body": { "txn_id": "TX-9001", "amount": "70.0000", "posted_date": "2026-09-20" } },
+          "expect": "ok" },
+        { "op": "queryRecord", "entity": "Payment", "asRole": "arClerk",
+          "template": { "filter": { "field": "number", "op": "eq", "value": "TX-9001" } },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "Invoice", "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": { "version": "${Invoice[0].version}", "amountOutstanding": "50.0000" },
+          "expect": "ok" },
+        { "op": "runReport", "entity": "arAging", "asRole": "controller",
+          "template": {},
+          "expect": "ok" }
+      ],
+      "assertExpressions": [
+        "${Invoice[0].status} == 'POSTED'",
+        "${Report[0].totals.outstanding} == 120.0000",
+        "${Query[1].count} == 1",
+        "${Report[1].totals.outstanding} == 50.0000"
+      ]
+    }
+  ]
+}

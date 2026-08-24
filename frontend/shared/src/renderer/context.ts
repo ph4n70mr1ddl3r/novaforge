@@ -77,6 +77,12 @@ export interface RendererContextValue {
     data?: RendererDataService;
     /** State-machine actions available on the current record (PHASE-4 §3). */
     transitions?: { to: string; label?: string; guard?: string }[];
+    /**
+     * A query-DSL filter the list page consumes natively (PHASE-5 §5): drill-through
+     * deep links carry the report row's group filters here — the runtime list page
+     * splices it into every paged request, server-side (never client slicing).
+     */
+    listFilter?: QueryFilter;
 }
 
 export const RendererContext = createContext<RendererContextValue | null>(null);

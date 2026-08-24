@@ -260,6 +260,46 @@ export function ReportBuilder({ app, saveReports }: ReportBuilderProps): ReactNo
                             Add group-by
                         </button>
                     </fieldset>
+                    <fieldset>
+                        <legend>Drill-through (rows deep-link the bound entity's list — §5)</legend>
+                        <label>
+                            Target entity
+                            <select
+                                aria-label="drill through entity"
+                                value={draft.drillThrough?.entity ?? ""}
+                                onChange={(event) =>
+                                    update({
+                                        drillThrough: event.target.value
+                                            ? { entity: event.target.value,
+                                                carryFilters: draft.drillThrough?.carryFilters }
+                                            : undefined,
+                                    })
+                                }
+                            >
+                                <option value="">none</option>
+                                {app.entities.map((candidate) => (
+                                    <option key={candidate.apiName} value={candidate.apiName}>{candidate.apiName}</option>
+                                ))}
+                            </select>
+                        </label>
+                        <label className="nf-inline">
+                            <input
+                                type="checkbox"
+                                aria-label="drill through carry filters"
+                                checked={draft.drillThrough?.carryFilters === true}
+                                disabled={!draft.drillThrough?.entity}
+                                onChange={(event) =>
+                                    update({
+                                        drillThrough: draft.drillThrough?.entity
+                                            ? { entity: draft.drillThrough.entity,
+                                                carryFilters: event.target.checked || undefined }
+                                            : undefined,
+                                    })
+                                }
+                            />
+                            carry the report's saved filters on the deep link
+                        </label>
+                    </fieldset>
                     {compileIssues.length > 0 ? (
                         <p role="alert">Live compile-check: {compileIssues.join("; ")}</p>
                     ) : (
