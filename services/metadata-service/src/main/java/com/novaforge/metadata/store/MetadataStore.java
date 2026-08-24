@@ -50,6 +50,9 @@ public class MetadataStore {
     /** The Translations branch (PHASE-8 §7) — one kind row per locale. */
     public static final String KIND_TRANSLATION = "translation";
 
+    /** The gap-log branch (PHASE-7 §1 rule 2, PHASE-8 §3) — one kind row per entry. */
+    public static final String KIND_GAP_LOG = "gap_log";
+
     private final JdbcTemplate jdbc;
 
     public MetadataStore(JdbcTemplate jdbc) {
@@ -612,6 +615,9 @@ public class MetadataStore {
         for (com.novaforge.metadata.TranslationsDefinition translations : app.translations()) {
             insertBranch(tenantId, actorId, appId, KIND_TRANSLATION, translations.locale(), translations);
         }
+        for (com.novaforge.metadata.GapLogEntry gap : app.gapLog()) {
+            insertBranch(tenantId, actorId, appId, KIND_GAP_LOG, gap.id(), gap);
+        }
     }
 
     private void insertBranch(UUID tenantId, UUID actorId, UUID appId, String kind,
@@ -678,12 +684,14 @@ public class MetadataStore {
         List<com.novaforge.metadata.TranslationsDefinition> translations = branchDocuments(
                 tenantId, appId, KIND_TRANSLATION,
                 com.novaforge.metadata.TranslationsDefinition.class);
+        List<com.novaforge.metadata.GapLogEntry> gapLog = branchDocuments(tenantId, appId,
+                KIND_GAP_LOG, com.novaforge.metadata.GapLogEntry.class);
         return new AppDefinition(appId.toString(), apiName, label,
                 DefinitionParser.parse(labelI18nJson == null ? "{}" : labelI18nJson, Map.class),
                 description, entities, pages,
                 new AppDefinition.SettingsDefinition(sequences, null, null), permissionSet,
                 suites, stateMachines, slas, jobs, workflows, reports, dashboards, integrations,
-                translations);
+                translations, gapLog);
     }
 
     private <T> List<T> branchDocuments(UUID tenantId, UUID appId, String kind, Class<T> type) {
@@ -700,7 +708,7 @@ public class MetadataStore {
                 app.description(), app.entities(), app.pages(), app.settings(),
                 app.permissionSet(), app.testSuites(), app.stateMachines(), app.slas(),
                 app.jobs(), app.workflows(), app.reports(), app.dashboards(),
-                app.integrations(), app.translations());
+                app.integrations(), app.translations(), app.gapLog());
     }
 
     private static List<String> parseStrings(String json) {

@@ -289,6 +289,27 @@ export class PlatformClient {
         }) as Promise<Record<string, unknown>>;
     }
 
+    // --- import/export jobs (PHASE-6 §7/§9): the builder progress surface ---
+
+    /** Lists job runs (imports + exports) with their progress counters. */
+    integrationJobs(): Promise<Record<string, unknown>[]> {
+        return this.request("GET", "/api/v1/integrations/jobs") as Promise<Record<string, unknown>[]>;
+    }
+
+    /** The per-item outcome ledger of one job (the retained audit trail, §7). */
+    integrationJobRows(jobId: string): Promise<Record<string, unknown>[]> {
+        return this.request("GET", `/api/v1/integrations/jobs/${jobId}/rows`) as Promise<
+            Record<string, unknown>[]
+        >;
+    }
+
+    /** Resumes a paused/failed import from its checkpoint (§11 item 4). */
+    resumeIntegrationJob(jobId: string): Promise<Record<string, unknown>> {
+        return this.request("POST", `/api/v1/integrations/jobs/${jobId}/resume`, {}) as Promise<
+            Record<string, unknown>
+        >;
+    }
+
     // --- notifications (PHASE-4 §8): own inbox + channel preferences ---
 
     notifications(page = 0, size = 25): Promise<{ rows: Record<string, unknown>[]; total: number }> {

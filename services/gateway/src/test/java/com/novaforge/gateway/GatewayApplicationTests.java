@@ -89,4 +89,21 @@ class GatewayApplicationTests {
                 .as("expected ResourceAccessException in the cause chain of %s", thrown)
                 .isTrue();
     }
+
+    @Test
+    @DisplayName("aggregated OpenAPI (PLAN.md §4): scope-gated, serves even with every upstream down")
+    void aggregatedOpenApiServesAndDegrades() throws Exception {
+        // every upstream is dead in this slice — the merged document still serves,
+        // listing the missing services instead of failing the edge (the aggregator's
+        // audible-degradation pin)
+        mockMvc.perform(get("/api/v1/openapi.json")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.info.title").value("NovaForge Platform API"))
+                .andExpect(jsonPath("$.info['x-novaforge-services']").isArray())
+                .andExpect(jsonPath("$.info['x-novaforge-unavailable']").isArray());
+        // and the route gates like every other API path: anonymous → 401
+        mockMvc.perform(get("/api/v1/openapi.json"))
+                .andExpect(status().isUnauthorized());
+    }
 }

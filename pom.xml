@@ -34,6 +34,9 @@
     <resilience4j.version>2.2.0</resilience4j.version>
     <!-- MinIO client (PHASE-6 §8) — presigned URLs against compose MinIO / S3. -->
     <minio.version>8.5.17</minio.version>
+    <!-- OpenAPI 3 per service (PLAN.md §4 / PHASE-1 §4): the springdoc 3.x line is
+         the Spring Framework 7 / Boot 4 port of the starter. -->
+    <springdoc.version>3.1.0</springdoc.version>
   </properties>
 
   <modules>
@@ -127,6 +130,11 @@
         <groupId>io.minio</groupId>
         <artifactId>minio</artifactId>
         <version>${minio.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.springdoc</groupId>
+        <artifactId>springdoc-openapi-starter-webmvc-api</artifactId>
+        <version>${springdoc.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>

@@ -90,8 +90,14 @@ public class TaskService {
 
     /** The inbox (§5): my tasks — assigned to me or to one of my roles. */
     public TaskStore.Page myTasks(UUID tenantId, UUID actor, String status, int page, int size) {
+        return myTasks(tenantId, actor, status, "createdAt", "asc", page, size);
+    }
+
+    public TaskStore.Page myTasks(UUID tenantId, UUID actor, String status, String sort,
+                                  String dir, int page, int size) {
         return tasks.myTasks(tenantId, actor, roles.of(tenantId, actor),
-                status == null || status.isBlank() ? "OPEN" : status, page, size);
+                status == null || status.isBlank() ? "OPEN" : status,
+                sort, dir, page, size);
     }
 
     public TaskStore.Task require(UUID tenantId, UUID id) {

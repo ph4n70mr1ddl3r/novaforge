@@ -44,6 +44,12 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
+    <dependency>
+      <!-- OpenAPI 3 generated per service (PLAN.md §4, PHASE-1 §4): /v3/api-docs
+           serves the machine-readable contract the gateway aggregates. -->
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-api</artifactId>
+    </dependency>
     <!-- the result cache (§4) — a latency tool, never an authorization boundary -->
     <dependency>
       <groupId>org.springframework.boot</groupId>

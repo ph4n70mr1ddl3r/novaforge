@@ -101,7 +101,50 @@ public final class DefinitionValidator {
         validateDashboards(app, errors);
         validatePermissionSet(app, errors);
         validateIntegrations(app, errors);
+        validateGapLog(app, errors);
         return new ProblemErrors(errors, globals);
+    }
+
+    /**
+     * Gap-log rules (PHASE-7 §1 rule 2 / §8, PHASE-8 §3): the entry shape the spec
+     * pins — {@code { area, blocker, workaround, proposedPrimitiveOrFlag, priority }}
+     * plus the triage disposition. Ids are unique and shaped so diffs stay stable;
+     * {@code resolvedIn} only rides triaged entries (an open/backlog entry has nothing
+     * to point at).
+     */
+    private static void validateGapLog(AppDefinition app, List<ProblemErrors.FieldError> errors) {
+        Set<String> ids = new HashSet<>();
+        for (GapLogEntry gap : app.gapLog()) {
+            String scope = "gapLog[" + gap.id() + "]";
+            if (gap.id() == null || !GapLogEntry.GAP_ID.matcher(gap.id()).matches()) {
+                errors.add(field("gapLog.id",
+                        "gap id must be shaped G-1 / costing-lots (letter + dash groups)", gap.id()));
+                continue;
+            }
+            if (!ids.add(gap.id())) {
+                errors.add(field("gapLog", "gap id must be unique per app: " + gap.id(), gap.id()));
+            }
+            if (isBlank(gap.area())) {
+                errors.add(field(scope + ".area", "gap area must not be blank", gap.area()));
+            }
+            if (isBlank(gap.blocker())) {
+                errors.add(field(scope + ".blocker", "gap blocker must not be blank", gap.blocker()));
+            }
+            if (gap.priority() == null || !GapLogEntry.PRIORITIES.contains(gap.priority())) {
+                errors.add(field(scope + ".priority",
+                        "gap priority must be one of high | medium | low", gap.priority()));
+            }
+            if (gap.disposition() == null || !GapLogEntry.DISPOSITIONS.contains(gap.disposition())) {
+                errors.add(field(scope + ".disposition",
+                        "gap disposition must be one of " + GapLogEntry.DISPOSITIONS, gap.disposition()));
+            }
+            if (gap.resolvedIn() != null
+                    && ("open".equals(gap.disposition()) || "backlog".equals(gap.disposition()))) {
+                errors.add(field(scope + ".resolvedIn",
+                        "resolvedIn only rides triaged entries (open/backlog gaps are not resolved)",
+                        gap.resolvedIn()));
+            }
+        }
     }
 
     /**

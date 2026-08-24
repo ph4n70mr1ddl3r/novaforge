@@ -58,6 +58,22 @@ metadata → runtime with the outbox → Kafka → audit trail all observed live
 inline children → 4 outbox rows published → `novaforge.record` carries the events →
 `GET /api/v1/audit/records/{id}` serves the trail through the gateway).
 
+**Spec-review closeout (2026-08-25, third pass) — §4's "OpenAPI generated per service,
+PLAN.md §4" had never landed.** Nothing in the tree generated API docs (PLAN §4's row
+and §7's Definition-of-Done both pin it). Closed: every web service carries
+`springdoc-openapi-starter-webmvc-api` (the 3.1 line — Framework 7/Boot 4) with a
+per-service `OpenApiConfig` (title/description), serving `/v3/api-docs` behind the
+same authentication as the APIs it describes; the gateway aggregates them at
+`GET /api/v1/openapi.json` — one merged document (union of each service's public
+paths, the owning service riding every path item as `x-novaforge-service`, components
+merged first-wins, collisions surfaced as `x-novaforge-conflicts`) built by relaying
+the caller's token to each routed upstream, cached 60 s. An unavailable upstream
+degrades audibly (`info.x-novaforge-unavailable`) — documentation never takes the
+edge down — and the Script Engine stays out of the upstream set (internal, no gateway
+route, ARCHITECTURE §2.5). Pinned by `ApiDocsAggregatorTest` (merge, degrade, conflict
+surfacing, token relay) and `GatewayApplicationTests` (the route is scope-gated and
+serves with every upstream dead).
+
 ## Phase 2 — Builder UI & Security ✅ (spec: PHASE-2-UI-BUILDER.md)
 
 **Backend implemented (landed in phases 1–6, unchanged):**
@@ -138,18 +154,39 @@ inline children → 4 outbox rows published → `novaforge.record` carries the e
   volume) with SPA deep-link fallback — asset paths anonymous, APIs still
   scope-gated; Vite dev proxies cover local development.
 
-**Suites:** 138 frontend tests (`pnpm -r test`: shared 92 — conformance 39, deltas,
-  goldens, validation, renderer, gallery-axe, client, report-table drill-through;
-  runtime-ui 11 — nav/auto-list/form journeys, inbox (+claim/delegate),
-  notifications, axe, the L1→delta→persist round-trip, dashboard drill/refresh;
-  builder-ui 35 — entity/page/RBAC/onboarding/i18n/reporting journeys incl. the 409
-  rebase, the PHASE-3 §8 logic + suites authoring journeys, the PHASE-4 §11
-  automation/sharing/guided-approval journeys, the PHASE-6 §3 integrations editor,
-  and the PHASE-8 §6 template catalog), plus
+**Suites:** 146 frontend tests (`pnpm -r test`: shared 96 — conformance 39, deltas,
+  goldens, validation (+ the §6-item-2 lifecycle warnings), renderer, gallery-axe,
+  client, report-table drill-through; runtime-ui 11 — nav/auto-list/form journeys,
+  inbox (+claim/delegate), notifications, axe, the L1→delta→persist round-trip,
+  dashboard drill/refresh; builder-ui 39 — entity/page/RBAC/onboarding/i18n/
+  reporting journeys incl. the 409 rebase, the PHASE-3 §8 logic + suites authoring
+  journeys, the PHASE-4 §11 automation/sharing/guided-approval journeys, the
+  PHASE-6 §3 integrations editor + its §7 job-progress panel, and the PHASE-8 §3
+  change-set review/gap-log editor + §6 template catalog), plus
   `DefinitionLifecycleTests.pageDefinitionLifecycle` (9 tests, real Postgres) and
   `GatewayApplicationTests` SPA hosting.
 
-**Deviations (honest):** Playwright per-component stories + the scripted E2E golden
+**Spec-review closeout (2026-08-25, third pass) — §6 item 2's catalog lifecycle
+existed only as the `version` field.** `CatalogEntry` had no status and no
+deprecation machinery — "draft → stable → deprecated; pages pin versions;
+deprecation emits migration guidance" was unimplementable. Closed: entries carry
+`status` (absent = stable — the v1 set ships stable) plus a `deprecation` record
+(`reason`, optional `migrateTo`); a new warnings channel beside save validation
+(`checkPage` → `{issues, warnings}`, `lifecycleWarnings` pure over the entries so
+suites drive synthetic lifecycles) surfaces the migration guidance when a page
+pins a deprecated component — a warning, never an error, because pinning *is* the
+compatibility contract — and flags draft components at publish; the page builder
+renders the warnings list at save and badges deprecated/draft palette entries.
+Pinned by four vitest cases (deprecated guidance, stable-silent/draft-publish-only,
+nested paths, the checkPage verdict).
+
+**Deviations (honest):** the §2 stack pins for lists/forms (TanStack Table +
+  Virtual, react-hook-form + the thin JSON Schema binder) are not the shipped
+  implementation — server-side paging rides the shared ListLayout against the
+  Data Runtime DSL and forms ride controlled catalog inputs with the same
+  JSON-Schema validation; the binder swap joins when widget-authoring demand
+  justifies it (recorded here so the absence is a decision, not an omission).
+  Playwright per-component stories + the scripted E2E golden
   journey (§11 items 2–3) ride the vitest+axe pattern the Phase 5 catalog work
   established (jsdom journeys + axe; browser-runner wiring lands with the live
   Phase 2 exit demo against the compose stack); the page-builder canvas is a
@@ -440,7 +477,7 @@ found re-walking the code against the spec, all closed:**
   (per-task ordering; delegation chains ride each delegate's own key)
 - spine consumption (T1's leg): `record.deleted` on `novaforge.record` cancels the
   record's open tasks — verified through the real Kafka path
-- suites: `TaskApiTests` — inbox resolution, resolution + events, claim, delegation
+- suites: `TaskApiTests` — inbox resolution (+the §5 sort conventions), resolution + events, claim, delegation
   chains + SoD, reassign gate, access checks, deletion-cancel, and (at the review
   closeout) the scratch as-of scan clock leg below
 - Flowable entered with §9 (below) — as the **Flowable 8 line** (8.0.0): ADR-004's
@@ -771,6 +808,14 @@ chain) with the addresser column showing assignee-or-role, the client grows
 the Phase 3 closeout above — the trail now consumes `novaforge.task`/
 `novaforge.sla`/`novaforge.scheduler`.
 
+**Spec-review closeout (2026-08-25, third pass) — §5's "filter/sort/page per the
+Phase 1 query conventions" had no sort.** The inbox listed status + paging only.
+`GET /api/v1/workflow/tasks` now takes `sort` (`createdAt` default, `dueAt`) +
+`dir` (`asc|desc`) over a column-mapped allowlist in the store (never in SQL text),
+tie-broken by creation order; unknown fields fall back to the default ordering so
+the inbox keeps serving. Pinned by `TaskApiTests.inboxSorts` (default order,
+dueAt desc, unknown-field fallback).
+
 ## Phase 5 — Reporting & Dashboards ◐ (spec: PHASE-5-REPORTING.md)
 
 **Backend surfaces implemented (T1–T4, T7, T8); T5's catalog components landed with
@@ -1098,6 +1143,18 @@ APIs). Closed:
   — T8's "Payments sync visible in aging" as a runnable contract (its live leg
   rides the full-stack exit walkthrough)
 
+**Spec-review closeout (2026-08-25, third pass) — §7/§9's builder job surface had
+never landed.** The Integration Service's operational job APIs existed (create
+import/export, list, get, per-row ledger, resume) but the shared client had no
+legs and the integrations screen rendered nothing of runs — "import runs …
+created, inspected, and resumed via the operational APIs" and "progress … drives
+the builder progress UI" were API-only. Closed: the client grows
+`integrationJobs`/`integrationJobRows`/`resumeIntegrationJob`, and the
+integrations screen ships a Jobs panel — per-run kind/status/progress counters
+(processed/total/failed), the retained per-item outcome ledger drilling open,
+and Resume on paused/failed imports (the checkpointed exactly-once leg). Pinned
+by the integrations vitest journey (counters render, resume fires, ledger opens).
+
 ## Phase 7 — ERP Dogfood ◐ (spec: PHASE-7-ERP-DOGFOOD.md)
 
 > The platform harvests (§3 + §4's soft close) are complete and suite-green; the
@@ -1211,7 +1268,7 @@ APIs). Closed:
   disposition (2 accept-as-platform-feature: created-record id capture + nested
   template resolution for auto-journals; a `$decimal` sandbox binding for script
   money fidelity), plus the two confirmed §3 harvests
-- `ErpAppArtifactTests` (7) gates the artifact in CI through the exact save/compile
+- `ErpAppArtifactTests` (8) gates the artifact in CI through the exact save/compile
   checks the builder would run (save-clean, FlowCompiler, harvests bound, gapless
   sequences, script budget, suite save-validation, ${…} reference shape) — it
   caught two real authoring defects on landing (unpromoted report aggregate field;
@@ -1228,6 +1285,16 @@ APIs). Closed:
   exactly like every other slot — references now accepted
 - `MetadataStore.insertApp` silently dropped inline `testSuites` (only the dedicated
   PUT endpoint persisted them) — inline suites now round-trip like entities
+
+**Spec-review closeout (2026-08-25, third pass) — the gap log rides the artifact
+as metadata.** PHASE-8 §3's change-set surface ("the gap-log entries the version
+resolves, Phase 7 continuity") needs gap-log *metadata* to render; GAP-LOG.md is
+the human deliverable but nothing platform-side carried it. The ERP app's
+`gapLog` branch now mirrors the markdown log (13 entries — G-1…G-11 plus the two
+resolved-question deferrals), riding the same kind-discriminated persistence,
+publish, and promotion-artifact path as every other branch; `ErpAppArtifactTests`
+pins its presence and that at least one entry is resolved (the review surface has
+a live authoring precedent).
 
 ## Phase 8 — Lifecycle & Hardening ◐ (spec: PHASE-8-LIFECYCLE.md)
 
@@ -1308,12 +1375,12 @@ definition diff (entities/state machines/reports/suites/translations by apiName:
   universe, the missing-translation count, RFC 4180 CSV round-trip) and the
   runtime shell carries the user-locale preference that selects the chain
 
-**Suites:** `LifecycleTests` (7 — the §9 promotion-gate suite: red gate blocks,
+**Suites:** `LifecycleTests` (8 — the §9 promotion-gate suite: red gate blocks,
   exact-content-hash matching (a stale-draft run does not admit), prod order +
   admin hop + override-forever-rendered, rollback both branches with the ack gate,
   artifact hash/signature/tamper + template round-trip, headless recording, i18n
   workspace round-trip incl. publish promotion), `TranslationsDefinitionTest` (4),
-  `ErpAppArtifactTests` (7, Phase 7's CI gate)
+  `ErpAppArtifactTests` (8, Phase 7's CI gate)
 
 **T8–T10 (the operational exercises):** the runbooks ship —
   `docs/runbooks/dr-restore-drill.md` (PITR + MinIO versioning + Kafka replay +
@@ -1322,3 +1389,31 @@ definition diff (entities/state machines/reports/suites/translations by apiName:
   owning suites); the live executions (load validation at full scale, the pen
   pass, the restore drill) run against the live stack — the Phases 5/6
   live-exit pattern — and record here when run.
+
+**Spec-review closeout (2026-08-25, third pass) — §3's gap-log surface, and the
+review screen read a payload the API never sends.** Three findings:
+- **The gap log is now platform metadata.** `GapLogEntry` (`{id, area, blocker,
+  workaround, proposed, priority, disposition, resolvedIn?}` — the PHASE-7 §1
+  rule-2 shape plus §8's triage set) rides the app definition as the `gapLog`
+  branch: kind-discriminated rows, PATCH-merge semantics that never wipe it,
+  save-validation (id shape/uniqueness, required area/blocker, closed
+  priority/disposition vocabularies, `resolvedIn` only on triaged entries), and
+  full round-trip through create → publish → published read (the Phase 4 §9
+  regression extended). Change-set review renders `resolvedGaps` — draft entries
+  whose disposition became resolving (accept-as-platform-feature/closed) where
+  the published side's same entry was not — beside the per-branch `gapLog` diff,
+  exactly §3's "entries the version resolves". The builder grows the authoring
+  surface (a Gap Log triage table on the lifecycle screen saving the branch
+  patch) and renders resolved gaps in review.
+- **`credentialRefs` listed only the published bundle's refs** — a promoting
+  draft that introduces a new connector credential never listed it for re-binding.
+  The list is now the union of published + draft.
+- **The review screen's TS interface was fiction** (`definitions`,
+  `scriptRatioDelta`, `credentialReferences` — fields `changeSet` never emits),
+  so the rendered review was empty tables against the real API. The screen now
+  reads the actual payload (`diff` flattened to rows, `suiteResults`,
+  `scriptRatio`, `credentialRefs`, `promotions`) and shows not-run-yet suites as
+  such (the gate's null state). Pinned by `LifecycleTests.changeSetRendersResolvedGaps`
+  (branch round-trip, resolvedGaps, the re-bind union) and the lifecycle vitest
+  journeys (payload rendering, red-gate promote disabled, the triage editor's
+  patch).

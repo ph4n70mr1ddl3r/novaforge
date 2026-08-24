@@ -66,6 +66,12 @@
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
     <dependency>
+      <!-- OpenAPI 3 generated per service (PLAN.md §4, PHASE-1 §4): /v3/api-docs
+           serves the machine-readable contract the gateway aggregates. -->
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-api</artifactId>
+    </dependency>
+    <dependency>
       <groupId>io.micrometer</groupId>
       <artifactId>micrometer-registry-prometheus</artifactId>
     </dependency>

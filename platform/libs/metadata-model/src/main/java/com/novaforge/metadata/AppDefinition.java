@@ -14,6 +14,9 @@ import java.util.Map;
  *                Phase 2 (PHASE-1 §3)
  * @param settings app-scoped settings: sequences, currencies, shared enums — the
  *                Settings branch of PLAN.md §2
+ * @param gapLog   the dogfood gap log (PHASE-7 §1 rule 2) as versioned metadata —
+ *                change-set review renders the entries a version resolves
+ *                (PHASE-8 §3)
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record AppDefinition(
@@ -34,7 +37,8 @@ public record AppDefinition(
         List<ReportDefinition> reports,
         List<DashboardDefinition> dashboards,
         IntegrationsDefinition integrations,
-        List<TranslationsDefinition> translations) {
+        List<TranslationsDefinition> translations,
+        List<GapLogEntry> gapLog) {
 
     public AppDefinition {
         entities = entities == null ? List.of() : List.copyOf(entities);
@@ -51,6 +55,7 @@ public record AppDefinition(
         dashboards = dashboards == null ? List.of() : List.copyOf(dashboards);
         integrations = integrations == null ? new IntegrationsDefinition() : integrations;
         translations = translations == null ? List.of() : List.copyOf(translations);
+        gapLog = gapLog == null ? List.of() : List.copyOf(gapLog);
     }
 
     /** The Integrations branch (PHASE-6 §2) — connectors, webhooks, credentials, imports. */
@@ -215,6 +220,21 @@ public record AppDefinition(
         this(id, apiName, label, labelI18n, description, entities, pages, settings,
                 permissionSet, testSuites, stateMachines, slas, jobs, workflows,
                 reports, dashboards, integrations, List.of());
+    }
+
+    /** Constructor without the gap-log branch (pre-review drafts and tests). */
+    public AppDefinition(String id, String apiName, String label, Map<String, String> labelI18n,
+                         String description, List<EntityDefinition> entities,
+                         List<PageDefinition> pages, SettingsDefinition settings,
+                         PermissionSet permissionSet, List<TestSuiteDefinition> testSuites,
+                         List<StateMachineDefinition> stateMachines,
+                         List<SlaDefinition> slas, List<ScheduledJobDefinition> jobs,
+                         List<WorkflowDefinition> workflows, List<ReportDefinition> reports,
+                         List<DashboardDefinition> dashboards, IntegrationsDefinition integrations,
+                         List<TranslationsDefinition> translations) {
+        this(id, apiName, label, labelI18n, description, entities, pages, settings,
+                permissionSet, testSuites, stateMachines, slas, jobs, workflows,
+                reports, dashboards, integrations, translations, List.of());
     }
 
     /**

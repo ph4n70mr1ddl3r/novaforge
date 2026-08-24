@@ -5,6 +5,10 @@
 > backlog | wontfix-with-workaround`; accepted items become versioned platform features
 > with a spec section here before implementation (§8). The two §3 candidates were
 > pre-accepted, confirmed by the dogfood, and shipped as platform features this phase.
+>
+> This markdown is the human-readable log; the same entries ride `erp-app.json`'s
+> `gapLog` branch (versioned metadata — PHASE-8 §3's change-set review renders the
+> entries a promoting version resolves). Keep the two in sync when triage moves.
 
 | # | Area | Blocker | Workaround in the ERP v1 | Proposed primitive / flag | Priority | Disposition |
 |---|------|---------|--------------------------|---------------------------|----------|-------------|

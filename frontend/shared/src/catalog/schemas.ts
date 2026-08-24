@@ -4,7 +4,19 @@
  * pages reference `{id, version}` so page definitions never rot as the catalog
  * evolves. The builder validates authored props against these schemas; the runtime
  * renderer resolves by the same ids.
+ *
+ * Lifecycle (PHASE-2 §6 item 2): entries carry a `status` on the
+ * `draft → stable → deprecated` ladder — pages may pin any status (pinning is the
+ * compatibility contract), but authoring against a deprecated component surfaces
+ * its migration guidance at save, so deprecations are visible, never silent.
  */
+
+/** Deprecation guidance (§6 item 2): why, and where to go. */
+export interface Deprecation {
+    reason: string;
+    /** The catalog id to migrate to, when a direct replacement exists. */
+    migrateTo?: string;
+}
 
 export interface CatalogEntry {
   /** The stable catalog id (`novaforge.<component>`). */
@@ -13,6 +25,10 @@ export interface CatalogEntry {
   version: "1.0.0";
   /** JSON Schema (draft 2020-12) for the component's props. */
   schema: Record<string, unknown>;
+  /** Lifecycle status — absent means `stable` (the v1 set ships stable). */
+  status?: "draft" | "stable" | "deprecated";
+  /** Present when `status` is deprecated: the migration guidance to surface. */
+  deprecation?: Deprecation;
 }
 
 const chartWidget: CatalogEntry = {

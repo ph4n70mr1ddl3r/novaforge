@@ -44,6 +44,24 @@ class ErpAppArtifactTests {
     }
 
     @Test
+    @DisplayName("the gap log rides the artifact as metadata (PHASE-8 §3's review surface)")
+    void gapLogRidesTheArtifact() throws Exception {
+        AppDefinition app = app();
+        // the GAP-LOG.md discipline, mirrored as the app's gapLog branch: every entry
+        // logged before its workaround, dispositions from §8's triage set
+        assertThat(app.gapLog().size()).isGreaterThanOrEqualTo(11);
+        assertThat(app.gapLog().stream().filter(gap -> gap.id().equals("G-1")).toList())
+                .as("the first logged gap (created-record id capture)").hasSize(1);
+        assertThat(app.gapLog().stream().filter(gap -> gap.id().equals("G-11")).toList())
+                .as("the newest logged gap (the poll op)").hasSize(1);
+        // at least one entry is resolved (accept-as-platform-feature/closed) so the
+        // change-set review's resolvedGaps surface has a live authoring precedent
+        assertThat(app.gapLog().stream()
+                .anyMatch(gap -> com.novaforge.metadata.GapLogEntry.resolving(gap.disposition())))
+                .isTrue();
+    }
+
+    @Test
     @DisplayName("the ERP app definition compiles: expressions, flows, machines, reports")
     void compileClean() throws Exception {
         // The exact publish path: expression compile-check + the FlowCompiler's

@@ -514,4 +514,60 @@ class LifecycleTests extends PostgresTestBase {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.translations[0].locale").value("de"));
     }
+
+    @Test
+    @DisplayName("§3: change-set review carries the gap-log entries the version resolves + the re-bind union")
+    void changeSetRendersResolvedGaps() throws Exception {
+        String appId = createGatedApp();
+        // author the gap-log branch + one bound credential on the draft, publish
+        mockMvc.perform(patch("/api/v1/metadata/apps/" + appId).with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "integrations": { "credentials": [ { "id": "cred_bound",
+                                    "kind": "api_key", "header": "Authorization" } ] },
+                                  "gapLog": [
+                                    { "id": "G-1", "area": "P3", "blocker": "b", "priority": "high",
+                                      "disposition": "open" },
+                                    { "id": "G-2", "area": "P4", "blocker": "b", "priority": "low",
+                                      "disposition": "backlog" } ] }
+                                """))
+                .andExpect(status().isOk());
+        publish(appId);
+
+        // the branch rides publish (the Phase 4 §9 regression, now for gapLog)
+        MvcResult published = mockMvc.perform(
+                        get("/api/v1/metadata/apps/" + appId + "/published").with(builderJwt()))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(MAPPER.readTree(published.getResponse().getContentAsString())
+                .get("app").get("gapLog").size()).isEqualTo(2);
+
+        // the promoting draft resolves G-1 and introduces a new credential ref
+        mockMvc.perform(patch("/api/v1/metadata/apps/" + appId).with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "integrations": { "credentials": [ { "id": "cred_bound",
+                                    "kind": "api_key", "header": "Authorization" },
+                                  { "id": "cred_new", "kind": "basic", "username": "u" } ] },
+                                  "gapLog": [
+                                    { "id": "G-1", "area": "P3", "blocker": "b", "priority": "high",
+                                      "disposition": "closed", "resolvedIn": "this change set" },
+                                    { "id": "G-2", "area": "P4", "blocker": "b", "priority": "low",
+                                      "disposition": "backlog" } ] }
+                                """))
+                .andExpect(status().isOk());
+
+        MvcResult review = mockMvc.perform(
+                        get("/api/v1/metadata/apps/" + appId + "/changeset?env=dev").with(builderJwt()))
+                .andExpect(status().isOk()).andReturn();
+        var node = MAPPER.readTree(review.getResponse().getContentAsString());
+        // §3: "the gap-log entries the version resolves" — G-1 (open → closed) yes, G-2 no
+        assertThat(node.get("resolvedGaps").size()).isEqualTo(1);
+        assertThat(node.get("resolvedGaps").get(0).get("id").asString()).isEqualTo("G-1");
+        assertThat(node.get("resolvedGaps").get(0).get("resolvedIn").asString())
+                .isEqualTo("this change set");
+        // the gap branch diffs like every other branch
+        assertThat(node.get("diff").get("gapLog").get("modified").toString()).contains("G-1");
+        // §3: the re-bind list carries the union — the already-bound ref AND the new one
+        assertThat(node.get("credentialRefs").toString()).contains("cred_bound", "cred_new");
+    }
 }

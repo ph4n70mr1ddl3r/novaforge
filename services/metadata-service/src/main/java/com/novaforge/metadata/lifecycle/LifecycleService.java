@@ -296,9 +296,21 @@ public class LifecycleService {
         review.put("scriptRatio", Map.of(
                 "draft", scriptRatio(draft),
                 "published", published == null ? 0 : scriptRatio(published)));
-        review.put("credentialRefs", published == null ? List.of()
-                : published.integrations().credentials().stream()
-                        .map(com.novaforge.metadata.CredentialDefinition::id).toList());
+        // §3: "any credential references stripped from the artifact ... listed for
+        // re-binding in the target environment" — the union of what the target
+        // currently binds and what the promoting draft references (a newly authored
+        // connector's ref must list too, not only the ones already bound).
+        Set<String> credentialRefs = new LinkedHashSet<>();
+        if (published != null) {
+            published.integrations().credentials().stream()
+                    .map(com.novaforge.metadata.CredentialDefinition::id).forEach(credentialRefs::add);
+        }
+        draft.integrations().credentials().stream()
+                .map(com.novaforge.metadata.CredentialDefinition::id).forEach(credentialRefs::add);
+        review.put("credentialRefs", List.copyOf(credentialRefs));
+        // §3: "the gap-log entries the version resolves (Phase 7 continuity)" —
+        // entries whose disposition became resolving in this change set.
+        review.put("resolvedGaps", resolvedGaps(published, draft));
         review.put("promotions", store.promotions(tenantId, appId).stream()
                 .map(promotion -> Map.of(
                         "env", promotion.env(),
@@ -337,7 +349,40 @@ public class LifecycleService {
                 !DefinitionParser.write(from.permissionSet()).equals(DefinitionParser.write(to.permissionSet())));
         diff.put("translations", diffDocuments(names(from.translations(), t -> ((TranslationsDefinition) t).locale()),
                 names(to.translations(), t -> ((TranslationsDefinition) t).locale())));
+        diff.put("gapLog", diffDocuments(names(from.gapLog(), g -> ((com.novaforge.metadata.GapLogEntry) g).id()),
+                names(to.gapLog(), g -> ((com.novaforge.metadata.GapLogEntry) g).id())));
         return diff;
+    }
+
+    /**
+     * The gap-log entries this change set resolves (PHASE-8 §3): draft entries whose
+     * disposition is a resolving one (shipped as a platform feature, or closed) where
+     * the published side's same entry — if present — was not yet resolving. New
+     * resolving entries count; re-triaged existing ones count once.
+     */
+    private static List<Map<String, Object>> resolvedGaps(AppDefinition published, AppDefinition draft) {
+        Map<String, com.novaforge.metadata.GapLogEntry> prior = published == null ? Map.of()
+                : published.gapLog().stream().collect(java.util.stream.Collectors.toMap(
+                        com.novaforge.metadata.GapLogEntry::id, gap -> gap, (a, b) -> a));
+        return draft.gapLog().stream()
+                .filter(gap -> com.novaforge.metadata.GapLogEntry.resolving(gap.disposition()))
+                .filter(gap -> !(prior.containsKey(gap.id())
+                        && com.novaforge.metadata.GapLogEntry.resolving(
+                                prior.get(gap.id()).disposition())))
+                .map(gap -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("id", gap.id());
+                    row.put("area", gap.area());
+                    row.put("disposition", gap.disposition());
+                    if (gap.resolvedIn() != null) {
+                        row.put("resolvedIn", gap.resolvedIn());
+                    }
+                    if (gap.proposed() != null) {
+                        row.put("proposed", gap.proposed());
+                    }
+                    return row;
+                })
+                .toList();
     }
 
     private List<Map.Entry<String, Object>> names(List<?> documents, java.util.function.Function<Object, String> key) {
@@ -348,7 +393,7 @@ public class LifecycleService {
     private static AppDefinition emptyBundle(String apiName) {
         return new AppDefinition(null, apiName, null, Map.of(), null, List.of(), List.of(),
                 null, null, null, List.of(), List.of(), List.of(), List.of(), List.of(),
-                List.of(), null, List.of());
+                List.of(), null, List.of(), List.of());
     }
 
     private Map<String, Object> diffDocuments(List<Map.Entry<String, Object>> from,
@@ -456,7 +501,8 @@ public class LifecycleService {
                             bundle.description(), bundle.entities(), bundle.pages(), bundle.settings(),
                             bundle.permissionSet(), bundle.testSuites(), bundle.stateMachines(),
                             bundle.slas(), bundle.jobs(), bundle.workflows(), bundle.reports(),
-                            bundle.dashboards(), bundle.integrations(), bundle.translations()));
+                            bundle.dashboards(), bundle.integrations(), bundle.translations(),
+                            bundle.gapLog()));
         } catch (PlatformException e) {
             throw e;
         } catch (Exception e) {
@@ -512,7 +558,8 @@ public class LifecycleService {
                 bundle.label(), bundle.labelI18n(), bundle.description(), bundle.entities(),
                 bundle.pages(), bundle.settings(), bundle.permissionSet(), bundle.testSuites(),
                 bundle.stateMachines(), bundle.slas(), bundle.jobs(), bundle.workflows(),
-                bundle.reports(), bundle.dashboards(), bundle.integrations(), bundle.translations()));
+                bundle.reports(), bundle.dashboards(), bundle.integrations(), bundle.translations(),
+                bundle.gapLog()));
     }
 
     // --- i18n workspaces (§7) ---

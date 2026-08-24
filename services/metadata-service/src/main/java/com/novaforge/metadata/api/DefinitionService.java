@@ -147,7 +147,7 @@ public class DefinitionService {
                 app.description(), app.entities(), List.copyOf(pages), app.settings(),
                 app.permissionSet(), app.testSuites(), app.stateMachines(), app.slas(),
                 app.jobs(), app.workflows(), app.reports(), app.dashboards(),
-                app.integrations(), app.translations());
+                app.integrations(), app.translations(), app.gapLog());
     }
 
     /**
@@ -523,7 +523,8 @@ public class DefinitionService {
                         && patch.integrations().credentials().isEmpty()
                         && patch.integrations().imports().isEmpty())
                         ? current.integrations() : patch.integrations(),
-                patch.translations().isEmpty() ? current.translations() : patch.translations());
+                patch.translations().isEmpty() ? current.translations() : patch.translations(),
+                patch.gapLog().isEmpty() ? current.gapLog() : patch.gapLog());
     }
 
     private static EntityDefinition mergeEntity(EntityDefinition current, EntityDefinition patch) {
@@ -547,7 +548,8 @@ public class DefinitionService {
         return new AppDefinition(app.id(), app.apiName(), app.label(), app.labelI18n(),
                 app.description(), entities, app.pages(), app.settings(), app.permissionSet(),
                 app.testSuites(), app.stateMachines(), app.slas(), app.jobs(), app.workflows(),
-                app.reports(), app.dashboards(), app.integrations(), app.translations());
+                app.reports(), app.dashboards(), app.integrations(), app.translations(),
+                app.gapLog());
     }
 
     /** A {@code ${…}} template reference — resolves at run time, validated for shape at save. */

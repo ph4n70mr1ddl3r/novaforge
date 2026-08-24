@@ -102,6 +102,7 @@ export {
   type CredentialDefinition,
   type ImportDefinition,
   type IntegrationsDefinition,
+  type GapLogEntry,
 } from "./metadata.ts";
 
 // --- page model v0 + structural deltas (§4 / §13 Q2) ---
@@ -134,9 +135,12 @@ export {
 export {
   takesBinding,
   validatePage,
+  checkPage,
+  lifecycleWarnings,
   validateSchema,
   type SchemaIssue,
   type ValidationContext,
+  type PageVerdict,
 } from "./pagemodel/validate.ts";
 
 // --- L1 default resolver (§5) ---

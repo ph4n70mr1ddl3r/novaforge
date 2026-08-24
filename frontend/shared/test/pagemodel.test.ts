@@ -3,10 +3,12 @@ import {
     applyDeltas,
     diffPages,
     type PageDelta,
+    type PageNode,
     type ResolvedPage,
 } from "../src/pagemodel/model.ts";
 import { toPatch, describeDelta, pageDocument } from "../src/pagemodel/patch.ts";
-import { validatePage } from "../src/pagemodel/validate.ts";
+import { checkPage, lifecycleWarnings, validatePage } from "../src/pagemodel/validate.ts";
+import type { CatalogEntry } from "../src/catalog/schemas.ts";
 import { resolveDefaultPage } from "../src/resolver.ts";
 import type { EntityDefinition } from "../src/metadata.ts";
 
@@ -193,5 +195,60 @@ describe("page save/publish validation (§4)", () => {
         // out-of-range setAction reports stale instead of corrupting (§11 item 4)
         const stale = applyDeltas(base, [{ op: "setAction", index: 99, action: { type: "save" } }]);
         expect(stale.stale).toHaveLength(1);
+    });
+});
+
+describe("catalog lifecycle warnings (§6 item 2)", () => {
+    const node = (type: string): PageNode => ({ type, key: `n:${type}`, props: {} });
+    const entry = (id: string, extra: Partial<CatalogEntry>): CatalogEntry => ({
+        id, version: "1.0.0", schema: { type: "object" }, ...extra,
+    });
+
+    it("a deprecated component surfaces its migration guidance — never silently", () => {
+        const warnings = lifecycleWarnings(
+            [node("novaforge.legacy-grid")],
+            [entry("novaforge.legacy-grid", {
+                status: "deprecated",
+                deprecation: { reason: "superseded by ListLayout", migrateTo: "novaforge.list-layout" },
+            })],
+            "save",
+        );
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]!.message).toContain("deprecated");
+        expect(warnings[0]!.message).toContain("superseded by ListLayout");
+        expect(warnings[0]!.message).toContain("migrate to novaforge.list-layout");
+    });
+
+    it("stable components stay silent; draft components warn only at publish", () => {
+        const entries = [
+            entry("novaforge.field-input", { status: "stable" }),
+            entry("novaforge.experimental-widget", { status: "draft" }),
+        ];
+        expect(lifecycleWarnings([node("novaforge.field-input")], entries, "publish")).toEqual([]);
+        expect(lifecycleWarnings([node("novaforge.experimental-widget")], entries, "save")).toEqual([]);
+        expect(lifecycleWarnings([node("novaforge.experimental-widget")], entries, "publish"))
+            .toHaveLength(1);
+    });
+
+    it("nested deprecations surface at their own path", () => {
+        const deprecated = entry("novaforge.legacy-grid", {
+            status: "deprecated",
+            deprecation: { reason: "retired" },
+        });
+        const root: PageNode = {
+            type: "novaforge.form-layout",
+            key: "form",
+            props: {},
+            children: [node("novaforge.legacy-grid")],
+        };
+        const warnings = lifecycleWarnings([root], [deprecated], "save");
+        expect(warnings[0]!.path).toBe("root.children[0]");
+    });
+
+    it("checkPage carries warnings beside the blocking issues (the page builder's verdict)", () => {
+        const page = resolveDefaultPage(entity, "form");
+        const verdict = checkPage(page.model, { entity, mode: "save" });
+        // the v1 catalog ships stable: no warnings, and L1 pages have no issues
+        expect(verdict.warnings).toEqual([]);
     });
 });

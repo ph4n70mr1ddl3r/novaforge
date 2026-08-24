@@ -58,13 +58,32 @@ const app: AppDefinition = {
 function stubClient(overrides: Partial<{
     deliveries: Record<string, unknown>[];
     dlq: Record<string, unknown>[];
+    jobs: Record<string, unknown>[];
+    jobRows: Record<string, unknown>[];
     putSecret: (ref: string, material: string, retireEarlier?: boolean) => Promise<unknown>;
     replay: (id: string) => Promise<unknown>;
-}> = {}): { client: PlatformClient; calls: { secrets: [string, string, boolean?][]; replays: string[] } } {
-    const calls = { secrets: [] as [string, string, boolean?][], replays: [] as string[] };
+}> = {}): {
+    client: PlatformClient;
+    calls: { secrets: [string, string, boolean?][]; replays: string[]; resumes: string[]; rowsFetched: string[] };
+} {
+    const calls = {
+        secrets: [] as [string, string, boolean?][],
+        replays: [] as string[],
+        resumes: [] as string[],
+        rowsFetched: [] as string[],
+    };
     const client = {
         integrationDeliveries: async () => overrides.deliveries ?? [],
         integrationDlq: async () => overrides.dlq ?? [],
+        integrationJobs: async () => overrides.jobs ?? [],
+        integrationJobRows: async (jobId: string) => {
+            calls.rowsFetched.push(jobId);
+            return overrides.jobRows ?? [];
+        },
+        resumeIntegrationJob: async (jobId: string) => {
+            calls.resumes.push(jobId);
+            return { jobId, status: "pending" };
+        },
         putSecret: async (ref: string, material: string, retireEarlier?: boolean) => {
             calls.secrets.push([ref, material, retireEarlier]);
             return overrides.putSecret?.(ref, material, retireEarlier) ?? { ref, status: "provisioned" };
@@ -196,5 +215,36 @@ describe("Integrations (PHASE-6 §3/§9)", () => {
         fireEvent.click(screen.getByLabelText("Replay DLQ entry dlq-1"));
         await waitFor(() => expect(calls.replays).toEqual(["dlq-1"]));
         await waitFor(() => expect(screen.getByText(/dlq-1: replayed/)).toBeTruthy());
+    });
+
+    it("renders import/export job runs with progress and drives the resume/inspect legs (§7)", async () => {
+        const onSave = vi.fn(async (_patch: Record<string, unknown>) => {});
+        const { client, calls } = stubClient({
+            jobs: [
+                { id: "job-1", kind: "IMPORT", status: "paused", importMapping: "paymentsFeed",
+                    processedRows: 41, totalRows: 100, failedRows: 0, createdAt: "2026-08-25T00:00:00Z" },
+                { id: "job-2", kind: "EXPORT_ENTITY", status: "ok", entity: "Invoice",
+                    processedRows: 12_000, totalRows: 12_000, failedRows: 0, createdAt: "2026-08-25T01:00:00Z" },
+            ],
+            jobRows: [
+                { row: 40, status: "applied", recordId: "rec-40", code: null, detail: "" },
+                { row: 41, status: "failed", recordId: null, code: "4001", detail: "required: number" },
+            ],
+        });
+        render(createElement(Integrations, { app, client, onSave }));
+
+        await waitFor(() => expect(screen.getByText("Import / export jobs")).toBeTruthy());
+        // progress counters render per run (§7's import.progress surface, polled)
+        expect(screen.getByText("41 / 100")).toBeTruthy();
+        expect(screen.getByText("12000 / 12000")).toBeTruthy();
+
+        // a paused import offers resume — the checkpointed exactly-once leg
+        fireEvent.click(screen.getByLabelText("Resume job job-1"));
+        await waitFor(() => expect(calls.resumes).toEqual(["job-1"]));
+
+        // the row ledger (per-item outcomes retained) drills open
+        fireEvent.click(screen.getByLabelText("Inspect rows of job job-1"));
+        await waitFor(() => expect(calls.rowsFetched).toEqual(["job-1"]));
+        await waitFor(() => expect(screen.getByText("required: number")).toBeTruthy());
     });
 });

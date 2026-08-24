@@ -1,4 +1,4 @@
-import { CATALOG } from "../catalog/schemas.ts";
+import { CATALOG, type CatalogEntry } from "../catalog/schemas.ts";
 import { catalogEntry } from "../registry.ts";
 import { Expression } from "../expression/expression.ts";
 import type { EntityDefinition } from "../metadata.ts";
@@ -137,6 +137,54 @@ export interface ValidationContext {
     entity: EntityDefinition;
     /** `save` resolves missing versions to the catalog's current stable; `publish` rejects. */
     mode: "save" | "publish";
+}
+
+/** The full verdict: blocking issues plus lifecycle warnings (§6 item 2). */
+export interface PageVerdict {
+    issues: SchemaIssue[];
+    warnings: SchemaIssue[];
+}
+
+/**
+ * Lifecycle warnings (PHASE-2 §6 item 2): a page pinning a deprecated component
+ * still saves — pinning is the compatibility contract — but the deprecation's
+ * migration guidance surfaces at save so it is never silent. Draft components
+ * warn at publish (they are not stable contracts). Pure over the entries so the
+ * suites can drive synthetic lifecycles.
+ */
+export function lifecycleWarnings(
+    nodes: PageNode[],
+    entries: readonly CatalogEntry[],
+    mode: "save" | "publish",
+): SchemaIssue[] {
+    const warnings: SchemaIssue[] = [];
+    const walk = (node: PageNode, path: string): void => {
+        const entry = entries.find((candidate) => candidate.id === node.type);
+        if (entry?.status === "deprecated") {
+            const guidance = entry.deprecation?.migrateTo
+                ? ` — migrate to ${entry.deprecation.migrateTo}`
+                : "";
+            warnings.push({
+                path,
+                message: `${node.type} is deprecated: ${entry.deprecation?.reason ?? "superseded"}${guidance}`,
+            });
+        } else if (entry?.status === "draft" && mode === "publish") {
+            warnings.push({
+                path,
+                message: `${node.type} is still draft — publishing pins an unstable contract`,
+            });
+        }
+        (node.children ?? []).forEach((child, index) => walk(child, `${path}.children[${index}]`));
+    };
+    nodes.forEach((node) => walk(node, "root"));
+    return warnings;
+}
+
+export function checkPage(model: PageModel, context: ValidationContext): PageVerdict {
+    return {
+        issues: validatePage(model, context),
+        warnings: lifecycleWarnings([model.root], CATALOG, context.mode),
+    };
 }
 
 export function validatePage(

@@ -12,7 +12,7 @@ import { Onboarding } from "./onboarding.tsx";
 import { I18nEditor } from "./i18n-editor.tsx";
 import { ReportBuilder } from "./report-builder.tsx";
 import { DashboardComposer } from "./dashboard-composer.tsx";
-import { Lifecycle, SuiteRuns } from "./lifecycle.tsx";
+import { GapLogEditor, Lifecycle, SuiteRuns } from "./lifecycle.tsx";
 import { LogicEditor } from "./logic-editor.tsx";
 import { SuitesEditor } from "./suites-editor.tsx";
 import { Automation } from "./automation.tsx";
@@ -214,6 +214,13 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                         ) : null}
                         {screen === "lifecycle" ? (
                             <>
+                                <GapLogEditor
+                                    app={app}
+                                    onSave={async (patch) => {
+                                        await client.patchApp(app.id ?? "", patch);
+                                        await reload();
+                                    }}
+                                />
                                 <SuiteRuns client={client} appId={app.id ?? ""} />
                                 <Lifecycle client={client} appId={app.id ?? ""} />
                             </>

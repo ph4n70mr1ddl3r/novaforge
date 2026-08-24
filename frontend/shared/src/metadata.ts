@@ -331,6 +331,21 @@ export interface TranslationsDefinition {
     entries: Record<string, string>;
 }
 
+// --- the gap log (PHASE-7 §1 rule 2 / §8, PHASE-8 §3) ---
+
+export interface GapLogEntry {
+    id: string;
+    area: string;
+    blocker: string;
+    workaround?: string;
+    /** The proposed primitive / flag the gap harvests toward. */
+    proposed?: string;
+    priority: "high" | "medium" | "low";
+    disposition: "open" | "accept-as-platform-feature" | "backlog" | "wontfix-with-workaround" | "closed";
+    /** What resolved the entry — rides triaged dispositions only. */
+    resolvedIn?: string;
+}
+
 // --- integrations (PHASE-6 §2): connectors, webhooks, credential references, imports ---
 
 export interface ConnectorOperation {
@@ -431,6 +446,7 @@ export interface AppDefinition {
     integrations?: IntegrationsDefinition;
     testSuites?: TestSuiteDefinition[];
     translations: TranslationsDefinition[];
+    gapLog?: GapLogEntry[];
 }
 
 /** The published read (PHASE-1 §4): bundle + version for cache keys. */

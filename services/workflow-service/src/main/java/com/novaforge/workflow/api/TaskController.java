@@ -27,14 +27,16 @@ public class TaskController {
         this.tasks = tasks;
     }
 
-    /** My tasks — assigned to me or to my roles; open by default (§5). */
+    /** My tasks — assigned to me or to my roles; open by default (§5), sortable per the Phase 1 conventions. */
     @GetMapping("/tasks")
     public Map<String, Object> myTasks(@RequestParam(required = false) String status,
+                                       @RequestParam(required = false) String sort,
+                                       @RequestParam(required = false) String dir,
                                        @RequestParam(defaultValue = "0") int page,
                                        @RequestParam(defaultValue = "25") int size) {
         var ctx = requireContext();
         var result = tasks.myTasks(UUID.fromString(ctx.tenantId()), UUID.fromString(ctx.actorId()),
-                status, page, Math.min(size, 200));
+                status, sort, dir, page, Math.min(size, 200));
         return Map.of("rows", result.rows().stream().map(t -> t.toJson()).toList(),
                 "total", result.total());
     }

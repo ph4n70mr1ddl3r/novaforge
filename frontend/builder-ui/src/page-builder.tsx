@@ -5,11 +5,11 @@ import {
     PageRenderer,
     applyDeltas,
     catalogEntry,
+    checkPage,
     diffPages,
     pageApiName,
     resolveDefaultPage,
     toPersistedLayout,
-    validatePage,
     type ActionDef,
     type AppDefinition,
     type EntityDefinition,
@@ -53,6 +53,8 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
     const [redoStack, setRedoStack] = useState<BuilderState[]>([]);
     const [selectedKey, setSelectedKey] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    /** Lifecycle warnings (§6 item 2): deprecations surface at save, never block it. */
+    const [warnings, setWarnings] = useState<string[]>([]);
     const [conflict, setConflict] = useState<{ message: string; serverPage: ResolvedPage } | null>(null);
     const [flash, setFlash] = useState<string | null>(null);
 
@@ -100,11 +102,12 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
             node.children?.forEach(stamp);
         };
         stamp(pinned.model.root);
-        const issues = validatePage(pinned.model, { entity, mode: "publish" });
-        if (issues.length > 0) {
-            setError(`Save rejected (${issues.length} issue(s)): ${issues[0]!.message}`);
+        const verdict = checkPage(pinned.model, { entity, mode: "publish" });
+        if (verdict.issues.length > 0) {
+            setError(`Save rejected (${verdict.issues.length} issue(s)): ${verdict.issues[0]!.message}`);
             return;
         }
+        setWarnings(verdict.warnings.map((warning) => `${warning.path}: ${warning.message}`));
         const layout = toPersistedLayout(pinned, current.base);
         try {
             await savePage({
@@ -173,6 +176,13 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
                 </button>
             </div>
             {error ? <p role="alert">{error}</p> : null}
+            {warnings.length > 0 ? (
+                <ul className="nf-warnings" role="status" aria-live="polite">
+                    {warnings.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                    ))}
+                </ul>
+            ) : null}
             {flash ? <p role="status" aria-live="polite">{flash}</p> : null}
             {conflict ? (
                 <div role="alertdialog" aria-label="Concurrent edit" data-testid="rebase-prompt">
@@ -198,6 +208,7 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
                                 key={entry.id}
                                 type="button"
                                 draggable
+                                aria-label={`${entry.id}${entry.status === "deprecated" ? " (deprecated)" : ""}`}
                                 onDragStart={(event) => event.dataTransfer.setData("text/novaforge-component", entry.id)}
                                 onClick={() =>
                                     apply([
@@ -211,6 +222,8 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
                                 }
                             >
                                 {entry.id.replace("novaforge.", "")}
+                                {entry.status === "deprecated" ? " (deprecated)" : ""}
+                                {entry.status === "draft" ? " (draft)" : ""}
                             </button>
                         ))}
                 </div>

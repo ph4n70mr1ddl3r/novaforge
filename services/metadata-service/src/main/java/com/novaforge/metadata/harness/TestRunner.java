@@ -833,7 +833,7 @@ public class TestRunner {
                     app.description(), app.entities(), app.pages(), app.settings(),
                     app.permissionSet(), app.testSuites(), app.stateMachines(), app.slas(),
                     app.jobs(), app.workflows(), app.reports(), app.dashboards(), integrations,
-                    app.translations());
+                    app.translations(), app.gapLog());
         }
 
         boolean serves() {

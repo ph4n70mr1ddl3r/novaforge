@@ -139,10 +139,17 @@ public class TaskStore {
 
     /**
      * The inbox query (§5): tasks assigned to me or to one of my roles, status-filtered
-     * (OPEN by default), server-side paged — the Phase 1 query conventions.
+     * (OPEN by default), server-side paged, sorted per the Phase 1 query conventions
+     * — {@code sort=field} with {@code dir=asc|desc} over the sortable allowlist
+     * ({@code createdAt}, {@code dueAt}), defaulting to oldest-first.
      */
     public Page myTasks(UUID tenantId, UUID actor, List<String> roles, String status,
                         int page, int size) {
+        return myTasks(tenantId, actor, roles, status, "createdAt", "asc", page, size);
+    }
+
+    public Page myTasks(UUID tenantId, UUID actor, List<String> roles, String status,
+                        String sort, String dir, int page, int size) {
         String anyRoles = roles == null || roles.isEmpty() ? null
                 : roles.stream().map(r -> "?").reduce((a, b) -> a + "," + b).orElse(null);
         String filter = "(assignee = ?" + (anyRoles == null ? "" : " OR role IN (" + anyRoles + ")")
@@ -164,9 +171,21 @@ public class TaskStore {
                         + " comment, due_at, warn_at, sla_warned, escalate_to, created_by,"
                         + " context_ref, instance_id, created_at"
                         + " FROM wf_tasks WHERE tenant_id = ? AND " + filter
-                        + " ORDER BY created_at LIMIT ? OFFSET ?",
+                        + " ORDER BY " + orderBy(sort, dir) + " LIMIT ? OFFSET ?",
                 TaskStore::mapRow, paged.toArray());
         return new Page(rows, total == null ? 0 : total);
+    }
+
+    /** The sortable allowlist (§5): mapping to columns happens here, never in SQL text. */
+    private static String orderBy(String sort, String dir) {
+        String column = switch (sort == null ? "createdAt" : sort) {
+            case "dueAt" -> "due_at";
+            case "createdAt" -> "created_at";
+            // Unknown sort fields fall back to the default ordering (the Phase 1
+            // convention rejects them in the DSL; the inbox keeps serving).
+            default -> "created_at";
+        };
+        return column + ("desc".equalsIgnoreCase(dir) ? " DESC" : " ASC") + ", created_at";
     }
 
     private static List<Object> prepend(UUID tenantId, List<Object> params) {

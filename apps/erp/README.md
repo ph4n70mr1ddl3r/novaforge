@@ -12,7 +12,7 @@ application code and exactly one budgeted escape-hatch script (§5, rule 3).
 | `suites/controls.json` | §9 items 2–3: posting immutability (`RECORD_FROZEN`) + period locking (`PERIOD_LOCKED`, incl. §4's soft close — `CLOSING` blocks postings unless `closeJournal`) + reopen |
 | `suites/inventoryCosting.json` | §9 item 4: receipt → issue at weighted average, decimal-exact through the rounding chain |
 | `suites/bankFeed.json` | PHASE-6 T10 / §5 T8: webhook payment (real HMAC path) → settlement → aging reflects it, decimal-exact |
-| `GAP-LOG.md` | The binding phase deliverable (§1 rule 2): every gap logged before any workaround, with dispositions |
+| `GAP-LOG.md` | The binding phase deliverable (§1 rule 2): every gap logged before any workaround, with dispositions — mirrored as `erp-app.json`'s `gapLog` branch (PHASE-8 §3's review surface) |
 
 ## Module map (§2)
 

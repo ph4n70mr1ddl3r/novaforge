@@ -34,6 +34,7 @@ export function Integrations({ app, client, onSave }: IntegrationsProps): ReactN
     const [imports, setImports] = useState<ImportDefinition[]>(branch.imports ?? []);
     const [deliveries, setDeliveries] = useState<Record<string, unknown>[] | null>(null);
     const [dlq, setDlq] = useState<Record<string, unknown>[] | null>(null);
+    const [jobs, setJobs] = useState<Record<string, unknown>[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [flash, setFlash] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
@@ -47,6 +48,10 @@ export function Integrations({ app, client, onSave }: IntegrationsProps): ReactN
             .integrationDlq()
             .then(setDlq)
             .catch(() => setDlq([]));
+        client
+            .integrationJobs()
+            .then(setJobs)
+            .catch(() => setJobs([]));
     };
 
     useEffect(reloadOps, [client]);
@@ -81,6 +86,7 @@ export function Integrations({ app, client, onSave }: IntegrationsProps): ReactN
                 onSave={() => save("import mappings")} />
             <DeliveryLog rows={deliveries} />
             <DlqPanel rows={dlq} client={client} onReplayed={reloadOps} />
+            <JobsPanel rows={jobs} client={client} onChanged={reloadOps} />
         </section>
     );
 }
@@ -536,7 +542,6 @@ function DeliveryLog({ rows }: { rows: Record<string, unknown>[] | null }): Reac
 }
 
 // --- the DLQ (§5/§6): terminal failures with the payload preserved, replayable ---
-
 function DlqPanel({
     rows,
     client,
@@ -602,6 +607,141 @@ function DlqPanel({
                     </tbody>
                 </table>
             )}
+            {outcome ? <p role="status" aria-live="polite">{outcome}</p> : null}
+        </fieldset>
+    );
+}
+
+// --- import/export jobs (§7): the builder progress surface — created, inspected,
+// resumed through the operational APIs; progress counters + the row ledger ---
+
+function JobsPanel({
+    rows,
+    client,
+    onChanged,
+}: {
+    rows: Record<string, unknown>[] | null;
+    client: PlatformClient;
+    onChanged: () => void;
+}): ReactNode {
+    const [ledger, setLedger] = useState<{ job: string; rows: Record<string, unknown>[] } | null>(null);
+    const [busy, setBusy] = useState<string | null>(null);
+    const [outcome, setOutcome] = useState<string | null>(null);
+
+    const resume = async (id: string): Promise<void> => {
+        setBusy(id);
+        try {
+            await client.resumeIntegrationJob(id);
+            setOutcome(`job ${id}: resumed from its checkpoint`);
+            onChanged();
+        } catch (caught) {
+            setOutcome(caught instanceof Error ? caught.message : String(caught));
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    const inspect = async (id: string): Promise<void> => {
+        setBusy(id);
+        try {
+            const jobRows = await client.integrationJobRows(id);
+            setLedger({ job: id, rows: jobRows });
+        } catch (caught) {
+            setOutcome(caught instanceof Error ? caught.message : String(caught));
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    return (
+        <fieldset>
+            <legend>Import / export jobs</legend>
+            <p className="nf-hint">
+                Async runs — imports checkpoint per row (kill → resume applies each row exactly
+                once); progress rides import.progress, completion notifies the initiator.
+            </p>
+            {rows === null ? (
+                <p role="status">Loading jobs…</p>
+            ) : rows.length === 0 ? (
+                <p>No job runs yet — imports and over-cap exports land here.</p>
+            ) : (
+                <table className="nf-table nf-jobs">
+                    <thead>
+                        <tr>
+                            <th scope="col">Kind</th>
+                            <th scope="col">App / target</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Progress</th>
+                            <th scope="col">Failed</th>
+                            <th scope="col">Created</th>
+                            <th scope="col">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows.map((row, index) => {
+                            const id = String(row.id ?? index);
+                            const resumable = row.status === "paused" || row.status === "failed";
+                            return (
+                                <tr key={id} data-job={id}>
+                                    <td>{String(row.kind ?? "")}</td>
+                                    <td>{String(row.entity ?? row.importMapping ?? row.reportId ?? row.app ?? "")}</td>
+                                    <td>{String(row.status ?? "")}</td>
+                                    <td>
+                                        {String(row.processedRows ?? 0)} / {String(row.totalRows ?? "?")}
+                                    </td>
+                                    <td>{String(row.failedRows ?? 0)}</td>
+                                    <td>{String(row.createdAt ?? "")}</td>
+                                    <td>
+                                        <button type="button" disabled={busy === id}
+                                            aria-label={`Inspect rows of job ${id}`}
+                                            onClick={() => void inspect(id)}>
+                                            Rows
+                                        </button>
+                                        {resumable ? (
+                                            <button type="button" disabled={busy === id}
+                                                aria-label={`Resume job ${id}`}
+                                                onClick={() => void resume(id)}>
+                                                Resume
+                                            </button>
+                                        ) : null}
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            )}
+            {ledger ? (
+                <details open data-job-rows={ledger.job}>
+                    <summary>Row ledger — job {ledger.job}</summary>
+                    {ledger.rows.length === 0 ? (
+                        <p>No rows recorded yet.</p>
+                    ) : (
+                        <table className="nf-table nf-job-rows">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Row</th>
+                                    <th scope="col">Status</th>
+                                    <th scope="col">Record</th>
+                                    <th scope="col">Code</th>
+                                    <th scope="col">Detail</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {ledger.rows.map((row, index) => (
+                                    <tr key={index}>
+                                        <td>{String(row.row ?? index)}</td>
+                                        <td>{String(row.status ?? "")}</td>
+                                        <td>{String(row.recordId ?? "—")}</td>
+                                        <td>{String(row.code ?? "—")}</td>
+                                        <td>{String(row.detail ?? "")}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </details>
+            ) : null}
             {outcome ? <p role="status" aria-live="polite">{outcome}</p> : null}
         </fieldset>
     );

@@ -179,6 +179,12 @@ The **Phase 1 exit demo** (create an app via the API, publish, then CRUD records
 validations enforced) runs against that stack — see IMPLEMENTATION.md for the verified
 transcript and `docs/loadtests/` for the measured read/list/write targets.
 
+**API docs (PLAN.md §4):** every service serves its OpenAPI 3 contract at
+`/v3/api-docs` (authenticated like the APIs it describes); the gateway aggregates
+them into one document at `GET /api/v1/openapi.json` — each path carries its owning
+service under `x-novaforge-service`, and an unavailable upstream degrades audibly
+(`info.x-novaforge-unavailable`) instead of failing the edge.
+
 ## Status
 
 **Phases 0–1 complete and verified live; Phases 2–7 partially implemented (all
@@ -220,7 +226,7 @@ dashboards, locale fallback), and the builder shell (entity builder, page builde
 with live preview + rebase, RBAC editors, tenant onboarding, report builder +
 dashboard composer, translation editor, change-set review/promotion) — pages are
 authorable metadata (`PUT …/pages/{apiName}`) with optimistic locking, served
-same-origin by the gateway. Java + 104 frontend tests green under `./mvnw verify` +
+same-origin by the gateway. Java (315) + frontend (146) tests green under `./mvnw verify` +
 `pnpm -r test`. The main remaining surfaces: the later-phase full-stack exit demos
 (Phases 4/5/8 live exercises). Progress ledger:
 [IMPLEMENTATION.md](IMPLEMENTATION.md).

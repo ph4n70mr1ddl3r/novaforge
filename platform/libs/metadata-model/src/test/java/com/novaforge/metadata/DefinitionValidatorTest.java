@@ -764,4 +764,59 @@ class DefinitionValidatorTest {
         assertThat(mentions(validate(reportingApp(branches.replace("__EXTRA__",
                 ", \"refreshSeconds\": 7200"))), "refreshSeconds is")).isTrue();
     }
+
+    // --- the gap-log branch (PHASE-7 §1 rule 2 / §8, PHASE-8 §3) ---
+
+    private static AppDefinition withGaps(AppDefinition app, String gapsJson) {
+        return DefinitionParser.parseApp(MetadataModelRoundTripTest.JOURNAL_APP
+                .replaceFirst("\\s*\\}$", ", \"gapLog\": " + gapsJson + "}"));
+    }
+
+    @Test
+    @DisplayName("rule: gap-log entries carry the §8 triage shape; resolving dispositions ride resolvedIn")
+    void gapLogShape() {
+        String valid = "[" + "{ \"id\": \"G-1\", \"area\": \"P3\", \"blocker\": \"b\","
+                + " \"priority\": \"high\", \"disposition\": \"open\" }," 
+                + "{ \"id\": \"G-2\", \"area\": \"P4\", \"blocker\": \"b\","
+                + " \"priority\": \"low\", \"disposition\": \"closed\", \"resolvedIn\": \"v3\" }]";
+        assertThat(validate(withGaps(baseApp(), valid)).isEmpty()).isTrue();
+
+        assertThat(mentions(validate(withGaps(baseApp(),
+                "[{ \"id\": \"G 1\", \"area\": \"P3\", \"blocker\": \"b\","
+                        + " \"priority\": \"high\", \"disposition\": \"open\" }]")),
+                "gap id must be shaped")).isTrue();
+        assertThat(mentions(validate(withGaps(baseApp(),
+                "[{ \"id\": \"G-1\", \"area\": \"\", \"blocker\": \"b\","
+                        + " \"priority\": \"high\", \"disposition\": \"open\" }]")),
+                "gap area must not be blank")).isTrue();
+        assertThat(mentions(validate(withGaps(baseApp(),
+                "[{ \"id\": \"G-1\", \"area\": \"P3\", \"blocker\": \"b\","
+                        + " \"priority\": \"urgent\", \"disposition\": \"open\" }]")),
+                "gap priority must be one of")).isTrue();
+        assertThat(mentions(validate(withGaps(baseApp(),
+                "[{ \"id\": \"G-1\", \"area\": \"P3\", \"blocker\": \"b\","
+                        + " \"priority\": \"high\", \"disposition\": \"shipped\" }]")),
+                "gap disposition must be one of")).isTrue();
+        assertThat(mentions(validate(withGaps(baseApp(),
+                "[{ \"id\": \"G-1\", \"area\": \"P3\", \"blocker\": \"b\","
+                        + " \"priority\": \"high\", \"disposition\": \"backlog\","
+                        + " \"resolvedIn\": \"v3\" }]")),
+                "resolvedIn only rides triaged entries")).isTrue();
+        assertThat(mentions(validate(withGaps(baseApp(),
+                "[{ \"id\": \"G-1\", \"area\": \"P3\", \"blocker\": \"b\","
+                        + " \"priority\": \"high\", \"disposition\": \"open\" },"
+                        + "{ \"id\": \"G-1\", \"area\": \"P3\", \"blocker\": \"b\","
+                        + " \"priority\": \"high\", \"disposition\": \"open\" }]")),
+                "gap id must be unique")).isTrue();
+    }
+
+    @Test
+    @DisplayName("resolving(): accepted-as-feature and closed count; backlog/wontfix do not")
+    void gapLogResolvingDispositions() {
+        assertThat(GapLogEntry.resolving("accept-as-platform-feature")).isTrue();
+        assertThat(GapLogEntry.resolving("closed")).isTrue();
+        assertThat(GapLogEntry.resolving("backlog")).isFalse();
+        assertThat(GapLogEntry.resolving("wontfix-with-workaround")).isFalse();
+        assertThat(GapLogEntry.resolving("open")).isFalse();
+    }
 }

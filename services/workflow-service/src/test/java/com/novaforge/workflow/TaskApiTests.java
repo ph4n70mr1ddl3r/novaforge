@@ -185,6 +185,47 @@ class TaskApiTests extends PostgresTestBase {
                 .andExpect(jsonPath("$.total").value(0));
     }
 
+
+    @Test
+    @DisplayName("the inbox sorts per the Phase 1 conventions: createdAt default, dueAt desc over the allowlist (§5)")
+    void inboxSorts() throws Exception {
+        // three tasks with distinct due dates; creation order is seed order
+        java.time.Instant base = java.time.Instant.now();
+        UUID first = tasks.create(TENANT, "approval", "Purch.PurchaseOrder",
+                UUID.randomUUID(), MANAGER, null, base.plusSeconds(3_000), null, CLERK, null).id();
+        UUID second = tasks.create(TENANT, "approval", "Purch.PurchaseOrder",
+                UUID.randomUUID(), MANAGER, null, base.plusSeconds(1_000), null, CLERK, null).id();
+        UUID third = tasks.create(TENANT, "todo", "Purch.PurchaseOrder",
+                UUID.randomUUID(), MANAGER, null, base.plusSeconds(2_000), null, CLERK, null).id();
+
+        // default: oldest first (creation order)
+        MvcResult defaultOrder = mockMvc.perform(get("/api/v1/workflow/tasks").with(jwtFor(MANAGER)))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(idsOf(defaultOrder)).containsExactly(first.toString(), second.toString(),
+                third.toString());
+
+        // sort=dueAt&dir=desc: the nearest deadline last
+        MvcResult byDue = mockMvc.perform(get("/api/v1/workflow/tasks")
+                        .queryParam("sort", "dueAt").queryParam("dir", "desc")
+                        .with(jwtFor(MANAGER)))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(idsOf(byDue)).containsExactly(first.toString(), third.toString(),
+                second.toString());
+
+        // an unknown sort field falls back to the default ordering (the inbox keeps serving)
+        MvcResult unknown = mockMvc.perform(get("/api/v1/workflow/tasks")
+                        .queryParam("sort", "nope").with(jwtFor(MANAGER)))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(idsOf(unknown)).containsExactly(first.toString(), second.toString(),
+                third.toString());
+    }
+
+    private static List<String> idsOf(MvcResult result) throws Exception {
+        List<String> ids = new java.util.ArrayList<>();
+        MAPPER.readTree(result.getResponse().getContentAsString()).get("rows")
+                .forEach(row -> ids.add(row.get("id").asString()));
+        return ids;
+    }
     @Test
     @DisplayName("approve/reject resolve with the comment and emit task.* on the spine (§5)")
     void resolutionEmitsEvents() throws Exception {
