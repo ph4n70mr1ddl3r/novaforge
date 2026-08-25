@@ -1,5 +1,6 @@
 package com.novaforge.security;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -42,6 +43,14 @@ class ServiceClientGateTest {
     void serviceClientByClientId() {
         authenticate(jwt(ServiceClientGate.CLIENT_ID, ServiceClientGate.CLIENT_ID));
         assertThatCode(() -> ServiceClientGate.require("resume")).doesNotThrowAnyException();
+        assertThat(ServiceClientGate.isServiceClient()).isTrue();
+    }
+
+    @Test
+    @DisplayName("the non-throwing twin reads the same verdict for user traffic")
+    void isServiceClientForUsers() {
+        authenticate(jwt("novaforge-api", "novaforge-api"));
+        assertThat(ServiceClientGate.isServiceClient()).isFalse();
     }
 
     @Test

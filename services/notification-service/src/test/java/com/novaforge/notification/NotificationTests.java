@@ -140,7 +140,7 @@ class NotificationTests extends PostgresTestBase {
     @Test
     @DisplayName("task.assigned fans out: inbox row, template tokens, both channels (§8)")
     void assignmentFansOut() throws Exception {
-        consumer.onEvent(assignedEvent(MANAGER.toString(), null));
+        consumer.onEvent(record(assignedEvent(MANAGER.toString(), null)));
         // wait — assignee-targeted: one inbox row, one email, one delivered per channel
         org.assertj.core.api.Assertions.assertThat(
                 jdbc.queryForObject("SELECT count(*) FROM nf_notifications",
@@ -178,7 +178,7 @@ class NotificationTests extends PostgresTestBase {
                                   "email": false } """))
                 .andExpect(status().isOk());
 
-        consumer.onEvent(assignedEvent(null, "Purch.manager"));
+        consumer.onEvent(record(assignedEvent(null, "Purch.manager")));
         org.assertj.core.api.Assertions.assertThat(
                 jdbc.queryForObject("SELECT count(*) FROM nf_notifications",
                         Integer.class)).isEqualTo(1);
@@ -191,7 +191,7 @@ class NotificationTests extends PostgresTestBase {
     @Test
     @DisplayName("synthetic actors have no channels — no inbox, no email, no delivered (§8, ADR-010 #3)")
     void syntheticActorsSkipped() {
-        consumer.onEvent(assignedEvent(SCRATCH_ACTOR.toString(), null));
+        consumer.onEvent(record(assignedEvent(SCRATCH_ACTOR.toString(), null)));
         org.assertj.core.api.Assertions.assertThat(
                 jdbc.queryForObject("SELECT count(*) FROM nf_notifications",
                         Integer.class)).isZero();
@@ -277,6 +277,14 @@ class NotificationTests extends PostgresTestBase {
     // --- helpers ---
 
     static final String RECORD = UUID.randomUUID().toString();
+
+    /** A consumer record wrapping the payload — the listener takes the record so it
+     *  can read the spine's traceparent header (ARCHITECTURE.md §6). */
+    private static org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record(
+            String payload) {
+        return new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                "novaforge.task", 0, 0L, "key", payload);
+    }
 
     private static String assignedEvent(String assignee, String role) {
         return """

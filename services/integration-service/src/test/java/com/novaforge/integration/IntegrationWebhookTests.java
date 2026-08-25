@@ -439,12 +439,12 @@ class IntegrationWebhookTests extends PostgresTestBase {
     void outboundDispatchSignsAndFilters() {
         withOutboundWebhook(ignored -> {
             RECEIVED.clear();
-            outbound.onEvent(MAPPER.writeValueAsString(Map.of(
+            outbound.onEvent(record(MAPPER.writeValueAsString(Map.of(
                     "event", "record.created", "eventId", UUID.randomUUID().toString(),
                     "tenantId", TENANT.toString(), "entityId", "Payment",
                     "recordId", UUID.randomUUID().toString(),
                     "actorId", UUID.randomUUID().toString(),
-                    "occurredAt", Instant.now().toString())));
+                    "occurredAt", Instant.now().toString()))));
             assertThat(RECEIVED).hasSize(1);
             String[] parts = RECEIVED.peek().split("\\|");
             assertThat(parts[1]).isNotBlank();   // timestamp header carried
@@ -452,12 +452,12 @@ class IntegrationWebhookTests extends PostgresTestBase {
             // (verified structurally here: hex, non-blank; the matrix above pins the scheme)
             assertThat(parts[2]).matches("[0-9a-f]{64}");
             // a non-matching event filters out
-            outbound.onEvent(MAPPER.writeValueAsString(Map.of(
+            outbound.onEvent(record(MAPPER.writeValueAsString(Map.of(
                     "event", "record.updated", "eventId", UUID.randomUUID().toString(),
                     "tenantId", TENANT.toString(), "entityId", "Payment",
                     "recordId", UUID.randomUUID().toString(),
                     "actorId", UUID.randomUUID().toString(),
-                    "occurredAt", Instant.now().toString())));
+                    "occurredAt", Instant.now().toString()))));
             assertThat(RECEIVED).hasSize(1);
         });
     }
@@ -475,7 +475,7 @@ class IntegrationWebhookTests extends PostgresTestBase {
                     "occurredAt", Instant.now().toString()));
             FAIL_FIRST.set(99);   // every attempt fails → DLQ
             RECEIVED.clear();
-            outbound.onEvent(raw);
+            outbound.onEvent(record(raw));
             assertThat(RECEIVED).hasSize(3);   // attempts=3 exhausted
             var parked = deliveries.dlq(TENANT, DeliveryStore.KIND_WEBHOOK_OUTBOUND, true);
             assertThat(parked).anySatisfy(entry -> assertThat(entry.target())
@@ -494,4 +494,12 @@ class IntegrationWebhookTests extends PostgresTestBase {
             deliveries.markReplayed(TENANT, dlqId);
         });
     }
+    /** A consumer record wrapping the payload — the dispatcher reads the spine's
+     *  traceparent header off the record (ARCHITECTURE.md §6). */
+    private static org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record(
+            String payload) {
+        return new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                "novaforge.record", 0, 0L, "key", payload);
+    }
+
 }

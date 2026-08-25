@@ -26,9 +26,11 @@ public class DeliveryStore {
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     private final JdbcTemplate jdbc;
+    private final io.micrometer.tracing.Tracer tracer;
 
-    public DeliveryStore(JdbcTemplate jdbc) {
+    public DeliveryStore(JdbcTemplate jdbc, io.micrometer.tracing.Tracer tracer) {
         this.jdbc = jdbc;
+        this.tracer = tracer;
     }
 
     public static final String KIND_CONNECTOR = "connector";
@@ -177,6 +179,10 @@ public class DeliveryStore {
         envelope.put("eventId", UUID.randomUUID().toString());
         envelope.put("tenantId", tenantId.toString());
         envelope.put("occurredAt", Instant.now().toString());
+        String traceparent = com.novaforge.security.TracePropagation.capture(tracer);
+        if (traceparent != null) {
+            envelope.put("traceparent", traceparent);
+        }
         jdbc.update("""
                 INSERT INTO it_event_outbox (id, tenant_id, event_type, payload)
                 VALUES (?, ?, ?, ?::jsonb)""",

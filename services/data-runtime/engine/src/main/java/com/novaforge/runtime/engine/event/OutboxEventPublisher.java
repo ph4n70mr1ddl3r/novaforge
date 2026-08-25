@@ -1,6 +1,8 @@
 package com.novaforge.runtime.engine.event;
 
 import com.novaforge.runtime.storage.outbox.OutboxStore;
+import com.novaforge.security.TracePropagation;
+import io.micrometer.tracing.Tracer;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -11,15 +13,19 @@ import org.springframework.stereotype.Component;
  * The Phase 3 event-seam binding (PHASE-3 §4): record events ride the creating
  * transaction as outbox rows ({@code record.created/updated/deleted}); the relay
  * publishes them to the Kafka spine at-least-once after commit. Payloads carry the
- * event id used for consumer dedup and the tenant/entity/record identifiers.
+ * event id used for consumer dedup and the tenant/entity/record identifiers, plus
+ * the captured W3C {@code traceparent} of the causing request (ARCHITECTURE §6 /
+ * PHASE-3 §4) — the relay lifts it into the Kafka header where consumers link.
  */
 @Component
 public class OutboxEventPublisher implements DomainEventPublisher {
 
     private final OutboxStore outbox;
+    private final Tracer tracer;
 
-    public OutboxEventPublisher(OutboxStore outbox) {
+    public OutboxEventPublisher(OutboxStore outbox, Tracer tracer) {
         this.outbox = outbox;
+        this.tracer = tracer;
     }
 
     @Override
@@ -38,6 +44,10 @@ public class OutboxEventPublisher implements DomainEventPublisher {
         payload.put("actorId", event.actorId().toString());
         payload.put("occurredAt", event.occurredAt() == null ? Instant.now().toString() : event.occurredAt());
         payload.putAll(metadata);
+        String traceparent = TracePropagation.capture(tracer);
+        if (traceparent != null) {
+            payload.put("traceparent", traceparent);
+        }
         outbox.append(UUID.randomUUID(), event.tenantId(), event.entityId(), event.recordId(),
                 event.event(), payload);
     }

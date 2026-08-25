@@ -43,13 +43,15 @@ public class AttachmentService {
     private final int presignExpirySeconds;
     private final long maxSizeBytes;
     private final Clock clock;
+    private final io.micrometer.tracing.Tracer tracer;
 
     public AttachmentService(JdbcTemplate jdbc, StoragePort storage,
                              Optional<VirusScanner> scanner,
                              @Value("${novaforge.file.clamav.enabled:false}") boolean clamavEnabled,
                              @Value("${novaforge.file.presign-expiry-seconds:900}") int presignExpirySeconds,
                              @Value("${novaforge.file.max-size-bytes:52428800}") long maxSizeBytes,
-                             Clock clock) {
+                             Clock clock,
+                             io.micrometer.tracing.Tracer tracer) {
         this.jdbc = jdbc;
         this.storage = storage;
         this.scanner = scanner;
@@ -57,6 +59,7 @@ public class AttachmentService {
         this.presignExpirySeconds = presignExpirySeconds;
         this.maxSizeBytes = maxSizeBytes;
         this.clock = clock;
+        this.tracer = tracer;
     }
 
     public record UploadGrant(UUID id, String uploadUrl, Instant expiresAt) {
@@ -251,6 +254,10 @@ public class AttachmentService {
         envelope.put("eventId", UUID.randomUUID().toString());
         envelope.put("tenantId", tenantId.toString());
         envelope.put("occurredAt", Instant.now(clock).toString());
+        String traceparent = com.novaforge.security.TracePropagation.capture(tracer);
+        if (traceparent != null) {
+            envelope.put("traceparent", traceparent);
+        }
         jdbc.update("""
                 INSERT INTO fl_event_outbox (id, tenant_id, event_type, payload)
                 VALUES (?, ?, ?, ?::jsonb)""",

@@ -1,10 +1,15 @@
 package com.novaforge.runtime.engine.metadata;
 
 import com.novaforge.runtime.storage.materializer.Materializer;
+import com.novaforge.security.EventHeaders;
+import com.novaforge.security.TracePropagation;
+import io.micrometer.tracing.Tracer;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -34,6 +39,7 @@ public class MetadataPublishedSubscriber {
     private final EntityResolver resolver;
     private final MetadataClient client;
     private final Materializer materializer;
+    private final Tracer tracer;
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final ExecutorService materializerExecutor = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "metadata-materializer");
@@ -43,14 +49,24 @@ public class MetadataPublishedSubscriber {
 
     public MetadataPublishedSubscriber(EntityResolver resolver,
                                        MetadataClient client,
-                                       Materializer materializer) {
+                                       Materializer materializer,
+                                       Tracer tracer) {
         this.resolver = resolver;
         this.client = client;
         this.materializer = materializer;
+        this.tracer = tracer;
     }
 
     @KafkaListener(topics = TOPIC, groupId = "novaforge-runtime-metadata")
-    public void onMetadataPublished(String message) {
+    public void onMetadataPublished(ConsumerRecord<String, String> message) {
+        var header = message.headers().lastHeader(EventHeaders.TRACEPARENT);
+        String traceparent = header == null ? null
+                : new String(header.value(), StandardCharsets.UTF_8);
+        TracePropagation.inConsumerSpan(tracer, traceparent,
+                "novaforge.metadata consume", () -> handle(message.value()));
+    }
+
+    void handle(String message) {
         try {
             Map<String, Object> envelope = mapper.readValue(message, Map.class);
             UUID tenantId = UUID.fromString(String.valueOf(envelope.get("tenantId")));

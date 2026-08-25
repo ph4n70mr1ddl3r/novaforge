@@ -18,14 +18,16 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
  * RestClient binding to the Metadata Service (PHASE-1 §4): the published-apps index and
- * per-app published bundles, with the caller's bearer token relayed from the incoming
- * request.
+ * per-app published bundles, always read with the platform service account — this is
+ * the runtime's internal write-path resolution (hooks, machines, roll-ups need the
+ * full bundle), not user rendering: the published read serves user callers a
+ * script/credential-stripped rendering view (ARCHITECTURE.md §2.3) and admits the
+ * trusted service client to the full bundle. The owning tenant is resolved
+ * server-side from the app id, so the service account needs no tenant claim.
  */
 @Component
 public class RestMetadataClient implements MetadataClient {
@@ -70,28 +72,14 @@ public class RestMetadataClient implements MetadataClient {
         try {
             return restClient.method(HttpMethod.GET)
                     .uri(path)
-                    .headers(this::relayAuth)
+                    .headers(headers -> headers.set(HttpHeaders.AUTHORIZATION,
+                            "Bearer " + serviceToken()))
                     .retrieve()
                     .body(type);
         } catch (Exception e) {
             throw new PlatformException(PlatformErrorCode.INTERNAL,
                     "metadata service call failed: " + e.getMessage(), null, e);
         }
-    }
-
-    /**
-     * Principal relay: user requests forward their bearer token; context-free calls
-     * (startup catch-up, the publish subscriber) fall back to the service account.
-     */
-    private void relayAuth(HttpHeaders headers) {
-        if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes) {
-            String authorization = attributes.getRequest().getHeader(HttpHeaders.AUTHORIZATION);
-            if (authorization != null && !authorization.isBlank()) {
-                headers.set(HttpHeaders.AUTHORIZATION, authorization);
-                return;
-            }
-        }
-        headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + serviceToken());
     }
 
     @SuppressWarnings("unchecked")

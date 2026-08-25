@@ -288,8 +288,8 @@ class HookRetryTests extends PostgresTestBase {
                   "trigger": "afterSave", "hook": "fileNote", "kind": "flow", "attempt": 1,
                   "error": "redelivery probe" }"""
                 .formatted(eventId, TENANT, UUID.randomUUID(), ACTOR);
-        consumer.onEvent(payload);
-        consumer.onEvent(payload);   // the redelivery
+        consumer.onEvent(record(payload));
+        consumer.onEvent(record(payload));   // the redelivery
         Map<String, Object> row = retries.statusOf(eventId);
         assertThat(row).containsEntry("status", "pending");
         assertThat(jdbc.queryForObject(
@@ -336,4 +336,12 @@ class HookRetryTests extends PostgresTestBase {
                 .jwt(token -> token.claim("tenant_id", tenant.toString()).subject(ACTOR.toString()))
                 .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
     }
+    /** A consumer record wrapping the payload — the listener reads the spine's
+     *  traceparent header off the record (ARCHITECTURE.md §6). */
+    private static org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record(
+            String payload) {
+        return new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                "novaforge.hook", 0, 0L, "key", payload);
+    }
+
 }

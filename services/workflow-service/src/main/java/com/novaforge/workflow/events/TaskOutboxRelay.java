@@ -1,9 +1,11 @@
 package com.novaforge.workflow.events;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import com.novaforge.security.EventHeaders;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,12 +60,17 @@ public class TaskOutboxRelay {
                         ? eventType.substring(0, eventType.indexOf('.')) : eventType);
                 ProducerRecord<String, String> record = new ProducerRecord<>(topic,
                         entry.get("tenant_id") + ":" + entry.get("task_id"), payload);
-                record.headers().add("X-Event-Id",
-                        String.valueOf(event.get("eventId")).getBytes());
-                record.headers().add("X-Event-Type",
-                        String.valueOf(event.get("event")).getBytes());
-                record.headers().add("X-Tenant-Id",
-                        String.valueOf(entry.get("tenant_id")).getBytes());
+                record.headers().add(EventHeaders.EVENT_ID,
+                        String.valueOf(event.get("eventId")).getBytes(StandardCharsets.UTF_8));
+                record.headers().add(EventHeaders.EVENT_TYPE,
+                        String.valueOf(event.get("event")).getBytes(StandardCharsets.UTF_8));
+                record.headers().add(EventHeaders.TENANT_ID,
+                        String.valueOf(entry.get("tenant_id")).getBytes(StandardCharsets.UTF_8));
+                if (event.get("traceparent") instanceof String traceparent
+                        && !traceparent.isBlank()) {
+                    record.headers().add(EventHeaders.TRACEPARENT,
+                            traceparent.getBytes(StandardCharsets.UTF_8));
+                }
                 kafka.send(record).get();
                 published.add(id);
             } catch (Exception e) {

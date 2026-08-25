@@ -40,11 +40,14 @@ public class Notifier {
     private final JdbcTemplate jdbc;
     private final EmailPort email;
     private final RecipientResolver recipients;
+    private final io.micrometer.tracing.Tracer tracer;
 
-    public Notifier(JdbcTemplate jdbc, EmailPort email, RecipientResolver recipients) {
+    public Notifier(JdbcTemplate jdbc, EmailPort email, RecipientResolver recipients,
+                    io.micrometer.tracing.Tracer tracer) {
         this.jdbc = jdbc;
         this.email = email;
         this.recipients = recipients;
+        this.tracer = tracer;
     }
 
     /** One spine event fanned out to its recipients' channels. */
@@ -136,6 +139,10 @@ public class Notifier {
         payload.put("channel", channel);
         payload.put("category", category);
         payload.put("occurredAt", java.time.Instant.now().toString());
+        String traceparent = com.novaforge.security.TracePropagation.capture(tracer);
+        if (traceparent != null) {
+            payload.put("traceparent", traceparent);
+        }
         jdbc.update("""
                 INSERT INTO nf_event_outbox (id, tenant_id, event_type, payload)
                 VALUES (?, ?, 'notification.delivered', ?::jsonb)""",

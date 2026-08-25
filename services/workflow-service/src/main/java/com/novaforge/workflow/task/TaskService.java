@@ -33,16 +33,19 @@ public class TaskService {
     private final RoleLookup roles;
     private final org.springframework.beans.factory.ObjectProvider<SuspensionService> suspensions;
     private final org.springframework.beans.factory.ObjectProvider<com.novaforge.workflow.process.ProcessTaskBridge> processTasks;
+    private final io.micrometer.tracing.Tracer tracer;
 
     public TaskService(TaskStore tasks, org.springframework.jdbc.core.JdbcTemplate jdbc,
                        RoleLookup roles,
                        org.springframework.beans.factory.ObjectProvider<SuspensionService> suspensions,
-                       org.springframework.beans.factory.ObjectProvider<com.novaforge.workflow.process.ProcessTaskBridge> processTasks) {
+                       org.springframework.beans.factory.ObjectProvider<com.novaforge.workflow.process.ProcessTaskBridge> processTasks,
+                       io.micrometer.tracing.Tracer tracer) {
         this.tasks = tasks;
         this.jdbc = jdbc;
         this.roles = roles;
         this.suspensions = suspensions;
         this.processTasks = processTasks;
+        this.tracer = tracer;
     }
 
     /** Creates a task (OPEN) with its lifecycle events on the outbox. */
@@ -261,6 +264,10 @@ public class TaskService {
         payload.put("occurredAt", Instant.now().toString());
         if (comment != null) {
             payload.put("comment", comment);
+        }
+        String traceparent = com.novaforge.security.TracePropagation.capture(tracer);
+        if (traceparent != null) {
+            payload.put("traceparent", traceparent);
         }
         jdbc.update("""
                 INSERT INTO wf_event_outbox (id, tenant_id, task_id, event_type, payload)

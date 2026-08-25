@@ -1,9 +1,14 @@
 package com.novaforge.workflow.events;
 
+import com.novaforge.security.EventHeaders;
+import com.novaforge.security.TracePropagation;
 import com.novaforge.workflow.process.ProcessStarts;
 import com.novaforge.workflow.task.TaskService;
+import io.micrometer.tracing.Tracer;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -28,14 +33,24 @@ public class RecordEventConsumer {
 
     private final TaskService tasks;
     private final ProcessStarts starts;
+    private final Tracer tracer;
 
-    public RecordEventConsumer(TaskService tasks, ProcessStarts starts) {
+    public RecordEventConsumer(TaskService tasks, ProcessStarts starts, Tracer tracer) {
         this.tasks = tasks;
         this.starts = starts;
+        this.tracer = tracer;
     }
 
     @KafkaListener(topics = "novaforge.record", groupId = "novaforge-workflow")
-    public void onEvent(String payload) {
+    public void onEvent(ConsumerRecord<String, String> message) {
+        var header = message.headers().lastHeader(EventHeaders.TRACEPARENT);
+        String traceparent = header == null ? null
+                : new String(header.value(), StandardCharsets.UTF_8);
+        TracePropagation.inConsumerSpan(tracer, traceparent,
+                "novaforge.record consume", () -> consume(message.value()));
+    }
+
+    void consume(String payload) {
         Map<String, Object> event;
         try {
             event = MAPPER.readValue(payload, Map.class);

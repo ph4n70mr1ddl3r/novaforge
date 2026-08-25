@@ -1,10 +1,15 @@
 package com.novaforge.runtime.events;
 
 import com.novaforge.runtime.storage.retry.HookRetryStore;
+import com.novaforge.security.EventHeaders;
+import com.novaforge.security.TracePropagation;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.tracing.Tracer;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -34,15 +39,28 @@ public class HookRetryConsumer {
     private final HookRetryStore retries;
     private final io.micrometer.core.instrument.Counter deduped;
     private final io.micrometer.core.instrument.Counter scriptParked;
+    private final Tracer tracer;
 
-    public HookRetryConsumer(HookRetryStore retries, MeterRegistry meters) {
+    public HookRetryConsumer(HookRetryStore retries, MeterRegistry meters, Tracer tracer) {
         this.retries = retries;
         this.deduped = meters.counter("novaforge.hook.retry.outcome", "result", "deduped");
         this.scriptParked = meters.counter("novaforge.hook.retry.outcome", "result", "script_parked");
+        this.tracer = tracer;
     }
 
     @KafkaListener(topics = "novaforge.hook", groupId = "novaforge-hook-retry")
-    public void onEvent(String payload) {
+    public void onEvent(ConsumerRecord<String, String> message) {
+        TracePropagation.inConsumerSpan(tracer, traceparent(message),
+                "novaforge.hook consume", () -> consume(message.value()));
+    }
+
+    /** The W3C link the relay stamped (ARCHITECTURE.md §6), when present. */
+    static String traceparent(ConsumerRecord<String, String> message) {
+        var header = message.headers().lastHeader(EventHeaders.TRACEPARENT);
+        return header == null ? null : new String(header.value(), StandardCharsets.UTF_8);
+    }
+
+    void consume(String payload) {
         try {
             Map<String, Object> event = MAPPER.readValue(payload, Map.class);
             if (!"hook.retry".equals(event.get("event"))) {

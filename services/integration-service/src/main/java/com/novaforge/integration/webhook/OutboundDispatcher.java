@@ -6,12 +6,17 @@ import com.novaforge.integration.store.DeliveryStore;
 import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.WebhookDefinition;
 import com.novaforge.expression.Expression;
+import com.novaforge.security.EventHeaders;
+import com.novaforge.security.TracePropagation;
+import io.micrometer.tracing.Tracer;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -43,12 +48,14 @@ public class OutboundDispatcher {
     private final SecretStore secrets;
     private final DeliveryStore deliveries;
     private final HmacScheme hmac;
+    private final io.micrometer.tracing.Tracer tracer;
     private final int attempts;
     private final long backoffInitial;
     private final long backoffMax;
 
     public OutboundDispatcher(PublishedIntegrations definitions, SecretStore secrets,
                               DeliveryStore deliveries, HmacScheme hmac,
+                              io.micrometer.tracing.Tracer tracer,
                               @Value("${novaforge.webhook.attempts:5}") int attempts,
                               @Value("${novaforge.webhook.backoff-initial-ms:200}") long backoffInitial,
                               @Value("${novaforge.webhook.backoff-max-ms:2000}") long backoffMax) {
@@ -56,6 +63,7 @@ public class OutboundDispatcher {
         this.secrets = secrets;
         this.deliveries = deliveries;
         this.hmac = hmac;
+        this.tracer = tracer;
         this.attempts = attempts;
         this.backoffInitial = backoffInitial;
         this.backoffMax = backoffMax;
@@ -63,7 +71,15 @@ public class OutboundDispatcher {
 
     /** The spine: every family topic (record.*, app events, platform events alike). */
     @KafkaListener(topicPattern = "novaforge\\..*", groupId = "novaforge-integration-dispatch")
-    public void onEvent(String payload) {
+    public void onEvent(ConsumerRecord<String, String> message) {
+        var header = message.headers().lastHeader(EventHeaders.TRACEPARENT);
+        String traceparent = header == null ? null
+                : new String(header.value(), StandardCharsets.UTF_8);
+        TracePropagation.inConsumerSpan(tracer, traceparent,
+                "novaforge dispatch consume", () -> consume(message.value()));
+    }
+
+    void consume(String payload) {
         Map<String, Object> event;
         try {
             event = MAPPER.readValue(payload, Map.class);

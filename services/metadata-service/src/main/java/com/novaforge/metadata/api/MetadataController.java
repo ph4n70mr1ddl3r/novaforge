@@ -150,7 +150,12 @@ public class MetadataController {
 
     /** The runtime read path for rendering: bundle + version for cache keys (§4).
      * User callers are tenant-scoped by their claim; the service client (no tenant
-     * claim) resolves the owning tenant server-side — same service path as the index. */
+     * claim) resolves the owning tenant server-side — same service path as the index.
+     * The view is caller-shaped (ARCHITECTURE.md §2.3): user callers receive the
+     * rendering view — escape-hatch script artifacts and credential references never
+     * ride user-facing metadata (scripts execute server-side; secrets never ride
+     * metadata, PHASE-6 §9) — while the trusted service client (the Data Runtime and
+     * the definition-consuming services) reads the full bundle its write path needs. */
     @GetMapping("/apps/{appId}/published")
     public Map<String, Object> published(@PathVariable UUID appId) {
         UUID tenantId = TenantContext.current()
@@ -159,7 +164,9 @@ public class MetadataController {
                 .orElseThrow(() -> new PlatformException(PlatformErrorCode.TENANT_MISSING,
                         "no tenant context bound (missing tenant_id claim?)"));
         MetadataStore.PublishedBundle bundle = definitions.published(tenantId, appId);
-        return Map.of("version", bundle.version(), "app", bundle.app());
+        AppDefinition app = com.novaforge.security.ServiceClientGate.isServiceClient()
+                ? bundle.app() : RenderingView.of(bundle.app());
+        return Map.of("version", bundle.version(), "app", app);
     }
 
     /**

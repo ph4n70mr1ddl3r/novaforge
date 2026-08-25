@@ -1,5 +1,9 @@
 package com.novaforge.notification.events;
 
+import com.novaforge.security.EventHeaders;
+import com.novaforge.security.TracePropagation;
+import io.micrometer.tracing.Tracer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -56,9 +60,17 @@ public class NotificationOutboxRelay {
                         ? eventType.substring(0, eventType.indexOf('.')) : eventType);
                 ProducerRecord<String, String> record = new ProducerRecord<>(topic,
                         String.valueOf(entry.get("tenant_id")), payload);
-                record.headers().add("X-Event-Id",
-                        String.valueOf(event.get("eventId")).getBytes());
-                record.headers().add("X-Event-Type", eventType.getBytes());
+                record.headers().add(EventHeaders.EVENT_ID,
+                        String.valueOf(event.get("eventId")).getBytes(StandardCharsets.UTF_8));
+                record.headers().add(EventHeaders.EVENT_TYPE,
+                        eventType.getBytes(StandardCharsets.UTF_8));
+                record.headers().add(EventHeaders.TENANT_ID,
+                        String.valueOf(entry.get("tenant_id")).getBytes(StandardCharsets.UTF_8));
+                if (event.get("traceparent") instanceof String traceparent
+                        && !traceparent.isBlank()) {
+                    record.headers().add(EventHeaders.TRACEPARENT,
+                            traceparent.getBytes(StandardCharsets.UTF_8));
+                }
                 kafka.send(record).get();
                 published.add(id);
             } catch (Exception e) {

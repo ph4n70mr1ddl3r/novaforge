@@ -4,13 +4,18 @@ import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
 import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.DefinitionParser;
+import com.novaforge.security.EventHeaders;
 import com.novaforge.security.ServiceTokenClient;
+import com.novaforge.security.TracePropagation;
+import io.micrometer.tracing.Tracer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -42,6 +47,7 @@ public class PublishedIntegrations {
     private final RestClient metadata;
     private final StringRedisTemplate redis;
     private final ServiceTokenClient serviceToken;
+    private final Tracer tracer;
     private final Map<String, Cached> cache = new ConcurrentHashMap<>();
 
     /** The hermetic base for tests and tools: no listener, no fetch — override the lookups. */
@@ -49,15 +55,18 @@ public class PublishedIntegrations {
         this.metadata = null;
         this.redis = null;
         this.serviceToken = null;
+        this.tracer = null;
     }
 
     public PublishedIntegrations(
             @Value("${novaforge.metadata.url:http://localhost:8081}") String metadataUrl,
             StringRedisTemplate redis,
-            ServiceTokenClient serviceToken) {
+            ServiceTokenClient serviceToken,
+            Tracer tracer) {
         this.metadata = RestClient.builder().baseUrl(metadataUrl).build();
         this.redis = redis;
         this.serviceToken = serviceToken;
+        this.tracer = tracer;
     }
 
     /**
@@ -67,7 +76,15 @@ public class PublishedIntegrations {
      * (an epoch increment is idempotent in effect).
      */
     @KafkaListener(topics = "novaforge.metadata", groupId = "novaforge-integration-definitions")
-    public void onMetadataPublished(String message) {
+    public void onMetadataPublished(ConsumerRecord<String, String> message) {
+        var header = message.headers().lastHeader(EventHeaders.TRACEPARENT);
+        String traceparent = header == null ? null
+                : new String(header.value(), StandardCharsets.UTF_8);
+        TracePropagation.inConsumerSpan(tracer, traceparent,
+                "novaforge.metadata consume", () -> invalidate(message.value()));
+    }
+
+    void invalidate(String message) {
         try {
             Map<String, Object> event = MAPPER.readValue(message, Map.class);
             String tenant = String.valueOf(event.get("tenantId"));

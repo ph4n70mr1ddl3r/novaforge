@@ -23,11 +23,14 @@ public class AdminService {
     private final PlatformStore platform;
     private final UserProvisioner users;
     private final OutboxStore outbox;
+    private final io.micrometer.tracing.Tracer tracer;
 
-    public AdminService(PlatformStore platform, UserProvisioner users, OutboxStore outbox) {
+    public AdminService(PlatformStore platform, UserProvisioner users, OutboxStore outbox,
+                        io.micrometer.tracing.Tracer tracer) {
         this.platform = platform;
         this.users = users;
         this.outbox = outbox;
+        this.tracer = tracer;
     }
 
     /** The user's username — synthetic-actor detection (PHASE-4 §8). */
@@ -134,6 +137,10 @@ public class AdminService {
         payload.put("actorId", actor.toString());
         payload.put("occurredAt", Instant.now().toString());
         payload.putAll(detail);
+        String traceparent = com.novaforge.security.TracePropagation.capture(tracer);
+        if (traceparent != null) {
+            payload.put("traceparent", traceparent);
+        }
         outbox.append(UUID.randomUUID(), tenantId, "platform.permission", subjectUserId,
                 event, payload);
     }

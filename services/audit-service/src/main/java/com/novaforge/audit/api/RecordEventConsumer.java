@@ -1,9 +1,14 @@
 package com.novaforge.audit.api;
 
 import com.novaforge.audit.store.AuditStore;
+import com.novaforge.security.EventHeaders;
+import com.novaforge.security.TracePropagation;
+import io.micrometer.tracing.Tracer;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -23,13 +28,23 @@ public class RecordEventConsumer {
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     private final AuditStore store;
+    private final Tracer tracer;
 
-    public RecordEventConsumer(AuditStore store) {
+    public RecordEventConsumer(AuditStore store, Tracer tracer) {
         this.store = store;
+        this.tracer = tracer;
     }
 
     @KafkaListener(topics = "novaforge.record", groupId = "novaforge-audit")
-    public void onEvent(String payload) {
+    public void onEvent(ConsumerRecord<String, String> message) {
+        var header = message.headers().lastHeader(EventHeaders.TRACEPARENT);
+        String traceparent = header == null ? null
+                : new String(header.value(), StandardCharsets.UTF_8);
+        TracePropagation.inConsumerSpan(tracer, traceparent,
+                "novaforge.record audit", () -> consume(message.value()));
+    }
+
+    void consume(String payload) {
         try {
             Map<String, Object> event = MAPPER.readValue(payload, Map.class);
             store.append(

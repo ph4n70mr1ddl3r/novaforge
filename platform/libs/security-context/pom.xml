@@ -57,6 +57,14 @@
       <artifactId>spring-boot-autoconfigure</artifactId>
       <optional>true</optional>
     </dependency>
+    <!-- TracePropagation captures/links the W3C traceparent across the Kafka spine
+         (ARCHITECTURE.md §6) — the micrometer-tracing API only, no bridge: services
+         supply the tracer their tracing starter already builds; version rides
+         Boot's dependencyManagement. -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-tracing</artifactId>
+    </dependency>
     <dependency>
       <groupId>tools.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>

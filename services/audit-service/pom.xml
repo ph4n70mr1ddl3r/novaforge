@@ -22,6 +22,12 @@
       <artifactId>novaforge-common-core</artifactId>
     </dependency>
     <dependency>
+      <!-- Spine header conventions + the W3C trace link on every consumer
+           (ARCHITECTURE.md §6 / PHASE-3 §4). -->
+      <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-security-context</artifactId>
+    </dependency>
+    <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-webmvc</artifactId>
     </dependency>

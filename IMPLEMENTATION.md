@@ -58,6 +58,23 @@ metadata → runtime with the outbox → Kafka → audit trail all observed live
 inline children → 4 outbox rows published → `novaforge.record` carries the events →
 `GET /api/v1/audit/records/{id}` serves the trail through the gateway).
 
+**Spec-review closeout (2026-08-25, fourth pass) — §4's published read never shaped
+itself to the caller (ARCHITECTURE.md §2.3).** The read was spec-pinned as
+"rendering-relevant definitions only — escape-hatch script artifacts and credential
+references excluded" for its user+ audience, but it served the whole bundle to any
+authenticated tenant user: script sources and credential refs rode every user-facing
+response. Closed: the read is caller-shaped — user tokens get `RenderingView.of(bundle)`
+(hook rules keep name/trigger/flow, the script artifact leaves; the integrations
+branch's `credentials` list empties; everything else verbatim), while the trusted
+service client (`ServiceClientGate.isServiceClient()`, the azp/client_id match the
+internal surfaces already use) reads the full bundle its write path needs — and the
+Data Runtime's `RestMetadataClient` now always reads with the service account (the
+resolver is write-path machinery, not user rendering; the owning tenant resolves
+server-side exactly as the index path always did), so hook/machine resolution on
+user-driven writes keeps full bundles. Pinned by
+`DefinitionLifecycleTests.publishedReadStripsScriptsAndCredentialRefsForUsers`
+(user view: no source, no credential ids; service view: both present).
+
 **Spec-review closeout (2026-08-25, third pass) — §4's "OpenAPI generated per service,
 PLAN.md §4" had never landed.** Nothing in the tree generated API docs (PLAN §4's row
 and §7's Definition-of-Done both pin it). Closed: every web service carries
@@ -213,7 +230,9 @@ persist → event seam → shaped projection):
 **Implemented — §4 event spine + §5 audit:**
 - transactional outbox (`event_outbox`): record events ride the creating transaction;
   the KafkaOutboxRelay publishes committed rows at-least-once to family topics
-  (`novaforge.record`), keyed `tenantId:recordId` for per-record ordering, event id +
+  (`novaforge.record`), keyed `tenantId:entityId:recordId` (the §13 Q3 pin —
+  entity_id is the entity-definition id, the record id keeps the key per-record),
+  event id +
   type + tenant in headers, then marks rows published (stop-on-failure preserves order)
 - spine contracts live in-producer (payload shapes beside each outbox; shared header
   constants in `security-context`) — the PHASE-0 §5.4 `event-schemas` lib charter was
@@ -338,6 +357,41 @@ persist → event seam → shaped projection):
 **Phase 3 closed:** all §1–§9 surfaces implemented. The environment track's live
 Kind-cluster bring-up remains the one outstanding operational check (declaratively
 validated; carried from Phase 1).
+
+**Spec-review closeout (2026-08-25, fourth pass) — §4's trace propagation and the
+§13 Q3 key never landed, and §5's read gate was missing.** Three findings:
+- **Kafka trace context (ARCHITECTURE.md §6 / §4's "trace context propagates in Kafka
+  headers via the security-context constants").** `EventHeaders.TRACEPARENT` existed
+  and was wired to nothing — no producer stamped a trace header, no consumer linked
+  one, so the cross-service trace stopped at the first topic. Closed end to end with a
+  new `TracePropagation` helper in `security-context` (capture the calling request's
+  span as a W3C `traceparent`; parse it back; open a micrometer consumer span parented
+  on it — the OTel bridge links the consuming service's spans and logs onto the trace
+  that caused the event): every outbox append captures into the payload (the request
+  thread is where the trace lives — relays' scheduler threads carry none, and the
+  capture null-tolerates them), every relay (runtime, workflow, notification,
+  integration, scheduler, file) lifts it into the `traceparent` record header beside
+  the shared id/type/tenant constants (the relays now stamp those through
+  `EventHeaders` instead of hand-rolled literals), the metadata publish producer
+  stamps at send, and every consumer (`HookRetryConsumer`, `MetadataPublishedSubscriber`,
+  workflow `RecordEventConsumer`, notification `TaskEventConsumer`, integration
+  `OutboundDispatcher`/`PublishedIntegrations`, audit's three consumers, reporting's
+  epoch listener) opens the linked span. A missing or malformed header skips the link
+  — delivery semantics never depend on tracing. Pinned by `TracePropagationTest`
+  (format/parse round-trip, W3C-invalid rejects, no-trace guards) and
+  `KafkaOutboxRelayShapeTest` (header lift, no-trace absence).
+- **The §4 partition key.** `tenantId:recordId` shipped where §13 Q3 pins
+  `tenant_id:entity_id:record_id` (entity_id = the entity-definition id). Same
+  per-record ordering either way, but the spec's resolved decision names the exact
+  shape and §10 item 3 pins it — the relay's `keyFor` now emits the three-part key,
+  and `RecordApiTests.kafkaSpineRelay` asserts it on the wire
+  (`tenant:Erp.Ticket:record`).
+- **§5's "read API for admins".** The trail's read surface gated on
+  `SCOPE_novaforge.api` only — any tenant user could read the full audit trail
+  (field diffs of every record). The audit service now maps platform roles (the same
+  `platform_roles`/`realm_access` converter every gated service uses) and
+  `/api/v1/audit/**` requires `admin`. Pinned by `AuditTrailTests.readsAreAdminGated`
+  (a `user` token answers 403) with every read in the suite riding the admin role.
 
 **Spec-review closeout (2026-08-24) — three gaps found reviewing the code against
 the spec, all closed:**
@@ -815,6 +869,15 @@ Phase 1 query conventions" had no sort.** The inbox listed status + paging only.
 tie-broken by creation order; unknown fields fall back to the default ordering so
 the inbox keeps serving. Pinned by `TaskApiTests.inboxSorts` (default order,
 dueAt desc, unknown-field fallback).
+
+**Spec-review closeout (2026-08-25, fourth pass) — §2/§13's scheduler route gate.**
+`GET /api/v1/scheduler/jobs` is spec-pinned `builder`+ ("the gateway routes exactly
+one Scheduler path … (builder role)"), but the service authenticated any
+`SCOPE_novaforge.api` caller — job definitions, crons, and app structure readable by
+any tenant user. The scheduler now maps platform roles like every gated service and
+the route requires `builder`/`admin`. Pinned by
+`SchedulerTests.statusRouteIsBuilderGated` (a `user` token answers 403), with the
+status-route read riding the builder role.
 
 ## Phase 5 — Reporting & Dashboards ◐ (spec: PHASE-5-REPORTING.md)
 

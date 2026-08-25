@@ -38,11 +38,14 @@ public class SlaScanner {
     private final JdbcTemplate jdbc;
     private final TaskService tasks;
     private final io.micrometer.core.instrument.Counter breaches;
+    private final io.micrometer.tracing.Tracer tracer;
 
-    public SlaScanner(JdbcTemplate jdbc, TaskService tasks, MeterRegistry meters) {
+    public SlaScanner(JdbcTemplate jdbc, TaskService tasks, MeterRegistry meters,
+                      io.micrometer.tracing.Tracer tracer) {
         this.jdbc = jdbc;
         this.tasks = tasks;
         this.breaches = meters.counter("novaforge.sla.breach");
+        this.tracer = tracer;
     }
 
     @Scheduled(fixedDelayString = "${novaforge.sla.scan-interval-ms:5000}")
@@ -136,6 +139,10 @@ public class SlaScanner {
             payload.put("status", status);
         }
         payload.put("occurredAt", Instant.now().toString());
+        String traceparent = com.novaforge.security.TracePropagation.capture(tracer);
+        if (traceparent != null) {
+            payload.put("traceparent", traceparent);
+        }
         jdbc.update("""
                 INSERT INTO wf_event_outbox (id, tenant_id, task_id, event_type, payload)
                 VALUES (?, ?, ?, ?, ?::jsonb)""",

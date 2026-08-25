@@ -832,7 +832,7 @@ class RecordApiTests extends PostgresTestBase {
     }
 
     @Test
-    @DisplayName("Kafka spine (§4): outbox rows relay to novaforge.record keyed tenant:record")
+    @DisplayName("Kafka spine (§4): outbox rows relay to novaforge.record keyed tenant:entity:record")
     void kafkaSpineRelay() throws Exception {
         MvcResult created = mockMvc.perform(post("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
                         .contentType("application/json").content("{\"title\":\"spine\"}"))
@@ -852,7 +852,7 @@ class RecordApiTests extends PostgresTestBase {
             boolean seen = false;
             while (System.currentTimeMillis() < deadline && !seen) {
                 for (var record : consumer.poll(java.time.Duration.ofSeconds(1))) {
-                    if (record.key().equals(TENANT + ":" + recordId)
+                    if (record.key().equals(TENANT + ":Erp.Ticket:" + recordId)
                             && record.value().contains("\"record.created\"")
                             && record.value().contains(recordId)) {
                         seen = true;

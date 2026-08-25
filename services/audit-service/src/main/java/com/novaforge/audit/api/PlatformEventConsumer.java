@@ -1,9 +1,14 @@
 package com.novaforge.audit.api;
 
 import com.novaforge.audit.store.AuditStore;
+import com.novaforge.security.EventHeaders;
+import com.novaforge.security.TracePropagation;
+import io.micrometer.tracing.Tracer;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -34,15 +39,26 @@ public class PlatformEventConsumer {
             "recordId", "taskId", "userId", "appId", "deliveryId", "jobId", "eventId"};
 
     private final AuditStore store;
+    private final Tracer tracer;
 
-    public PlatformEventConsumer(AuditStore store) {
+    public PlatformEventConsumer(AuditStore store, Tracer tracer) {
         this.store = store;
+        this.tracer = tracer;
     }
 
     @KafkaListener(topics = {"novaforge.metadata", "novaforge.permission", "novaforge.auth",
             "novaforge.task", "novaforge.sla", "novaforge.scheduler", "novaforge.notification"},
             groupId = "novaforge-audit-platform")
-    public void onEvent(String payload) {
+    public void onEvent(ConsumerRecord<String, String> message) {
+        var header = message.headers().lastHeader(EventHeaders.TRACEPARENT);
+        String traceparent = header == null ? null
+                : new String(header.value(), StandardCharsets.UTF_8);
+        String topic = message.topic();
+        TracePropagation.inConsumerSpan(tracer, traceparent,
+                topic + " audit", () -> consume(message.value()));
+    }
+
+    void consume(String payload) {
         try {
             Map<String, Object> event = MAPPER.readValue(payload, Map.class);
             String family = String.valueOf(event.get("event"));

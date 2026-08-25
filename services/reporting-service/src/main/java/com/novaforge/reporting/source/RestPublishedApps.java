@@ -5,13 +5,18 @@ import com.novaforge.common.error.PlatformException;
 import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.DefinitionParser;
 import com.novaforge.reporting.source.PublishedApps.PublishedApp;
+import com.novaforge.security.EventHeaders;
 import com.novaforge.security.ServiceTokenClient;
+import com.novaforge.security.TracePropagation;
+import io.micrometer.tracing.Tracer;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -42,14 +47,17 @@ public class RestPublishedApps implements PublishedApps {
     }
 
     private final ServiceTokenClient serviceToken;
+    private final io.micrometer.tracing.Tracer tracer;
 
     public RestPublishedApps(
             @Value("${novaforge.metadata.url:http://localhost:8081}") String metadataUrl,
             org.springframework.data.redis.core.StringRedisTemplate redis,
-            ServiceTokenClient serviceToken) {
+            ServiceTokenClient serviceToken,
+            io.micrometer.tracing.Tracer tracer) {
         this.metadata = RestClient.builder().baseUrl(metadataUrl).build();
         this.redis = redis;
         this.serviceToken = serviceToken;
+        this.tracer = tracer;
     }
 
     /**
@@ -59,7 +67,15 @@ public class RestPublishedApps implements PublishedApps {
      * (an epoch increment is idempotent in effect).
      */
     @KafkaListener(topics = "novaforge.metadata", groupId = "novaforge-reporting-definitions")
-    public void onMetadataPublished(String message) {
+    public void onMetadataPublished(ConsumerRecord<String, String> message) {
+        var header = message.headers().lastHeader(EventHeaders.TRACEPARENT);
+        String traceparent = header == null ? null
+                : new String(header.value(), StandardCharsets.UTF_8);
+        TracePropagation.inConsumerSpan(tracer, traceparent,
+                "novaforge.metadata consume", () -> invalidate(message.value()));
+    }
+
+    void invalidate(String message) {
         try {
             Map<String, Object> event = MAPPER.readValue(message, Map.class);
             String tenant = String.valueOf(event.get("tenantId"));

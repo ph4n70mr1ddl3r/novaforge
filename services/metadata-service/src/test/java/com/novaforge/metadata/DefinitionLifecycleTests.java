@@ -229,6 +229,15 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                 .authorities(new SimpleGrantedAuthority("ROLE_user"));
     }
 
+    /** The trusted service client (ServiceClientGate's azp match) — the full-bundle reader. */
+    private static org.springframework.security.test.web.servlet.request
+            .SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor serviceJwt() {
+        return jwt()
+                .jwt(token -> token.claim("azp", "novaforge-runtime")
+                        .claim("client_id", "novaforge-runtime"))
+                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
+    }
+
     @Test
     @DisplayName("full definition lifecycle: create → invalid save rejected → publish → versions → export → immutability")
     void definitionLifecycle() throws Exception {
@@ -319,14 +328,28 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                 .andExpect(jsonPath("$.app.label").value("ERP"));
 
         // 9. both publish envelopes rode the spine topic (the PHASE-3 §4 rebind)
-        await().atMost(Duration.ofSeconds(10)).until(() -> PUBLISHED_EVENTS.size() >= 2);
-        String first = PUBLISHED_EVENTS.poll();
-        String second = PUBLISHED_EVENTS.poll();
+        java.util.List<String> mine = new java.util.ArrayList<>();
+        await().atMost(Duration.ofSeconds(10)).until(() -> {
+            PUBLISHED_EVENTS.drainTo(mine);
+            return mine.stream().filter(envelope -> appId.equals(appIdOf(envelope))).count() >= 2;
+        });
+        java.util.List<String> own = mine.stream()
+                .filter(envelope -> appId.equals(appIdOf(envelope))).toList();
+        String first = own.get(0);
+        String second = own.get(1);
         assertThat(MAPPER.readTree(first).get("event").asString()).isEqualTo("metadata.published");
         assertThat(MAPPER.readTree(first).get("appId").asString()).isEqualTo(appId);
         assertThat(MAPPER.readTree(first).get("version").asInt()).isEqualTo(1);
         assertThat(MAPPER.readTree(second).get("version").asInt()).isEqualTo(2);
         assertThat(MAPPER.readTree(first).get("tenantId").asString()).isEqualTo(TENANT);
+    }
+
+    private String appIdOf(String envelope) {
+        try {
+            return MAPPER.readTree(envelope).get("appId").asString();
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     @Test
@@ -647,6 +670,47 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors[0].message").value(
                         org.hamcrest.Matchers.containsString("exceeds")));
+    }
+
+    @Test
+    @DisplayName("published read is caller-shaped (ARCHITECTURE §2.3): user tokens get the rendering view, the service client the full bundle")
+    void publishedReadStripsScriptsAndCredentialRefsForUsers() throws Exception {
+        MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "ViewApp", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "name", "type": "text" } ],
+                                  "hooks": [ { "name": "enrich", "trigger": "beforeSave",
+                                    "script": { "language": "js",
+                                      "source": "({ name: $record.name.toUpperCase() })" } } ] } ],
+                                  "integrations": { "credentials": [
+                                    { "id": "cred_view", "kind": "api_key", "header": "X-Key" } ] } }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+        String appId = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/publish").with(builderJwt()))
+                .andExpect(status().isOk());
+
+        // a user caller reads the rendering view: no script artifact, no credential refs
+        String userView = mockMvc.perform(get("/api/v1/metadata/apps/" + appId + "/published")
+                        .with(userJwt()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.app.entities[0].apiName").value("Thing"))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(userView).doesNotContain("toUpperCase");
+        assertThat(userView).doesNotContain("cred_view");
+
+        // the trusted service client reads the full bundle its write path needs
+        String serviceView = mockMvc.perform(get("/api/v1/metadata/apps/" + appId + "/published")
+                        .with(serviceJwt()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(serviceView).contains("toUpperCase");
+        assertThat(serviceView).contains("cred_view");
+
+        // this test's publish envelope must not leak into the lifecycle test's queue
+        await().atMost(Duration.ofSeconds(10)).until(() -> !PUBLISHED_EVENTS.isEmpty());
+        PUBLISHED_EVENTS.clear();
     }
 
     @Test

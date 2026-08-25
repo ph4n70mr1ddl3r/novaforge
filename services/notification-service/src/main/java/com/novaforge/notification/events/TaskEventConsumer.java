@@ -1,8 +1,13 @@
 package com.novaforge.notification.events;
 
 import com.novaforge.notification.notify.Notifier;
+import com.novaforge.security.EventHeaders;
+import com.novaforge.security.TracePropagation;
+import io.micrometer.tracing.Tracer;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -23,14 +28,24 @@ public class TaskEventConsumer {
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     private final Notifier notifier;
+    private final Tracer tracer;
 
-    public TaskEventConsumer(Notifier notifier) {
+    public TaskEventConsumer(Notifier notifier, Tracer tracer) {
         this.notifier = notifier;
+        this.tracer = tracer;
     }
 
     @KafkaListener(topics = {"novaforge.task", "novaforge.sla"},
                    groupId = "novaforge-notification")
-    public void onEvent(String payload) {
+    public void onEvent(ConsumerRecord<String, String> message) {
+        var header = message.headers().lastHeader(EventHeaders.TRACEPARENT);
+        String traceparent = header == null ? null
+                : new String(header.value(), StandardCharsets.UTF_8);
+        TracePropagation.inConsumerSpan(tracer, traceparent,
+                "novaforge.task consume", () -> consume(message.value()));
+    }
+
+    void consume(String payload) {
         try {
             Map<String, Object> event = MAPPER.readValue(payload, Map.class);
             String type = String.valueOf(event.get("event"));

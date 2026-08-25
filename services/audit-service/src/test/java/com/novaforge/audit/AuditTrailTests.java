@@ -102,9 +102,21 @@ class AuditTrailTests extends PostgresTestBase {
         mockMvc.perform(get("/api/v1/audit/records/" + recordId)
                         .with(jwt().jwt(token -> token.claim("tenant_id", OTHER_TENANT.toString())
                                 .subject(ACTOR.toString()))
-                                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"))))
+                                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"),
+                                        new SimpleGrantedAuthority("ROLE_admin"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").isEmpty());
+    }
+
+    @Test
+    @DisplayName("PHASE-3 §5: the read API is admin-facing — a plain user token is denied")
+    void readsAreAdminGated() throws Exception {
+        mockMvc.perform(get("/api/v1/audit/records/" + UUID.randomUUID())
+                        .with(jwt().jwt(token -> token.claim("tenant_id", TENANT.toString())
+                                .subject(ACTOR.toString()))
+                                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"),
+                                        new SimpleGrantedAuthority("ROLE_user"))))
+                .andExpect(status().isForbidden());
     }
 
     @Test
@@ -204,7 +216,8 @@ class AuditTrailTests extends PostgresTestBase {
         mockMvc.perform(get("/api/v1/audit/records/" + taskId)
                         .with(jwt().jwt(token -> token.claim("tenant_id", OTHER_TENANT.toString())
                                 .subject(ACTOR.toString()))
-                                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"))))
+                                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"),
+                                        new SimpleGrantedAuthority("ROLE_admin"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").isEmpty());
     }
@@ -218,7 +231,8 @@ class AuditTrailTests extends PostgresTestBase {
         return mockMvc.perform(get("/api/v1/audit/records/" + recordId)
                         .with(jwt().jwt(token -> token.claim("tenant_id", TENANT.toString())
                                 .subject(ACTOR.toString()))
-                                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"))))
+                                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"),
+                                        new SimpleGrantedAuthority("ROLE_admin"))))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
     }

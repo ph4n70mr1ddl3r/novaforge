@@ -21,6 +21,13 @@
       <artifactId>novaforge-common-core</artifactId>
     </dependency>
     <dependency>
+      <!-- Spine header conventions + trace capture on the publish producer
+           (PHASE-3 §4 / ARCHITECTURE §6) and the trusted-service check behind the
+           published read's rendering view (ARCHITECTURE §2.3). -->
+      <groupId>com.novaforge</groupId>
+      <artifactId>novaforge-security-context</artifactId>
+    </dependency>
+    <dependency>
       <groupId>com.novaforge</groupId>
       <artifactId>novaforge-metadata-model</artifactId>
     </dependency>

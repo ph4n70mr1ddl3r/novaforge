@@ -315,6 +315,17 @@ class SchedulerTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("the status route serves builders/admins only — a user token is denied (§2/§13)")
+    void statusRouteIsBuilderGated() throws Exception {
+        mockMvc.perform(get("/api/v1/scheduler/jobs")
+                        .with(jwt().jwt(token -> token.claim("tenant_id", TENANT.toString())
+                                .subject("33333333-3333-4333-8333-333333333333"))
+                                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"),
+                                        new SimpleGrantedAuthority("ROLE_user"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     @DisplayName("the status route is read-only, tenant-scoped registry visibility (§7/§2)")
     void statusRoute() throws Exception {
         runner.syncOnce();
@@ -329,6 +340,7 @@ class SchedulerTests extends PostgresTestBase {
         return jwt()
                 .jwt(token -> token.claim("tenant_id", TENANT.toString())
                         .subject("33333333-3333-4333-8333-333333333333"))
-                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
+                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"),
+                        new SimpleGrantedAuthority("ROLE_builder"));
     }
 }

@@ -61,6 +61,13 @@
       <groupId>io.micrometer</groupId>
       <artifactId>micrometer-core</artifactId>
     </dependency>
+    <!-- Outbox trace capture (ARCHITECTURE §6): the micrometer-tracing API the
+         publisher reads the causing request's span through; the bridge + OTLP
+         exporter ride the api module's tracing starter. -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-tracing</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>

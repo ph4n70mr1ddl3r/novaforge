@@ -29,16 +29,26 @@ public final class ServiceClientGate {
      * 403 {@code FORBIDDEN} naming the surface.
      */
     public static void require(String surface) {
+        if (!isServiceClient()) {
+            throw new PlatformException(PlatformErrorCode.FORBIDDEN,
+                    "the " + surface + " surface is service-client only");
+        }
+    }
+
+    /**
+     * Whether the current authentication is the platform service client (matched on
+     * {@code azp} or {@code client_id}) — the non-throwing twin {@link #require}
+     * leaves to callers that branch on the caller's identity instead of gating
+     * (the published read's rendering view, ARCHITECTURE.md §2.3).
+     */
+    public static boolean isServiceClient() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication instanceof JwtAuthenticationToken jwtAuth
                 && jwtAuth.getToken() instanceof Jwt jwt) {
             String azp = jwt.getClaimAsString("azp");
             String clientId = jwt.getClaimAsString("client_id");
-            if (CLIENT_ID.equals(azp) || CLIENT_ID.equals(clientId)) {
-                return;
-            }
+            return CLIENT_ID.equals(azp) || CLIENT_ID.equals(clientId);
         }
-        throw new PlatformException(PlatformErrorCode.FORBIDDEN,
-                "the " + surface + " surface is service-client only");
+        return false;
     }
 }
