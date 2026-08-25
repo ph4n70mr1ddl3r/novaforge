@@ -116,13 +116,40 @@ describe("LogicEditor (PHASE-3 §8)", () => {
             id: "approve",
             op: "requestApproval",
             params: {
-                approversRole: "Purch.manager",
+                approvers: "Purch.manager",
                 mode: "all",
                 timeout: "PT24H",
                 escalateTo: "role:Purch.seniorManager",
             },
             next: undefined,
         });
+    });
+
+    it("writes the user-list form of approvers when UUIDs are given", async () => {
+        const onSaveEntity = vi.fn(async (_entity: EntityDefinition) => {});
+        render(createElement(LogicEditor, { app, onSaveEntity }));
+
+        fireEvent.change(screen.getByLabelText("Step id 0"), { target: { value: "approve" } });
+        fireEvent.change(screen.getByLabelText("Step op 0"), { target: { value: "requestApproval" } });
+        fireEvent.change(screen.getByLabelText("Step other params 0"), { target: { value: "" } });
+        fireEvent.blur(screen.getByLabelText("Step other params 0"));
+
+        const fill = (label: string, value: string): void => {
+            fireEvent.change(screen.getByLabelText(label), { target: { value } });
+            fireEvent.blur(screen.getByLabelText(label));
+        };
+        fill("Approvers role 0", "Purch.manager");
+        fill("Approver users 0", "11111111-1111-4111-8111-111111111111, 22222222-2222-4222-8222-222222222222");
+
+        fireEvent.click(screen.getByText("Save logic"));
+        await waitFor(() => expect(onSaveEntity).toHaveBeenCalledTimes(1));
+        const saved = onSaveEntity.mock.calls[0]![0] as EntityDefinition;
+        // the user list wins over the role text — one `approvers` param, the shape
+        // the engine reads (§4)
+        expect((saved.hooks[0]!.flow!.params as Record<string, unknown>).approvers).toEqual([
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222",
+        ]);
     });
 });
 

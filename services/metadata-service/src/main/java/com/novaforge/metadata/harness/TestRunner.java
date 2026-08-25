@@ -188,6 +188,17 @@ public class TestRunner {
                                         Map<String, String> hookSecrets) {
         Map<String, Object> scope = new LinkedHashMap<>();   // "Entity[n]" → last record map
         List<String> failures = new ArrayList<>();
+        // PHASE-3 §7's per-case override: an explicit `clock` re-freezes the case
+        // (default: the run's start instant) — period-lock-style cases advance it
+        // explicitly instead of waiting on wall time
+        Instant caseClock = frozenAt;
+        if (testCase.clock() != null && !testCase.clock().isBlank()) {
+            try {
+                caseClock = Instant.parse(testCase.clock());
+            } catch (RuntimeException malformed) {
+                failures.add("case clock must be an ISO-8601 instant: " + testCase.clock());
+            }
+        }
         try {
             for (var fixture : testCase.fixtures()) {
                 String token = actorToken(fixture.asRole(), rolePasswords);
@@ -234,8 +245,9 @@ public class TestRunner {
                     remember(scope, step.entity(), result);
                 }
             }
-            // assertions: DSL predicates over ${Entity[n].path} — frozen clock
-            Clock frozen = Clock.fixed(frozenAt, java.time.ZoneOffset.UTC);
+            // assertions: DSL predicates over ${Entity[n].path} — the case's frozen
+            // clock (the run start, or the case's explicit override above)
+            Clock frozen = Clock.fixed(caseClock, java.time.ZoneOffset.UTC);
             for (String assertion : testCase.assertExpressions()) {
                 String resolved = interpolateAssertion(assertion, scope);
                 Object outcome;
@@ -257,6 +269,9 @@ public class TestRunner {
         verdict.put("name", testCase.name());
         verdict.put("passed", failures.isEmpty());
         verdict.put("failures", failures);
+        if (testCase.clock() != null && !testCase.clock().isBlank()) {
+            verdict.put("clock", testCase.clock());   // the case's override, visible in the artifact
+        }
         return verdict;
     }
 

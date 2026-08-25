@@ -323,9 +323,12 @@ function StepListEditor({
 
 /**
  * requestApproval step properties (PHASE-4 §11): the §4 param set as guided fields —
- * approvers (role or user list), mode, timeout, escalation — with the remaining
- * params (the inline onReject subgraph) as JSON. The Metadata Service
- * compile-checks approvers/mode/timeout and the onReject graph at publish.
+ * approvers (a role reference, an expression resolving to users over the record, or
+ * a user list), mode, timeout, escalation — with the remaining params (the inline
+ * onReject subgraph) as JSON. The Metadata Service compile-checks approvers/mode/
+ * timeout and the onReject graph at publish — the guided fields write exactly the
+ * `approvers` param the engine reads (one surface: role/expression text, or the
+ * user list when UUIDs are given).
  */
 function RequestApprovalParams({
     index,
@@ -353,18 +356,28 @@ function RequestApprovalParams({
         }
         onChange(Object.keys(merged).length > 0 ? JSON.stringify(merged) : "");
     };
-    const users = Array.isArray(params.approverUsers) ? (params.approverUsers as string[]).join(", ") : "";
+    const users = Array.isArray(params.approvers) ? (params.approvers as string[]).join(", ")
+            : "";
+    const role = typeof params.approvers === "string" ? params.approvers : "";
+    const patchApprovers = (roleText: string, usersText: string): void => {
+        if (usersText.trim().length > 0) {
+            patch({ approvers: usersText.split(",").map((part) => part.trim())
+                    .filter((part) => part.length > 0) });
+        } else if (roleText.trim().length > 0) {
+            patch({ approvers: roleText.trim() });
+        } else {
+            patch({ approvers: undefined });
+        }
+    };
     return (
         <div className="nf-approval-params">
-            <input aria-label={`Approvers role ${index}`} placeholder="approvers role, e.g. Purch.manager"
-                defaultValue={typeof params.approversRole === "string" ? params.approversRole : ""}
-                onBlur={(e) => patch({ approversRole: e.target.value })} />
+            <input aria-label={`Approvers role ${index}`}
+                placeholder="approvers — a role, or an expression over the record (e.g. manager)"
+                defaultValue={role}
+                onBlur={(e) => patchApprovers(e.target.value, users)} />
             <input aria-label={`Approver users ${index}`} placeholder="approver users (UUIDs, comma-separated)"
                 defaultValue={users}
-                onBlur={(e) => patch({
-                    approverUsers: e.target.value.split(",").map((part) => part.trim())
-                        .filter((part) => part.length > 0),
-                })} />
+                onBlur={(e) => patchApprovers(role, e.target.value)} />
             <select aria-label={`Approval mode ${index}`}
                 defaultValue={typeof params.mode === "string" ? params.mode : ""}
                 onChange={(e) => patch({ mode: e.target.value })}>
@@ -389,7 +402,7 @@ function RequestApprovalParams({
                         return;   // malformed JSON stays uncommitted — save surfaces it
                     }
                     const guided: Record<string, unknown> = {};
-                    for (const key of ["approversRole", "approverUsers", "mode", "timeout", "escalateTo"]) {
+                    for (const key of ["approvers", "mode", "timeout", "escalateTo"]) {
                         if (params[key] !== undefined) guided[key] = params[key];
                     }
                     const merged = { ...guided, ...rest };
@@ -403,7 +416,7 @@ function RequestApprovalParams({
 function otherParams(params: Record<string, unknown>): string {
     const rest: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(params)) {
-        if (!["approversRole", "approverUsers", "mode", "timeout", "escalateTo"].includes(key)) {
+        if (!["approvers", "mode", "timeout", "escalateTo"].includes(key)) {
             rest[key] = value;
         }
     }

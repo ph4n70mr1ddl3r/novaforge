@@ -97,7 +97,7 @@ public class RecordEngine {
         reject(errors, "create " + entityApiName + " failed validation");
 
         UUID id = UUID.randomUUID();
-        runHooks(app, handle, tenantId, id, canonical, "beforeSave", appSystemPrincipal(handle), actorId);
+        runHooks(app, handle, tenantId, id, canonical, "beforeSave", appSystemPrincipal(handle), actorId, null);
         requireParentsNotFrozen(tenantId, app, handle, canonical);
         enforceCreateState(app, handle, canonical);
         enforcePeriodLock(tenantId, app, handle, canonical);
@@ -105,7 +105,7 @@ public class RecordEngine {
         persistWithChildren(tenantId, actorId, app, handle, id, canonical, children, errors);
 
         events.publish(event("record.created", tenantId, handle.entityKey(), id, actorId));
-        runHooks(app, handle, tenantId, id, canonical, "afterSave", appSystemPrincipal(handle), actorId);
+        runHooks(app, handle, tenantId, id, canonical, "afterSave", appSystemPrincipal(handle), actorId, null);
         return shape(handle.entity(), records.find(tenantId, handle.entityKey(), id, false)
                 .orElseThrow(), strip(tenantId, actorId, handle, app));
     }
@@ -142,7 +142,8 @@ public class RecordEngine {
         evaluateFormulas(handle.entity(), merged);
         evaluateValidationRules(handle.entity(), merged, errors);
         reject(errors, "update " + entityApiName + "/" + id + " failed validation");
-        runHooks(app, handle, tenantId, id, merged, "beforeSave", appSystemPrincipal(handle), actorId);
+        String transition = transitionOf(app, handle, existing.data(), merged);
+        runHooks(app, handle, tenantId, id, merged, "beforeSave", appSystemPrincipal(handle), actorId, transition);
         requireParentsNotFrozen(tenantId, app, handle, merged);
         enforceTransition(app, handle, existing.data(), merged);
         enforcePeriodLock(tenantId, app, handle, merged);
@@ -152,7 +153,7 @@ public class RecordEngine {
         replaceChildren(tenantId, actorId, app, handle, id, children);
         newVersion = recomputeRollupsIfChanged(tenantId, actorId, app, handle, id, merged, newVersion);
         events.publish(event("record.updated", tenantId, handle.entityKey(), id, actorId));
-        runHooks(app, handle, tenantId, id, merged, "afterSave", appSystemPrincipal(handle), actorId);
+        runHooks(app, handle, tenantId, id, merged, "afterSave", appSystemPrincipal(handle), actorId, transition);
 
         Map<String, Object> shaped = shape(handle.entity(),
                 records.find(tenantId, handle.entityKey(), id, false).orElseThrow(),
@@ -176,12 +177,12 @@ public class RecordEngine {
         requireNotFrozen(app, handle, existingData);
         requireParentsNotFrozen(tenantId, app, handle, existingData);
         runHooks(app, handle, tenantId, id, existingData, "beforeDelete",
-                appSystemPrincipal(handle), actorId);
+                appSystemPrincipal(handle), actorId, null);
         records.softDelete(tenantId, handle.entityKey(), id, expectedVersion, actorId);
         cascadeChildren(tenantId, actorId, app, handle, id);
         events.publish(event("record.deleted", tenantId, handle.entityKey(), id, actorId));
         runHooks(app, handle, tenantId, id, existingData, "afterDelete",
-                appSystemPrincipal(handle), actorId);
+                appSystemPrincipal(handle), actorId, null);
     }
 
     // --- read path ---
@@ -472,7 +473,7 @@ public class RecordEngine {
 
         UUID id = UUID.randomUUID();
         runHooks(app, handle, tenantId, id, canonical, "beforeSave", appSystemPrincipal(handle),
-                principal);
+                principal, null);
         requireParentsNotFrozen(tenantId, app, handle, canonical);
         enforceCreateState(app, handle, canonical);
         enforcePeriodLock(tenantId, app, handle, canonical);
@@ -480,7 +481,7 @@ public class RecordEngine {
         persistWithChildren(tenantId, principal, app, handle, id, canonical, children, errors);
         events.publish(event("record.created", tenantId, handle.entityKey(), id, principal));
         runHooks(app, handle, tenantId, id, canonical, "afterSave", appSystemPrincipal(handle),
-                principal);
+                principal, null);
         Map<String, Object> shaped = shape(handle.entity(),
                 records.find(tenantId, handle.entityKey(), id, false).orElseThrow(),
                 field -> false);
@@ -515,8 +516,9 @@ public class RecordEngine {
         evaluateFormulas(handle.entity(), merged);
         evaluateValidationRules(handle.entity(), merged, errors);
         reject(errors, "integration update " + entityApiName + "/" + id + " failed validation");
+        String transition = transitionOf(app, handle, existing.data(), merged);
         runHooks(app, handle, tenantId, id, merged, "beforeSave", appSystemPrincipal(handle),
-                principal);
+                principal, transition);
         requireNotFrozen(app, handle, existing.data());
         requireParentsNotFrozen(tenantId, app, handle, merged);
         enforceTransition(app, handle, existing.data(), merged);
@@ -529,7 +531,7 @@ public class RecordEngine {
                 newVersion);
         events.publish(event("record.updated", tenantId, handle.entityKey(), id, principal));
         runHooks(app, handle, tenantId, id, merged, "afterSave", appSystemPrincipal(handle),
-                principal);
+                principal, transition);
         Map<String, Object> shaped = shape(handle.entity(),
                 records.find(tenantId, handle.entityKey(), id, false).orElseThrow(),
                 field -> false);
@@ -627,6 +629,27 @@ public class RecordEngine {
                     "create must start in the initial state " + machine.get().initial()
                             + ", got " + current);
         }
+    }
+
+    /**
+     * The triggering write's state-machine edge ({@code PRIOR->NEW}) when the bound
+     * state field changed — the {@code transition} SLA match binding a
+     * {@code requestApproval} suspension carries (PHASE-4 §6 / PHASE-2 Annex A).
+     * Null for creates (initial-state entry is not a transition), deletes, and
+     * state-unchanged writes.
+     */
+    private static String transitionOf(AppDefinition app, EntityHandle handle,
+                                       Map<String, Object> existing, Map<String, Object> merged) {
+        var machine = app.stateMachineFor(handle.entity().apiName());
+        if (machine.isEmpty()) {
+            return null;
+        }
+        Object from = existing.get(machine.get().stateField());
+        Object to = merged.get(machine.get().stateField());
+        if (from == null || to == null || java.util.Objects.equals(from, to)) {
+            return null;
+        }
+        return from + "->" + to;
     }
 
     /** A changed state field requires a listed transition with a passing guard (§3). */
@@ -806,12 +829,12 @@ public class RecordEngine {
 
     private void runHooks(AppDefinition app, EntityHandle handle, UUID tenantId, UUID recordId,
                           Map<String, Object> data, String trigger, UUID systemPrincipal,
-                          UUID initiatingActor) {
+                          UUID initiatingActor, String transition) {
         if (handle.entity().hooks().isEmpty()) {
             return;
         }
         HookExecutor.Outcome outcome = hooks.runTrigger(app, handle, tenantId, recordId,
-                data, trigger, systemPrincipal, initiatingActor, hookSink);
+                data, trigger, systemPrincipal, initiatingActor, transition, hookSink);
         // §2 failure policy: after-hook failures ride the spine as hook.retry outbox
         // rows — same transaction as the write, so the failure is never lost and the
         // spine's retry consumer re-drives it (idempotently, bounded).

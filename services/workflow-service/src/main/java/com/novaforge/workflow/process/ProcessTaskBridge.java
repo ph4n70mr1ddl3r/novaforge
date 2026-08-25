@@ -141,7 +141,7 @@ public class ProcessTaskBridge implements FlowableEventListener {
         }
         SlaResolver.Timers timers = slas.resolve(tenantId, deployment.get().app(),
                 entityId == null ? deployment.get().workflowId() : entityId, "todo",
-                stepTimeout, now);
+                stepTimeout, null, now);
         var inboxTask = tasks.create(tenantId, "todo",
                 entityId == null ? deployment.get().workflowId() : entityId,
                 recordId, assignee, role, timers.dueAt(), timers.warnAt(), createdBy, null);

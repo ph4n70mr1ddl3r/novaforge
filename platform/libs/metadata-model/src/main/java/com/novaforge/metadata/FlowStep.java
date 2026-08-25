@@ -43,4 +43,30 @@ public record FlowStep(
         Object value = params.get(name);
         return value == null ? null : String.valueOf(value);
     }
+
+    /**
+     * The {@code requestApproval} approvers discriminator (PHASE-4 §4: "a role
+     * reference or an expression resolving to users") — one rule, shared by the
+     * publish compiler and the runtime executor so the two can never disagree.
+     * A string whose <em>root identifier</em> (the name before the first dot, or the
+     * whole string) names a field of the bound entity — or the injected {@code id} —
+     * is an expression resolving against the record (a lookup walked to a user id,
+     * a user-list field, …); every other string is a role reference. A role that
+     * collides with a field name is therefore shadowed — the compiler's guidance
+     * says to rename one.
+     */
+    public static boolean approversIsExpression(String approvers, EntityDefinition entity) {
+        if (approvers == null || approvers.isBlank()) {
+            return false;
+        }
+        // the leading identifier of the string ("manager.owner" → "manager",
+        // "manager + something" → "manager") — paths and arities both route through it
+        var match = java.util.regex.Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*")
+                .matcher(approvers.trim());
+        if (!match.find()) {
+            return false;
+        }
+        String root = match.group();
+        return "id".equals(root) || entity.field(root).isPresent();
+    }
 }

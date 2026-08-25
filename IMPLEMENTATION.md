@@ -171,11 +171,11 @@ serves with every upstream dead).
   volume) with SPA deep-link fallback — asset paths anonymous, APIs still
   scope-gated; Vite dev proxies cover local development.
 
-**Suites:** 146 frontend tests (`pnpm -r test`: shared 96 — conformance 39, deltas,
+**Suites:** 147 frontend tests (`pnpm -r test`: shared 96 — conformance 39, deltas,
   goldens, validation (+ the §6-item-2 lifecycle warnings), renderer, gallery-axe,
   client, report-table drill-through; runtime-ui 11 — nav/auto-list/form journeys,
   inbox (+claim/delegate), notifications, axe, the L1→delta→persist round-trip,
-  dashboard drill/refresh; builder-ui 39 — entity/page/RBAC/onboarding/i18n/
+  dashboard drill/refresh; builder-ui 40 — entity/page/RBAC/onboarding/i18n/
   reporting journeys incl. the 409 rebase, the PHASE-3 §8 logic + suites authoring
   journeys, the PHASE-4 §11 automation/sharing/guided-approval journeys, the
   PHASE-6 §3 integrations editor + its §7 job-progress panel, and the PHASE-8 §3
@@ -481,6 +481,19 @@ found re-walking the code against the spec, all closed:**
   had no mechanism): `recordSuiteRun` now trims to the newest 25 rows per
   (app, suite) — the promotion gate reads the latest only, so nothing observable
   changes.
+
+**Spec-review closeout (2026-08-25, fifth pass) — §7's controlled clock was
+run-frozen only.** The pin reads "a run freezes the clock at an explicit value
+(default: run start, **overridable per case**)" — the runner froze at `Instant.now()`
+with no per-case say, so period-lock-style cases could not advance assertions
+without advancing the whole run. `TestCase` grows the optional `clock` (ISO-8601
+instant; the §7 encoding's original 4-field shape stays constructible): assertions
+resolve against the case's instant instead of the run's, a malformed value fails
+that case with guidance (never the run), and the override is recorded on the case's
+artifact row. The builder's suite editor grows the field; the TS `SuiteCase` type
+carries it. Pinned by `TestRunnerJourneyTests.perCaseClockOverridesRunStart`
+(run-start default, advanced `today()`/`now()` under the override, malformed
+→ red case with ISO-8601 guidance).
 
 ## Phase 4 — Workflow & Approvals ◐ (spec: PHASE-4-WORKFLOW-APPROVALS.md)
 
@@ -826,7 +839,8 @@ fell back to the initial state's edges). Closed:
   registry is never written), and the read-only scheduler status list riding
   `GET /api/v1/scheduler/jobs`
 - **the flow editor's requestApproval properties (§11)**: the op's params render
-  as guided fields — approvers role/users, mode any|all, timeout, escalateTo —
+  as guided fields — approvers (role/expression text, or the user list), mode
+  any|all, timeout, escalateTo —
   with the remaining params (the inline `onReject` subgraph) as JSON
 - **the sharing-rule editor (§10)** joins the RBAC screen: owner/roleHierarchy/
   criteria rows with role CSVs, the owner-field and criteria slots per type, and
@@ -878,6 +892,46 @@ any tenant user. The scheduler now maps platform roles like every gated service 
 the route requires `builder`/`admin`. Pinned by
 `SchedulerTests.statusRouteIsBuilderGated` (a `user` token answers 403), with the
 status-route read riding the builder role.
+
+**Spec-review closeout (2026-08-25, fifth pass) — §6's own SLA example could not
+compile, §4's expression approvers were missing, and the builder's approval editor
+wrote params the engine never read.** Three findings:
+- **The `transition` SLA match binding (PHASE-2 Annex A names the slot bindings
+  `entity`/`transition`; §6's SLADefinition example matches
+  `transition == 'DRAFT->SUBMITTED'`) did not exist** — `SlaDefinition.bindings`
+  bound `entity`/`type` only, and the publish compile check rejected the spec's own
+  example as an unresolved reference. Closed end to end: the write path computes the
+  triggering write's state-machine edge (`transitionOf`, `PRIOR->NEW`, null when no
+  state changed — creates, deletes, state-unchanged writes), the `transitionState`
+  step records its flow-driven edge onto the execution context (a later
+  `requestApproval` in the same flow suspends carrying it — the exit scenario's
+  submit-then-approve shape), the suspension payload and the internal approval
+  surface carry it across the wire, and `SlaResolver` binds it into every match
+  expression (empty string when absent; BPMN-bridge tasks bind empty — no transition
+  context exists there). Pinned by `DefinitionLifecycleTests` (the spec's example
+  compiles clean; an unknown binding still rejects), `TaskApiTests.
+  transitionScopedSlaMatchesOnlyItsEdge` (matches only its edge — a different edge or
+  no state change stays timerless per §6), and `ApprovalFlowTests` (the captured
+  suspension carries `DRAFT->SUBMITTED` on the submit write).
+- **§4's approvers pin — "a role reference or an expression resolving to users" —
+  shipped role/list only.** One shared discriminator (`FlowStep.approversIsExpression`,
+  used by both the publish compiler and the runtime so they can never disagree): a
+  string whose leading identifier names a field of the bound entity (or `id`) is an
+  expression resolved against the merged record — a lookup walked to a user id, a
+  user-list field — and must yield a user id or a list of them (anything else is a
+  problem+json authoring error, never a silently-empty approver set); every other
+  string stays a role reference (a role colliding with a field name is shadowed —
+  rename one). Pinned by `DefinitionLifecycleTests` (the field-rooted form compiles
+  against the record context; a malformed one rejects) and
+  `ApprovalFlowTests.approversExpressionResolvesUsers` (a uuid field's value arrives
+  as the approver set, role null).
+- **The builder's requestApproval editor wrote `approversRole`/`approverUsers`
+  params the engine never reads** — the engine (and the compiler) read one `approvers`
+  param, so a builder-authored approval saved a flow the compile check would reject.
+  The guided fields now write exactly that param: role/expression text, or the
+  comma-separated UUID list (which wins when both are given); the "other params"
+  JSON slot re-syncs. Pinned by the logic-editor vitest journeys (role form and
+  user-list form both land as `approvers`).
 
 ## Phase 5 — Reporting & Dashboards ◐ (spec: PHASE-5-REPORTING.md)
 

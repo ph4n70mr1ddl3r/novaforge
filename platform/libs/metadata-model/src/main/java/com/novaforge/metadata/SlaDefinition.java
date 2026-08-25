@@ -6,7 +6,12 @@ import java.util.Map;
 /**
  * An SLA definition (PHASE-4 §6): wall-clock duration from task {@code createdAt},
  * scoped to a task type plus a match expression over the task's scope bindings
- * ({@code entity}, {@code type}). {@code warnAt} is a fraction of {@code target}
+ * ({@code entity}, {@code type}, {@code transition} — the PHASE-2 Annex A slot
+ * bindings; the spec's own example matches {@code transition == 'DRAFT->SUBMITTED'}).
+ * For approvals the transition is the state-machine edge of the write that
+ * suspended the flow ({@code PRIOR->NEW}, empty when the triggering write changed
+ * no state); BPMN-bridge tasks carry no transition context and bind empty.
+ * {@code warnAt} is a fraction of {@code target}
  * (0.8 = warn at 80%); a matching definition takes precedence over a
  * {@code requestApproval} step's own {@code timeout}/{@code escalateTo} — the
  * governed overlay beats the inline default — and {@code warnAt: null} disables the
@@ -36,9 +41,15 @@ public record SlaDefinition(
         }
     }
 
-    /** The scope bindings a {@code match} expression evaluates against. */
-    public static Map<String, Object> bindings(String entityKey, String taskType) {
+    /**
+     * The scope bindings a {@code match} expression evaluates against:
+     * {@code entity} (the qualified entity key), {@code type} (the task type), and
+     * {@code transition} ({@code FROM->TO} on approval tasks, empty otherwise).
+     */
+    public static Map<String, Object> bindings(String entityKey, String taskType,
+                                               String transition) {
         return Map.of("entity", entityKey == null ? "" : entityKey,
-                "type", taskType == null ? "" : taskType);
+                "type", taskType == null ? "" : taskType,
+                "transition", transition == null ? "" : transition);
     }
 }

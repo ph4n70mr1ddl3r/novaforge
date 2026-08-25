@@ -52,7 +52,7 @@ public class SuspensionService {
                                        String stepId, String afterStep, String onRejectJson,
                                        String approversRole, List<String> approverUsers,
                                        String mode, String stepTimeout, String stepEscalateTo,
-                                       UUID initiatingActor) {
+                                       UUID initiatingActor, String transition) {
         // SoD: the initiating actor leaves an explicit approver set (§4, fail closed).
         List<String> users = new ArrayList<>(approverUsers == null ? List.of() : approverUsers);
         if (initiatingActor != null) {
@@ -82,8 +82,10 @@ public class SuspensionService {
         // §6 precedence: a matching SLADefinition governs the timers (and its
         // onBreach.escalateTo wins); otherwise the step's own timeout/escalateTo
         // apply; with neither, no timer — the task stays open until resolved.
+        // The match may pin the triggering write's transition (PHASE-4 §6's example,
+        // PHASE-2 Annex A's slot binding — 'DRAFT->SUBMITTED' shaped).
         var timers = slas.resolve(tenantId, app, entityKey, "approval",
-                stepTimeout, Instant.now());
+                stepTimeout, transition, Instant.now());
         String escalateTo = timers.matched() != null && timers.matched().onBreach() != null
                 && timers.matched().onBreach().escalateTo() != null
                 ? roleOf(timers.matched().onBreach().escalateTo())

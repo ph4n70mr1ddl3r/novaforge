@@ -47,6 +47,17 @@ import tools.jackson.databind.json.JsonMapper;
 class TaskApiTests extends PostgresTestBase {
 
     static final UUID TENANT = UUID.fromString("11111111-1111-4111-8111-111111111111");
+
+    /** The canned SLA source's definitions — swap in a test for scoped matching. */
+    static final java.util.concurrent.atomic.AtomicReference<
+            java.util.List<com.novaforge.metadata.SlaDefinition>> CANNED_SLAS =
+            new java.util.concurrent.atomic.AtomicReference<>(java.util.List.of(
+                    new com.novaforge.metadata.SlaDefinition("sla_po",
+                            new com.novaforge.metadata.SlaDefinition.Scope("approval",
+                                    "entity == 'Purch.PurchaseOrder'"),
+                            "PT1H", 0.5,
+                            new com.novaforge.metadata.SlaDefinition.OnBreach(
+                                    "role:Purch.seniorManager", true))));
     static final UUID CLERK = UUID.fromString("33333333-3333-4333-8333-333333333333");
     static final UUID MANAGER = UUID.fromString("77777777-7777-4777-8777-777777777777");
     static final UUID SENIOR = UUID.fromString("88888888-8888-4888-8888-888888888888");
@@ -119,13 +130,7 @@ class TaskApiTests extends PostgresTestBase {
         @Bean
         @Primary
         com.novaforge.workflow.sla.PublishedSlaSource slaSource() {
-            return (tenantId, appApiName) -> java.util.List.of(
-                    new com.novaforge.metadata.SlaDefinition("sla_po",
-                            new com.novaforge.metadata.SlaDefinition.Scope("approval",
-                                    "entity == 'Purch.PurchaseOrder'"),
-                            "PT1H", 0.5,
-                            new com.novaforge.metadata.SlaDefinition.OnBreach(
-                                    "role:Purch.seniorManager", true)));
+            return (tenantId, appApiName) -> CANNED_SLAS.get();
         }
     }
 
@@ -373,7 +378,7 @@ class TaskApiTests extends PostgresTestBase {
         var result = suspensions.request(TENANT, "Purch", "PurchaseOrder",
                 "Purch.PurchaseOrder", record, "submit", "a1", "s2",
                 "{\"id\":\"r1\",\"op\":\"transitionState\",\"params\":{\"to\":\"REJECTED\"}}",
-                "Purch.manager", null, "any", null, null, CLERK);
+                "Purch.manager", null, "any", null, null, CLERK, "DRAFT->SUBMITTED");
         UUID instance = UUID.fromString(String.valueOf(result.get("instanceId")));
 
         // the role task exists and links the instance; the manager approves
@@ -397,7 +402,7 @@ class TaskApiTests extends PostgresTestBase {
         // resolve their own approval (§4, fail closed)
         UUID own = UUID.randomUUID();
         suspensions.request(TENANT, "Purch", "PurchaseOrder", "Purch.PurchaseOrder", own,
-                "submit", "a1", "s2", null, "Purch.manager", null, "any", null, null, MANAGER);
+                "submit", "a1", "s2", null, "Purch.manager", null, "any", null, null, MANAGER, null);
         String ownTask = jdbc.queryForObject(
                 "SELECT id FROM wf_tasks WHERE instance_id = ?", UUID.class,
                 jdbc.queryForObject("SELECT id FROM wf_suspended_flows WHERE record_id = ?",
@@ -414,7 +419,7 @@ class TaskApiTests extends PostgresTestBase {
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                         suspensions.request(TENANT, "Purch", "PurchaseOrder",
                                 "Purch.PurchaseOrder", UUID.randomUUID(), "submit", "a1",
-                                "s2", null, null, List.of(CLERK.toString()), "all", null, null, CLERK))
+                                "s2", null, null, List.of(CLERK.toString()), "all", null, null, CLERK, null))
                 .isInstanceOf(com.novaforge.common.error.PlatformException.class)
                 .hasMessageContaining("segregated");
     }
@@ -426,7 +431,7 @@ class TaskApiTests extends PostgresTestBase {
         suspensions.request(TENANT, "Purch", "PurchaseOrder", "Purch.PurchaseOrder", record,
                 "submit", "a1", "s2",
                 "{\"id\":\"r1\",\"op\":\"transitionState\",\"params\":{\"to\":\"REJECTED\"}}",
-                "Purch.manager", null, "any", null, null, CLERK);
+                "Purch.manager", null, "any", null, null, CLERK, "SUBMITTED->APPROVED");
         String taskId = jdbc.queryForObject(
                 "SELECT id FROM wf_tasks WHERE record_id = ?", UUID.class, record).toString();
         RESUMES.clear();
@@ -445,7 +450,7 @@ class TaskApiTests extends PostgresTestBase {
         // warnAt 0.5, senior escalation) governs instead
         var result = suspensions.request(TENANT, "Purch", "PurchaseOrder",
                 "Purch.PurchaseOrder", UUID.randomUUID(), "submit", "a1", "s2", null,
-                "Purch.manager", null, "any", "PT2H", "Purch.stepEscalator", CLERK);
+                "Purch.manager", null, "any", "PT2H", "Purch.stepEscalator", CLERK, "DRAFT->SUBMITTED");
         UUID instance = UUID.fromString(String.valueOf(result.get("instanceId")));
         Map<String, Object> task = jdbc.queryForMap(
                 "SELECT id, warn_at, due_at, escalate_to FROM wf_tasks WHERE instance_id = ?",
@@ -492,12 +497,61 @@ class TaskApiTests extends PostgresTestBase {
     void noTimersWhenNothingGoverns() {
         var result = suspensions.request(TENANT, "Purch", "Other",
                 "Purch.Other", UUID.randomUUID(), "hook", "a1", null, null,
-                "Purch.manager", null, "any", null, null, CLERK);
+                "Purch.manager", null, "any", null, null, CLERK, null);
         Map<String, Object> task = jdbc.queryForMap(
                 "SELECT due_at, warn_at FROM wf_tasks WHERE instance_id = ?",
                 UUID.fromString(String.valueOf(result.get("instanceId"))));
         org.assertj.core.api.Assertions.assertThat(task.get("due_at")).isNull();
         org.assertj.core.api.Assertions.assertThat(task.get("warn_at")).isNull();
+    }
+
+    @Test
+    @DisplayName("§6/Annex A: a transition-scoped SLA matches only its edge — the "
+            + "spec example's 'DRAFT->SUBMITTED' binding (empty when no state changed)")
+    void transitionScopedSlaMatchesOnlyItsEdge() {
+        try {
+            CANNED_SLAS.set(java.util.List.of(
+                    new com.novaforge.metadata.SlaDefinition("sla_submit_only",
+                            new com.novaforge.metadata.SlaDefinition.Scope("approval",
+                                    "entity == 'Purch.PurchaseOrder' "
+                                            + "&& transition == 'DRAFT->SUBMITTED'"),
+                            "PT1H", null, null)));
+            // the triggering write's edge carried — the definition governs (fresh app
+            // apiNames sidestep the resolver's 30s definition cache per test phase)
+            var matched = suspensions.request(TENANT, "PurchT1", "PurchaseOrder",
+                    "Purch.PurchaseOrder", UUID.randomUUID(), "submit", "a1", "s2", null,
+                    "Purch.manager", null, "any", null, null, CLERK, "DRAFT->SUBMITTED");
+            java.time.Instant due = jdbc.queryForObject(
+                    "SELECT due_at FROM wf_tasks WHERE instance_id = ?",
+                    java.sql.Timestamp.class,
+                    UUID.fromString(String.valueOf(matched.get("instanceId")))).toInstant();
+            org.assertj.core.api.Assertions.assertThat(
+                    java.time.Duration.between(java.time.Instant.now(), due).toMinutes())
+                    .isBetween(55L, 65L);
+
+            // a different edge (or no state change at all): no match, no step timeout —
+            // §6's no-timer path, the SLA stays dormant
+            String[] apps = {"PurchT2", "PurchT3"};
+            String[] others = {"SUBMITTED->APPROVED", null};
+            for (int i = 0; i < apps.length; i++) {
+                var unmatched = suspensions.request(TENANT, apps[i], "PurchaseOrder",
+                        "Purch.PurchaseOrder", UUID.randomUUID(), "submit", "a1", "s2", null,
+                        "Purch.manager", null, "any", null, null, CLERK, others[i]);
+                org.assertj.core.api.Assertions.assertThat(
+                                jdbc.queryForObject("SELECT count(*) FROM wf_tasks "
+                                                + "WHERE instance_id = ? AND due_at IS NOT NULL", Integer.class,
+                                        UUID.fromString(String.valueOf(unmatched.get("instanceId")))))
+                        .isZero();
+            }
+        } finally {
+            CANNED_SLAS.set(java.util.List.of(
+                    new com.novaforge.metadata.SlaDefinition("sla_po",
+                            new com.novaforge.metadata.SlaDefinition.Scope("approval",
+                                    "entity == 'Purch.PurchaseOrder'"),
+                            "PT1H", 0.5,
+                            new com.novaforge.metadata.SlaDefinition.OnBreach(
+                                    "role:Purch.seniorManager", true))));
+        }
     }
 
     @Test
@@ -508,7 +562,7 @@ class TaskApiTests extends PostgresTestBase {
         // senior escalation) — timers are in the future relative to wall clock
         var result = suspensions.request(TENANT, "Purch", "PurchaseOrder",
                 "Purch.PurchaseOrder", UUID.randomUUID(), "submit", "a1", "s2", null,
-                "Purch.manager", null, "any", "PT2H", "Purch.stepEscalator", CLERK);
+                "Purch.manager", null, "any", "PT2H", "Purch.stepEscalator", CLERK, "DRAFT->SUBMITTED");
         UUID instance = UUID.fromString(String.valueOf(result.get("instanceId")));
         UUID task = jdbc.queryForObject("SELECT id FROM wf_tasks WHERE instance_id = ?",
                 UUID.class, instance);

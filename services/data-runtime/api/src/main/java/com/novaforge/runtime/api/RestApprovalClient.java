@@ -82,6 +82,8 @@ public class RestApprovalClient implements ApprovalClient {
                 : suspension.escalateTo());
         payload.put("initiatingActor", suspension.initiatingActor() == null ? ""
                 : suspension.initiatingActor().toString());
+        payload.put("transition", suspension.transition() == null ? ""
+                : suspension.transition());
         return payload;
     }
 

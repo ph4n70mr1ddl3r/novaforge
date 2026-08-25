@@ -186,6 +186,13 @@ function CaseEditor({
                 <input aria-label={`Case name ${suiteCase.name}`} value={suiteCase.name}
                     onChange={(e) => patch({ name: e.target.value })} />
             </label>
+            <label>
+                Frozen clock (ISO-8601 instant; empty = run start — PHASE-3 §7's per-case override)
+                <input aria-label={`Case clock ${suiteCase.name}`}
+                    placeholder="2026-09-30T00:00:00Z"
+                    value={suiteCase.clock ?? ""}
+                    onChange={(e) => patch({ clock: e.target.value.trim() || undefined })} />
+            </label>
 
             <h3>Fixtures</h3>
             {suiteCase.fixtures.map((fixture, index) => (

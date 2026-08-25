@@ -39,11 +39,14 @@ public class SlaResolver {
 
     /**
      * Resolves the timers for a task about to be created. {@code stepTimeout} is the
-     * requestApproval step's own ISO-8601 duration (may be null).
+     * requestApproval step's own ISO-8601 duration (may be null); {@code transition}
+     * is the triggering write's state-machine edge ({@code PRIOR->NEW}, null when no
+     * state changed) — the match binding of PHASE-4 §6's example / PHASE-2 Annex A.
      */
     public Timers resolve(UUID tenantId, String appApiName, String entityKey,
-                          String taskType, String stepTimeout, Instant createdAt) {
-        SlaDefinition matched = match(tenantId, appApiName, entityKey, taskType);
+                          String taskType, String stepTimeout, String transition,
+                          Instant createdAt) {
+        SlaDefinition matched = match(tenantId, appApiName, entityKey, taskType, transition);
         if (matched != null) {
             Duration target = Duration.parse(matched.target());
             Double warnAt = matched.warnAt() == null ? DEFAULT_WARN_AT : matched.warnAt();
@@ -61,7 +64,7 @@ public class SlaResolver {
     }
 
     private SlaDefinition match(UUID tenantId, String appApiName, String entityKey,
-                                String taskType) {
+                                String taskType, String transition) {
         for (SlaDefinition sla : slasOf(tenantId, appApiName)) {
             if (sla.scope() == null || sla.target() == null) {
                 continue;
@@ -72,7 +75,7 @@ public class SlaResolver {
             if (sla.scope().match() != null) {
                 Object outcome = Expression.parse(sla.scope().match())
                         .evaluate(Expression.Bindings.of(
-                                SlaDefinition.bindings(entityKey, taskType)),
+                                SlaDefinition.bindings(entityKey, taskType, transition)),
                                 java.time.Clock.systemUTC());
                 if (!(outcome instanceof Boolean matches) || !matches) {
                     continue;

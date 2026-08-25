@@ -62,6 +62,7 @@ class ApprovalFlowTests extends PostgresTestBase {
                   "fields": [
                     { "apiName": "label", "type": "text", "required": true },
                     { "apiName": "total", "type": "decimal", "precision": 18, "scale": 4 },
+                    { "apiName": "approver", "type": "uuid" },
                     { "apiName": "status", "type": "enum",
                       "values": ["DRAFT", "SUBMITTED", "APPROVED", "REJECTED"] } ],
                   "hooks": [
@@ -76,7 +77,12 @@ class ApprovalFlowTests extends PostgresTestBase {
                             "body": { "id": "r1", "op": "transitionState",
                                        "params": { "to": "REJECTED" },
                               "body": { "id": "s2", "op": "transitionState",
-                                         "params": { "to": "APPROVED" } } } } } } } ] } ],
+                                         "params": { "to": "APPROVED" } } } } } } },
+                    { "name": "assign", "trigger": "beforeSave", "flow":
+                      { "id": "g1", "op": "branch", "params": { "guard": "label == 'assign'" },
+                        "onTrue": "a2",
+                        "body": { "id": "a2", "op": "requestApproval",
+                                   "params": { "approvers": "approver", "mode": "all" } } } } ] } ],
               "stateMachines": [
                 { "id": "sm_po", "entity": "PurchaseOrder", "stateField": "status",
                   "initial": "DRAFT",
@@ -177,6 +183,10 @@ class ApprovalFlowTests extends PostgresTestBase {
                 .isEqualTo("Purch.manager");
         org.assertj.core.api.Assertions.assertThat(suspension.afterStep()).isEqualTo("s2");
         org.assertj.core.api.Assertions.assertThat(suspension.initiatingActor()).isEqualTo(ACTOR);
+        // the suspension carries the triggering write's state-machine edge — the
+        // `transition` SLA match binding of PHASE-4 §6 / PHASE-2 Annex A
+        org.assertj.core.api.Assertions.assertThat(suspension.transition())
+                .isEqualTo("DRAFT->SUBMITTED");
 
         // the manager's approval re-enters the engine through the internal surface
         mockMvc.perform(post("/api/v1/hooks/resume").with(serviceJwt())
@@ -223,6 +233,30 @@ class ApprovalFlowTests extends PostgresTestBase {
         mockMvc.perform(get("/api/v1/runtime/PurchaseOrder/" + id).with(jwtFor()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.label").value("po"));
+    }
+
+    @Test
+    @DisplayName("approvers as an expression resolving to users — the §4 form (root identifier names a field)")
+    void approversExpressionResolvesUsers() throws Exception {
+        String manager = "99999999-9999-4999-8999-999999999999";
+        String id = createOrder(100);
+        SUSPENSIONS.clear();
+
+        // the assign update: the flow's approvers is the record's `approver` field —
+        // an expression, not a role — resolved against the merged record at suspension
+        mockMvc.perform(patch("/api/v1/runtime/PurchaseOrder/" + id).with(jwtFor())
+                        .contentType("application/json")
+                        .content("{\"version\":1,\"label\":\"assign\",\"approver\":\"" + manager + "\"}"))
+                .andExpect(status().isOk());
+
+        assertThatOneSuspensionFor(id);
+        ApprovalClient.Suspension suspension = SUSPENSIONS.getFirst();
+        org.assertj.core.api.Assertions.assertThat(suspension.approversRole()).isNull();
+        org.assertj.core.api.Assertions.assertThat(suspension.approverUsers())
+                .containsExactly(manager);
+        org.assertj.core.api.Assertions.assertThat(suspension.mode()).isEqualTo("all");
+        // no state changed on this write — the transition binding is empty (null here)
+        org.assertj.core.api.Assertions.assertThat(suspension.transition()).isNull();
     }
 
     @Test
@@ -288,7 +322,7 @@ class ApprovalFlowTests extends PostgresTestBase {
     private static ApprovalClient.Suspension stubSuspension(String recordId) {
         return new ApprovalClient.Suspension(TENANT, "Purch", "PurchaseOrder",
                 "Purch.PurchaseOrder", UUID.fromString(recordId), "submit", "a1", "s2",
-                null, "Purch.manager", null, "any", null, null, ACTOR);
+                null, "Purch.manager", null, "any", null, null, ACTOR, "DRAFT->SUBMITTED");
     }
 
     private void assertThatOneSuspensionFor(String recordId) {

@@ -24,16 +24,29 @@ public record TestSuiteDefinition(
         cases = cases == null ? List.of() : List.copyOf(cases);
     }
 
+    /**
+     * One case. The optional {@code clock} pins the case's frozen instant
+     * (ISO-8601) — PHASE-3 §7's "overridable per case": assertions and DSL
+     * predicates resolve against it instead of the run's start instant, so
+     * period-lock-style cases advance the clock explicitly rather than waiting.
+     */
     public record TestCase(
             String name,
             List<Fixture> fixtures,
             List<Step> steps,
-            List<String> assertExpressions) {
+            List<String> assertExpressions,
+            String clock) {
 
         public TestCase {
             fixtures = fixtures == null ? List.of() : List.copyOf(fixtures);
             steps = steps == null ? List.of() : List.copyOf(steps);
             assertExpressions = assertExpressions == null ? List.of() : List.copyOf(assertExpressions);
+        }
+
+        /** The pre-override shape (PHASE-3 §7's original encoding) — run-start clock. */
+        public TestCase(String name, List<Fixture> fixtures, List<Step> steps,
+                        List<String> assertExpressions) {
+            this(name, fixtures, steps, assertExpressions, null);
         }
     }
 

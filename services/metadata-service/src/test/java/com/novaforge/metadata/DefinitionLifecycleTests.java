@@ -594,6 +594,63 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors[0].message").value(
                         org.hamcrest.Matchers.containsString("requires a state machine")));
+
+        // SLA match carries the Annex A slot bindings — the spec's own example
+        // (entity + transition, PHASE-4 §6) compiles clean…
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "SlaApp", "entities": [ { "apiName": "PurchaseOrder",
+                                  "fields": [ { "apiName": "name", "type": "text" } ] } ],
+                                  "slas": [ { "id": "sla_po",
+                                    "scope": { "taskType": "approval",
+                                               "match": "entity == 'Purch.PurchaseOrder' && transition == 'DRAFT->SUBMITTED'" },
+                                    "target": "PT24H", "warnAt": 0.8,
+                                    "onBreach": { "escalateTo": "role:senior-manager",
+                                                   "notify": true } } ] }
+                                """))
+                .andExpect(status().isOk());
+
+        // …while a match referencing a binding no slot provides still rejects
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "SlaApp2", "entities": [ { "apiName": "PurchaseOrder",
+                                  "fields": [ { "apiName": "name", "type": "text" } ] } ],
+                                  "slas": [ { "id": "sla_bad",
+                                    "scope": { "match": "record == 'x'" },
+                                    "target": "PT24H" } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value(
+                        org.hamcrest.Matchers.containsString("sla[sla_bad].scope.match")))
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("unresolved reference 'record'")));
+
+        // §4's approvers-expression form: a root identifier naming a field compiles
+        // against the record context…
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "ApprApp", "entities": [ { "apiName": "Claim",
+                                  "fields": [ { "apiName": "name", "type": "text" },
+                                               { "apiName": "manager", "type": "uuid" } ],
+                                  "hooks": [ { "name": "route", "trigger": "beforeSave",
+                                    "flow": { "id": "a1", "op": "requestApproval",
+                                      "params": { "approvers": "manager", "mode": "any" } } } ] } ] }
+                                """))
+                .andExpect(status().isOk());
+
+        // …and a malformed expression in that form rejects with the parse error
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "ApprApp2", "entities": [ { "apiName": "Claim",
+                                  "fields": [ { "apiName": "name", "type": "text" },
+                                               { "apiName": "manager", "type": "uuid" } ],
+                                  "hooks": [ { "name": "route", "trigger": "beforeSave",
+                                    "flow": { "id": "a1", "op": "requestApproval",
+                                      "params": { "approvers": "manager +" } } } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("requestApproval approvers expression")));
     }
 
     @Test

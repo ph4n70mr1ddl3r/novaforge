@@ -226,7 +226,7 @@ dashboards, locale fallback), and the builder shell (entity builder, page builde
 with live preview + rebase, RBAC editors, tenant onboarding, report builder +
 dashboard composer, translation editor, change-set review/promotion) — pages are
 authorable metadata (`PUT …/pages/{apiName}`) with optimistic locking, served
-same-origin by the gateway. Java (326) + frontend (146) tests green under `./mvnw verify` +
+same-origin by the gateway. Java (329) + frontend (147) tests green under `./mvnw verify` +
 `pnpm -r test`. The main remaining surfaces: the later-phase full-stack exit demos
 (Phases 4/5/8 live exercises). Progress ledger:
 [IMPLEMENTATION.md](IMPLEMENTATION.md).

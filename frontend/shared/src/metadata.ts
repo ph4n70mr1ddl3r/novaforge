@@ -130,6 +130,8 @@ export interface SuiteCase {
     fixtures: SuiteFixture[];
     steps: SuiteStep[];
     assertExpressions: string[];
+    /** PHASE-3 §7's per-case frozen-clock override (ISO-8601 instant; absent = run start). */
+    clock?: string;
 }
 
 /** The Tests branch (ADR-010): fixtures → steps → assertions per PHASE-3 §7. */

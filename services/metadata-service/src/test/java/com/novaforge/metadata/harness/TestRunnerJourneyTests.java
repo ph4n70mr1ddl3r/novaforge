@@ -333,4 +333,36 @@ class TestRunnerJourneyTests {
                 .matcher(SECRET_BODY.get()).results().findFirst()
                 .map(match -> match.group(1)).orElseThrow();
     }
+
+    @Test
+    @DisplayName("§7's per-case clock override: assertions resolve against the case's "
+            + "frozen instant, not the run's — malformed values fail the case, not the run")
+    void perCaseClockOverridesRunStart() {
+        TestSuiteDefinition suite = new TestSuiteDefinition("clocks", null, List.of(
+                // no override: the run-start clock — a far-future date must NOT hold
+                new TestSuiteDefinition.TestCase("run start default", List.of(), List.of(),
+                        List.of("today() != date('2030-01-01')"), null),
+                // the override: every time function resolves against the case's instant
+                new TestSuiteDefinition.TestCase("advanced", List.of(), List.of(),
+                        List.of("today() == date('2030-01-01')",
+                                "now() >= datetime('2030-01-01T00:00:00Z')"),
+                        "2030-01-01T00:00:00Z"),
+                // a malformed override is a case failure with guidance, never a crash
+                new TestSuiteDefinition.TestCase("malformed", List.of(), List.of(),
+                        List.of("true"), "not-an-instant")));
+        AppDefinition candidate = new AppDefinition(null, "ClockApp", null, null, null,
+                null, null, null, null, null, null, null, null);
+        Map<String, Object> artifact = runner.run(candidate, suite, null);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> cases = (List<Map<String, Object>>) artifact.get("cases");
+        assertEquals("run start default", cases.get(0).get("name"));
+        assertEquals(Boolean.TRUE, cases.get(0).get("passed"), () -> String.valueOf(cases.get(0)));
+        assertEquals(Boolean.TRUE, cases.get(1).get("passed"), () -> String.valueOf(cases.get(1)));
+        assertEquals("2030-01-01T00:00:00Z", cases.get(1).get("clock"));
+        assertEquals(Boolean.FALSE, cases.get(2).get("passed"));
+        assertTrue(String.valueOf(cases.get(2).get("failures")).contains("ISO-8601"),
+                () -> String.valueOf(cases.get(2)));
+        assertEquals(Boolean.FALSE, artifact.get("green"));
+    }
 }

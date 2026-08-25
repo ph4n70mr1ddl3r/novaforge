@@ -76,7 +76,9 @@ final class FlowCompiler {
 
     /**
      * SLA match expressions compile at publish (PHASE-4 §6) — the scope bindings are
-     * {@code entity} and {@code type} (SlaDefinition.bindings).
+     * {@code entity}, {@code type}, and {@code transition} (SlaDefinition.bindings;
+     * the Annex A slot bindings — §6's example matches
+     * {@code transition == 'DRAFT->SUBMITTED'}).
      */
     private static void checkSlas(AppDefinition app,
                                   java.util.List<ProblemErrors.FieldError> findings) {
@@ -88,7 +90,7 @@ final class FlowCompiler {
             try {
                 Expression.parse(sla.scope().match())
                         .compileCheck(Expression.CompilePolicy.recordContext(
-                                java.util.Set.of("entity", "type"), true));
+                                java.util.Set.of("entity", "type", "transition"), true));
             } catch (ExpressionException e) {
                 findings.add(new ProblemErrors.FieldError(scope,
                         sla.scope().match() + " — " + e.getMessage(), sla.scope().match()));
@@ -402,15 +404,30 @@ final class FlowCompiler {
                 }
             }
             case "requestApproval" -> {
-                // Phase 4 activation (§4): approvers (a role reference or a user list)
-                // and mode are compile-checked; the optional onReject subgraph rides
+                // Phase 4 activation (§4): approvers (a role reference, an expression
+                // resolving to users, or a literal user list) and mode are
+                // compile-checked; the optional onReject subgraph rides
                 // the step's body and is checked like any graph fragment.
                 Object approvers = step.params().get("approvers");
                 if (!(approvers instanceof String) && !(approvers instanceof java.util.List<?> list
                         && !list.isEmpty())) {
                     errors.add(new ProblemErrors.FieldError(where,
-                            "requestApproval requires approvers — a role reference or a "
-                                    + "non-empty user list", approvers));
+                            "requestApproval requires approvers — a role reference, an "
+                                    + "expression resolving to users, or a non-empty user list",
+                            approvers));
+                } else if (approvers instanceof String text
+                        && com.novaforge.metadata.FlowStep.approversIsExpression(text, entity)) {
+                    // the expression form (§4): its root identifier names a field of the
+                    // bound entity, so it resolves against the record — a lookup walked to
+                    // a user id, a user-list field, and the like. Plain names stay role
+                    // references; the runtime applies the same discriminator.
+                    try {
+                        Expression.parse(text).compileCheck(Expression.CompilePolicy
+                                .recordContext(recordFields(entity), true));
+                    } catch (ExpressionException e) {
+                        errors.add(new ProblemErrors.FieldError(where,
+                                "requestApproval approvers expression — " + e.getMessage(), text));
+                    }
                 }
                 String mode = step.param("mode");
                 if (mode != null && !"any".equals(mode) && !"all".equals(mode)) {
@@ -500,5 +517,14 @@ final class FlowCompiler {
 
     private FlowStep byId(String id) {
         return id == null ? null : stepsById.get(id);
+    }
+
+    /** The record-context binding set the approvers-expression form compiles against:
+     *  the entity's field apiNames plus the executor's injected {@code id}. */
+    private static Set<String> recordFields(EntityDefinition entity) {
+        Set<String> fields = new HashSet<>();
+        entity.fields().forEach(f -> fields.add(f.apiName()));
+        fields.add("id");
+        return fields;
     }
 }

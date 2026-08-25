@@ -94,6 +94,20 @@ public class HookExecutor {
     public Outcome runTrigger(AppDefinition app, EntityHandle handle, UUID tenantId,
                               UUID recordId, Map<String, Object> data, String trigger,
                               UUID systemPrincipal, UUID initiatingActor, HookSink sink) {
+        return runTrigger(app, handle, tenantId, recordId, data, trigger,
+                systemPrincipal, initiatingActor, null, sink);
+    }
+
+    /**
+     * The write path's entry with the triggering write's state-machine edge
+     * ({@code PRIOR->NEW}, null when no state changed) — the {@code transition} SLA
+     * match binding requestApproval suspensions carry (PHASE-4 §6 / PHASE-2
+     * Annex A).
+     */
+    public Outcome runTrigger(AppDefinition app, EntityHandle handle, UUID tenantId,
+                              UUID recordId, Map<String, Object> data, String trigger,
+                              UUID systemPrincipal, UUID initiatingActor,
+                              String transition, HookSink sink) {
         List<Outcome.Retry> retries = new java.util.ArrayList<>();
         for (HookRule hook : handle.entity().hooks()) {
             // the Scheduler's synthetic "scheduled" context addresses hooks by name —
@@ -106,7 +120,7 @@ public class HookExecutor {
             }
             try {
                 runOne(app, handle, tenantId, recordId, data, trigger, hook,
-                        systemPrincipal, initiatingActor, sink);
+                        systemPrincipal, initiatingActor, transition, sink);
             } catch (RuntimeException e) {
                 // before-hooks abort (§2.5); after-hooks ride the spine for retry —
                 // never lost, never blocking the write (§2 failure policy).
@@ -146,7 +160,7 @@ public class HookExecutor {
                             + "write path (ADR-003 #2), never on demand");
         }
         runOne(app, handle, tenantId, recordId, data, "manual", hook,
-                systemPrincipal, initiatingActor, sink);
+                systemPrincipal, initiatingActor, null, sink);
     }
 
     /**
@@ -162,7 +176,7 @@ public class HookExecutor {
         for (HookRule hook : handle.entity().hooks()) {
             if (trigger.equals(hook.trigger()) && hookName.equals(hook.name())) {
                 runOne(app, handle, tenantId, recordId, data, trigger, hook,
-                        systemPrincipal, null, sink);
+                        systemPrincipal, null, null, sink);
                 return true;
             }
         }
@@ -197,7 +211,7 @@ public class HookExecutor {
     private void runOne(AppDefinition app, EntityHandle handle, UUID tenantId,
                         UUID recordId, Map<String, Object> data, String trigger,
                         HookRule hook, UUID systemPrincipal, UUID initiatingActor,
-                        HookSink sink) {
+                        String transition, HookSink sink) {
         String kind = hook.script() == null ? "flow" : "script";
         counted(handle, trigger, kind);
         // §9 hook-duration histogram — the write path's per-trigger latency shape.
@@ -211,6 +225,7 @@ public class HookExecutor {
                         systemPrincipal, 0, sink);
                 context.initiatingActor = initiatingActor;
                 context.currentHook = hook.name();
+                context.transition = transition;
                 context.index(hook.flow());
                 executeIndexed(hook.flow(), context);
             }
@@ -348,7 +363,14 @@ public class HookExecutor {
                     throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                             "unknown state on " + machine.get().id() + ": " + to);
                 }
+                Object prior = context.data.get(machine.get().stateField());
                 context.data.put(machine.get().stateField(), to);
+                if (prior != null && !to.equals(String.valueOf(prior))) {
+                    // the flow-driven edge becomes this context's transition — a later
+                    // requestApproval in the same flow suspends carrying it (the §6
+                    // match binding), exactly like a human-driven state change
+                    context.transition = prior + "->" + to;
+                }
                 if (context.resume) {
                     // no enclosing write carries the field here — the transition
                     // rides the standard guarded write (updateAsPrincipal enforces
@@ -365,10 +387,22 @@ public class HookExecutor {
                 // Service (task + suspended instance); execution of this flow ends
                 // here — the triggering write commits, resolution re-enters the
                 // engine afterward. Never holds the enclosing transaction.
+                // Approvers (§4): a role reference, or an expression resolving to
+                // users — the shared FlowStep discriminator decides (a root identifier
+                // naming a field of the bound entity, or `id`, is the expression form).
                 Object approvers = step.params().get("approvers");
-                String role = approvers instanceof String text ? text : null;
-                java.util.List<String> users = approvers instanceof List<?> list
-                        ? list.stream().map(String::valueOf).toList() : null;
+                String role = null;
+                java.util.List<String> users = null;
+                if (approvers instanceof String text
+                        && com.novaforge.metadata.FlowStep.approversIsExpression(
+                                text, context.handle.entity())) {
+                    Object resolved = context.evaluate(text);
+                    users = approverUsers(resolved, text);
+                } else {
+                    role = approvers instanceof String roleText ? roleText : null;
+                    users = approvers instanceof List<?> list
+                            ? list.stream().map(String::valueOf).toList() : null;
+                }
                 approvals.request(new ApprovalClient.Suspension(context.tenantId,
                         context.handle.appApiName(), context.handle.entity().apiName(),
                         context.handle.entityKey(), context.recordId,
@@ -376,7 +410,7 @@ public class HookExecutor {
                         step.next(), step.body(), role, users,
                         step.param("mode") == null ? "any" : step.param("mode"),
                         step.param("timeout"), step.param("escalateTo"),
-                        context.initiatingActor));
+                        context.initiatingActor, context.transition));
                 return null;   // suspended — the remainder runs on resolution
             }
             case "callConnector" -> {
@@ -400,6 +434,24 @@ public class HookExecutor {
             default -> throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "unknown op at runtime: " + step.op());
         }
+    }
+
+    /**
+     * The approvers-expression outcome (§4): a user id or a collection of them —
+     * anything else is an authoring error surfaced as problem+json, never a silent
+     * empty approver set (SoD's fail-closed path would then reject ambiguously).
+     */
+    private static java.util.List<String> approverUsers(Object resolved, String expression) {
+        if (resolved instanceof String user && !user.isBlank()) {
+            return java.util.List.of(user);
+        }
+        if (resolved instanceof List<?> list && !list.isEmpty()
+                && list.stream().allMatch(item -> item instanceof String s && !s.isBlank())) {
+            return list.stream().map(String::valueOf).toList();
+        }
+        throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                "requestApproval approvers expression must resolve to a user id or a list "
+                        + "of user ids: " + expression);
     }
 
     // --- template resolution (${…} — ADR-008 record templates, host-resolved) ---
@@ -445,6 +497,7 @@ public class HookExecutor {
         boolean resume;
         UUID initiatingActor;
         String currentHook;
+        String transition;
         private final Map<String, Object> overlay = new HashMap<>();
         private final Map<String, FlowStep> steps = new HashMap<>();
         final Map<String, Object> connectorResults = new HashMap<>();
@@ -502,6 +555,7 @@ public class HookExecutor {
             Context childContext = new Context(app, handle, tenantId, recordId, data,
                     systemPrincipal, depth, sink);
             childContext.overlay.putAll(child);
+            childContext.transition = transition;
             return childContext;
         }
 

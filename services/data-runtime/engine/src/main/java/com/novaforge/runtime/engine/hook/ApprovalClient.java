@@ -13,12 +13,18 @@ import java.util.UUID;
  */
 public interface ApprovalClient {
 
-    /** One suspension request: who must approve, and where the flow resumes. */
+    /**
+     * One suspension request: who must approve, and where the flow resumes. The
+     * {@code transition} is the state-machine edge of the triggering write
+     * ({@code PRIOR->NEW}, null when the write changed no state) — the SLA match
+     * binding of PHASE-4 §6 / PHASE-2 Annex A.
+     */
     record Suspension(UUID tenantId, String appApiName, String entityApiName,
                       String entityKey, UUID recordId, String hookName, String stepId,
                       String afterStep, FlowStep onReject,
                       String approversRole, List<String> approverUsers, String mode,
-                      String timeout, String escalateTo, UUID initiatingActor) {
+                      String timeout, String escalateTo, UUID initiatingActor,
+                      String transition) {
     }
 
     /**
