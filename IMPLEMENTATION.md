@@ -998,6 +998,18 @@ landed, and one of them hid a live defect.**
   empty, as before). Pinned by `NotificationTests.recordTokensResolve` (token
   resolution, once-per-event fetch, failure-degrades delivery).
 
+**Spec-review closeout (2026-08-26, eighth pass) — §5's inbox paging silently
+clamped where the Phase 1 conventions it rides reject.** PHASE-4 §5 pins the task
+inbox "filter/sort/page per the Phase 1 query conventions", and PHASE-1 §5/§12 Q2
+pin over-limit page sizes to **reject** (`VALIDATION_FAILED`, never silently clamp) —
+but both paged user surfaces answered `size=201` with a silently clamped 200-row
+page (`Math.min(size, 200)`: the workflow inbox and the notification inbox, §8's
+sibling surface). Both now reject over-limit or negative paging with 400
+problem+json while the 200 boundary serves — the same contract the Data Runtime's
+own query parser enforces (`page size must be 1..200 (reject, never clamp)`).
+Pinned by `TaskApiTests.inboxRejectsOverLimitPaging` and
+`NotificationTests.inboxRejectsOverLimitPaging`.
+
 Verified end to end at the close: `./mvnw verify` green (676 backend tests — the
 +8 of this pass ride `ScriptApiTests`, `ScheduledScriptTests`, `SchedulerTests`,
 `NotificationTests`, and `DefinitionValidatorTest`) and the frontend workspace
@@ -1643,3 +1655,56 @@ review screen read a payload the API never sends.** Three findings:
   (branch round-trip, resolvedGaps, the re-bind union) and the lifecycle vitest
   journeys (payload rendering, red-gate promote disabled, the triage editor's
   patch).
+
+**Spec-review closeout (2026-08-26, eighth pass) — §4 item 5's "projection columns
+and indexes drop lazily at publish" had never landed, and the create-only
+materializer hid two live defects.** The materializer was create-only:
+`CREATE TABLE IF NOT EXISTS` plus `CREATE … INDEX IF NOT EXISTS`, nothing ever
+altered or dropped. Three findings, all closed by one rewrite:
+- **Live defect — a compatible publish that adds an indexed field to an existing
+  entity failed DDL forever.** `CREATE TABLE IF NOT EXISTS` no-ops on the existing
+  projection, so the new field's generated column never exists — then `CREATE INDEX`
+  on it fails (`column does not exist`), every publish logs `materialization failed`,
+  and the new column/index never land (PHASE-1 §6's publish-time DDL).
+- **Live defect — an acknowledged type change left the stale typed generated column.**
+  The promoted-column query path then breaks on the *next* legitimate publish:
+  `text = numeric` operator errors on filters/aggregates over the re-typed field
+  (the compatibility check's `acknowledgeDataImpact` path, §4 item 5).
+- **The spec pins.** Removed fields' columns and stale indexes never retired (the
+  explicit "drop lazily at publish"); removed entities kept their sync trigger
+  firing on every `rec_records` write forever; and §4 item 4's "the materializer
+  handles version downgrades" held only by accident (nothing was ever dropped).
+
+Closed with a **union reconcile**: `Materializer.applyAll(every currently published
+app)` computes, per entity apiName, the union of promoted columns and managed
+indexes — projections are shared across apps and tenants (the DDL is tenant-shared),
+so one app's removal can never retire a column another published app still promotes
+— then reconciles: missing promoted columns ADD (the stored generated expression
+backfills over existing rows), stale ones DROP (values survive in `rec_records`
+JSONB — nothing is destroyed at publish), re-typed ones drop and re-add under the
+type class; managed `ix_/ux_` indexes drop/create to the union set; entities no
+published app carries retire wholesale (trigger, function, table — republish
+recreates and backfills from the base table, which is §4 item 4's compatible
+downgrade made mechanical). The sync trigger now matches *every claiming app's*
+entity key, so two apps publishing the same entity apiName both land in the one
+shared projection (the last-publisher-wins trigger silently dropped the other's
+rows — a latent shared-table bug the union surfaced). Statements run isolated per
+shape — one app's bad DDL (data that no longer casts under a retype) never blocks
+the rest, retried idempotently on the next publish. The
+`MetadataPublishedSubscriber` feeds the union (the event handler and the boot
+catch-up each run one reconcile pass — per-app passes would each see a single-app
+union and retire the others'), skips the reconcile when the event's app is absent
+from the published-apps index (a deleted or raced listing is never read as
+"everything else retired"), and an empty index reconciles nothing — the scheduler's
+outage-safety rule. Pinned by five new `MaterializerTests` cases (add-promoted-field
+creates column+index over the live table, removal drops both lazily with the value
+surviving in JSONB, retype recreates the column under the new class, entity removal
+retires the projection and republish backfills it, and the shared-table union keeps
+a column another app promotes while both apps' rows sync) — 8 total.
+
+Verified: `./mvnw verify` green end to end (all 23 reactor modules, +7 test methods
+this pass — 5 `MaterializerTests`, 1 `TaskApiTests`, 1 `NotificationTests`; 348
+per-class test methods total on this runner — earlier passes' headline totals had
+double-counted surefire's per-module summary lines) and the frontend workspace
+unchanged-green (147 vitest). The gateway's health suite again needed a local Redis
+on 6379 (the standing environmental note).

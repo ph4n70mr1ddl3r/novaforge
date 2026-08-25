@@ -1,6 +1,8 @@
 package com.novaforge.workflow.api;
 
 import com.novaforge.common.context.TenantContext;
+import com.novaforge.common.error.PlatformErrorCode;
+import com.novaforge.common.error.PlatformException;
 import com.novaforge.workflow.task.TaskService;
 import java.util.Map;
 import java.util.UUID;
@@ -27,7 +29,7 @@ public class TaskController {
         this.tasks = tasks;
     }
 
-    /** My tasks — assigned to me or to my roles; open by default (§5), sortable per the Phase 1 conventions. */
+    /** My tasks — assigned to me or to my roles; open by default (§5), sortable/paged per the Phase 1 conventions. */
     @GetMapping("/tasks")
     public Map<String, Object> myTasks(@RequestParam(required = false) String status,
                                        @RequestParam(required = false) String sort,
@@ -35,8 +37,18 @@ public class TaskController {
                                        @RequestParam(defaultValue = "0") int page,
                                        @RequestParam(defaultValue = "25") int size) {
         var ctx = requireContext();
+        // The Phase 1 paging convention (§5/§12 Q2 — the convention §5 binds this inbox
+        // to): page size is 1..200 and over-limit requests reject, never silently clamp.
+        if (size < 1 || size > 200) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "page size must be 1..200 (reject, never clamp)");
+        }
+        if (page < 0) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "page offset must be >= 0");
+        }
         var result = tasks.myTasks(UUID.fromString(ctx.tenantId()), UUID.fromString(ctx.actorId()),
-                status, sort, dir, page, Math.min(size, 200));
+                status, sort, dir, page, size);
         return Map.of("rows", result.rows().stream().map(t -> t.toJson()).toList(),
                 "total", result.total());
     }

@@ -192,6 +192,19 @@ class NotificationTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("over-limit page sizes reject, never silently clamp (PHASE-1 §5's convention via PHASE-4 §5)")
+    void inboxRejectsOverLimitPaging() throws Exception {
+        mockMvc.perform(get("/api/v1/notifications").queryParam("size", "201")
+                        .with(jwtFor(MANAGER)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("4000"));
+        // the boundary itself serves
+        mockMvc.perform(get("/api/v1/notifications").queryParam("size", "200")
+                        .with(jwtFor(MANAGER)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("role-targeted events resolve the role's holders; preferences filter (§8)")
     void roleFanOutAndPreferences() throws Exception {
         // the manager opts out of email for task assignments

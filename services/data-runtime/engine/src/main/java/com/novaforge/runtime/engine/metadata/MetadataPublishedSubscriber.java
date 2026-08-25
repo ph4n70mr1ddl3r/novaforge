@@ -1,10 +1,12 @@
 package com.novaforge.runtime.engine.metadata;
 
+import com.novaforge.metadata.AppDefinition;
 import com.novaforge.runtime.storage.materializer.Materializer;
 import com.novaforge.security.EventHeaders;
 import com.novaforge.security.TracePropagation;
 import io.micrometer.tracing.Tracer;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
@@ -22,6 +24,12 @@ import tools.jackson.databind.json.JsonMapper;
  * single-threaded executor (DDL serialization) — publish time only, never the hot
  * path (§6). Lives in the engine: it bridges the resolver cache (engine) and the
  * materializer (storage) without the api layer knowing either.
+ *
+ * <p>The materializer receives every currently published app, not just the changed
+ * one: projections are shared per entity apiName across apps and tenants (the DDL is
+ * tenant-shared), so the reconcile must run over the union — one app's field removal
+ * can never retire a column another published app still promotes
+ * (PHASE-8 §4 item 5's lazy drop, scoped by "no live definition needs it").</p>
  *
  * <p>PHASE-3 §4 rebind: the envelope rides the spine topic {@code novaforge.metadata}
  * — same payload, Kafka client; the Phase 1 Redis pub/sub channel is retired. The
@@ -72,10 +80,19 @@ public class MetadataPublishedSubscriber {
             UUID tenantId = UUID.fromString(String.valueOf(envelope.get("tenantId")));
             UUID appId = UUID.fromString(String.valueOf(envelope.get("appId")));
             resolver.evict(tenantId, appId);
-            MetadataClient.PublishedBundle bundle = client.publishedBundle(appId);
             materializerExecutor.execute(() -> {
                 try {
-                    materializer.apply(bundle.app());
+                    // The reconcile needs the event's app in the published-apps index:
+                    // an index that does not know the app this event announces (a deleted
+                    // app, or a listing that raced the read) is never read as "everything
+                    // else retired" — skip; the next publish or the catch-up converges.
+                    List<MetadataClient.PublishedApp> index = client.publishedApps();
+                    if (index.stream().noneMatch(app -> appId.equals(app.appId()))) {
+                        LOG.warn("published-apps index does not list app {} — skipping the "
+                                + "projection reconcile", appId);
+                        return;
+                    }
+                    materializer.applyAll(publishedUnion(index));
                 } catch (Exception e) {
                     LOG.error("materialization failed for app {}", appId, e);
                 }
@@ -85,27 +102,41 @@ public class MetadataPublishedSubscriber {
         }
     }
 
+    /**
+     * Every indexed app's bundle — the union. An empty index reconciles nothing — an
+     * outage-safe guard in the scheduler's registry-sync spirit: a listing that
+     * surfaces empty must never be read as "nothing is published anywhere" and wipe
+     * the projections.
+     */
+    private List<AppDefinition> publishedUnion(List<MetadataClient.PublishedApp> index) {
+        List<AppDefinition> apps = new java.util.ArrayList<>();
+        for (MetadataClient.PublishedApp app : index) {
+            apps.add(client.publishedBundle(app.appId()).app());
+        }
+        if (apps.isEmpty()) {
+            LOG.warn("published-apps index empty — skipping the projection reconcile");
+        }
+        return apps;
+    }
+
     @jakarta.annotation.PostConstruct
     void catchUpOnRestart() {
         // Publishes that fired while this instance was down are covered by the boot
         // catch-up (the consumer group's offsets only advance while it is live, and a
         // fresh group starts at earliest — but an offset reset to latest or a manual
         // purge must never leave a projection missing). Idempotent DDL makes re-running
-        // every currently published app safe.
+        // every currently published app safe — one union reconcile (PHASE-8 §4 item 5):
+        // app-by-app passes would each see a single-app union and retire the others'.
         try {
-            for (MetadataClient.PublishedApp app : client.publishedApps()) {
-                try {
-                    MetadataClient.PublishedBundle bundle = client.publishedBundle(app.appId());
-                    materializerExecutor.execute(() -> {
-                        try {
-                            materializer.apply(bundle.app());
-                        } catch (Exception e) {
-                            LOG.error("startup catch-up failed for app {}", app.appId(), e);
-                        }
-                    });
-                } catch (Exception e) {
-                    LOG.error("startup catch-up could not fetch app {}", app.appId(), e);
-                }
+            List<AppDefinition> union = publishedUnion(client.publishedApps());
+            if (!union.isEmpty()) {
+                materializerExecutor.execute(() -> {
+                    try {
+                        materializer.applyAll(union);
+                    } catch (Exception e) {
+                        LOG.error("startup catch-up failed", e);
+                    }
+                });
             }
         } catch (Exception e) {
             LOG.error("startup catch-up could not read the published-apps index", e);

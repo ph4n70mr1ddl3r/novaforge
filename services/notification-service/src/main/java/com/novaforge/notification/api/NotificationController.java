@@ -33,6 +33,13 @@ public class NotificationController {
     public Map<String, Object> inbox(@RequestParam(defaultValue = "0") int page,
                                      @RequestParam(defaultValue = "25") int size) {
         var ctx = requireContext();
+        // The Phase 1 paging convention (PHASE-4 §5 binds the inboxes to it): page size
+        // is 1..200 and over-limit requests reject, never silently clamp.
+        if (size < 1 || size > 200 || page < 0) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    size < 1 || size > 200 ? "page size must be 1..200 (reject, never clamp)"
+                            : "page offset must be >= 0");
+        }
         UUID tenant = UUID.fromString(ctx.tenantId());
         UUID user = UUID.fromString(ctx.actorId());
         Long total = jdbc.queryForObject(
@@ -42,7 +49,7 @@ public class NotificationController {
                 SELECT id, category, title, body, read_at, created_at
                   FROM nf_notifications WHERE tenant_id = ? AND user_id = ?
                  ORDER BY created_at DESC LIMIT ? OFFSET ?""",
-                tenant, user, Math.min(size, 200), page * Math.min(size, 200));
+                tenant, user, size, page * size);
         return Map.of("rows", rows, "total", total == null ? 0 : total);
     }
 

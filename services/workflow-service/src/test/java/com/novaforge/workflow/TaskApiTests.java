@@ -231,6 +231,23 @@ class TaskApiTests extends PostgresTestBase {
                 .forEach(row -> ids.add(row.get("id").asString()));
         return ids;
     }
+
+    @Test
+    @DisplayName("over-limit page sizes reject, never silently clamp (PHASE-1 §5's convention via §5)")
+    void inboxRejectsOverLimitPaging() throws Exception {
+        // 201 is over the 200 cap: the request rejects with VALIDATION_FAILED problem+json
+        mockMvc.perform(get("/api/v1/workflow/tasks").queryParam("size", "201")
+                        .with(jwtFor(MANAGER)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("code").value("4000"));
+        mockMvc.perform(get("/api/v1/workflow/tasks").queryParam("size", "0")
+                        .with(jwtFor(MANAGER)))
+                .andExpect(status().isBadRequest());
+        // the boundary itself serves
+        mockMvc.perform(get("/api/v1/workflow/tasks").queryParam("size", "200")
+                        .with(jwtFor(MANAGER)))
+                .andExpect(status().isOk());
+    }
     @Test
     @DisplayName("approve/reject resolve with the comment and emit task.* on the spine (§5)")
     void resolutionEmitsEvents() throws Exception {
