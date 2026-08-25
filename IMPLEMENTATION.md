@@ -314,6 +314,14 @@ persist → event seam → shaped projection):
   dies at its budget and the service stays on its feet; host access closed;
   authorization verdicts (FORBIDDEN et al.) survive the sandbox boundary
 
+**Phase 3 §6 note (2026-08-26, seventh pass):** the engine grew a second,
+execution-context leg — `POST /api/v1/scripts/scheduled`, service-client gated —
+for the Scheduler's `script` target (PHASE-4 §7's activation; that phase's
+closeout below carries the full shape): recordless, per-app system principal,
+`$record` absent, `$data.query` on the runtime's internal system-principal query
+surface. The write-path hook leg is unchanged: caller-context, no
+service-account fallback (ADR-003 #2, amended with this note).
+
 **Implemented — §2 failure policy, the retry leg (phase close):**
 - after-hook failures ride the spine out of the write's own transaction: the engine
   emits `hook.retry` outbox rows (trigger, hook, kind, attempt, error in the payload
@@ -650,12 +658,14 @@ carries it. Pinned by `TestRunnerJourneyTests.perCaseClockOverridesRunStart`
 - targets: `flow` fires the compiled-graph engine through the runtime's new
   internal `/api/v1/hooks/scheduled` surface (service-client gated) — hooks
   addressed by name in the synthetic `scheduled` context, no record, per-app
-  system principal; `script`/`processStart`/`report` register but fire as
-  `skipped` (dormant) — script awaits the Script Engine's service execution
-  context, processStart awaits Flowable, report awaits Phase 5 (ledger note)
+  system principal; `script` fires the same surface (the 2026-08-26 seventh-pass
+  activation — a script hook executes recordless as the per-app system principal
+  through the Script Engine's scheduled surface, see the closeout below);
+  `processStart` activated with §9, `report` with Phase 5 §7; unknown targets stay
+  a defensive `skipped` (authoring + a store CHECK enforce the closed set)
 - suites: publish-driven sync with upsert republish, fire-exactly-once with run +
-  event, misfire skip advancing to the next tick, dormant targets skip with
-  reason, read-only tenant-scoped status route
+  event, misfire skip advancing to the next tick, the script target firing the
+  scheduled-hook surface, read-only tenant-scoped status route
 
 **Implemented — T9 record-level sharing rules (§10, the PHASE-2 §9 remainder):**
 - `SharingRuleDefinition` on the PermissionSet branch (versioned, promoted):
@@ -932,6 +942,68 @@ wrote params the engine never read.** Three findings:
   comma-separated UUID list (which wins when both are given); the "other params"
   JSON slot re-syncs. Pinned by the logic-editor vitest journeys (role form and
   user-list form both land as `approvers`).
+
+**Spec-review closeout (2026-08-26, seventh pass) — three §6/§7/§8 pins had never
+landed, and one of them hid a live defect.**
+- **§7's `script` target had shipped dormant** ("script awaits the Script Engine's
+  service execution context" — a ledger note, never revisited once the engine
+  existed). §7 pins "`script` → the Script Engine the same way" as `flow`: via an
+  internal endpoint, per-app system principal, synthetic `scheduled` context
+  (`$record` absent). Closed end to end: the Scheduler's `script` jobs (params
+  `{entity, hook}`, now save-validated like `flow` jobs) fire the same runtime
+  scheduled-hook surface; the runtime executes a script hook recordless through a
+  new `ScriptClient.executeScheduled` leg (tenant + per-app system principal ride
+  the body — there is no user token to relay); the Script Engine grows
+  `POST /api/v1/scripts/scheduled` (service-client gated — `ServiceClientGate`, the
+  shared rule every internal surface rides) binding its own context, leaving
+  `$record` unbound (a reach for it is a ReferenceError, never a silent empty view)
+  and routing `$data.query` to a new `systemQuery` leg on the runtime's internal
+  `POST /api/v1/hooks/records/query` — the standard list DSL executed by the
+  storage path as the system principal (the `recordForSubscription` system-context
+  shape; raw rows, never user-shaped), PHASE-4 §4's engine-driven-context rule, not
+  a service-account fallback of the write-path leg. `$http` still exists only in
+  the declared connector sandbox. The dormant `else` branch stays as a defensive
+  guard (a registry row no definition can produce — authoring validates the target
+  set and the store CHECKs it) and answers `skipped` audibly.
+- **The scheduled surface fired every hook on the entity, not the addressed one.**
+  `runScheduledHook` resolved the hook by name only as an existence check, then
+  `runTrigger`'s scheduled-context matching ran *every* hook whose entity matched —
+  a scheduled job targeting one flow also fired its entity's script hooks (and vice
+  versa), against §7's "addressed by name" and the ledger's own wording. Found by
+  the new suite's regression case (`ScheduledScriptTests.flowHookStillFires` —
+  firing the flow hook must leave the script leg untouched); closed with a
+  dedicated `HookExecutor.runScheduled` that runs exactly the addressed hook in the
+  recordless context, and scheduled-context failures now propagate to the
+  Scheduler's run row + `scheduler.job.run` event (§7's audible failure record)
+  instead of parking spine retries that can never converge.
+- **§6's "SLA metrics (warn/breach counts per app) feed the Grafana baseline"
+  existed only as the unlabeled breach counter.** No warn counter existed and no
+  board surfaced either. Closed: `novaforge.sla.warn` joins `novaforge.sla.breach`,
+  both labeled `app` (derived from the task's app-qualified entity key;
+  process-keyed bridge tasks label with the raw value), and a
+  **NovaForge / Phase 4** Grafana board ships — warns/breaches per app (rate),
+  breach totals, escalation replacements, plus the workflow/notification/scheduler
+  service rows' p95 and the two services' consumer lag. Pinned by
+  `TaskApiTests.slaPrecedenceWarnAndBreach` (per-app counters asserted) and the
+  dashboard JSON in `deploy/compose/observability`.
+- **§8's `${record.field}` template tokens resolved nothing** — the ledger's own
+  "waits for a record-fetching surface (noted)" had been overtaken by events: the
+  PHASE-4 §9 event-start read landed that surface and nobody came back for the
+  tokens. Closed: `TaskEventConsumer` fetches the task's record once per event
+  through a new `RuntimeRecordPort` (the runtime's internal record read, service
+  client, best-effort — a gone record or an unreachable runtime renders empty
+  tokens and the fan-out still delivers; a misbehaving port can never take delivery
+  down with it), and `Notifier.resolve` binds both token families
+  (`${task.*}` from the event, `${record.*}` from the fetch — absent keys render
+  empty, as before). Pinned by `NotificationTests.recordTokensResolve` (token
+  resolution, once-per-event fetch, failure-degrades delivery).
+
+Verified end to end at the close: `./mvnw verify` green (676 backend tests — the
++8 of this pass ride `ScriptApiTests`, `ScheduledScriptTests`, `SchedulerTests`,
+`NotificationTests`, and `DefinitionValidatorTest`) and the frontend workspace
+unchanged-green (147 vitest). The gateway's hermetic health test needs a local
+Redis on 6379 in dev environments (its rate-limit health indicator) — an
+environmental note this pass surfaced, not a regression.
 
 ## Phase 5 — Reporting & Dashboards ◐ (spec: PHASE-5-REPORTING.md)
 

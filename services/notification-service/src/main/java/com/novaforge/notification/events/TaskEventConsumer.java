@@ -1,6 +1,7 @@
 package com.novaforge.notification.events;
 
 import com.novaforge.notification.notify.Notifier;
+import com.novaforge.notification.notify.RuntimeRecordPort;
 import com.novaforge.security.EventHeaders;
 import com.novaforge.security.TracePropagation;
 import io.micrometer.tracing.Tracer;
@@ -18,7 +19,9 @@ import tools.jackson.databind.json.JsonMapper;
  * Consumes the spine (PHASE-4 §8): {@code task.assigned} fans out as
  * {@code task-assignment}, {@code sla.warn}/{@code sla.breach} as
  * {@code sla-warning}. Built-in platform templates per category (no authoring
- * surface in v1); the event payload is the {@code ${task.*}} binding set.
+ * surface in v1); the event payload is the {@code ${task.*}} binding set, and the
+ * task's record — fetched once per event through the runtime's internal read — is
+ * the {@code ${record.*}} binding set (§8's token pin; best-effort, per §5).
  */
 @Component
 public class TaskEventConsumer {
@@ -28,10 +31,12 @@ public class TaskEventConsumer {
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     private final Notifier notifier;
+    private final RuntimeRecordPort records;
     private final Tracer tracer;
 
-    public TaskEventConsumer(Notifier notifier, Tracer tracer) {
+    public TaskEventConsumer(Notifier notifier, RuntimeRecordPort records, Tracer tracer) {
         this.notifier = notifier;
+        this.records = records;
         this.tracer = tracer;
     }
 
@@ -51,19 +56,20 @@ public class TaskEventConsumer {
             String type = String.valueOf(event.get("event"));
             UUID tenantId = UUID.fromString(String.valueOf(event.get("tenantId")));
             String eventId = String.valueOf(event.get("eventId"));
+            Map<String, Object> record = recordOf(tenantId, event);
             switch (type) {
                 case "task.assigned" -> notifier.onEvent(eventId, tenantId,
-                        Notifier.TASK_ASSIGNMENT, event,
+                        Notifier.TASK_ASSIGNMENT, event, record,
                         "Task assigned: ${task.entityId} ${task.taskId}",
                         "A task awaits you — record ${task.recordId} on "
                                 + "${task.entityId}.");
                 case "sla.warn" -> notifier.onEvent(eventId, tenantId,
-                        Notifier.SLA_WARNING, event,
+                        Notifier.SLA_WARNING, event, record,
                         "SLA warning: ${task.entityId} ${task.taskId}",
                         "The task on record ${task.recordId} is approaching its "
                                 + "SLA target.");
                 case "sla.breach" -> notifier.onEvent(eventId, tenantId,
-                        Notifier.SLA_WARNING, event,
+                        Notifier.SLA_WARNING, event, record,
                         "SLA breached: ${task.entityId} ${task.taskId}",
                         "The task on record ${task.recordId} breached its SLA and "
                                 + "has been escalated.");
@@ -71,6 +77,32 @@ public class TaskEventConsumer {
             }
         } catch (Exception e) {
             LOG.error("invalid task/sla event ignored: {}", payload, e);
+        }
+    }
+
+    /**
+     * The {@code ${record.*}} binding set, fetched once per event (§8) — a task
+     * without a record, a process-keyed entity, or an unreachable runtime all
+     * degrade to an empty binding rather than blocking the fan-out.
+     */
+    private Map<String, Object> recordOf(UUID tenantId, Map<String, Object> event) {
+        Object recordId = event.get("recordId");
+        String entityKey = String.valueOf(event.get("entityId"));
+        if (recordId == null || "null".equals(String.valueOf(recordId))
+                || entityKey.isBlank() || "null".equals(entityKey)) {
+            return Map.of();
+        }
+        try {
+            return records.recordOf(tenantId, entityKey, UUID.fromString(
+                    String.valueOf(recordId)));
+        } catch (IllegalArgumentException e) {
+            return Map.of();   // a non-uuid record reference never blocks delivery
+        } catch (RuntimeException e) {
+            // the port is best-effort by contract; a misbehaving binding must never
+            // take the fan-out down with it — empty tokens, delivery proceeds
+            LOG.warn("record fetch for template tokens failed ({}): {}", entityKey,
+                    e.getMessage());
+            return Map.of();
         }
     }
 }

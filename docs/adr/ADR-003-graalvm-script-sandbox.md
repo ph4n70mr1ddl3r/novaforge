@@ -38,5 +38,10 @@ must be made structurally impossible, not merely discouraged.
   the transaction; after-hook failures retry via the spine.
 - The engine runs caller-context (unlike declarative flows' system principal —
   PHASE-3 §13 Q1), so a script can never exceed its authorizing user's grants.
+  *(Amended 2026-08-26 at the seventh-pass review, for one surface PHASE-4 §7 pins:
+  the Scheduler's recordless `script` target executes as the per-app system
+  principal through the engine's service-gated scheduled leg — no user initiated
+  the firing, so there is no authorizing user to bound; the write-path hook leg
+  stays caller-context with no service-account fallback, exactly this ADR's rule.)*
 - Escape-hatch discipline is measurable: the ratio surfaces in change-set review
   (Phase 8) and gates nothing directly — social pressure plus primitive harvesting.

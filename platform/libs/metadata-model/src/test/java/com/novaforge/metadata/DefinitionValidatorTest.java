@@ -522,6 +522,29 @@ class DefinitionValidatorTest {
                 "default runAsRole")).isTrue();
     }
 
+    @Test
+    @DisplayName("rule: flow and script jobs address one hook — params {entity, hook}")
+    void flowAndScriptJobParams() {
+        // the Scheduler's scheduled-hook surface (PHASE-4 §7): both targets address
+        // one hook by name on one entity — the runtime resolves the kind (flow graph
+        // or script artifact) from the published definition
+        String jobs = """
+            , "jobs": [
+                    { "name": "sweep", "cron": "0 0 3 * * *", "target": "flow",
+                      "params": { "entity": "Invoice", "hook": "sweep" } },
+                    { "name": "reprice", "cron": "0 0 7 * * *", "target": "script",
+                      "params": { "entity": "Invoice", "hook": "reprice" } } ]
+            """;
+        assertThat(validate(reportingApp(jobs)).isEmpty()).isTrue();
+        assertThat(mentions(validate(reportingApp(jobs.replace(
+                "\"hook\": \"reprice\"", "\"hook\": \"\""))),
+                "script jobs require params")).isTrue();
+        assertThat(mentions(validate(reportingApp(jobs.replace(
+                "\"entity\": \"Invoice\", \"hook\": \"sweep\"",
+                "\"entity\": \"\", \"hook\": \"sweep\""))),
+                "flow jobs require params")).isTrue();
+    }
+
     // --- integrations (PHASE-6 §3/§5/§6/§7/§9) ---
 
     private static AppDefinition withIntegrations(AppDefinition app, String json) {

@@ -67,6 +67,9 @@ public class ScriptSandbox {
     public record ScriptResult(Object value, List<String> logs, long elapsedMillis) {
     }
 
+    /** The trigger label of a recordless scheduled firing (PHASE-4 §7). */
+    public static final String SCHEDULED_TRIGGER = "scheduled";
+
     private final QueryProxy queryProxy;
     private final HttpProxy httpProxy;
     private final long cpuBudgetNanos;
@@ -143,14 +146,65 @@ public class ScriptSandbox {
                     "script execution interrupted while awaiting a lane");
         }
         try {
-            return runCapped(script, record == null ? Map.of() : record, caller, connectorApp);
+            return runCapped(script, (bindings, logs) -> {
+                bindings.putMember("$record", Collections.unmodifiableMap(
+                        record == null ? Map.of() : record));
+                bindings.putMember("$data", new DataSurface(queryProxy, caller));
+                bindings.putMember("$log", new LogSurface(logs));
+                // $http exists only inside the connector sandbox (§4): a script
+                // outside the declared context never sees the egress at all.
+                if (connectorApp != null) {
+                    bindings.putMember("$http", new HttpSurface(httpProxy, caller, connectorApp));
+                }
+            });
         } finally {
             lanes.release();
         }
     }
 
-    private ScriptResult runCapped(String script, Map<String, Object> record,
-                                   TenantContext.Context caller, String connectorApp) {
+    /**
+     * The Scheduler's {@code script} target (PHASE-4 §7): a recordless firing in the
+     * synthetic {@code scheduled} context — {@code $record} is absent (a script that
+     * reaches for it dies loudly, not on empty data), {@code $data.query} rides the
+     * internal system-principal leg, and the per-app system principal bound in
+     * {@code principal} is the executing identity (engine-driven actions run as it,
+     * PHASE-4 §4 — this is the write-path script leg's caller-context rule, not a
+     * service-account fallback: no user ever initiated this execution).
+     */
+    public ScriptResult executeScheduled(String script, String app,
+                                         TenantContext.Context principal, String connectorApp) {
+        try {
+            if (!lanes.tryAcquire(queueWaitMillis, TimeUnit.MILLISECONDS)) {
+                throw new PlatformException(PlatformErrorCode.INTERNAL,
+                        "script execution capacity exceeded — retry");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new PlatformException(PlatformErrorCode.INTERNAL,
+                    "script execution interrupted while awaiting a lane");
+        }
+        try {
+            return runCapped(script, (context, logs) -> {
+                // $record stays absent in the scheduled context (§7) — a reach for
+                // it is a ReferenceError, never a silent empty view
+                context.putMember("$data", new DataSurface(queryProxy, principal, app, true));
+                context.putMember("$log", new LogSurface(logs));
+                if (connectorApp != null) {
+                    context.putMember("$http", new HttpSurface(httpProxy, principal, connectorApp));
+                }
+            });
+        } finally {
+            lanes.release();
+        }
+    }
+
+    /** Installs one execution's guest bindings — the capped runner's only variable. */
+    private interface Binder {
+
+        void bind(org.graalvm.polyglot.Value bindings, List<String> logs);
+    }
+
+    private ScriptResult runCapped(String script, Binder binder) {
         List<String> logs = new CopyOnWriteArrayList<>();
         long startNanos = System.nanoTime();
         Thread executor = Thread.currentThread();
@@ -204,15 +258,7 @@ public class ScriptSandbox {
                 }
             }, 50, 25, TimeUnit.MILLISECONDS);
             try {
-                var bindings = context.getBindings("js");
-                bindings.putMember("$record", Collections.unmodifiableMap(record));
-                bindings.putMember("$data", new DataSurface(queryProxy, caller));
-                bindings.putMember("$log", new LogSurface(logs));
-                // $http exists only inside the connector sandbox (§4): a script
-                // outside the declared context never sees the egress at all.
-                if (connectorApp != null) {
-                    bindings.putMember("$http", new HttpSurface(httpProxy, caller, connectorApp));
-                }
+                binder.bind(context.getBindings("js"), logs);
                 Value outcome = context.eval("js", script);
                 // conversion re-enters guest code (getters, Proxy traps run on member
                 // access) — the watchdog stays armed until the result is host-side
@@ -262,7 +308,8 @@ public class ScriptSandbox {
      * $data — the query surface under the calling user's authorization (§5 item 4):
      * every call rides the caller's tenant and actor; the proxy forwards to the Data
      * Runtime's query API with the caller's token, so a script can never exceed its
-     * authorizing user's grants.
+     * authorizing user's grants. The system mode is the scheduled context's leg
+     * (PHASE-4 §7): the internal surface, the per-app system principal.
      */
     public static final class DataSurface {
 
@@ -271,10 +318,18 @@ public class ScriptSandbox {
 
         private final QueryProxy proxy;
         private final TenantContext.Context caller;
+        private final String app;
+        private final boolean system;
 
         DataSurface(QueryProxy proxy, TenantContext.Context caller) {
+            this(proxy, caller, null, false);
+        }
+
+        DataSurface(QueryProxy proxy, TenantContext.Context caller, String app, boolean system) {
             this.proxy = proxy;
             this.caller = caller;
+            this.app = app;
+            this.system = system;
         }
 
         @HostAccess.Export
@@ -283,8 +338,10 @@ public class ScriptSandbox {
                 throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                         "$data.query entity must be an api name: " + entity);
             }
-            return proxy.query(caller, entity,
-                    queryJson == null || queryJson.isBlank() ? "{}" : queryJson);
+            String query = queryJson == null || queryJson.isBlank() ? "{}" : queryJson;
+            return system
+                    ? proxy.systemQuery(caller, app, entity, query)
+                    : proxy.query(caller, entity, query);
         }
     }
 

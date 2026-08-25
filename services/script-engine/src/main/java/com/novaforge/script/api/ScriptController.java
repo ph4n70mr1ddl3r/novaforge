@@ -6,10 +6,12 @@ import com.novaforge.common.error.PlatformException;
 import com.novaforge.metadata.DefinitionValidator;
 import com.novaforge.metadata.HookRule;
 import com.novaforge.metadata.ScriptDefinition;
+import com.novaforge.security.ServiceClientGate;
 import com.novaforge.script.engine.ScriptBudgetExceededException;
 import com.novaforge.script.engine.ScriptSandbox;
 import com.novaforge.script.telemetry.ScriptMetrics;
 import java.util.Map;
+import java.util.UUID;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -32,6 +34,15 @@ public class ScriptController {
                                    Map<String, Object> record) {
     }
 
+    /**
+     * The Scheduler's leg (PHASE-4 §7): the Data Runtime relays a recordless firing —
+     * tenant and the per-app system principal ride the body because the caller is the
+     * trusted service client, never a user (no token exists to relay).
+     */
+    public record ScheduledRequest(String tenantId, String app, Integer appVersion,
+                                   String hook, String language, String script, String sandbox) {
+    }
+
     private final ScriptSandbox sandbox;
     private final ScriptMetrics metrics;
 
@@ -42,47 +53,84 @@ public class ScriptController {
 
     @PostMapping("/execute")
     public ScriptSandbox.ScriptResult execute(@RequestBody ExecutionRequest request) {
-        if (request.script() == null || request.script().isBlank()) {
-            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                    "script must not be blank");
-        }
-        if (!ScriptDefinition.LANGUAGES.contains(request.language() == null
-                ? "js" : request.language())) {
-            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                    "unsupported script language: " + request.language()
-                            + " — v0 is " + ScriptDefinition.LANGUAGES);
-        }
-        if (request.script().length() > ScriptDefinition.MAX_SOURCE_CHARS) {
-            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                    "script exceeds " + ScriptDefinition.MAX_SOURCE_CHARS + " characters");
-        }
-        // the telemetry dimensions double as label values — validate what arrives
+        validateAuthoring(request.app(), request.hook(), request.language(), request.script());
         if (request.trigger() == null || !HookRule.TRIGGERS.contains(request.trigger())) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "trigger must be one of " + HookRule.TRIGGERS);
         }
-        if (request.app() == null
-                || !DefinitionValidator.PASCAL_CASE.matcher(request.app()).matches()) {
-            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                    "app must be the published app's apiName: " + request.app());
-        }
-        if (request.hook() == null || !request.hook().matches("[a-zA-Z][A-Za-z0-9_-]*")) {
-            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                    "hook must be the hook rule's name: " + request.hook());
-        }
         var context = TenantContext.current().orElseThrow(() ->
                 new PlatformException(PlatformErrorCode.TENANT_MISSING,
                         "no tenant context bound"));
-        // the connector sandbox context (PHASE-6 §4): $http exists only for scripts
-        // whose artifact declares it — the declared context must name this app
-        String connectorApp = null;
-        if (ScriptDefinition.SANDBOX_CONNECTOR.equals(request.sandbox())) {
-            connectorApp = request.app();
+        return run(request.app(), request.appVersion(), request.hook(), request.trigger(),
+                () -> sandbox.execute(request.script(), request.record(), context,
+                        ScriptDefinition.SANDBOX_CONNECTOR.equals(request.sandbox())
+                                ? request.app() : null));
+    }
+
+    /**
+     * The scheduled execution (PHASE-4 §7): service-client gated — the Data Runtime's
+     * scheduled-hook surface is the only caller. Tenant and actor arrive in the body
+     * (the per-app system principal, {@code system:<app>}); {@code $record} is absent
+     * and {@code $data.query} rides the internal system-principal leg. Telemetry joins
+     * the same series the write path feeds, under the {@code scheduled} trigger label.
+     */
+    @PostMapping("/scheduled")
+    public ScriptSandbox.ScriptResult scheduled(@RequestBody ScheduledRequest request) {
+        ServiceClientGate.require("scheduled-script");
+        validateAuthoring(request.app(), request.hook(), request.language(), request.script());
+        if (request.tenantId() == null) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "tenantId is required — the scheduled leg binds its own context");
         }
+        var principal = new TenantContext.Context(request.tenantId(),
+                UUID.nameUUIDFromBytes(("system:" + request.app()).getBytes()).toString());
+        var result = new ScriptSandbox.ScriptResult[] {null};
+        return run(request.app(), request.appVersion(), request.hook(),
+                ScriptSandbox.SCHEDULED_TRIGGER, () -> {
+                    TenantContext.with(principal, () -> result[0] =
+                            sandbox.executeScheduled(request.script(), request.app(), principal,
+                                    ScriptDefinition.SANDBOX_CONNECTOR.equals(request.sandbox())
+                                            ? request.app() : null));
+                    return result[0];
+                });
+    }
+
+    /** The shared authoring checks (the telemetry dimensions are label values). */
+    private static void validateAuthoring(String app, String hook, String language,
+                                          String script) {
+        if (script == null || script.isBlank()) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "script must not be blank");
+        }
+        if (!ScriptDefinition.LANGUAGES.contains(language == null
+                ? "js" : language)) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "unsupported script language: " + language
+                    + " — v0 is " + ScriptDefinition.LANGUAGES);
+        }
+        if (script.length() > ScriptDefinition.MAX_SOURCE_CHARS) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "script exceeds " + ScriptDefinition.MAX_SOURCE_CHARS + " characters");
+        }
+        if (app == null
+                || !DefinitionValidator.PASCAL_CASE.matcher(app).matches()) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "app must be the published app's apiName: " + app);
+        }
+        if (hook == null || !hook.matches("[a-zA-Z][A-Za-z0-9_-]*")) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "hook must be the hook rule's name: " + hook);
+        }
+    }
+
+    /** The shared telemetry envelope both surfaces ride. */
+    private ScriptSandbox.ScriptResult run(String app, Integer appVersion, String hook,
+                                           String trigger,
+                                           java.util.function.Supplier<ScriptSandbox.ScriptResult> body) {
         long start = System.nanoTime();
         String outcome = ScriptMetrics.OK;
         try {
-            return sandbox.execute(request.script(), request.record(), context, connectorApp);
+            return body.get();
         } catch (ScriptBudgetExceededException e) {
             outcome = ScriptMetrics.CAPPED;
             throw e;
@@ -90,8 +138,8 @@ public class ScriptController {
             outcome = ScriptMetrics.ERROR;
             throw e;
         } finally {
-            metrics.executed(request.app(), request.appVersion(), request.trigger(), outcome);
-            metrics.duration(request.trigger(), (System.nanoTime() - start) / 1_000_000);
+            metrics.executed(app, appVersion, trigger, outcome);
+            metrics.duration(trigger, (System.nanoTime() - start) / 1_000_000);
         }
     }
 }

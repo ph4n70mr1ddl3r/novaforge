@@ -465,7 +465,10 @@ class TaskApiTests extends PostgresTestBase {
         // expire both timers; one scan warns once and breaches with a replacement
         jdbc.update("UPDATE wf_tasks SET warn_at = now() - interval '1 second', "
                 + "due_at = now() - interval '1 second' WHERE instance_id = ?", instance);
-        double before = meters.counter("novaforge.sla.breach").count();
+        double before = meters.counter("novaforge.sla.breach",
+                "app", "Purch").count();
+        double warnBefore = meters.counter("novaforge.sla.warn",
+                "app", "Purch").count();
         slaScanner.scanOnce();
 
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
@@ -483,7 +486,15 @@ class TaskApiTests extends PostgresTestBase {
         org.assertj.core.api.Assertions.assertThat(events).containsSubsequence(
                 "task.created", "sla.warn", "task.escalated", "sla.breach");
         org.assertj.core.api.Assertions.assertThat(
-                meters.counter("novaforge.sla.breach").count()).isGreaterThan(before);
+                meters.counter("novaforge.sla.breach", "app", "Purch").count())
+                .isGreaterThan(before);
+        // §6: warn/breach counters are labeled per app and feed the Grafana baseline
+        org.assertj.core.api.Assertions.assertThat(
+                meters.counter("novaforge.sla.warn", "app", "Purch").count())
+                .isGreaterThan(warnBefore);
+        org.assertj.core.api.Assertions.assertThat(
+                meters.counter("novaforge.sla.breach", "app", "Purch").count())
+                .isGreaterThanOrEqualTo(1.0);
 
         // a second pass warns and escalates nothing further
         jdbc.update("DELETE FROM wf_event_outbox");

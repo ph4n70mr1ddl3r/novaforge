@@ -9,6 +9,7 @@ import com.novaforge.common.context.TenantContext;
 import com.novaforge.script.engine.QueryProxy;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -44,15 +45,30 @@ class ScriptApiTests {
     /** The connector-sandbox egress stub (PHASE-6 §4): records calls, returns a body. */
     static final List<String> HTTP_CALLS = new CopyOnWriteArrayList<>();
 
+    /** The scheduled leg's system queries the stub observed (PHASE-4 §7). */
+    static final List<String> SYSTEM_QUERIES = new CopyOnWriteArrayList<>();
+
     @TestConfiguration
     static class StubQuery {
 
         @Bean
         @Primary
         QueryProxy queryProxy() {
-            return (caller, entity, queryJson) -> {
-                CALLERS.add(caller.tenantId() + "/" + caller.actorId());
-                return Map.of("rows", List.of(Map.of("sku", "WIDGET")), "total", 1L);
+            return new QueryProxy() {
+                @Override
+                public Object query(com.novaforge.common.context.TenantContext.Context caller,
+                                    String entity, String queryJson) {
+                    CALLERS.add(caller.tenantId() + "/" + caller.actorId());
+                    return Map.of("rows", List.of(Map.of("sku", "WIDGET")), "total", 1L);
+                }
+
+                @Override
+                public Object systemQuery(com.novaforge.common.context.TenantContext.Context principal,
+                                         String app, String entity, String queryJson) {
+                    SYSTEM_QUERIES.add(principal.tenantId() + "/" + principal.actorId()
+                            + "/" + app + "/" + entity);
+                    return Map.of("rows", List.of(Map.of("sku", "SCHEDULED")), "total", 1L);
+                }
             };
         }
 
@@ -74,6 +90,14 @@ class ScriptApiTests {
     private static RequestPostProcessor engineJwt() {
         return jwt()
                 .jwt(token -> token.claim("tenant_id", TENANT).subject(ACTOR))
+                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
+    }
+
+    /** The platform service client (azp) — the scheduled surface's gate. */
+    private static RequestPostProcessor serviceJwt() {
+        return jwt()
+                .jwt(token -> token.claim("azp", com.novaforge.security.ServiceClientGate.CLIENT_ID)
+                        .subject("service-account-novaforge-runtime"))
                 .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
     }
 
@@ -169,5 +193,66 @@ class ScriptApiTests {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail").value(
                         org.hamcrest.Matchers.containsString("language")));
+    }
+
+    @Test
+    @DisplayName("the scheduled leg is service-client only — a user token answers 403 (§7)")
+    void scheduledSurfaceIsServiceGated() throws Exception {
+        mockMvc.perform(post("/api/v1/scripts/scheduled").with(engineJwt())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tenantId\":\"" + TENANT + "\", \"app\":\"Erp\","
+                                + " \"hook\":\"sweep\", \"script\":\"1\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("service-client")));
+    }
+
+    @Test
+    @DisplayName("scheduled execution: $record absent, $data rides the system leg (§7)")
+    void scheduledExecutionBindsSystemPrincipal() throws Exception {
+        SYSTEM_QUERIES.clear();
+        // the per-app system principal's UUID, derived exactly as the runtime does
+        String systemActor = UUID.nameUUIDFromBytes("system:Erp".getBytes()).toString();
+        mockMvc.perform(post("/api/v1/scripts/scheduled").with(serviceJwt())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "tenantId": "%s", "app": "Erp", "appVersion": 3,
+                                  "hook": "nightlySweep", "language": "js",
+                                  "script": "const rows = $data.query('Payment', '{}'); ({ found: rows.rows[0].sku })" }
+                                """.formatted(TENANT)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.value.found").value("SCHEDULED"));
+        org.assertj.core.api.Assertions.assertThat(SYSTEM_QUERIES).containsExactly(
+                TENANT + "/" + systemActor + "/Erp/Payment");
+        org.assertj.core.api.Assertions.assertThat(CALLERS).isEmpty();
+
+        // $record is absent in the recordless context — a reach for it fails loudly
+        mockMvc.perform(post("/api/v1/scripts/scheduled").with(serviceJwt())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "tenantId": "%s", "app": "Erp", "hook": "nightlySweep",
+                                  "script": "$record.id" }
+                                """.formatted(TENANT)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("$record")));
+    }
+
+    @Test
+    @DisplayName("scheduled authoring rejects: blank script, missing tenant (§7)")
+    void scheduledValidation() throws Exception {
+        mockMvc.perform(post("/api/v1/scripts/scheduled").with(serviceJwt())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tenantId\":\"" + TENANT + "\", \"app\":\"Erp\","
+                                + " \"hook\":\"sweep\", \"script\":\" \"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("blank")));
+        mockMvc.perform(post("/api/v1/scripts/scheduled").with(serviceJwt())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"app\":\"Erp\", \"hook\":\"sweep\", \"script\":\"1\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("tenantId")));
     }
 }

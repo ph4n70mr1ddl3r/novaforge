@@ -15,10 +15,13 @@ import tools.jackson.databind.json.JsonMapper;
  * Delivery (PHASE-4 §8): the platform inbox row plus SMTP email, filtered by the
  * user's per-category channel preferences (both on by default — v1's coarse
  * toggles). Built-in templates per category — no authoring surface in v1 — with
- * {@code ${task.field}} tokens resolved from the event payload. Every delivery
- * emits {@code notification.delivered} on the outbox; synthetic actors
- * ({@code scratch-*}/{@code actor-*} usernames, ADR-010 #3) have no channels and no
- * inbox address — the fan-out skips them entirely.
+ * {@code ${task.field}} tokens resolved from the event payload and
+ * {@code ${record.field}} tokens from the record fetched through the runtime's
+ * internal read (§8's pin — the surface landed with PHASE-4 §9; the fetch is
+ * best-effort, an unfetchable record renders empty tokens, never a blocked
+ * delivery). Every delivery emits {@code notification.delivered} on the outbox;
+ * synthetic actors ({@code scratch-*}/{@code actor-*} usernames, ADR-010 #3) have
+ * no channels and no inbox address — the fan-out skips them entirely.
  */
 @Service
 public class Notifier {
@@ -53,13 +56,14 @@ public class Notifier {
     /** One spine event fanned out to its recipients' channels. */
     @Transactional
     public void onEvent(String eventId, UUID tenantId, String category,
-                        Map<String, Object> task, String titleTemplate, String bodyTemplate) {
+                        Map<String, Object> task, Map<String, Object> record,
+                        String titleTemplate, String bodyTemplate) {
         for (UUID user : recipients.of(tenantId, task)) {
             if (!recipients.hasChannels(user)) {
                 continue;   // synthetic actors: no inbox entry, no email (ADR-010 #3)
             }
-            String title = resolve(titleTemplate, task);
-            String body = resolve(bodyTemplate, task);
+            String title = resolve(titleTemplate, task, record);
+            String body = resolve(bodyTemplate, task, record);
             boolean inboxOn = preference(tenantId, user, category, "inbox");
             boolean emailOn = preference(tenantId, user, category, "email");
             if (inboxOn) {
@@ -149,18 +153,25 @@ public class Notifier {
                 UUID.randomUUID(), tenantId, MAPPER.writeValueAsString(payload));
     }
 
-    /** {@code ${task.field}} tokens — the event payload is the binding set (v1). */
-    static String resolve(String template, Map<String, Object> task) {
+    /**
+     * {@code ${task.field}} tokens resolve from the event payload;
+     * {@code ${record.field}} tokens from the fetched record (§8) — an absent or
+     * unfetchable record renders the empty string, never a blocked delivery.
+     */
+    public static String resolve(String template, Map<String, Object> task,
+                          Map<String, Object> record) {
         if (template == null) {
             return "";
         }
         StringBuilder result = new StringBuilder();
         java.util.regex.Matcher matcher = java.util.regex.Pattern
-                .compile("\\$\\{task\\.([a-zA-Z0-9_.]+)}").matcher(template);
+                .compile("\\$\\{(task|record)\\.([a-zA-Z0-9_.]+)}").matcher(template);
         while (matcher.find()) {
+            Map<String, Object> bindings = "record".equals(matcher.group(1)) && record != null
+                    ? record : task;
             matcher.appendReplacement(result,
                     java.util.regex.Matcher.quoteReplacement(
-                            String.valueOf(task.getOrDefault(matcher.group(1), ""))));
+                            String.valueOf(bindings.getOrDefault(matcher.group(2), ""))));
         }
         matcher.appendTail(result);
         return result.toString();

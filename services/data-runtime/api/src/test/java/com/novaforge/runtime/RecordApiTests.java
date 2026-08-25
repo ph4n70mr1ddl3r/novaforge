@@ -205,25 +205,39 @@ class RecordApiTests extends PostgresTestBase {
         @Bean
         @Primary
         ScriptClient scriptClient() {
-            return (app, appVersion, hook, trigger, script, record) -> {
-                SCRIPT_CALLS.add(app + "|" + hook + "|" + trigger + "|" + script.language()
-                        + "|" + record.get("id"));
-                if (failBeforeScripts && trigger.startsWith("before")) {
-                    throw new com.novaforge.common.error.PlatformException(
-                            com.novaforge.common.error.PlatformErrorCode.VALIDATION_FAILED,
-                            "script hook " + hook + " exploded");
+            return new ScriptClient() {
+                @Override
+                public ScriptOutcome execute(String app, int appVersion, String hook,
+                                             String trigger, com.novaforge.metadata.ScriptDefinition script,
+                                             Map<String, Object> record) {
+                    SCRIPT_CALLS.add(app + "|" + hook + "|" + trigger + "|" + script.language()
+                            + "|" + record.get("id"));
+                    if (failBeforeScripts && trigger.startsWith("before")) {
+                        throw new com.novaforge.common.error.PlatformException(
+                                com.novaforge.common.error.PlatformErrorCode.VALIDATION_FAILED,
+                                "script hook " + hook + " exploded");
+                    }
+                    if (failAfterScripts && trigger.startsWith("after")) {
+                        throw new com.novaforge.common.error.PlatformException(
+                                com.novaforge.common.error.PlatformErrorCode.VALIDATION_FAILED,
+                                "script hook " + hook + " exploded");
+                    }
+                    if ("beforeSave".equals(trigger)) {
+                        return new ScriptOutcome(
+                                Map.of("label", "ENRICHED-" + record.get("label")),
+                                List.of("stub enrich"));
+                    }
+                    return new ScriptOutcome(Map.of(), List.of("stub notify"));
                 }
-                if (failAfterScripts && trigger.startsWith("after")) {
-                    throw new com.novaforge.common.error.PlatformException(
-                            com.novaforge.common.error.PlatformErrorCode.VALIDATION_FAILED,
-                            "script hook " + hook + " exploded");
+
+                @Override
+                public ScriptOutcome executeScheduled(java.util.UUID tenantId, String app,
+                                                      int appVersion, String hook,
+                                                      com.novaforge.metadata.ScriptDefinition script) {
+                    SCRIPT_CALLS.add(app + "|" + hook + "|scheduled|" + script.language()
+                            + "|null");
+                    return new ScriptOutcome(Map.of(), List.of("stub scheduled"));
                 }
-                if ("beforeSave".equals(trigger)) {
-                    return new ScriptClient.ScriptOutcome(
-                            Map.of("label", "ENRICHED-" + record.get("label")),
-                            List.of("stub enrich"));
-                }
-                return new ScriptClient.ScriptOutcome(Map.of(), List.of("stub notify"));
             };
         }
 

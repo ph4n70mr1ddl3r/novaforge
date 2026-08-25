@@ -56,6 +56,9 @@ public class HookExecutor {
     /** Defensive cap — compiled graphs are DAGs; this guards runaway recursion. */
     public static final int MAX_STEPS = 256;
 
+    /** The Scheduler's synthetic recordless context (PHASE-4 §7). */
+    public static final String SCHEDULED_CONTEXT = "scheduled";
+
     /** Nested engine calls (createRecord/updateRecord) get their own budget. */
     public static final int MAX_DEPTH = 4;
 
@@ -99,6 +102,19 @@ public class HookExecutor {
     }
 
     /**
+     * The Scheduler's firing (PHASE-4 §7): exactly the addressed hook, by name — its
+     * authored trigger is irrelevant to a recordless firing, and no other hook on
+     * the entity runs. Failures propagate to the scheduled surface: the run row and
+     * its {@code scheduler.job.run} event are the audible failure record (§7), and
+     * the spine's record-scoped retry leg is not this context's machinery.
+     */
+    public void runScheduled(AppDefinition app, EntityHandle handle, UUID tenantId,
+                             HookRule hook, UUID systemPrincipal, HookSink sink) {
+        runOne(app, handle, tenantId, null, new LinkedHashMap<>(), SCHEDULED_CONTEXT,
+                hook, systemPrincipal, null, null, sink);
+    }
+
+    /**
      * The write path's entry with the triggering write's state-machine edge
      * ({@code PRIOR->NEW}, null when no state changed) — the {@code transition} SLA
      * match binding requestApproval suspensions carry (PHASE-4 §6 / PHASE-2
@@ -110,13 +126,8 @@ public class HookExecutor {
                               String transition, HookSink sink) {
         List<Outcome.Retry> retries = new java.util.ArrayList<>();
         for (HookRule hook : handle.entity().hooks()) {
-            // the Scheduler's synthetic "scheduled" context addresses hooks by name —
-            // their authored trigger is irrelevant to a recordless firing (§7)
-            if (!trigger.equals(hook.trigger()) && !"scheduled".equals(trigger)) {
+            if (!trigger.equals(hook.trigger())) {
                 continue;
-            }
-            if ("scheduled".equals(trigger) && recordId != null) {
-                continue;   // name-matched only in the recordless context
             }
             try {
                 runOne(app, handle, tenantId, recordId, data, trigger, hook,
@@ -219,7 +230,13 @@ public class HookExecutor {
                 io.micrometer.core.instrument.Timer.start(meters);
         try {
             if (hook.script() != null) {
-                runScriptHook(handle, recordId, data, trigger, hook);
+                if (SCHEDULED_CONTEXT.equals(trigger)) {
+                    // the Scheduler's script target (§7): recordless, per-app system
+                    // principal — the engine's scheduled surface binds the context
+                    runScheduledScriptHook(tenantId, handle, hook);
+                } else {
+                    runScriptHook(handle, recordId, data, trigger, hook);
+                }
             } else {
                 Context context = new Context(app, handle, tenantId, recordId, data,
                         systemPrincipal, 0, sink);
@@ -249,6 +266,18 @@ public class HookExecutor {
                         "version", String.valueOf(handle.version()),
                         "trigger", trigger, "kind", kind)
                 .increment();
+    }
+
+    /**
+     * The Scheduler's {@code script} target (PHASE-4 §7): a recordless firing as the
+     * per-app system principal through the engine's service-gated scheduled surface —
+     * {@code $record} absent, {@code $data.query} on the internal system-principal
+     * leg. The return value is recorded in the firing's outcome (there is no record
+     * to merge into); failures render as the job's failed run, audibly.
+     */
+    private void runScheduledScriptHook(UUID tenantId, EntityHandle handle, HookRule hook) {
+        scripts.executeScheduled(tenantId, handle.appApiName(), handle.version(),
+                hook.name(), hook.script());
     }
 
     /**

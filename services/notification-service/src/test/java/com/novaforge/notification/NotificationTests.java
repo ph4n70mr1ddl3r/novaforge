@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.novaforge.notification.notify.Notifier;
 import com.novaforge.notification.notify.Notifier.EmailPort;
 import com.novaforge.notification.notify.RecipientResolver.RuntimeAdminPort;
+import com.novaforge.notification.notify.RuntimeRecordPort;
 import com.novaforge.testsupport.PostgresTestBase;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +58,12 @@ class NotificationTests extends PostgresTestBase {
     /** Attachments the stub observed (the §7 report-delivery leg's inline export). */
     static final List<String> ATTACHMENTS = new CopyOnWriteArrayList<>();
 
+    /** Record fetches the stub observed (the §8 ${record.*} binding). */
+    static final List<String> RECORD_FETCHES = new CopyOnWriteArrayList<>();
+
+    /** When set, the record port fails — delivery degrades, never blocks (§8). */
+    static volatile boolean failRecordFetch = false;
+
     @Autowired
     MockMvc mockMvc;
 
@@ -68,6 +75,9 @@ class NotificationTests extends PostgresTestBase {
 
     @Autowired
     com.novaforge.notification.events.TaskEventConsumer consumer;
+
+    @Autowired
+    Notifier notifier;
 
     @TestConfiguration
     static class Stubs {
@@ -91,6 +101,18 @@ class NotificationTests extends PostgresTestBase {
                     }
                     return "actor-manager-1234";   // the synthetic shape (ADR-010 #3)
                 }
+            };
+        }
+
+        @Bean
+        @Primary
+        RuntimeRecordPort runtimeRecordPort() {
+            return (tenantId, entityKey, recordId) -> {
+                RECORD_FETCHES.add(tenantId + "/" + entityKey + "/" + recordId);
+                if (failRecordFetch) {
+                    throw new RuntimeException("runtime unreachable");
+                }
+                return Map.of("reference", "PO-1024", "total", "120.0000");
             };
         }
 
@@ -135,6 +157,8 @@ class NotificationTests extends PostgresTestBase {
         jdbc.update("DELETE FROM nf_preferences");
         EMAILS.clear();
         ATTACHMENTS.clear();
+        RECORD_FETCHES.clear();
+        failRecordFetch = false;
     }
 
     @Test
@@ -199,6 +223,50 @@ class NotificationTests extends PostgresTestBase {
         org.assertj.core.api.Assertions.assertThat(
                 jdbc.queryForObject("SELECT count(*) FROM nf_event_outbox",
                         Integer.class)).isZero();
+    }
+
+    @Test
+    @DisplayName("${record.field} tokens resolve from the fetched record; failure degrades (§8)")
+    void recordTokensResolve() {
+        java.util.UUID recordId = java.util.UUID.fromString(RECORD);
+        // the token mechanism: both binding sets resolve side by side, absent keys empty
+        org.assertj.core.api.Assertions.assertThat(Notifier.resolve(
+                "${record.reference} owes ${record.total} (${task.entityId})",
+                Map.of("entityId", "Purch.PurchaseOrder"),
+                Map.of("reference", "PO-1024", "total", "120.0000")))
+                .isEqualTo("PO-1024 owes 120.0000 (Purch.PurchaseOrder)");
+        org.assertj.core.api.Assertions.assertThat(Notifier.resolve(
+                "${record.ghost} | ${task.ghost}", Map.of(), Map.of()))
+                .isEqualTo(" | ");
+
+        // the fan-out fetches the record once per event and renders through it
+        notifier.onEvent(java.util.UUID.randomUUID().toString(), TENANT,
+                Notifier.TASK_ASSIGNMENT,
+                Map.of("entityId", "Purch.PurchaseOrder", "recordId", RECORD,
+                        "assignee", MANAGER.toString()),
+                Map.of("reference", "PO-1024"),
+                "${task.entityId} ${task.recordId}",
+                "record ${record.reference} awaits");
+        org.assertj.core.api.Assertions.assertThat(
+                jdbc.queryForObject("SELECT body FROM nf_notifications",
+                        String.class)).isEqualTo("record PO-1024 awaits");
+
+        // the consumer's leg: an event fetches once — and a failing fetch never
+        // blocks the fan-out (tokens render empty, the inbox row still lands)
+        RECORD_FETCHES.clear();
+        consumer.onEvent(record(assignedEvent(MANAGER.toString(), null)));
+        org.assertj.core.api.Assertions.assertThat(RECORD_FETCHES).containsExactly(
+                TENANT + "/Purch.PurchaseOrder/" + RECORD);
+        org.assertj.core.api.Assertions.assertThat(
+                jdbc.queryForObject("SELECT count(*) FROM nf_notifications",
+                        Integer.class)).isEqualTo(2);
+
+        jdbc.update("DELETE FROM nf_notifications");
+        failRecordFetch = true;
+        consumer.onEvent(record(assignedEvent(MANAGER.toString(), null)));
+        org.assertj.core.api.Assertions.assertThat(
+                jdbc.queryForObject("SELECT count(*) FROM nf_notifications",
+                        Integer.class)).isEqualTo(1);
     }
 
     @Test

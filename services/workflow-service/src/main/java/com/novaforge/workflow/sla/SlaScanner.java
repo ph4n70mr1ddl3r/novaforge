@@ -23,6 +23,11 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code novaforge.sla.breach} counter increments. Tasks without timers stay open
  * until resolved or cancelled (§6). Single-level escalation in v1 (§6).
  *
+ * <p>SLA metrics feed the Grafana baseline (§6): warn and breach counters, both
+ * labeled per app — derived from the task's app-qualified entity key
+ * ({@code App.Entity}); a task without one (a process-keyed BPMN bridge task) labels
+ * with the raw value rather than inventing a bucket.</p>
+ *
  * <p>Two entry points: the wall-clock {@link #scanOnce()} the scheduler drives, and
  * the as-of {@link #scanOnce(Instant, UUID)} the harness-facing scratch surface
  * drives (§12's clock-advanced leg — warn/breach/escalation assertions with no
@@ -37,14 +42,14 @@ public class SlaScanner {
 
     private final JdbcTemplate jdbc;
     private final TaskService tasks;
-    private final io.micrometer.core.instrument.Counter breaches;
+    private final MeterRegistry meters;
     private final io.micrometer.tracing.Tracer tracer;
 
     public SlaScanner(JdbcTemplate jdbc, TaskService tasks, MeterRegistry meters,
                       io.micrometer.tracing.Tracer tracer) {
         this.jdbc = jdbc;
         this.tasks = tasks;
-        this.breaches = meters.counter("novaforge.sla.breach");
+        this.meters = meters;
         this.tracer = tracer;
     }
 
@@ -84,6 +89,7 @@ public class SlaScanner {
             jdbc.update("UPDATE wf_tasks SET sla_warned = true, updated_at = now() WHERE id = ?",
                     task.get("id"));
             emit(task, "sla.warn", null);
+            counted("novaforge.sla.warn", appOf(task.get("entity_id")));
             LOG.info("sla warn: task {}", task.get("task_id"));
         }
         return due.size();
@@ -109,7 +115,7 @@ public class SlaScanner {
             breached++;
             emit(task, "task.escalated", "ESCALATED");
             emit(task, "sla.breach", "ESCALATED");
-            breaches.increment();
+            counted("novaforge.sla.breach", appOf(task.get("entity_id")));
             String escalateTo = task.get("escalate_to") == null ? null
                     : String.valueOf(task.get("escalate_to"));
             if (escalateTo != null) {
@@ -122,6 +128,21 @@ public class SlaScanner {
             LOG.warn("sla breach: task {} escalated to {}", task.get("task_id"), escalateTo);
         }
         return breached;
+    }
+
+    /** The §6 metrics: warn/breach counters labeled per app (the Grafana feed). */
+    private void counted(String name, String app) {
+        io.micrometer.core.instrument.Counter.builder(name)
+                .tag("app", app)
+                .register(meters)
+                .increment();
+    }
+
+    /** The app of an app-qualified entity key ({@code Erp.Invoice} → {@code Erp}). */
+    static String appOf(Object entityKey) {
+        String key = entityKey == null ? "" : String.valueOf(entityKey);
+        int dot = key.indexOf('.');
+        return dot > 0 ? key.substring(0, dot) : (key.isBlank() ? "unknown" : key);
     }
 
     private void emit(Map<String, Object> task, String event, String status) {

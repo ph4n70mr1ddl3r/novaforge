@@ -32,9 +32,19 @@ class ScriptSandboxTests {
 
     private final AtomicReference<TenantContext.Context> seenCaller = new AtomicReference<>();
 
-    private final QueryProxy proxy = (caller, entity, queryJson) -> {
-        seenCaller.set(caller);
-        return Map.of("rows", List.of(Map.of("sku", entity)), "total", 1L);
+    private final QueryProxy proxy = new QueryProxy() {
+        @Override
+        public Object query(TenantContext.Context caller, String entity, String queryJson) {
+            seenCaller.set(caller);
+            return Map.of("rows", List.of(Map.of("sku", entity)), "total", 1L);
+        }
+
+        @Override
+        public Object systemQuery(TenantContext.Context principal, String app,
+                                  String entity, String queryJson) {
+            seenCaller.set(principal);
+            return Map.of("rows", List.of(Map.of("sku", entity)), "total", 1L);
+        }
     };
 
     private ScriptSandbox sandbox(long cpuMillis, long wallMillis, long heapMb, long statements) {
@@ -130,9 +140,19 @@ class ScriptSandboxTests {
     @Test
     @DisplayName("the caller's authorization verdicts pass through unchanged")
     void authorizationVerdictPassthrough() {
-        QueryProxy denying = (caller, entity, queryJson) -> {
-            throw new PlatformException(PlatformErrorCode.FORBIDDEN,
-                    "actor lacks read grants on " + entity);
+        QueryProxy denying = new QueryProxy() {
+            @Override
+            public Object query(TenantContext.Context caller, String entity, String queryJson) {
+                throw new PlatformException(PlatformErrorCode.FORBIDDEN,
+                        "actor lacks read grants on " + entity);
+            }
+
+            @Override
+            public Object systemQuery(TenantContext.Context principal, String app,
+                                      String entity, String queryJson) {
+                throw new PlatformException(PlatformErrorCode.FORBIDDEN,
+                        "actor lacks read grants on " + entity);
+            }
         };
         ScriptSandbox denyingSandbox = new ScriptSandbox(denying, null, 1000, 30000, 64, 10_000, 4, 1000);
         assertThatThrownBy(() -> denyingSandbox.execute(

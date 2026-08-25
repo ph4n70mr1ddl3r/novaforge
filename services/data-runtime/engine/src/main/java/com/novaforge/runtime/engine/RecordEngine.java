@@ -873,6 +873,32 @@ public class RecordEngine {
     }
 
     /**
+     * The scheduled script's read (PHASE-4 §7 — the Script Engine's internal query
+     * leg): the standard list DSL executed by the storage path under the per-app
+     * system principal — the same system-context shape {@link #recordForSubscription}
+     * serves the Workflow Service: raw stored rows, never shaped or user-stripped,
+     * never a mutation. The single query path lowers the DSL; the matrix, field
+     * security, and sharing rules are user-context concerns this principal does not
+     * carry (the §13 Q1 engine-action rule — nested engine writes ride the same
+     * bypass).
+     */
+    public QueryModel.QueryResult listAsPrincipal(UUID tenantId, String entityApiName,
+                                                  String queryJson) {
+        EntityHandle handle = resolver.resolve(tenantId, entityApiName);
+        QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
+        QueryLowering lowering = new QueryLowering(handle.entity());
+        QueryLowering.Lowered countSql = lowering.count(handle.entity().apiName(), tenantId,
+                query.filter());
+        QueryLowering.Lowered listSql = lowering.list(handle.entity().apiName(), tenantId, query);
+        RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
+                listSql.sql(), listSql.params());
+        List<Map<String, Object>> rows = page.rows().stream()
+                .map(row -> (Map<String, Object>) new LinkedHashMap<>(row))
+                .toList();
+        return new QueryModel.QueryResult(rows, page.total());
+    }
+
+    /**
      * The Workflow Service's event-start read (PHASE-4 §9): the record's raw stored
      * fields for subscription-filter evaluation — system context (the resume
      * surface's read pattern), never shaped or user-stripped, never a mutation
@@ -901,8 +927,7 @@ public class RecordEngine {
                 .findFirst()
                 .orElseThrow(() -> new PlatformException(PlatformErrorCode.NOT_FOUND,
                         "hook " + hookName + " not found on " + entityApiName));
-        hooks.runTrigger(app, handle, tenantId, null, new LinkedHashMap<>(), "scheduled",
-                appSystemPrincipal(handle), null, hookSink);
+        hooks.runScheduled(app, handle, tenantId, hook, appSystemPrincipal(handle), hookSink);
     }
 
     /**

@@ -164,7 +164,7 @@ class SchedulerTests extends PostgresTestBase {
                 new ScheduledJobDefinition("reportJob", "0 0 6 * * *", "report",
                         Map.of("reportId", "arAging"), true),
                 new ScheduledJobDefinition("scriptJob", "0 0 7 * * *", "script",
-                        Map.of(), true))));
+                        Map.of("entity", "PurchaseOrder", "hook", "reprice"), true))));
     }
 
     @Test
@@ -243,18 +243,17 @@ class SchedulerTests extends PostgresTestBase {
     }
 
     @Test
-    @DisplayName("dormant targets register and fire as skipped with a reason (§7)")
-    void dormantTargetsSkip() {
+    @DisplayName("the script target fires the same scheduled-hook surface as flow (§7)")
+    void scriptTargetFires() {
         runner.syncOnce();
         jdbc.update("UPDATE sched_jobs SET next_fire_at = now() - interval '1 second' "
                 + "WHERE name = 'scriptJob'");
         runner.scanOnce();
-        org.assertj.core.api.Assertions.assertThat(FIRED).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(FIRED)
+                .containsExactly("Purch:reprice");
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForMap(
-                "SELECT status, detail FROM sched_runs").get("status")).isEqualTo("skipped");
-        org.assertj.core.api.Assertions.assertThat(String.valueOf(
-                jdbc.queryForMap("SELECT detail FROM sched_runs").get("detail")))
-                .contains("dormant");
+                "SELECT last_status FROM sched_jobs WHERE name = 'scriptJob'")
+                .get("last_status")).isEqualTo("ok");
     }
 
     @Test

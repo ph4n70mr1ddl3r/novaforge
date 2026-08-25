@@ -4,8 +4,10 @@ import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
 import com.novaforge.metadata.ScriptDefinition;
 import com.novaforge.runtime.engine.hook.ScriptClient;
+import com.novaforge.security.ServiceTokenClient;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -22,9 +24,13 @@ import tools.jackson.databind.json.JsonMapper;
  * (port 8084 — no gateway route, PHASE-3 §6) with the <em>calling</em> user's token
  * relayed verbatim, so the script runs caller-context (§13 Q1) and every
  * {@code $data.query} it makes stays inside the user's grants. No service-account
- * fallback exists by design: without a caller token the hook fails loudly rather than
- * silently escalating — the read timeout therefore exceeds the engine's wall-clock
- * cap so capped scripts surface as problem+json, not as client timeouts.
+ * fallback exists on this leg by design: without a caller token the hook fails
+ * loudly rather than silently escalating — the read timeout therefore exceeds the
+ * engine's wall-clock cap so capped scripts surface as problem+json, not as client
+ * timeouts. The one exception the specs name is the Scheduler's {@code script}
+ * target (PHASE-4 §7): a recordless firing has no caller, so its explicit
+ * {@link #executeScheduled} leg rides the shared service client and the per-app
+ * system principal — a distinct, pinned execution mode, never a silent fallback.
  */
 @Component
 public class RestScriptEngineClient implements ScriptClient {
@@ -32,9 +38,10 @@ public class RestScriptEngineClient implements ScriptClient {
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     private final RestClient restClient;
+    private final ServiceTokenClient serviceToken;
 
     public RestScriptEngineClient(@Value("${novaforge.script-engine.url:http://localhost:8084}")
-                                  String baseUrl) {
+                                  String baseUrl, ServiceTokenClient serviceToken) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2_000);
         factory.setReadTimeout(60_000);
@@ -42,6 +49,7 @@ public class RestScriptEngineClient implements ScriptClient {
                 .baseUrl(baseUrl)
                 .requestFactory(factory)
                 .build();
+        this.serviceToken = serviceToken;
     }
 
     @Override
@@ -63,6 +71,48 @@ public class RestScriptEngineClient implements ScriptClient {
                     .uri("/api/v1/scripts/execute")
                     .contentType(MediaType.APPLICATION_JSON)
                     .headers(this::relayCaller)
+                    .body(body)
+                    .retrieve()
+                    .body(Map.class);
+            if (response == null) {
+                throw new PlatformException(PlatformErrorCode.INTERNAL,
+                        "script engine returned no body for hook " + hookName);
+            }
+            return new ScriptOutcome(response.get("value"),
+                    (List<String>) response.getOrDefault("logs", List.of()));
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            throw map(hookName, e);
+        } catch (PlatformException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new PlatformException(PlatformErrorCode.INTERNAL,
+                    "script engine call failed for hook " + hookName + ": " + e.getMessage(), null, e);
+        }
+    }
+
+    /**
+     * The scheduled leg (PHASE-4 §7): the engine's service-gated surface with the
+     * shared service client — the per-app system principal rides the body, because
+     * a recordless firing has no user token to relay. The same problem+json mapping
+     * renders engine failures onto the firing.
+     */
+    @Override
+    @SuppressWarnings("unchecked")
+    public ScriptOutcome executeScheduled(UUID tenantId, String appApiName, int appVersion,
+                                          String hookName, ScriptDefinition script) {
+        Map<String, Object> body = Map.of(
+                "tenantId", tenantId.toString(),
+                "app", appApiName,
+                "appVersion", appVersion,
+                "hook", hookName,
+                "language", script.language(),
+                "script", script.source(),
+                "sandbox", script.sandbox() == null ? "default" : script.sandbox());
+        try {
+            Map<String, Object> response = restClient.post()
+                    .uri("/api/v1/scripts/scheduled")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .headers(headers -> headers.setBearerAuth(serviceToken.token()))
                     .body(body)
                     .retrieve()
                     .body(Map.class);

@@ -16,7 +16,10 @@ import org.springframework.web.client.RestClient;
  * The {@link FlowTarget} binding (PHASE-4 §7): the Data Runtime's internal
  * scheduled-hook surface with the shared service client's token — the
  * compiled-graph engine, per-app system principal, synthetic {@code scheduled}
- * trigger context ({@code $record} absent).
+ * trigger context ({@code $record} absent). Both addressable targets ride this
+ * client: {@code flow} jobs and — since the §7 activation — {@code script} jobs,
+ * whose artifacts the runtime resolves and executes recordless through the Script
+ * Engine's scheduled surface.
  */
 @Component
 public class RestFlowTarget implements FlowTarget {

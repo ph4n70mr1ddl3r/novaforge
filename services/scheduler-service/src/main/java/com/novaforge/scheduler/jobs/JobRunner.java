@@ -195,6 +195,25 @@ public class JobRunner {
                 LOG.error("scheduled process start failed for {}.{}: {}",
                         job.get("app"), job.get("name"), e.getMessage(), e);
             }
+        } else if ("script".equals(target)) {
+            // §7's script target: the same scheduled-hook surface the flow target
+            // rides — the runtime resolves the hook from the published bundle and a
+            // script hook executes recordless as the per-app system principal through
+            // the Script Engine's scheduled surface ($record absent, $data on the
+            // internal system leg). "The same way" as flow, per the spec's pin.
+            try {
+                Map<String, Object> params = MAPPER.readValue(
+                        String.valueOf(job.get("params")), Map.class);
+                flows.run((UUID) job.get("tenant_id"), String.valueOf(job.get("app")),
+                        String.valueOf(params.get("entity")),
+                        String.valueOf(params.get("hook")));
+                status = "ok";
+            } catch (Exception e) {
+                status = "failed";
+                detail = e.getMessage();
+                LOG.error("scheduled script failed for {}.{}: {}",
+                        job.get("app"), job.get("name"), e.getMessage(), e);
+            }
         } else if ("report".equals(target)) {
             // §7 activation (PHASE-5): the Reporting Service's internal delivery
             // surface — the run executes under the job's runAsRole, the export
@@ -214,8 +233,11 @@ public class JobRunner {
                         job.get("app"), job.get("name"), e.getMessage(), e);
             }
         } else {
-            // script registers but stays dormant (the Script Engine's service
-            // execution context is its consumer).
+            // defensive: authoring (save validation) and the store (a CHECK on the
+            // target column) both enforce the closed v1 set — flow | script |
+            // processStart | report (§7) — so this branch guards only registry rows
+            // that predate a target leaving the vocabulary; it answers audibly
+            // instead of guessing
             status = "skipped";
             detail = "target '" + target + "' is registered but dormant";
         }
@@ -258,7 +280,7 @@ public class JobRunner {
                 : next.toInstant(ZoneOffset.UTC);
     }
 
-    /** The flow target: the runtime's compiled-graph engine, system principal. */
+    /** The flow and script targets: the runtime's scheduled-hook surface (§7). */
     public interface FlowTarget {
 
         void run(UUID tenantId, String appApiName, String entityApiName, String hookName);

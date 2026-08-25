@@ -477,14 +477,17 @@ public final class DefinitionValidator {
                 continue;
             }
             switch (job.target()) {
-                case "flow" -> {
+                case "flow", "script" -> {
+                    // the scheduled-hook surface both targets ride (PHASE-4 §7): a
+                    // job addresses one hook by name on one entity — flow graphs and
+                    // script artifacts alike (the runtime resolves the kind)
                     if (isBlank(job.param("entity")) || isBlank(job.param("hook"))) {
                         errors.add(field("jobs." + scope + ".params",
-                                "flow jobs require params {entity, hook}", job.params()));
+                                job.target() + " jobs require params {entity, hook}", job.params()));
                     }
                 }
                 case "report" -> validateReportJob(app, job, scope, errors);
-                default -> { }   // script/processStart params are their services' contract
+                default -> { }   // processStart params are the Workflow Service's contract
             }
         }
     }

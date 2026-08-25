@@ -139,13 +139,25 @@ class HookRetryTests extends PostgresTestBase {
         @Bean
         @Primary
         ScriptClient scriptClient() {
-            return (appApiName, appVersion, hook, trigger, script, record) -> {
-                if (failAfterScripts && trigger.startsWith("after")) {
-                    throw new com.novaforge.common.error.PlatformException(
-                            com.novaforge.common.error.PlatformErrorCode.INTERNAL,
-                            "script hook " + hook + " exploded");
+            return new ScriptClient() {
+                @Override
+                public ScriptOutcome execute(String appApiName, int appVersion, String hook,
+                                             String trigger, com.novaforge.metadata.ScriptDefinition script,
+                                             Map<String, Object> record) {
+                    if (failAfterScripts && trigger.startsWith("after")) {
+                        throw new com.novaforge.common.error.PlatformException(
+                                com.novaforge.common.error.PlatformErrorCode.INTERNAL,
+                                "script hook " + hook + " exploded");
+                    }
+                    return new ScriptOutcome(Map.of(), List.of("stub notify"));
                 }
-                return new ScriptClient.ScriptOutcome(Map.of(), List.of("stub notify"));
+
+                @Override
+                public ScriptOutcome executeScheduled(java.util.UUID tenantId, String app,
+                                                      int appVersion, String hook,
+                                                      com.novaforge.metadata.ScriptDefinition script) {
+                    return new ScriptOutcome(Map.of(), List.of("stub scheduled"));
+                }
             };
         }
     }
