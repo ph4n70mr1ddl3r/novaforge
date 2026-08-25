@@ -1,0 +1,195 @@
+{
+  "apiName": "creditAndCurrency",
+  "label": "AR/AP allocation legs, multi-currency posting, dunning letters, AP subledger (PHASE-7 §2 AR/AP + Settings rows, §9 item 6 leg 1)",
+  "cases": [
+    {
+      "name": "credit-note-allocates-against-invoice",
+      "fixtures": [
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "1100", "name": "Accounts Receivable", "type": "ASSET" } },
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "4000", "name": "Sales Revenue", "type": "REVENUE" } },
+        { "entity": "Customer", "asRole": "arClerk", "template": { "name": "Acme Corp" } }
+      ],
+      "steps": [
+        { "op": "createRecord", "entity": "Invoice", "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "invoiceDate": "2026-09-01", "dueDate": "2026-09-30",
+            "amountOutstanding": "120.0000",
+            "lines": [ { "description": "Widgets", "quantity": "1", "unitPrice": "120.0000" } ] },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "Invoice", "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": { "version": "${Invoice[0].version}", "status": "SUBMITTED" },
+          "expect": "ok" },
+        { "op": "queryRecord", "entity": "Task", "asRole": "accountingManager",
+          "template": { "filter": { "status": "OPEN" } }, "expect": "ok" },
+        { "op": "resolveTask", "entity": "Task", "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": { "action": "approve", "comment": "approved" }, "expect": "ok" },
+        { "op": "createRecord", "entity": "CreditNote", "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}", "invoice": "${Invoice[0].id}",
+            "noteDate": "2026-09-10", "currency": "USD",
+            "amount": "20.0000", "reason": "Returned goods" },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "Invoice", "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": { "version": "${Invoice[0].version}", "amountOutstanding": "100.0000" },
+          "expect": "ok" },
+        { "op": "runReport", "entity": "arAging", "asRole": "controller",
+          "template": {}, "expect": "ok" }
+      ],
+      "assertExpressions": [
+        "${Invoice[0].status} == 'POSTED'",
+        "${CreditNote[0].amount} == 20.0000",
+        "${Invoice[0].amountOutstanding} == 100.0000",
+        "${Report[0].totals.outstanding} == 100.0000"
+      ]
+    },
+    {
+      "name": "eur-invoice-posts-in-book-currency",
+      "fixtures": [
+        { "entity": "FxRate", "asRole": "accountingManager",
+          "template": { "currency": "EUR", "rateDate": "2026-09-01", "rate": "1.100000" } },
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "1101", "name": "Accounts Receivable", "type": "ASSET" } },
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "4001", "name": "Sales Revenue", "type": "REVENUE" } },
+        { "entity": "Customer", "asRole": "arClerk", "template": { "name": "Eurotrade GmbH" } }
+      ],
+      "steps": [
+        { "op": "createRecord", "entity": "Invoice", "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "invoiceDate": "2026-09-01", "dueDate": "2026-10-15",
+            "currency": "EUR", "fxRate": "1.100000",
+            "amountOutstanding": "110.0000",
+            "lines": [ { "description": "Consulting", "quantity": "1", "unitPrice": "100.0000" } ] },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "Invoice", "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": { "version": "${Invoice[0].version}", "status": "SUBMITTED" },
+          "expect": "ok" },
+        { "op": "queryRecord", "entity": "Task", "asRole": "accountingManager",
+          "template": { "filter": { "status": "OPEN" } }, "expect": "ok" },
+        { "op": "resolveTask", "entity": "Task", "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": { "action": "approve", "comment": "approved" }, "expect": "ok" },
+        { "op": "createRecord", "entity": "JournalEntry", "asRole": "arClerk",
+          "template": {
+            "entryDate": "2026-09-01", "memo": "EUR invoice ${Invoice[0].number} at the book rate",
+            "currency": "USD",
+            "lines": [
+              { "account": "${Account[0].id}", "debit": "110.0000", "memo": "AR" },
+              { "account": "${Account[1].id}", "credit": "110.0000", "memo": "Revenue" } ] },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "JournalEntry", "asRole": "arClerk",
+          "recordId": "${JournalEntry[0].id}",
+          "template": { "version": "${JournalEntry[0].version}", "status": "SUBMITTED" },
+          "expect": "ok" },
+        { "op": "queryRecord", "entity": "Task", "asRole": "accountingManager",
+          "template": { "filter": { "status": "OPEN" } }, "expect": "ok" },
+        { "op": "resolveTask", "entity": "Task", "asRole": "accountingManager",
+          "recordId": "${Task[1].id}",
+          "template": { "action": "approve", "comment": "approved" }, "expect": "ok" },
+        { "op": "runReport", "entity": "trialBalance", "asRole": "controller",
+          "template": {}, "expect": "ok" },
+        { "op": "runReport", "entity": "arAging", "asRole": "controller",
+          "template": {}, "expect": "ok" }
+      ],
+      "assertExpressions": [
+        "${Invoice[0].currency} == 'EUR'",
+        "${Invoice[0].status} == 'POSTED'",
+        "${JournalEntry[0].status} == 'POSTED'",
+        "${Report[0].totals.debitTotal} == ${Report[0].totals.creditTotal}",
+        "${Report[1].totals.outstanding} == 210.0000"
+      ]
+    },
+    {
+      "name": "dunning-letter-mirrors-the-aging-bucket",
+      "clock": "2026-10-01T00:00:00Z",
+      "fixtures": [
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "1102", "name": "Accounts Receivable", "type": "ASSET" } },
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "4002", "name": "Sales Revenue", "type": "REVENUE" } },
+        { "entity": "Customer", "asRole": "arClerk", "template": { "name": "Slow Pay Inc" } }
+      ],
+      "steps": [
+        { "op": "createRecord", "entity": "Invoice", "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "invoiceDate": "2026-09-01", "dueDate": "2026-09-15",
+            "amountOutstanding": "80.0000",
+            "lines": [ { "description": "Lease", "quantity": "1", "unitPrice": "80.0000" } ] },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "Invoice", "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": { "version": "${Invoice[0].version}", "status": "SUBMITTED" },
+          "expect": "ok" },
+        { "op": "queryRecord", "entity": "Task", "asRole": "accountingManager",
+          "template": { "filter": { "status": "OPEN" } }, "expect": "ok" },
+        { "op": "resolveTask", "entity": "Task", "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": { "action": "approve", "comment": "approved" }, "expect": "ok" },
+        { "op": "createRecord", "entity": "DunningLetter", "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "asOfDate": "2026-10-01", "bucket": "0-30",
+            "outstanding": "80.0000", "letterDate": "2026-10-01" },
+          "expect": "ok" },
+        { "op": "runReport", "entity": "arAging", "asRole": "controller",
+          "template": {}, "expect": "ok" }
+      ],
+      "assertExpressions": [
+        "${Invoice[0].status} == 'POSTED'",
+        "${DunningLetter[0].bucket} == '0-30'",
+        "${DunningLetter[0].outstanding} == ${Invoice[0].amountOutstanding}",
+        "${DunningLetter[0].sent} == false",
+        "${Report[0].totals.outstanding} == 290.0000"
+      ]
+    },
+    {
+      "name": "ap-rides-the-gl-with-vendor-subledger",
+      "fixtures": [
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "2000", "name": "Accounts Payable", "type": "LIABILITY" } },
+        { "entity": "Account", "asRole": "accountingManager",
+          "template": { "code": "5000", "name": "Office Supplies", "type": "EXPENSE" } },
+        { "entity": "Vendor", "asRole": "arClerk",
+          "template": { "name": "Globex Supply", "email": "ap@globex.example", "paymentTerms": "NET30" } }
+      ],
+      "steps": [
+        { "op": "createRecord", "entity": "JournalEntry", "asRole": "arClerk",
+          "template": {
+            "entryDate": "2026-09-05", "memo": "Globex supply invoice — AP subledger",
+            "currency": "USD",
+            "lines": [
+              { "account": "${Account[1].id}", "debit": "60.0000", "memo": "Supplies" },
+              { "account": "${Account[0].id}", "credit": "60.0000", "memo": "AP / Globex" } ] },
+          "expect": "ok" },
+        { "op": "updateRecord", "entity": "JournalEntry", "asRole": "arClerk",
+          "recordId": "${JournalEntry[0].id}",
+          "template": { "version": "${JournalEntry[0].version}", "status": "SUBMITTED" },
+          "expect": "ok" },
+        { "op": "queryRecord", "entity": "Task", "asRole": "accountingManager",
+          "template": { "filter": { "status": "OPEN" } }, "expect": "ok" },
+        { "op": "resolveTask", "entity": "Task", "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": { "action": "approve", "comment": "approved" }, "expect": "ok" },
+        { "op": "runReport", "entity": "plSketch", "asRole": "controller",
+          "template": {}, "expect": "ok" },
+        { "op": "runReport", "entity": "trialBalance", "asRole": "controller",
+          "template": {}, "expect": "ok" }
+      ],
+      "assertExpressions": [
+        "${Vendor[0].name} == 'Globex Supply'",
+        "${JournalEntry[0].status} == 'POSTED'",
+        "${Report[0].rowCount} == 2",
+        "${Report[1].totals.debitTotal} == ${Report[1].totals.creditTotal}"
+      ]
+    }
+  ]
+}

@@ -48,9 +48,9 @@
       "name": "closed-period-locks-dated-writes",
       "fixtures": [
         { "entity": "Account", "asRole": "accountingManager",
-          "template": { "code": "1100", "name": "Accounts Receivable", "type": "ASSET" } },
+          "template": { "code": "1101", "name": "Accounts Receivable", "type": "ASSET" } },
         { "entity": "Account", "asRole": "accountingManager",
-          "template": { "code": "4000", "name": "Sales Revenue", "type": "REVENUE" } }
+          "template": { "code": "4001", "name": "Sales Revenue", "type": "REVENUE" } }
       ],
       "steps": [
         { "op": "createRecord", "entity": "AccountingPeriod", "asRole": "accountingManager",
@@ -96,9 +96,9 @@
       "name": "closing-period-blocks-postings-except-close-journals",
       "fixtures": [
         { "entity": "Account", "asRole": "accountingManager",
-          "template": { "code": "1100", "name": "Accounts Receivable", "type": "ASSET" } },
+          "template": { "code": "1102", "name": "Accounts Receivable", "type": "ASSET" } },
         { "entity": "Account", "asRole": "accountingManager",
-          "template": { "code": "4000", "name": "Sales Revenue", "type": "REVENUE" } }
+          "template": { "code": "4002", "name": "Sales Revenue", "type": "REVENUE" } }
       ],
       "steps": [
         { "op": "createRecord", "entity": "AccountingPeriod", "asRole": "accountingManager",

@@ -101,6 +101,37 @@ class ErpAppArtifactTests {
     }
 
     @Test
+    @DisplayName("the §2 AR/AP + Settings scope rows are authored (credit notes, letters, vendor, rates)")
+    void arApSettingsScopeAuthored() throws Exception {
+        AppDefinition app = app();
+        // AR/AP row: Customer, Vendor, Invoice+lines, CreditNote, Payment, DunningLetter
+        for (String entity : List.of("Vendor", "CreditNote", "DunningLetter")) {
+            assertThat(app.entity(entity)).as("§2 AR/AP row entity %s", entity).isPresent();
+        }
+        // the allocation leg (payment → invoice/credit memo) rides the credit note's
+        // invoice lookup — present on the entity, exercised by creditAndCurrency
+        assertThat(app.entity("CreditNote").orElseThrow()
+                .field("invoice")).isPresent();
+        // Settings row: the FX rate table is an app entity (the multi-currency pin),
+        // unique per (currency, rateDate)
+        var fx = app.entity("FxRate").orElseThrow();
+        assertThat(fx.indexes().stream().anyMatch(index -> Boolean.TRUE.equals(index.unique())
+                && index.fields().equals(List.of("currency", "rateDate"))))
+                .as("FxRate is unique per (currency, rateDate)").isTrue();
+        // credit notes number gaplessly like the other customer-facing documents
+        assertThat(app.settings().sequence("creditNoteNumber").orElseThrow().mode())
+                .isEqualTo(com.novaforge.metadata.SequenceMode.GAPLESS);
+        assertThat(sequenceField(app, "CreditNote", "number")).isNotNull();
+        // financial-reports row: trial balance, A/R aging, P&L sketch, dashboard
+        assertThat(app.reports().stream().anyMatch(report -> report.id().equals("plSketch")))
+                .as("the P&L sketch report (§2 financial-reports row)").isTrue();
+        assertThat(app.dashboards().stream()
+                .anyMatch(board -> board.widgets().stream()
+                        .anyMatch(widget -> "plSketch".equals(widget.reportRef()))))
+                .as("the executive dashboard carries the P&L sketch").isTrue();
+    }
+
+    @Test
     @DisplayName("gapless sequences bind the entry/invoice numbering (§2 GL/AR)")
     void gaplessNumbering() throws Exception {
         AppDefinition app = app();
@@ -135,8 +166,9 @@ class ErpAppArtifactTests {
         try (Stream<Path> files = Files.list(ERP.resolve("suites"))) {
             suites = files.filter(path -> path.toString().endsWith(".json")).sorted().toList();
         }
-        assertThat(suites).as("the acceptance corpus: reconciliation + controls + costing + bank feed")
-                .hasSizeGreaterThanOrEqualTo(4);
+        assertThat(suites).as("the acceptance corpus: reconciliation + controls + costing + bank feed "
+                + "+ credit/currency (allocation, EUR book-currency posting, dunning, AP subledger)")
+                .hasSizeGreaterThanOrEqualTo(5);
         for (Path suitePath : suites) {
             TestSuiteDefinition suite = DefinitionParser.parse(
                     Files.readString(suitePath), TestSuiteDefinition.class);

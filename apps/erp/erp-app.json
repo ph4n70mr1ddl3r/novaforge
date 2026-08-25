@@ -7,6 +7,7 @@
     "sequences": [
       { "apiName": "entryNumber", "mode": "gapless", "start": 1, "prefix": "JE-", "padding": 6 },
       { "apiName": "invoiceNumber", "mode": "gapless", "start": 1, "prefix": "INV-", "padding": 6 },
+      { "apiName": "creditNoteNumber", "mode": "gapless", "start": 1, "prefix": "CN-", "padding": 6 },
       { "apiName": "paymentNumber", "mode": "cached", "start": 1, "prefix": "PAY-", "padding": 5 }
     ],
     "currencies": [
@@ -30,26 +31,38 @@
       { "role": "arClerk", "entity": "JournalEntry", "create": true, "read": true, "update": true },
       { "role": "arClerk", "entity": "JournalLine", "create": true, "read": true, "update": true, "delete": true },
       { "role": "arClerk", "entity": "Payment", "create": true, "read": true, "update": true, "delete": true },
+      { "role": "arClerk", "entity": "CreditNote", "create": true, "read": true, "update": true, "delete": true },
+      { "role": "arClerk", "entity": "DunningLetter", "create": true, "read": true, "update": true },
+      { "role": "arClerk", "entity": "Vendor", "create": true, "read": true, "update": true, "delete": true },
       { "role": "arClerk", "entity": "Account", "read": true },
       { "role": "arClerk", "entity": "AccountingPeriod", "read": true },
+      { "role": "arClerk", "entity": "FxRate", "read": true },
 
-      { "role": "accountingManager", "entity": "Account", "create": true, "read": true, "update": true, "delete": true },
+      { "role": "accountingManager", "entity": "Account", "create": true, "read": true, "update": true, "delete": true, "reportExecute": true },
       { "role": "accountingManager", "entity": "AccountingPeriod", "create": true, "read": true, "update": true },
       { "role": "accountingManager", "entity": "JournalEntry", "create": true, "read": true, "update": true, "delete": true },
       { "role": "accountingManager", "entity": "JournalLine", "create": true, "read": true, "update": true, "delete": true },
       { "role": "accountingManager", "entity": "Customer", "read": true },
       { "role": "accountingManager", "entity": "Invoice", "read": true, "update": true },
       { "role": "accountingManager", "entity": "Payment", "read": true },
+      { "role": "accountingManager", "entity": "CreditNote", "read": true, "update": true },
+      { "role": "accountingManager", "entity": "DunningLetter", "read": true },
+      { "role": "accountingManager", "entity": "Vendor", "read": true },
+      { "role": "accountingManager", "entity": "FxRate", "create": true, "read": true, "update": true, "delete": true },
       { "role": "accountingManager", "entity": "Item", "read": true },
       { "role": "accountingManager", "entity": "StockLedger", "read": true },
 
-      { "role": "controller", "entity": "Account", "read": true },
+      { "role": "controller", "entity": "Account", "read": true, "reportExecute": true },
       { "role": "controller", "entity": "AccountingPeriod", "read": true, "update": true },
       { "role": "controller", "entity": "JournalEntry", "read": true },
       { "role": "controller", "entity": "JournalLine", "read": true, "reportExecute": true },
       { "role": "controller", "entity": "Customer", "read": true },
       { "role": "controller", "entity": "Invoice", "read": true, "reportExecute": true },
       { "role": "controller", "entity": "Payment", "read": true },
+      { "role": "controller", "entity": "CreditNote", "read": true },
+      { "role": "controller", "entity": "DunningLetter", "read": true },
+      { "role": "controller", "entity": "Vendor", "read": true },
+      { "role": "controller", "entity": "FxRate", "read": true },
       { "role": "controller", "entity": "Item", "read": true, "reportExecute": true },
       { "role": "controller", "entity": "StockLedger", "read": true },
 
@@ -257,6 +270,77 @@
       "indexes": [ { "fields": ["paymentDate"] }, { "fields": ["amount"] }, { "fields": ["invoice"] } ]
     },
     {
+      "apiName": "CreditNote",
+      "label": "Credit Note",
+      "displayField": "number",
+      "module": "AR",
+      "fields": [
+        { "apiName": "number", "type": "text", "required": true, "uniqueness": true,
+          "default": { "sequence": "creditNoteNumber" } },
+        { "apiName": "customer", "type": "lookup", "target": "Customer", "required": true },
+        { "apiName": "invoice", "type": "lookup", "target": "Invoice" },
+        { "apiName": "noteDate", "type": "date", "required": true },
+        { "apiName": "currency", "type": "enum", "values": ["USD", "EUR"],
+          "default": { "value": "USD" } },
+        { "apiName": "fxRate", "type": "decimal", "precision": 18, "scale": 6,
+          "default": { "value": 1 } },
+        { "apiName": "amount", "type": "money", "required": true },
+        { "apiName": "reason", "type": "text" }
+      ],
+      "validations": [
+        { "name": "positiveAmount", "scope": "record",
+          "expression": "amount > 0",
+          "message": "A credit note carries a positive amount" }
+      ],
+      "indexes": [ { "fields": ["noteDate"] }, { "fields": ["customer"] } ]
+    },
+    {
+      "apiName": "DunningLetter",
+      "label": "Dunning Letter",
+      "displayField": "letterDate",
+      "module": "AR",
+      "fields": [
+        { "apiName": "customer", "type": "lookup", "target": "Customer", "required": true },
+        { "apiName": "asOfDate", "type": "date", "required": true },
+        { "apiName": "bucket", "type": "enum", "required": true,
+          "values": ["current", "0-30", "31-60", "60+"] },
+        { "apiName": "outstanding", "type": "money", "required": true },
+        { "apiName": "letterDate", "type": "date", "required": true },
+        { "apiName": "sent", "type": "boolean", "default": { "value": false } }
+      ],
+      "validations": [
+        { "name": "nonNegativeOutstanding", "scope": "record",
+          "expression": "outstanding >= 0",
+          "message": "A dunning letter mirrors a non-negative outstanding balance" }
+      ],
+      "indexes": [ { "fields": ["letterDate"] }, { "fields": ["customer"] } ]
+    },
+    {
+      "apiName": "Vendor",
+      "label": "Vendor",
+      "displayField": "name",
+      "module": "AP",
+      "fields": [
+        { "apiName": "name", "type": "text", "required": true },
+        { "apiName": "email", "type": "email" },
+        { "apiName": "paymentTerms", "type": "enum", "values": ["NET15", "NET30", "NET60"],
+          "default": { "value": "NET30" } }
+      ],
+      "indexes": [ { "fields": ["name"] } ]
+    },
+    {
+      "apiName": "FxRate",
+      "label": "FX Rate",
+      "displayField": "currency",
+      "module": "Settings",
+      "fields": [
+        { "apiName": "currency", "type": "enum", "values": ["EUR"], "required": true },
+        { "apiName": "rateDate", "type": "date", "required": true },
+        { "apiName": "rate", "type": "decimal", "precision": 18, "scale": 6, "required": true }
+      ],
+      "indexes": [ { "fields": ["currency", "rateDate"], "unique": true } ]
+    },
+    {
       "apiName": "Item",
       "label": "Item",
       "displayField": "sku",
@@ -373,6 +457,15 @@
         { "op": "sum", "field": "qtyOnHand", "alias": "qtyTotal" },
         { "op": "sum", "field": "inventoryValue", "alias": "valueTotal" } ],
       "drillThrough": { "entity": "Item", "carryFilters": false }
+    },
+    {
+      "id": "plSketch",
+      "entity": "Account",
+      "label": "P&L Sketch (revenue/expense sections)",
+      "filters": [ { "field": "type", "op": "in", "value": ["REVENUE", "EXPENSE"] } ],
+      "groupBy": [ { "field": "type" } ],
+      "aggregates": [ { "op": "count", "alias": "accounts" } ],
+      "drillThrough": { "entity": "JournalLine", "carryFilters": false }
     }
   ],
 
@@ -383,7 +476,8 @@
       "widgets": [
         { "widget": "kpi", "reportRef": "arAging", "params": { "aggregate": "outstanding" }, "span": 4 },
         { "widget": "chart", "reportRef": "arAging", "params": { "x": "bucket", "y": "outstanding" }, "span": 8 },
-        { "widget": "table", "reportRef": "trialBalance", "params": {}, "span": 12 } ],
+        { "widget": "table", "reportRef": "trialBalance", "params": {}, "span": 12 },
+        { "widget": "table", "reportRef": "plSketch", "params": {}, "span": 12 } ],
       "roles": ["controller", "accountingManager"]
     }
   ],
@@ -435,6 +529,8 @@
     { "id": "fifo-costing", "area": "Inventory", "blocker": "FIFO costing deferred by §11 Q1 (resolved): weighted-average only; lot machinery half-present in StockLedger", "workaround": "—", "proposed": "costingMethod flag on Item + lot allocation", "priority": "low", "disposition": "backlog" },
     { "id": "dunning-automation", "area": "AR", "blocker": "Full dunning automation deferred by §11 Q2 (resolved): letters + scheduler only", "workaround": "nightlyAging scheduled delivery is the v1 dunning surface", "proposed": "escalation chains (Phase 4 reuse)", "priority": "low", "disposition": "backlog" },
     { "id": "G-10", "area": "P4 Workflow", "blocker": "Reopen resolves only through its own approval flow (§4): transition guards and hook guards evaluate the record's current (post-merge) state — a status == 'OPEN' guard cannot distinguish the audited CLOSED → OPEN reopen from the initial create, so gating reopen with requestApproval would suspend every period creation (and SoD would block the creating controller from approving it)", "workaround": "The reopen edge is a listed, audited machine transition an accountingManager/controller write drives — audited, but not approval-gated", "proposed": "transition-scoped hooks (trigger: onTransition, carrying prior state) or prior-state bindings in guards", "priority": "medium", "disposition": "backlog" },
-    { "id": "G-11", "area": "ADR-010 harness", "blocker": "The close-checklist suite leg: §9 item 3's close checklist completes only with all tasks resolved needs the suite to observe the event-started process's tasks, but event-starts ride the spine asynchronously and the harness has no await/poll step — a queryRecord Task right after the CLOSING update races", "workaround": "The checklist's all-tasks-then-confirm shape is structural (the BPMN parallel join gates confirmClose) and pinned service-level by BpmnProcessTests; the authored suite covers the CLOSING write gate instead", "proposed": "an awaitTasks/poll step op (bounded retries over the inbox query)", "priority": "medium", "disposition": "backlog" }
+    { "id": "G-11", "area": "ADR-010 harness", "blocker": "The close-checklist suite leg: §9 item 3's close checklist completes only with all tasks resolved needs the suite to observe the event-started process's tasks, but event-starts ride the spine asynchronously and the harness has no await/poll step — a queryRecord Task right after the CLOSING update races", "workaround": "The checklist's all-tasks-then-confirm shape is structural (the BPMN parallel join gates confirmClose) and pinned service-level by BpmnProcessTests; the authored suite covers the CLOSING write gate instead", "proposed": "an awaitTasks/poll step op (bounded retries over the inbox query)", "priority": "medium", "disposition": "backlog" },
+    { "id": "G-12", "area": "P5 Reporting", "blocker": "P&L amount slicing by account type: report groupBy/filters bind direct fields of one entity — JournalLine cannot group by account.type (the report vocabulary has no lookup-path traversal), so revenue/expense nets over journal lines are not expressible as a report", "workaround": "plSketch is the structural section sketch over Account (type sections + count + drill-through to lines); the trial balance remains the amount surface, and the reconciliation suite pins the nets", "proposed": "lookup-path groupBy/filters in reports (join lowering), or a denormalize-on-write harvest stamping the target's classification", "priority": "medium", "disposition": "backlog" },
+    { "id": "G-13", "area": "AR/AP", "blocker": "AP bill document: the Invoice entity is AR-shaped (required customer lookup, AR machine, AR aging) — a vendor bill document with its own numbering and subledger view is not authored", "workaround": "AP rides the GL — JournalEntry postings against AP control accounts with the Vendor subledger (the ap-vendor-subledger suite leg books one end to end)", "proposed": "a versioned APBill app template, or a polymorphic party lookup if a second dogfood flow demands one document shape", "priority": "medium", "disposition": "backlog" }
   ]
 }

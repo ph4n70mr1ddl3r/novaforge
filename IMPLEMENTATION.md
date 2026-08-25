@@ -1292,6 +1292,32 @@ by the integrations vitest journey (counters render, resume fires, ledger opens)
 > fourth suite). Two newly-found platform/harness limits are gap-logged (G-10
 > reopen approval needs prior-state guards; G-11 the checklist suite leg needs a
 > poll op) rather than silently worked around.
+>
+> **Spec-review closeout (2026-08-25, sixth pass) — §2's scope table had silent
+> reductions.** Four rows of the §2 "ERP App Scope" table named metadata that was
+> neither authored nor gap-logged: the AR/AP row's `Vendor`, `CreditNote`, and
+> `DunningLetter` entities (only Customer/Invoice/Payment had landed), the
+> Settings row's FX-rate table entity (documents carried `fxRate` but no rate
+> table existed), and the financial-reports row's P&L sketch. Closed, all as
+> metadata per the dogfood rules: `Vendor` (AP party subledger) + `CreditNote`
+> (gapless `CN-` numbering, customer + invoice lookups — the credit-memo half of
+> the allocation flows) + `DunningLetter` (bucket mirrors the aging report's
+> labels; §11 Q2's letters half) + `FxRate` (unique per currency+date — the
+> multi-currency pin's rate table) + the `plSketch` report and its dashboard
+> widget. What the v1 vocabulary cannot express is gap-logged, not worked around
+> silently: G-12 (report groupBy/filters cannot traverse lookups, so P&L amount
+> slicing by `account.type` rides the structural sketch + trial balance) and G-13
+> (no AP bill document — AP rides the GL with the Vendor subledger). The same
+> pass found the authored corpus was not live-runnable: cases sharing a suite's
+> scratch tenant re-created unique fixture keys (`Account` codes), so
+> `reconciliation`'s second case and `controls`' cases 2–3 would abort on their
+> own fixtures — fixed with per-case-unique keys; a fifth suite
+> (`creditAndCurrency`) lands the §2 allocation legs (credit-note application),
+> §9 item 6's first leg (EUR invoice at the date rate posts in USD book currency
+> — TB nets, USD aging), the dunning-letter journey under a per-case frozen
+> clock, and the AP-through-GL vendor subledger posting that exercises
+> `plSketch`. `ErpAppArtifactTests` pins the completed scope (entities, gapless
+> `CN-` sequence, unique rate table, P&L sketch + dashboard widget, corpus ≥ 5).
 
 **Implemented — T3 the two anticipated harvests (§3), confirmed by the dogfood:**
 - **`freezeOnTerminal` (§3.1)**: an `EntityDefinition` attribute (requiring a bound
@@ -1345,11 +1371,17 @@ by the integrations vitest journey (counters render, resume fires, ledger opens)
   the invoice, so settlement decrements `amountOutstanding` on the POSTED invoice
   (the 2026-08-24 review removed a freeze the app had carried against the pin —
   the bankFeed suite's settlement leg pinned it); `Payment` as the bank-feed
-  webhook target), Inventory (`Item` with roll-up-maintained
+  webhook target; `CreditNote` with gapless `CN-` numbering + the `invoice`
+  lookup (the credit-memo half of the allocation flows) and `DunningLetter`
+  whose bucket values mirror the aging report's labels — both sixth-pass
+  additions), AP (`Vendor` — the party subledger; bills ride the GL per G-13),
+  Settings (`FxRate`, unique per currency+date — the multi-currency pin's rate
+  table), Inventory (`Item` with roll-up-maintained
   `qtyOnHand`/`inventoryValue` — the running weighted average is exactly
   value/qty; `StockLedger` append-only with terminal `POSTED` + freeze), periods
   (`OPEN→CLOSING→CLOSED` with the audited `CLOSED→OPEN` reopen edge), reports
-  (trial balance, bucketed A/R aging, inventory valuation), the `exec` dashboard,
+  (trial balance, bucketed A/R aging, inventory valuation, the P&L sketch), the
+  `exec` dashboard,
   the `nightlyAging` scheduled delivery under the `reporting` role, roles + the
   object matrix (arClerk/accountingManager/controller/inventoryClerk/reporting),
   the bankFeed connector + paymentsFeed inbound webhook (T8's wiring), and the
@@ -1377,17 +1409,22 @@ by the integrations vitest journey (counters render, resume fires, ledger opens)
   a normal posting into `CLOSING` rejects `error(PERIOD_LOCKED)` while the
   `closeJournal` accrual posts), `inventoryCosting`
   (§9 item 4: receipt 10×5 → issue 4 at average — `unitCost == 5.0000`, qty 6,
-  value 30.0000 decimal-exact), and `bankFeed` (PHASE-6 T10/T8's leg: webhook
+  value 30.0000 decimal-exact), `bankFeed` (PHASE-6 T10/T8's leg: webhook
   payment through the real HMAC path → Payment lands → settlement decrements
-  `amountOutstanding` on the POSTED invoice → aging 50.0000 decimal-exact)
-- `apps/erp/GAP-LOG.md` — the binding rule-2 deliverable: 11 numbered gaps logged
+  `amountOutstanding` on the POSTED invoice → aging 50.0000 decimal-exact), and
+  `creditAndCurrency` (the sixth pass: credit-note allocation → aging 100.0000,
+  EUR invoice at the date rate posting in USD book currency — TB nets, aging
+  210.0000, the dunning letter mirroring its aging bucket under a per-case
+  frozen clock, and the AP vendor-subledger posting exercising `plSketch`)
+- `apps/erp/GAP-LOG.md` — the binding rule-2 deliverable: 13 numbered gaps logged
   BEFORE their workarounds, each with proposed primitive/flag + priority +
   disposition (2 accept-as-platform-feature: created-record id capture + nested
   template resolution for auto-journals; a `$decimal` sandbox binding for script
   money fidelity), plus the two confirmed §3 harvests
-- `ErpAppArtifactTests` (8) gates the artifact in CI through the exact save/compile
+- `ErpAppArtifactTests` (9) gates the artifact in CI through the exact save/compile
   checks the builder would run (save-clean, FlowCompiler, harvests bound, gapless
-  sequences, script budget, suite save-validation, ${…} reference shape) — it
+  sequences, script budget, suite save-validation, ${…} reference shape, and the
+  §2 AR/AP + Settings scope rows) — it
   caught two real authoring defects on landing (unpromoted report aggregate field;
   deleteRecord's dynamic-version rejection)
 
