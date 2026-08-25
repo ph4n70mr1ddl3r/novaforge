@@ -64,6 +64,10 @@ public class HookExecutor {
 
     private static final Pattern TEMPLATE = Pattern.compile("\\$\\{([^}]+)}");
 
+    /** Response-node conversion (connector bindings): JsonNode → plain Java. */
+    private static final tools.jackson.databind.json.JsonMapper JSON =
+            tools.jackson.databind.json.JsonMapper.builder().build();
+
     private static final Logger LOG = LoggerFactory.getLogger(HookExecutor.class);
 
     /** The runtime's integration point: executes one hook trigger for a record.
@@ -110,8 +114,14 @@ public class HookExecutor {
      */
     public void runScheduled(AppDefinition app, EntityHandle handle, UUID tenantId,
                              HookRule hook, UUID systemPrincipal, HookSink sink) {
+        // A fire key scopes this invocation's connector deliveries: the delivery
+        // dedupe is permanent, so a recordless pull keyed only by hook+step would
+        // answer every later fire with the first fire's recorded outcome — the
+        // provider would never be called again (§7's registry fires forever). The
+        // per-invocation key keeps each fire fresh; write-path keys stay
+        // record-scoped so after-hook retries still collapse (§4).
         runOne(app, handle, tenantId, null, new LinkedHashMap<>(), SCHEDULED_CONTEXT,
-                hook, systemPrincipal, null, null, sink);
+                hook, systemPrincipal, null, null, UUID.randomUUID().toString(), sink);
     }
 
     /**
@@ -131,7 +141,7 @@ public class HookExecutor {
             }
             try {
                 runOne(app, handle, tenantId, recordId, data, trigger, hook,
-                        systemPrincipal, initiatingActor, transition, sink);
+                        systemPrincipal, initiatingActor, transition, null, sink);
             } catch (RuntimeException e) {
                 // before-hooks abort (§2.5); after-hooks ride the spine for retry —
                 // never lost, never blocking the write (§2 failure policy).
@@ -171,7 +181,7 @@ public class HookExecutor {
                             + "write path (ADR-003 #2), never on demand");
         }
         runOne(app, handle, tenantId, recordId, data, "manual", hook,
-                systemPrincipal, initiatingActor, null, sink);
+                systemPrincipal, initiatingActor, null, null, sink);
     }
 
     /**
@@ -187,7 +197,7 @@ public class HookExecutor {
         for (HookRule hook : handle.entity().hooks()) {
             if (trigger.equals(hook.trigger()) && hookName.equals(hook.name())) {
                 runOne(app, handle, tenantId, recordId, data, trigger, hook,
-                        systemPrincipal, null, null, sink);
+                        systemPrincipal, null, null, null, sink);
                 return true;
             }
         }
@@ -222,7 +232,7 @@ public class HookExecutor {
     private void runOne(AppDefinition app, EntityHandle handle, UUID tenantId,
                         UUID recordId, Map<String, Object> data, String trigger,
                         HookRule hook, UUID systemPrincipal, UUID initiatingActor,
-                        String transition, HookSink sink) {
+                        String transition, String fireKey, HookSink sink) {
         String kind = hook.script() == null ? "flow" : "script";
         counted(handle, trigger, kind);
         // §9 hook-duration histogram — the write path's per-trigger latency shape.
@@ -243,6 +253,7 @@ public class HookExecutor {
                 context.initiatingActor = initiatingActor;
                 context.currentHook = hook.name();
                 context.transition = transition;
+                context.fireKey = fireKey;
                 context.index(hook.flow());
                 executeIndexed(hook.flow(), context);
             }
@@ -365,15 +376,34 @@ public class HookExecutor {
                 return byName(context, step.next());
             }
             case "iterate" -> {
+                String iteratePath = step.param("path");
+                if (iteratePath != null && iteratePath.startsWith("connector.")) {
+                    // Connector-response iteration (the scheduled pull shape,
+                    // PHASE-6 §3's response mapping / PHASE-7 §5): the array a
+                    // callConnector step landed in scope becomes the row set —
+                    // each object row runs the body as the child overlay, so
+                    // createRecord templates bind the row's fields directly.
+                    Object rows = context.resolveTemplateValue(iteratePath);
+                    if (rows == null) {
+                        return byName(context, step.next());   // no array: no rows
+                    }
+                    if (!(rows instanceof List<?> rowList)) {
+                        throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                                "iterate connector path must address an array: " + iteratePath);
+                    }
+                    for (Object row : rowList) {
+                        if (!(row instanceof Map<?, ?> rowMap)) {
+                            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                                    "connector response rows must be objects: " + iteratePath);
+                        }
+                        runIterateBody(step, context.forChild(castRow(rowMap)));
+                    }
+                    return byName(context, step.next());
+                }
                 for (Map<String, Object> child : context.sink.children(context.tenantId,
                         context.handle.appApiName(), context.handle.entity().apiName(),
-                        step.param("path"), context.recordId)) {
-                    FlowStep body = step.body();
-                    Context childContext = context.forChild(child);
-                    int executed = 0;
-                    while (body != null && executed++ < MAX_STEPS) {
-                        body = executeStep(body, childContext);
-                    }
+                        iteratePath, context.recordId)) {
+                    runIterateBody(step, context.forChild(child));
                 }
                 return byName(context, step.next());
             }
@@ -453,7 +483,8 @@ public class HookExecutor {
                         context);
                 String dedupeKey = context.tenantId + ":" + context.handle.entityKey() + ":"
                         + (context.recordId == null ? "new" : context.recordId) + ":"
-                        + context.currentHook + ":" + step.id();
+                        + context.currentHook + ":" + step.id()
+                        + (context.fireKey == null ? "" : ":" + context.fireKey);
                 var result = connectors.execute(context.tenantId.toString(),
                         context.handle.appApiName(), step.param("connector"),
                         step.param("operation"), template, dedupeKey);
@@ -463,6 +494,20 @@ public class HookExecutor {
             default -> throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "unknown op at runtime: " + step.op());
         }
+    }
+
+    /** Runs one iterate body chain under the row/child's context (bounded). */
+    private void runIterateBody(FlowStep step, Context childContext) {
+        FlowStep body = step.body();
+        int executed = 0;
+        while (body != null && executed++ < MAX_STEPS) {
+            body = executeStep(body, childContext);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> castRow(Map<?, ?> row) {
+        return (Map<String, Object>) row;
     }
 
     /**
@@ -527,6 +572,7 @@ public class HookExecutor {
         UUID initiatingActor;
         String currentHook;
         String transition;
+        String fireKey;
         private final Map<String, Object> overlay = new HashMap<>();
         private final Map<String, FlowStep> steps = new HashMap<>();
         final Map<String, Object> connectorResults = new HashMap<>();
@@ -569,15 +615,78 @@ public class HookExecutor {
         }
 
         Object resolveTemplateValue(String path) {
-            Object direct = data.get(path);
+            if (path != null && path.startsWith("connector.")) {
+                // Connector-response binding (the versioned growth this shape rides):
+                // `connector.<stepId>.<path…>` addresses the settled response of the
+                // callConnector step — PHASE-6 §3's response mapping surface for
+                // flows. The response path itself is provider-shaped (compile checks
+                // the step reference, never the provider's document); an absent step
+                // or path resolves empty like every other unresolved reference.
+                String[] parts = path.split("\\.", 3);
+                if (parts.length >= 2
+                        && connectorResults.get(parts[1]) instanceof ConnectorPort.ConnectorResult result) {
+                    return walkNode(result.body(), parts.length == 3 ? parts[2] : "");
+                }
+                return null;
+            }
+            Object direct = walk(data, path);
             if (direct != null) {
                 return direct;
             }
-            Object overlayValue = overlay.get(path);
+            Object overlayValue = walk(overlay, path);
             if (overlayValue != null) {
                 return overlayValue;
             }
             return path.equals("id") && recordId != null ? recordId.toString() : null;
+        }
+
+        /** Dot-path descent through nested maps (iterate rows may nest). */
+        private static Object walk(Map<String, Object> source, String path) {
+            if (source == null || path == null) {
+                return null;
+            }
+            Object direct = source.get(path);
+            if (direct != null || source.containsKey(path)) {
+                return direct;
+            }
+            if (!path.contains(".")) {
+                return null;
+            }
+            Object node = source;
+            for (String segment : path.split("\\.")) {
+                if (!(node instanceof Map<?, ?> map) || (node = map.get(segment)) == null) {
+                    return null;
+                }
+            }
+            return node;
+        }
+
+        /** Dot-path descent through a settled connector response (arrays by index). */
+        private static Object walkNode(tools.jackson.databind.JsonNode node, String path) {
+            tools.jackson.databind.JsonNode current = node;
+            if (path != null && !path.isBlank()) {
+                for (String segment : path.split("\\.")) {
+                    if (current == null) {
+                        return null;
+                    }
+                    if (current.isArray() && segment.matches("\\d+")) {
+                        current = current.get(Integer.parseInt(segment));
+                    } else if (current.isObject()) {
+                        current = current.get(segment);
+                    } else {
+                        return null;
+                    }
+                }
+            }
+            return switch (current == null ? null : current.getNodeType()) {
+                case STRING -> current.asText();
+                case NUMBER -> current.isBigDecimal() || current.isFloatingPointNumber()
+                        ? java.math.BigDecimal.valueOf(current.doubleValue())
+                        : (Object) Long.valueOf(current.longValue());
+                case BOOLEAN -> Boolean.valueOf(current.booleanValue());
+                case OBJECT, ARRAY -> JSON.convertValue(current, Object.class);
+                default -> null;   // null, missing — unresolved, never an error
+            };
         }
 
         Context forChild(Map<String, Object> child) {
@@ -585,6 +694,10 @@ public class HookExecutor {
                     systemPrincipal, depth, sink);
             childContext.overlay.putAll(child);
             childContext.transition = transition;
+            childContext.currentHook = currentHook;
+            childContext.initiatingActor = initiatingActor;
+            childContext.fireKey = fireKey;
+            childContext.connectorResults.putAll(connectorResults);
             return childContext;
         }
 

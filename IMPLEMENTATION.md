@@ -1402,6 +1402,71 @@ by the integrations vitest journey (counters render, resume fires, ledger opens)
 > clock, and the AP-through-GL vendor subledger posting that exercises
 > `plSketch`. `ErpAppArtifactTests` pins the completed scope (entities, gapless
 > `CN-` sequence, unique rate table, P&L sketch + dashboard widget, corpus ≥ 5).
+>
+> **Spec-review closeout (2026-08-26, ninth pass) — §5/T8's bank-feed connector was
+> authored but never driven, and the platform could not have driven it.** Three
+> findings, one landing:
+> - **T8's wiring was half-present.** §5 pins "Bank feed = the Phase 6 exit
+>   connector driven by a scheduled flow (a `callConnector` step inside it — …
+>   there is no `connector` target, so the connector always rides a flow)" and
+>   T8's acceptance is "Reuse Phase 6 exit connector as scheduled job." The app
+>   carried the `bankFeed` connector and the `paymentsFeed` webhook — but only the
+>   push direction was wired: no job targeted a flow, no hook contained a
+>   `callConnector` step, and nothing consumed a connector response anyway
+>   (`connectorResults` was write-only dead state — the mapping engine's §3
+>   "response field maps" had never existed for flows).
+> - **The flow IR grows its connector-response bindings (ADR-008 #2's versioned
+>   path).** After a `callConnector` step, `${connector.<stepId>.<path…>}`
+>   addresses the settled response in any record/payload template (dot-path
+>   descent, arrays by index), and `iterate` accepts `connector.<stepId>.<path>`
+>   as its row source — each object row runs the body as the child overlay, so
+>   `createRecord` templates bind the row's fields directly (the bank-feed pull
+>   shape: call → iterate transactions → create a Payment per row). The publish
+>   compiler checks every step reference (the addressed step must exist and be a
+>   `callConnector`; the response path itself is provider-shaped and resolves —
+>   or resolves empty — at run time, never a compile error); iterate bodies now
+>   inherit the enclosing context (connector results, hook name, actor) instead
+>   of silently dropping them.
+> - **Two live defects the wiring surfaced.** (1) A recordless scheduled fire
+>   would have deduped onto the *first* fire's connector delivery forever — the
+>   delivery dedupe is permanent and the key was `tenant:entity:new:<hook>:<step>`
+>   with no record to scope it — so every cron tick after the first answered the
+>   stale recorded response and never called the provider. Scheduled firings now
+>   carry a per-invocation fire key (write-path keys stay record-scoped so
+>   after-hook retries still collapse). (2) A `publishEvent` tail on a scheduled
+>   flow NPE'd on the outbox append — `record_id` was NOT NULL and the payload
+>   builder called `.toString()` on a null record id; V5 makes the outbox row's
+>   record id nullable and the relay keys recordless app events `tenant:entity`
+>   (record-scoped families keep the §13 Q3 three-part key).
+> - **The trigger vocabulary grows `scheduled`** (its first versioned growth):
+>   a recordless trigger the write path never matches — no write carries it —
+>   and only the Scheduler's by-name firing executes, so a sync hook never
+>   double-fires on the very records it creates. The TS twin's `HOOK_TRIGGERS`
+>   carries it. The ERP app now authors the full T8 shape: `Payment.syncBankFeed`
+>   (callConnector → iterate `connector.c1.transactions` → createRecord per row →
+>   the recordless `erp.bankfeed.synced` tail) driven by the hourly
+>   `bankFeedSync` job (target `flow`), with the inbound webhook staying beside
+>   it as the idempotent push path. What the vocabulary still cannot express is
+>   gap-logged before the workaround, per rule 2: **G-14** (no flow-side upsert /
+>   cursor bindings — a re-pulled settled transaction rejects audibly on
+>   `Payment.number`'s unique index rather than silently double-applying).
+>   Pinned by `ScheduledConnectorFlowTests` (4 — rows land through the real write
+>   path decimal-exact, every fire is a fresh delivery with distinct dedupe keys,
+>   the scheduled trigger never fires on writes, duplicate re-pulls reject 400
+>   `VALIDATION_FAILED` and the recordless event rides the outbox),
+>   `DefinitionLifecycleTests` (the vocabulary compiles; connector references to
+>   non-`callConnector` steps reject), `ErpAppArtifactTests.bankFeedWiring` (the
+>   §5 shape as a structural pin), and the relay shape test's recordless key.
+>   Test-support note: the singleton testcontainer Postgres's default
+>   `max_connections=100` no longer covers a module's worth of cached Spring
+>   contexts — the twelfth context tipped it — so the base raises the budget
+>   (`postgres -c max_connections=400`); test-only, no service change.
+>
+> Verified: `./mvnw verify` green end to end (all 23 reactor modules; 351 test
+> methods) and the frontend workspace unchanged-green (147 vitest: shared 96,
+> builder-ui 40, runtime-ui 11; `pnpm check` strict tsc clean). The gateway's
+> health suite again needed a local Redis on 6379 (the standing environmental
+> note).
 
 **Implemented — T3 the two anticipated harvests (§3), confirmed by the dogfood:**
 - **`freezeOnTerminal` (§3.1)**: an `EntityDefinition` attribute (requiring a bound

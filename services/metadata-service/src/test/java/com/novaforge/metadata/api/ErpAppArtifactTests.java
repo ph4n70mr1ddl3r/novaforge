@@ -132,6 +132,56 @@ class ErpAppArtifactTests {
     }
 
     @Test
+    @DisplayName("bank-feed wiring (§5/T8): the connector rides a scheduled flow, not just the inbound webhook")
+    void bankFeedWiring() throws Exception {
+        AppDefinition app = app();
+        // §5's pin: "the Phase 6 exit connector driven by a scheduled flow (a
+        // callConnector step inside it)" — the job addresses the hook by name and
+        // the hook's graph carries the connector call that iterates into Payments
+        var job = app.jobs().stream().filter(j -> "bankFeedSync".equals(j.name()))
+                .findFirst().orElseThrow();
+        assertThat(job.target()).isEqualTo("flow");
+        assertThat(job.param("entity")).isEqualTo("Payment");
+        assertThat(job.param("hook")).isEqualTo("syncBankFeed");
+        assertThat(job.cron()).isNotBlank();
+
+        var hook = app.entity("Payment").orElseThrow().hooks().stream()
+                .filter(h -> "syncBankFeed".equals(h.name())).findFirst().orElseThrow();
+        assertThat(hook.trigger()).isEqualTo("scheduled");   // recordless — never write-path
+        // walk the graph (next + bodies) for the callConnector and the iterate over
+        // its response — the pull shape's two load-bearing steps
+        boolean[] found = { false, false };
+        java.util.ArrayDeque<com.novaforge.metadata.FlowStep> stack = new java.util.ArrayDeque<>();
+        stack.push(hook.flow());
+        while (!stack.isEmpty()) {
+            com.novaforge.metadata.FlowStep step = stack.pop();
+            if (step == null) {
+                continue;
+            }
+            if ("callConnector".equals(step.op())
+                    && "bankFeed".equals(step.param("connector"))) {
+                found[0] = true;
+            }
+            if ("iterate".equals(step.op())
+                    && step.param("path") != null
+                    && step.param("path").startsWith("connector.")) {
+                found[1] = true;
+            }
+            if (step.body() != null) {
+                stack.push(step.body());
+            }
+        }
+        assertThat(found[0]).as("a callConnector step drives the bankFeed connector").isTrue();
+        assertThat(found[1]).as("the response array iterates into Payment rows").isTrue();
+        // the inbound push direction stays beside it (the idempotent upsert path —
+        // G-14's workaround, the bankFeed suite's leg)
+        assertThat(app.integrations().webhooks().stream()
+                .anyMatch(w -> "paymentsFeed".equals(w.id())
+                        && com.novaforge.metadata.WebhookDefinition.INBOUND.equals(w.direction())))
+                .isTrue();
+    }
+
+    @Test
     @DisplayName("gapless sequences bind the entry/invoice numbering (§2 GL/AR)")
     void gaplessNumbering() throws Exception {
         AppDefinition app = app();

@@ -22,7 +22,12 @@ public abstract class PostgresTestBase {
     private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(POSTGRES_IMAGE)
             .withDatabaseName("novaforge_test")
             .withUsername("novaforge")
-            .withPassword("novaforge");
+            .withPassword("novaforge")
+            // One container serves the whole JVM: every @SpringBootTest class caches
+            // its own context (its own Hikari pool + Flyway), so the default
+            // max_connections=100 no longer covers a module's worth of classes —
+            // raise the budget rather than cap the suites
+            .withCommand("postgres", "-c", "max_connections=400");
 
     @BeforeAll
     static void startPostgres() {

@@ -71,7 +71,9 @@ export interface ValidationRule {
 
 /**
  * An event-hook rule (PHASE-3 §2): a trigger + a flow-IR step graph, record scope.
- * Triggers v1: beforeSave | afterSave | beforeDelete | afterDelete. The body is
+ * Triggers v1: beforeSave | afterSave | beforeDelete | afterDelete; the vocabulary's
+ * first versioned growth adds `scheduled` (the recordless trigger only the
+ * Scheduler's by-name firing executes — PHASE-7 §5's bank-feed shape). The body is
  * either a flow or a script artifact (PHASE-3 §6) — exactly one is present.
  */
 export interface HookRule {
@@ -105,8 +107,14 @@ export const FLOW_OPS = [
     "callConnector",
 ] as const;
 
-/** The v1 hook triggers (PHASE-3 §2). */
-export const HOOK_TRIGGERS = ["beforeSave", "afterSave", "beforeDelete", "afterDelete"] as const;
+/** The v1 hook triggers + the first versioned growth (PHASE-7 §5's scheduled pull). */
+export const HOOK_TRIGGERS = [
+    "beforeSave",
+    "afterSave",
+    "beforeDelete",
+    "afterDelete",
+    "scheduled",
+] as const;
 
 // --- builder test suites (PHASE-3 §7, ADR-010) ---
 

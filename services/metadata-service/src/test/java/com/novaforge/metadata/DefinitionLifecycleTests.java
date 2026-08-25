@@ -654,6 +654,96 @@ class DefinitionLifecycleTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("connector-response flows (§5's scheduled pull): the vocabulary compiles; bad step references reject")
+    void connectorResponseFlowCompilerChecks() throws Exception {
+        // the bank-feed shape (PHASE-7 §5/T8): a scheduled hook — callConnector →
+        // iterate over the response's array → createRecord per row → the
+        // recordless publishEvent tail — saves clean, `scheduled` trigger included
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "ConnApp", "entities": [ { "apiName": "Payment",
+                                  "fields": [ { "apiName": "number", "type": "text" },
+                                               { "apiName": "amount", "type": "decimal",
+                                                 "precision": 18, "scale": 4 } ],
+                                  "hooks": [ { "name": "syncBankFeed", "trigger": "scheduled",
+                                    "flow": { "id": "c1", "op": "callConnector",
+                                      "params": { "connector": "bankFeed",
+                                                  "operation": "listTransactions",
+                                                  "template": { "since": "2000-01-01" } },
+                                      "next": "i1",
+                                      "body": { "id": "i1", "op": "iterate",
+                                        "params": { "path": "connector.c1.transactions" },
+                                        "next": "e1",
+                                        "body": { "id": "p1", "op": "createRecord",
+                                          "params": { "entity": "Payment",
+                                            "template": { "number": "${txn_id}",
+                                              "amount": "${amount}" } },
+                                          "body": { "id": "e1", "op": "publishEvent",
+                                            "params": { "name": "ledger.bankfeed.synced",
+                                              "payload": { "ref": "${connector.c1.cursor}" } } } } } } } ] } ],
+                                  "integrations": { "connectors": [ { "id": "bankFeed",
+                                    "type": "rest", "baseUrl": "https://bank.example.local",
+                                    "operations": [ { "name": "listTransactions", "method": "GET",
+                                      "path": "/v1/transactions" } ] } ] } }
+                                """))
+                .andExpect(status().isOk());
+
+        // an iterate connector path addressing a non-callConnector step rejects:
+        // the path names p1 (a createRecord), not the callConnector that ran
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "ConnApp3", "entities": [ { "apiName": "Payment",
+                                  "fields": [ { "apiName": "number", "type": "text" } ],
+                                  "hooks": [ { "name": "sync", "trigger": "scheduled",
+                                    "flow": { "id": "c1", "op": "callConnector",
+                                      "params": { "connector": "bankFeed",
+                                                  "operation": "listTransactions",
+                                                  "template": { "since": "2000-01-01" } },
+                                      "next": "i1",
+                                      "body": { "id": "i1", "op": "iterate",
+                                        "params": { "path": "connector.p1.transactions" },
+                                        "next": "e1",
+                                        "body": { "id": "p1", "op": "createRecord",
+                                          "params": { "entity": "Payment",
+                                            "template": { "number": "x" } },
+                                          "body": { "id": "e1", "op": "publishEvent",
+                                            "params": { "name": "ledger.synced" } } } } } } ] } ],
+                                  "integrations": { "connectors": [ { "id": "bankFeed",
+                                    "type": "rest", "baseUrl": "https://bank.example.local",
+                                    "operations": [ { "name": "listTransactions", "method": "GET",
+                                      "path": "/v1/transactions" } ] } ] } }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString(
+                                "connector reference must address a callConnector step")));
+
+        // a record template referencing a connector step that does not exist rejects
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "ConnApp4", "entities": [ { "apiName": "Payment",
+                                  "fields": [ { "apiName": "number", "type": "text" } ],
+                                  "hooks": [ { "name": "sync", "trigger": "scheduled",
+                                    "flow": { "id": "c1", "op": "callConnector",
+                                      "params": { "connector": "bankFeed",
+                                                  "operation": "listTransactions",
+                                                  "template": { "since": "2000-01-01" } },
+                                      "next": "p1",
+                                      "body": { "id": "p1", "op": "createRecord",
+                                        "params": { "entity": "Payment",
+                                          "template": { "number": "${connector.ghost.ref}" } } } } } ] } ],
+                                  "integrations": { "connectors": [ { "id": "bankFeed",
+                                    "type": "rest", "baseUrl": "https://bank.example.local",
+                                    "operations": [ { "name": "listTransactions", "method": "GET",
+                                      "path": "/v1/transactions" } ] } ] } }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString(
+                                "connector reference must address a callConnector step")));
+    }
+
+    @Test
     @DisplayName("script hooks (§6): publish accepts a valid artifact; shape, language, and size reject")
     void scriptHookPublishChecks() throws Exception {
         // valid script hook rides the same review path as flows

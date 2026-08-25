@@ -13,6 +13,7 @@ import com.novaforge.metadata.HookRule;
 import com.novaforge.metadata.ScriptDefinition;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -345,7 +346,17 @@ final class FlowCompiler {
             }
             case "iterate" -> {
                 String path = step.param("path");
-                if (path == null || entity.relationship(path).isEmpty()) {
+                if (path != null && path.startsWith("connector.")) {
+                    // Connector-response iteration (the scheduled pull shape,
+                    // PHASE-7 §5): the array a callConnector step lands in scope —
+                    // the addressed step must be one, the response path itself is
+                    // provider-shaped and never compile-checked
+                    checkConnectorReference(path, where, errors);
+                    if (step.body() == null) {
+                        errors.add(new ProblemErrors.FieldError(where,
+                                "iterate requires a body", null));
+                    }
+                } else if (path == null || entity.relationship(path).isEmpty()) {
                     errors.add(new ProblemErrors.FieldError(where,
                             "iterate path must be a relationship: " + path, path));
                 } else if (step.body() == null) {
@@ -375,6 +386,7 @@ final class FlowCompiler {
                                 entry.getKey()));
                     }
                 }
+                scanConnectorReferences(template, where, errors);
                 if ("updateRecord".equals(step.op()) && step.param("recordId") == null) {
                     errors.add(new ProblemErrors.FieldError(where,
                             "updateRecord requires recordId (a ${…} template)", null));
@@ -386,6 +398,7 @@ final class FlowCompiler {
                     errors.add(new ProblemErrors.FieldError(where,
                             "publishEvent requires a dotted event name: " + name, name));
                 }
+                scanConnectorReferences(step.params().get("payload"), where, errors);
             }
             case "transitionState" -> {
                 // Phase 4 activation (§3): a guarded field write through the same
@@ -468,7 +481,9 @@ final class FlowCompiler {
                     if (entry.getValue() instanceof String text
                             && text.startsWith("${") && text.endsWith("}")) {
                         String reference = text.substring(2, text.length() - 1);
-                        if (!reference.equals("id") && entity.field(reference).isEmpty()) {
+                        if (reference.startsWith("connector.")) {
+                            checkConnectorReference(reference, where, errors);
+                        } else if (!reference.equals("id") && entity.field(reference).isEmpty()) {
                             errors.add(new ProblemErrors.FieldError(where,
                                     "callConnector template reference must resolve on "
                                             + entity.apiName() + ": " + reference, reference));
@@ -485,6 +500,54 @@ final class FlowCompiler {
                 && !isTerminal(step)) {
             errors.add(new ProblemErrors.FieldError(where,
                     "step must chain to a known step id: " + step.next(), step.next()));
+        }
+    }
+
+    /** Finds every `${connector.…}` reference in a template value tree. */
+    private static final java.util.regex.Pattern CONNECTOR_REF =
+            java.util.regex.Pattern.compile("\\$\\{(connector\\.[^}]+)}");
+
+    /**
+     * Connector-response references (the versioned growth the scheduled pull
+     * rides): {@code ${connector.<stepId>.<path…>}} in record/payload templates
+     * and {@code connector.<stepId>.<path>} iterate paths address the settled
+     * response of a {@code callConnector} step of the same graph. The step
+     * reference is compile-checked; the response path itself is provider-shaped
+     * and resolves (or resolves empty) at run time.
+     */
+    private void checkConnectorReference(String reference, String where,
+                                         java.util.List<ProblemErrors.FieldError> errors) {
+        String[] parts = reference.split("\\.", 3);
+        if (parts.length < 2 || parts[1].isBlank()) {
+            errors.add(new ProblemErrors.FieldError(where,
+                    "connector references address a callConnector step: "
+                            + "connector.<stepId>.<path>", reference));
+            return;
+        }
+        FlowStep target = stepsById.get(parts[1]);
+        if (target == null || !"callConnector".equals(target.op())) {
+            errors.add(new ProblemErrors.FieldError(where,
+                    "connector reference must address a callConnector step of this flow: "
+                            + parts[1], parts[1]));
+        }
+    }
+
+    /** Deep-scans a template value tree for connector-response references. */
+    private void scanConnectorReferences(Object template, String where,
+                                         java.util.List<ProblemErrors.FieldError> errors) {
+        if (template instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                scanConnectorReferences(entry.getValue(), where, errors);
+            }
+        } else if (template instanceof List<?> list) {
+            for (Object item : list) {
+                scanConnectorReferences(item, where, errors);
+            }
+        } else if (template instanceof String text) {
+            java.util.regex.Matcher matcher = CONNECTOR_REF.matcher(text);
+            while (matcher.find()) {
+                checkConnectorReference(matcher.group(1), where, errors);
+            }
         }
     }
 

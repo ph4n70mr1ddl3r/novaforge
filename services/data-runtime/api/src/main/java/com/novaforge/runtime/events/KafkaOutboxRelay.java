@@ -81,7 +81,12 @@ public class KafkaOutboxRelay {
      * shape holds uniformly.
      */
     static String keyFor(OutboxEntry entry) {
-        return entry.tenantId() + ":" + entry.entityId() + ":" + entry.recordId();
+        // record-scoped families key tenant:entity:record (§13 Q3); a recordless
+        // app event (a scheduled flow's completion event) keys tenant:entity —
+        // per-entity ordering holds, no record exists to order per
+        return entry.recordId() == null
+                ? entry.tenantId() + ":" + entry.entityId()
+                : entry.tenantId() + ":" + entry.entityId() + ":" + entry.recordId();
     }
 
     /** The shared spine headers (PHASE-3 §4): event id/type/tenant + trace link. */

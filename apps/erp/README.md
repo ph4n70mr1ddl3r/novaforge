@@ -45,9 +45,13 @@ application code and exactly one budgeted escape-hatch script (§5, rule 3).
 - **Reports** — `trialBalance`, `arAging` (bucketed aging over POSTED invoices, the
   Phase 5 exit artifact), `inventoryValuation`; the `exec` dashboard; `nightlyAging`
   scheduled delivery under the `reporting` role.
-- **Integrations** — the `bankFeed` REST connector (T8's wiring: the Scheduler's
-  `report`/`flow` targets drive it; there is no `connector` target by design, §5) and
-  the `paymentsFeed` inbound webhook (`Payment` upsert, HMAC per PHASE-6 §5).
+- **Integrations** — the `bankFeed` REST connector driven by the hourly
+  `bankFeedSync` scheduled job (T8's §5 wiring: target `flow` firing the
+  `Payment.syncBankFeed` hook — `callConnector` → iterate the response's
+  transactions → a `Payment` per row; there is no `connector` target by design,
+  §5 — with a re-pull's duplicates rejecting audibly per G-14) and the
+  `paymentsFeed` inbound webhook (`Payment` upsert, HMAC per PHASE-6 §5 — the
+  idempotent push path the bankFeed suite pins).
 
 ## Loading (through the definition APIs, or the builder's entity/integration editors — G-7 closed)
 

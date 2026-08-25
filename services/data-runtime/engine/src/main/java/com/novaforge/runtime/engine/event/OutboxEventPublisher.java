@@ -40,7 +40,11 @@ public class OutboxEventPublisher implements DomainEventPublisher {
         payload.put("eventId", UUID.randomUUID().toString());
         payload.put("tenantId", event.tenantId().toString());
         payload.put("entityId", event.entityId());
-        payload.put("recordId", event.recordId().toString());
+        // recordless app events (a scheduled flow's publishEvent tail) omit the
+        // record id — the envelope's consumers key on the event id regardless
+        if (event.recordId() != null) {
+            payload.put("recordId", event.recordId().toString());
+        }
         payload.put("actorId", event.actorId().toString());
         payload.put("occurredAt", event.occurredAt() == null ? Instant.now().toString() : event.occurredAt());
         payload.putAll(metadata);

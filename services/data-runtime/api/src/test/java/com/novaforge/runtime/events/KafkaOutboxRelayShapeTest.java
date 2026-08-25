@@ -35,6 +35,12 @@ class KafkaOutboxRelayShapeTest {
                 RECORD, "record.created", "{}");
         assertThat(KafkaOutboxRelay.keyFor(entry))
                 .isEqualTo(TENANT + ":Erp.JournalEntry:" + RECORD);
+        // a recordless app event (a scheduled flow's publishEvent tail, V5) keys
+        // tenant:entity — per-entity ordering holds, no record exists to order per
+        OutboxEntry recordless = new OutboxEntry(UUID.randomUUID(), TENANT, "Erp.Payment",
+                null, "erp.bankfeed.synced", "{}");
+        assertThat(KafkaOutboxRelay.keyFor(recordless))
+                .isEqualTo(TENANT + ":Erp.Payment");
     }
 
     @Test
