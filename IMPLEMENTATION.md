@@ -865,8 +865,8 @@ fell back to the initial state's edges). Closed:
   `notifications.test.tsx` (2 — inbox mark-read/reload, preference load/toggle)
 
 **Phase 4 remainder:** the §1 exit-journey demo (T12 — needs the full stack live;
-the §14 item 1 journey suite through the runner rides it too; its SLA leg is now
-expressible through `scanSla`). T10's surfaces all landed: the approval inbox and
+its runner leg is authored and CI-gated — see the 2026-08-26 exit-journey
+authoring below; the SLA leg rides `scanSla`). T10's surfaces all landed: the approval inbox and
 notification inbox/preferences in `frontend/runtime-ui`, state-machine
 transitions as record actions from published machine metadata (reading the real
 `stateField`), the automation screen, the sharing-rule editor, guided
@@ -874,6 +874,23 @@ requestApproval config, and scheduler visibility in `frontend/builder-ui`. All
 backend machinery for the journey — state machines, approvals with suspension and
 SoD, SLA escalation, notifications, the scheduler, BPMN execution with
 event-starts — is implemented and covered by the service-level suites above.
+
+**Exit journey authored for the live run (2026-08-26):** PLAN §5's Phase 4 exit is
+now a CI-gated artifact — `apps/purchasing/`: the PurchaseOrder machine
+(DRAFT→SUBMITTED→APPROVED|REJECTED; APPROVED→POSTED; REJECTED/POSTED terminal),
+the threshold branch into `requestApproval` (Purchasing.manager, mode all),
+onReject routing, the approve resume chaining APPROVED→POSTED→`po.posted`, and
+the governing SLA (PT1H, warnAt 0.5, senior-manager escalation) — zero scripts.
+The `exitJourney` suite is §14 item 1's contract: approve→POSTED, reject,
+below-threshold auto-post, scanSla warn→breach→escalation (no sleeps), and
+`error(SOD_VIOLATION)` — ordered so the SoD case's open task cannot skew the
+escalation counts; `PurchasingAppArtifactTests` (5) gates save/compile/suite
+validation + the §1 decomposition. Two live-run blockers closed on the way:
+`resolveTask` now re-observes the resolved task's record (best-effort GET as the
+resolving actor, remembered in place — suspension resume is synchronous but
+nothing re-read the record, so `${Entity[n]}` assertions would have read stale
+pre-resolution snapshots), and the live run's Keycloak legs — synthetic-actor
+usernames + app-scoped role assignments.
 
 **Spec-review closeout (2026-08-24, second pass):** §11's inbox pin reads
 "approve/reject with comment, **delegate**" — the runtime inbox had resolution
@@ -1358,6 +1375,50 @@ by the integrations vitest journey (counters render, resume fires, ledger opens)
 
 ## Phase 7 — ERP Dogfood ◐ (spec: PHASE-7-ERP-DOGFOOD.md)
 
+> **ERP corpus authored for the live run (2026-08-26):** the 14-entity corpus is
+> the full authored shape (AccountingPeriod, Account, JournalEntry/JournalLine,
+> Customer, Invoice/InvoiceLine, Payment, CreditNote, DunningLetter, Vendor,
+> FxRate, Item, StockLedger; four reports; the bankFeed and controls suites at
+> their authored scope), and running its suites live shook ten platform defects
+> out — standalone child writes recompute parent roll-ups (same transaction as
+> the write's actor), afterSave/afterDelete hook transitions persist through the
+> standard guarded write (they mutated only the in-memory map before), the
+> resolver's published-app index is tenant-scoped (accumulated scratch publishes
+> made unqualified resolution ambiguous), query aliases are quoted (Postgres
+> folded camelCase aliases to lowercase), the integration clients' dual
+> constructors carry `@Autowired` (Spring fell back to the hermetic base —
+> pinned by `ClientWiringTests`), the webhook upsert lookup sends the query-DSL
+> leaf shape, suite report runs pass `fresh:true` (a settlement between two
+> identical runs served a cached pre-settlement aggregate; TestRunner surfaces
+> problem+json raw and keeps JSON type on single-reference values),
+> ScriptSandbox warms the GraalVM engine at boot (the truffle bootstrap landed
+> inside the first script's CPU budget), and the Purchasing submit flow guards
+> create-time firing. The driver (`docs/loadtests/live-run-suites.py`) rides the
+> recorded walkthrough, and G-15 joined the gap log from it. Two independent
+> code-review passes ran the same day (first-pass criticals + second-pass
+> findings — token-cache regression, RFC 6749 §2.3.1 Basic client auth, cause
+> preservation, mapper-composed query encoding); their record lives in
+> `CODE_REVIEW.md`.
+>
+> **Gap-harvest closeout (2026-08-27) — §3.5/§3.6 land, G-15 and G-5 close:**
+> one shared parser (`RollupExpression` in metadata-model) now owns the roll-up
+> grammar for save validation and the runtime alike — conditional roll-ups
+> (`SUM(movements.qty WHERE status = 'POSTED')`, DSL leaf vocabulary, AND-joined)
+> filter identically on both aggregation paths: the store-side recompute ANDs the
+> leaves onto the binding leaf of the aggregate/count query it already builds,
+> and the inline-create path filters raw child rows with numeric-pair exact-
+> decimal comparison; save validation joins the rule matrix (grammar,
+> relationship/aggregated-field existence + numeric requirement, condition-field
+> resolution). The query DSL's leaf set grows `id`/`version` (G-5) with values
+> canonicalized at the door (uuid/integral → JDBC-typed bindings against the
+> projection columns) and every other reserved name still rejected. Suites:
+> `RollupExpressionTests` (5), validator rules (+5), `ConditionalRollupTests`
+> (3 — store-path recompute on child writes/transition/delete, in-memory inline
+> filtering, system-field leaves e2e incl. malformed-value 400s); affected sweep
+> green (metadata-model 69 · storage 8 · engine 12 · api 77 · metadata-service
+> 46). The corpus keeps its authored workarounds — adopting the features is the
+> next dogfood iteration's authoring work.
+>
 > The platform harvests (§3 + §4's soft close) are complete and suite-green; the
 > ERP app ships as authored metadata with its acceptance suites and the binding
 > gap log. The live-stack walkthrough (the §1 exit demo against the running
