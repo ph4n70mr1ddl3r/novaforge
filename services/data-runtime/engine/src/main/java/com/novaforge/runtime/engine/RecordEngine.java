@@ -1068,9 +1068,18 @@ public class RecordEngine {
         requireParentsNotFrozen(tenantId, app, handle, canonical);
         enforceCreateState(app, handle, canonical);
         enforcePeriodLock(tenantId, app, handle, canonical);
+        // roll-ups aggregate the in-memory child set before the insert (PHASE-3 §3) —
+        // the same semantics as the user path, now load-bearing for flow-created
+        // parents with deep-resolved inline children (§3.3, the G-1 harvest)
+        evaluateRollupsFromChildren(app, handle, children, canonical);
         persistWithChildren(tenantId, systemPrincipal, app, handle, id, canonical, children, errors);
         events.publish(event("record.created", tenantId, handle.entityKey(), id, systemPrincipal));
-        return canonical;
+        // The created id rides the returned view (§3.3, the G-1 harvest): a
+        // createRecord step captures it into flow scope as ${record.<stepId>.id}.
+        // The persisted canonical map stays field-pure — the copy is the view.
+        Map<String, Object> view = new LinkedHashMap<>(canonical);
+        view.put("id", id.toString());
+        return view;
     }
 
     /** Nested update as the system principal (flow-driven field writes). */
@@ -1243,6 +1252,18 @@ public class RecordEngine {
                 java.math.BigDecimal decimal = value instanceof java.math.BigDecimal big
                         ? big : value instanceof Number number
                         ? new java.math.BigDecimal(number.toString()) : null;
+                if (decimal == null && value instanceof String text && !text.isBlank()
+                        && !text.equals("null")) {
+                    // exact decimal strings are the ${…} template channel's canonical
+                    // form (deep-resolved inline children arrive as strings, §3.3) —
+                    // parsed exactly, never floated. A non-numeric string skips here
+                    // and fails loudly in the child's own canonicalize below.
+                    try {
+                        decimal = new java.math.BigDecimal(text.trim());
+                    } catch (NumberFormatException skipped) {
+                        // the child write rejects it — the rollup never masks it
+                    }
+                }
                 if (decimal == null) {
                     continue;
                 }

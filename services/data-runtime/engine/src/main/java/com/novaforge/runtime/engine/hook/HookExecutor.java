@@ -359,26 +359,28 @@ public class HookExecutor {
                 return byName(context, guard ? step.onTrue() : step.onFalse());
             }
             case "createRecord" -> {
-                context.sink.writeRecord(step.param("entity"),
-                        resolveTemplate(step.params().get("template"), context),
+                // The G-1 harvest (§3.3, 2026-08-26): the created record enters step
+                // scope — later steps address it as ${record.<stepId>.<path…>}, the
+                // mirror of the connector-result namespace.
+                Map<String, Object> created = context.sink.writeRecord(step.param("entity"),
+                        resolveTemplateMap(step.params().get("template"), context),
                         null, context.systemPrincipal, context.depth + 1);
+                context.recordResults.put(step.id(), created);
                 return byName(context, step.next());
             }
             case "updateRecord" -> {
                 context.sink.writeRecord(step.param("entity"),
-                        resolveTemplate(step.params().get("template"), context),
+                        resolveTemplateMap(step.params().get("template"), context),
                         resolveTemplateText(step.param("recordId"), context),
                         context.systemPrincipal, context.depth + 1);
                 return byName(context, step.next());
             }
             case "publishEvent" -> {
-                Map<String, Object> payload = new LinkedHashMap<>();
-                Object template = step.params().get("payload");
-                if (template instanceof Map<?, ?> map) {
-                    map.forEach((key, value) -> payload.put(String.valueOf(key),
-                            value instanceof String text ? resolveTemplateText(text, context) : value));
-                }
-                context.sink.publishAppEvent(step.param("name"), payload, context.tenantId,
+                Object payload = resolveTemplateValue(step.params().get("payload"), context);
+                @SuppressWarnings("unchecked")
+                Map<String, Object> payloadMap = payload instanceof Map<?, ?> map
+                        ? (Map<String, Object>) map : new LinkedHashMap<String, Object>();
+                context.sink.publishAppEvent(step.param("name"), payloadMap, context.tenantId,
                         context.handle.entityKey(), context.recordId, context.systemPrincipal);
                 return byName(context, step.next());
             }
@@ -490,7 +492,7 @@ public class HookExecutor {
                 // after-hooks retry via the spine. The step's dedupe key scopes
                 // idempotency so a retried after-hook collapses onto the recorded
                 // delivery instead of double-calling the provider.
-                Map<String, Object> template = resolveTemplate(step.params().get("template"),
+                Map<String, Object> template = resolveTemplateMap(step.params().get("template"),
                         context);
                 String dedupeKey = context.tenantId + ":" + context.handle.entityKey() + ":"
                         + (context.recordId == null ? "new" : context.recordId) + ":"
@@ -541,13 +543,35 @@ public class HookExecutor {
 
     // --- template resolution (${…} — ADR-008 record templates, host-resolved) ---
 
-    private Map<String, Object> resolveTemplate(Object template, Context context) {
-        Map<String, Object> resolved = new LinkedHashMap<>();
+    /**
+     * Deep ${…} resolution (the G-1 harvest, §3.3): strings resolve wherever they sit
+     * in the value tree — nested maps and arrays included, so an inline children array
+     * inside a createRecord template binds per row. Non-string leaves pass through
+     * unchanged (constants), exactly as before; structure is preserved (maps keep
+     * their order, arrays their arity).
+     */
+    private Object resolveTemplateValue(Object template, Context context) {
         if (template instanceof Map<?, ?> map) {
+            Map<String, Object> resolved = new LinkedHashMap<>();
             map.forEach((key, value) -> resolved.put(String.valueOf(key),
-                    value instanceof String text ? resolveTemplateText(text, context) : value));
+                    resolveTemplateValue(value, context)));
+            return resolved;
         }
-        return resolved;
+        if (template instanceof List<?> list) {
+            java.util.List<Object> resolved = new java.util.ArrayList<>(list.size());
+            for (Object item : list) {
+                resolved.add(resolveTemplateValue(item, context));
+            }
+            return resolved;
+        }
+        return template instanceof String text ? resolveTemplateText(text, context) : template;
+    }
+
+    /** The record-template form (a map by construction — the compiler guarantees it). */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> resolveTemplateMap(Object template, Context context) {
+        Object resolved = resolveTemplateValue(template, context);
+        return resolved instanceof Map<?, ?> map ? (Map<String, Object>) map : new LinkedHashMap<>();
     }
 
     private String resolveTemplateText(String text, Context context) {
@@ -588,6 +612,7 @@ public class HookExecutor {
         private final Map<String, Object> overlay = new HashMap<>();
         private final Map<String, FlowStep> steps = new HashMap<>();
         final Map<String, Object> connectorResults = new HashMap<>();
+        final Map<String, Object> recordResults = new HashMap<>();
 
         Context(AppDefinition app, EntityHandle handle, UUID tenantId, UUID recordId,
                 Map<String, Object> data, UUID systemPrincipal, int depth, HookSink sink) {
@@ -638,6 +663,20 @@ public class HookExecutor {
                 if (parts.length >= 2
                         && connectorResults.get(parts[1]) instanceof ConnectorPort.ConnectorResult result) {
                     return walkNode(result.body(), parts.length == 3 ? parts[2] : "");
+                }
+                return null;
+            }
+            if (path != null && path.startsWith("record.")) {
+                // Step-result binding (§3.3, the G-1 harvest): `record.<stepId>.<path…>`
+                // addresses the created record of a createRecord step of this graph —
+                // `${record.<stepId>.id}` is the created id. The step reference is
+                // compile-checked; an absent path resolves empty like every other
+                // unresolved reference.
+                String[] parts = path.split("\\.", 3);
+                if (parts.length >= 2 && recordResults.get(parts[1]) instanceof Map<?, ?> created) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> view = (Map<String, Object>) created;
+                    return parts.length == 3 ? walk(view, parts[2]) : view;
                 }
                 return null;
             }
@@ -710,6 +749,7 @@ public class HookExecutor {
             childContext.initiatingActor = initiatingActor;
             childContext.fireKey = fireKey;
             childContext.connectorResults.putAll(connectorResults);
+            childContext.recordResults.putAll(recordResults);
             return childContext;
         }
 

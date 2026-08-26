@@ -154,6 +154,47 @@ class ScriptApiTests {
     }
 
     @Test
+    @DisplayName("$decimal \u2014 exact decimals in the sandbox (\u00a73.4, the G-4 harvest): string construction, exact arithmetic, string crossing")
+    void decimalSurfaceIsExact() throws Exception {
+        // the float64 trap the surface exists to close: 0.1 + 0.2 must be 0.3 exactly,
+        // and a costing chain (multiply \u2192 divide at scale) stays decimal-exact
+        String script = "const sum = $decimal.of('0.1').add($decimal.of('0.2'));"
+                + "const unit = $decimal.of('10').multiply($decimal.of('12.345')).divide($decimal.of('3'), 4);"
+                + "({ sum: sum, exact: sum.compareTo($decimal.of('0.3')) === 0,"
+                + "   unit: unit, rounded: $decimal.of('2.345').round(2),"
+                + "   integral: $decimal.of(7).add($decimal.of('1')), scaled: unit.scale() })";
+        mockMvc.perform(post("/api/v1/scripts/execute").with(engineJwt())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(new tools.jackson.databind.json.JsonMapper()
+                                .writeValueAsString(Map.of("app", "Erp", "hook", "cost",
+                                        "trigger", "beforeSave", "language", "js",
+                                        "script", script, "record", Map.of()))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.value.sum").value("0.3"))
+                .andExpect(jsonPath("$.value.exact").value(true))
+                .andExpect(jsonPath("$.value.unit").value("41.1500"))
+                .andExpect(jsonPath("$.value.rounded").value("2.34"))   // banker's rounding at 2
+                .andExpect(jsonPath("$.value.integral").value("8"))
+                .andExpect(jsonPath("$.value.scaled").value(4));
+    }
+
+    @Test
+    @DisplayName("$decimal rejects float64 construction with guidance — never silently coerced")
+    void decimalSurfaceRejectsFloats() throws Exception {
+        mockMvc.perform(post("/api/v1/scripts/execute").with(engineJwt())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "app": "Erp", "hook": "cost", "trigger": "beforeSave",
+                                  "language": "js",
+                                  "script": "$decimal.of(0.1)",
+                                  "record": {} }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("float64")));
+    }
+
+    @Test
     @DisplayName("no token renders 401 problem+json")
     void unauthorized() throws Exception {
         mockMvc.perform(post("/api/v1/scripts/execute")

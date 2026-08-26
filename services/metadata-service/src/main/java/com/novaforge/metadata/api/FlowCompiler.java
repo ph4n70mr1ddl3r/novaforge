@@ -351,7 +351,7 @@ final class FlowCompiler {
                     // PHASE-7 §5): the array a callConnector step lands in scope —
                     // the addressed step must be one, the response path itself is
                     // provider-shaped and never compile-checked
-                    checkConnectorReference(path, where, errors);
+                    checkStepReference(path, where, errors);
                     if (step.body() == null) {
                         errors.add(new ProblemErrors.FieldError(where,
                                 "iterate requires a body", null));
@@ -380,16 +380,36 @@ final class FlowCompiler {
                     return;
                 }
                 for (Map.Entry<?, ?> entry : map.entrySet()) {
-                    if (targetEntity.get().field(String.valueOf(entry.getKey())).isEmpty()) {
+                    String key = String.valueOf(entry.getKey());
+                    var relationship = targetEntity.get().relationship(key);
+                    if (relationship.isPresent()) {
+                        // §3.3 (the G-1 harvest): an inline children array — each row is
+                        // a field map on the child entity, template-resolved per row at
+                        // run time. create-only: the flow update path merges fields.
+                        if (!"createRecord".equals(step.op())) {
+                            errors.add(new ProblemErrors.FieldError(where,
+                                    "updateRecord templates address fields — inline children "
+                                            + "arrays are the create path's: " + key, key));
+                            continue;
+                        }
+                        checkInlineChildren(relationship.get(), entry.getValue(),
+                                where + "." + key, app, errors);
+                    } else if (targetEntity.get().field(key).isEmpty()) {
                         errors.add(new ProblemErrors.FieldError(where,
-                                "template field must exist on " + target + ": " + entry.getKey(),
-                                entry.getKey()));
+                                "template field must exist on " + target + ": " + key,
+                                key));
                     }
                 }
-                scanConnectorReferences(template, where, errors);
-                if ("updateRecord".equals(step.op()) && step.param("recordId") == null) {
-                    errors.add(new ProblemErrors.FieldError(where,
-                            "updateRecord requires recordId (a ${…} template)", null));
+                scanStepReferences(template, where, errors);
+                if ("updateRecord".equals(step.op())) {
+                    if (step.param("recordId") == null) {
+                        errors.add(new ProblemErrors.FieldError(where,
+                                "updateRecord requires recordId (a ${…} template)", null));
+                    } else {
+                        // the recordId template may address a created record — the
+                        // create-then-update chain (§3.3)
+                        scanStepReferences(step.param("recordId"), where, errors);
+                    }
                 }
             }
             case "publishEvent" -> {
@@ -398,7 +418,7 @@ final class FlowCompiler {
                     errors.add(new ProblemErrors.FieldError(where,
                             "publishEvent requires a dotted event name: " + name, name));
                 }
-                scanConnectorReferences(step.params().get("payload"), where, errors);
+                scanStepReferences(step.params().get("payload"), where, errors);
             }
             case "transitionState" -> {
                 // Phase 4 activation (§3): a guarded field write through the same
@@ -481,8 +501,8 @@ final class FlowCompiler {
                     if (entry.getValue() instanceof String text
                             && text.startsWith("${") && text.endsWith("}")) {
                         String reference = text.substring(2, text.length() - 1);
-                        if (reference.startsWith("connector.")) {
-                            checkConnectorReference(reference, where, errors);
+                        if (reference.startsWith("connector.") || reference.startsWith("record.")) {
+                            checkStepReference(reference, where, errors);
                         } else if (!reference.equals("id") && entity.field(reference).isEmpty()) {
                             errors.add(new ProblemErrors.FieldError(where,
                                     "callConnector template reference must resolve on "
@@ -503,50 +523,109 @@ final class FlowCompiler {
         }
     }
 
-    /** Finds every `${connector.…}` reference in a template value tree. */
+    /**
+     * Inline children rows of a createRecord template (§3.3): each row's keys must be
+     * fields of the relationship's target entity — the same shape the write path's
+     * splitChildren accepts, compile-checked here so the runtime executes checked
+     * graphs only.
+     */
+    private void checkInlineChildren(com.novaforge.metadata.RelationshipDefinition relationship,
+                                     Object rows, String where, AppDefinition app,
+                                     java.util.List<ProblemErrors.FieldError> errors) {
+        var child = app.entity(relationship.target() == null ? "" : relationship.target());
+        if (child.isEmpty()) {
+            errors.add(new ProblemErrors.FieldError(where,
+                    "relationship target must resolve within the app: "
+                            + relationship.target(), relationship.target()));
+            return;
+        }
+        if (!(rows instanceof List<?> list)) {
+            errors.add(new ProblemErrors.FieldError(where,
+                    "an inline children template must be an array of row objects", rows));
+            return;
+        }
+        for (Object row : list) {
+            if (!(row instanceof Map<?, ?> rowMap)) {
+                errors.add(new ProblemErrors.FieldError(where,
+                        "inline child rows must be objects: " + row, row));
+                continue;
+            }
+            for (Map.Entry<?, ?> field : rowMap.entrySet()) {
+                if (child.get().field(String.valueOf(field.getKey())).isEmpty()) {
+                    errors.add(new ProblemErrors.FieldError(where,
+                            "inline child field must exist on " + relationship.target()
+                                    + ": " + field.getKey(), field.getKey()));
+                }
+            }
+        }
+    }
+
+    /** Finds every `${connector.…}` / `${record.…}` reference in a template value tree. */
     private static final java.util.regex.Pattern CONNECTOR_REF =
             java.util.regex.Pattern.compile("\\$\\{(connector\\.[^}]+)}");
+    private static final java.util.regex.Pattern RECORD_REF =
+            java.util.regex.Pattern.compile("\\$\\{(record\\.[^}]+)}");
 
     /**
-     * Connector-response references (the versioned growth the scheduled pull
-     * rides): {@code ${connector.<stepId>.<path…>}} in record/payload templates
-     * and {@code connector.<stepId>.<path>} iterate paths address the settled
-     * response of a {@code callConnector} step of the same graph. The step
-     * reference is compile-checked; the response path itself is provider-shaped
-     * and resolves (or resolves empty) at run time.
+     * Step-result references — the two namespaces later steps address earlier steps'
+     * outcomes through:
+     * <ul>
+     *   <li>{@code ${connector.<stepId>.<path…>}} — the settled response of a
+     *       {@code callConnector} step (the versioned growth the scheduled pull
+     *       rides, PHASE-6 §3);</li>
+     *   <li>{@code ${record.<stepId>.<path…>}} — the created record of a
+     *       {@code createRecord} step (§3.3, the G-1 harvest), {@code id} included.</li>
+     * </ul>
+     * The step reference is compile-checked — the addressed step must be of the
+     * addressing op and belong to this graph; the path below it is run-time shaped
+     * (provider document / created view) and resolves or resolves empty.
      */
-    private void checkConnectorReference(String reference, String where,
-                                         java.util.List<ProblemErrors.FieldError> errors) {
+    private void checkStepReference(String reference, String where,
+                                    java.util.List<ProblemErrors.FieldError> errors) {
+        if (reference.startsWith("connector.")) {
+            checkResultReference(reference, where, "connector", "callConnector", errors);
+        } else {
+            checkResultReference(reference, where, "record", "createRecord", errors);
+        }
+    }
+
+    /** The shared shape of both step-result namespaces: {@code <ns>.<stepId>.<path…>}. */
+    private void checkResultReference(String reference, String where, String namespace,
+                                      String op, java.util.List<ProblemErrors.FieldError> errors) {
         String[] parts = reference.split("\\.", 3);
         if (parts.length < 2 || parts[1].isBlank()) {
             errors.add(new ProblemErrors.FieldError(where,
-                    "connector references address a callConnector step: "
-                            + "connector.<stepId>.<path>", reference));
+                    namespace + " references address a " + op + " step: "
+                            + namespace + ".<stepId>.<path>", reference));
             return;
         }
         FlowStep target = stepsById.get(parts[1]);
-        if (target == null || !"callConnector".equals(target.op())) {
+        if (target == null || !op.equals(target.op())) {
             errors.add(new ProblemErrors.FieldError(where,
-                    "connector reference must address a callConnector step of this flow: "
+                    namespace + " reference must address a " + op + " step of this flow: "
                             + parts[1], parts[1]));
         }
     }
 
-    /** Deep-scans a template value tree for connector-response references. */
-    private void scanConnectorReferences(Object template, String where,
-                                         java.util.List<ProblemErrors.FieldError> errors) {
+    /** Deep-scans a template value tree for step-result references (both namespaces). */
+    private void scanStepReferences(Object template, String where,
+                                    java.util.List<ProblemErrors.FieldError> errors) {
         if (template instanceof Map<?, ?> map) {
             for (Map.Entry<?, ?> entry : map.entrySet()) {
-                scanConnectorReferences(entry.getValue(), where, errors);
+                scanStepReferences(entry.getValue(), where, errors);
             }
         } else if (template instanceof List<?> list) {
             for (Object item : list) {
-                scanConnectorReferences(item, where, errors);
+                scanStepReferences(item, where, errors);
             }
         } else if (template instanceof String text) {
-            java.util.regex.Matcher matcher = CONNECTOR_REF.matcher(text);
-            while (matcher.find()) {
-                checkConnectorReference(matcher.group(1), where, errors);
+            java.util.regex.Matcher connector = CONNECTOR_REF.matcher(text);
+            while (connector.find()) {
+                checkStepReference(connector.group(1), where, errors);
+            }
+            java.util.regex.Matcher record = RECORD_REF.matcher(text);
+            while (record.find()) {
+                checkStepReference(record.group(1), where, errors);
             }
         }
     }

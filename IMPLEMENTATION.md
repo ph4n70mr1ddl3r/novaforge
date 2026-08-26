@@ -1599,6 +1599,54 @@ publish, and promotion-artifact path as every other branch; `ErpAppArtifactTests
 pins its presence and that at least one entry is resolved (the review surface has
 a live authoring precedent).
 
+**Gap-harvest closeout (2026-08-26) — the two accept-as-platform-feature entries
+land as the versioned platform features §3.3/§3.4 specify** (the §8 protocol run
+end to end: spec sections first, their own commit, then the code):
+
+- **G-1 → §3.3 `createRecord` step results + deep template resolution.** A
+  `createRecord` step's created record — the canonical view plus the generated
+  `id` — enters flow scope as `${record.<stepId>.<path…>}`, the exact mirror of
+  the `connector.<stepId>.<path…>` convention; the publish compiler checks the
+  addressed step is a `createRecord` step of the same graph (the shared
+  step-result namespace checker), the runtime resolves the path against the
+  created view, and `iterate` bodies inherit the scope. `${…}` template
+  resolution is now deep — nested maps and arrays resolve per row, so an inline
+  children array inside a `createRecord` template (the §5 posting shape the
+  dogfood logged as inexpressible) binds `${…}` references per row; the compiler
+  deep-checks relationship-array rows against the child entity (field names must
+  exist; create-only — the flow update path merges fields). Two adjacent
+  engine legs complete the semantics: the hook-create path now computes
+  inline-children roll-ups like the user path always did (PHASE-3 §3's
+  "creates aggregate the in-memory child set" — load-bearing the moment flows
+  create parents with deep-resolved children), and the in-memory roll-up
+  aggregator parses exact decimal strings — the `${…}` channel's canonical form —
+  instead of silently skipping them (a non-numeric string still fails loudly in
+  the child's own canonicalize). Pinned by `HookStepResultTests` (the posting
+  journey: journal + inline lines + voucher naming the created journal through
+  `${record.j1.id}`/`${record.j1.memo}`) and
+  `DefinitionLifecycleTests.recordResultFlowCompilerChecks` (the vocabulary
+  compiles; a `record.` reference addressing a non-createRecord step rejects; an
+  inline child row naming an unknown child field rejects with the child entity
+  named).
+- **G-4 → §3.4 `$decimal` — exact decimals in the sandbox.** The closed surface
+  grows `$decimal.of(x)` (string or integral-number construction; a non-integral
+  float64 input rejects with guidance — never silently coerced) returning a
+  value object with the DSL's numeric vocabulary (`add/subtract/multiply/`
+  `divide(scale-required, banker's)/negate/abs/round(scale)/min/max/compareTo/`
+  `isZero/scale/toPlainString`). A returned or nested decimal crosses the result
+  boundary as its exact plain string — the PHASE-3 §7 wire form the write path's
+  decimal coercion accepts — so nothing a script computes crosses as a float.
+  No host classes, no I/O (ADR-003's surface stays closed). Pinned by two new
+  `ScriptApiTests` journeys (0.1+0.2 exact, a costing chain at scale 4, banker's
+  rounding, integral construction, scale readback; float64 construction
+  rejects).
+- **The gap log's dispositions move with the landing**: G-1 and G-4 are `closed`
+  in both `apps/erp/GAP-LOG.md` and the `gapLog` metadata branch
+  (`resolvedIn` names the spec section) — change-set review renders them among
+  the entries the next ERP version resolves. The ERP v1 corpus keeps its
+  authored workarounds (the historical record); adopting the features is the
+  next dogfood iteration's authoring work.
+
 ## Phase 8 — Lifecycle & Hardening ◐ (spec: PHASE-8-LIFECYCLE.md)
 
 > T1–T7 implemented and suite-green (the code surface: environments, the gate,

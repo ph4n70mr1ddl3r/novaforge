@@ -808,6 +808,99 @@ class DefinitionLifecycleTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("createRecord step results + deep templates (§3.3): the vocabulary compiles; bad references and child rows reject")
+    void recordResultFlowCompilerChecks() throws Exception {
+        // the posting shape (PHASE-7 §5, the G-1 harvest): create the parent with an
+        // inline children array, then address the created record — id and a promoted
+        // field — through the record.<stepId> namespace. Saves clean.
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "PostApp", "entities": [
+                                  { "apiName": "Bill",
+                                    "fields": [ { "apiName": "number", "type": "text" },
+                                                 { "apiName": "total", "type": "money" } ],
+                                    "hooks": [ { "name": "post", "trigger": "afterSave",
+                                      "flow": { "id": "j1", "op": "createRecord",
+                                        "params": { "entity": "Journal",
+                                          "template": { "memo": "Bill ${number}",
+                                            "lines": [
+                                              { "memo": "AR", "debit": "${total}" },
+                                              { "memo": "Revenue", "credit": "${total}" } ] } },
+                                        "next": "v1",
+                                        "body": { "id": "v1", "op": "createRecord",
+                                          "params": { "entity": "Voucher",
+                                            "template": { "journal": "${record.j1.id}",
+                                              "memo": "${record.j1.memo}" } } } } } ] },
+                                  { "apiName": "Journal",
+                                    "fields": [ { "apiName": "memo", "type": "text" } ],
+                                    "relationships": [
+                                      { "apiName": "lines", "type": "child",
+                                        "target": "JournalLine", "cascadeDelete": true } ] },
+                                  { "apiName": "JournalLine",
+                                    "fields": [ { "apiName": "entry", "type": "lookup",
+                                                  "target": "Journal", "required": true },
+                                                 { "apiName": "memo", "type": "text" },
+                                                 { "apiName": "debit", "type": "money" },
+                                                 { "apiName": "credit", "type": "money" } ] },
+                                  { "apiName": "Voucher",
+                                    "fields": [ { "apiName": "journal", "type": "lookup",
+                                                  "target": "Journal" },
+                                                 { "apiName": "memo", "type": "text" } ] } ] }
+                                """))
+                .andExpect(status().isOk());
+
+        // a record reference addressing a non-createRecord step rejects (v1 names a
+        // setField, not the createRecord that ran)
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "PostApp2", "entities": [
+                                  { "apiName": "Bill",
+                                    "fields": [ { "apiName": "number", "type": "text" } ],
+                                    "hooks": [ { "name": "post", "trigger": "afterSave",
+                                      "flow": { "id": "s1", "op": "setField",
+                                          "params": { "field": "number",
+                                            "expression": "'x' + number" },
+                                        "next": "v1",
+                                        "body": { "id": "v1", "op": "createRecord",
+                                          "params": { "entity": "Voucher",
+                                            "template": { "memo": "${record.s1.id}" } } } } } ] },
+                                  { "apiName": "Voucher",
+                                    "fields": [ { "apiName": "memo", "type": "text" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString(
+                                "record reference must address a createRecord step")));
+
+        // an inline children row addressing a field the child does not carry rejects
+        // with the child entity named — deep-checked, not just the top-level map
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "PostApp3", "entities": [
+                                  { "apiName": "Bill",
+                                    "fields": [ { "apiName": "number", "type": "text" } ],
+                                    "hooks": [ { "name": "post", "trigger": "afterSave",
+                                      "flow": { "id": "j1", "op": "createRecord",
+                                        "params": { "entity": "Journal",
+                                          "template": { "lines": [
+                                            { "ghost": "x" } ] } } } } ] },
+                                  { "apiName": "Journal",
+                                    "fields": [ { "apiName": "memo", "type": "text" } ],
+                                    "relationships": [
+                                      { "apiName": "lines", "type": "child",
+                                        "target": "JournalLine", "cascadeDelete": true } ] },
+                                  { "apiName": "JournalLine",
+                                    "fields": [ { "apiName": "entry", "type": "lookup",
+                                                  "target": "Journal", "required": true },
+                                                 { "apiName": "memo", "type": "text" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString(
+                                "inline child field must exist on JournalLine: ghost")));
+    }
+
+    @Test
     @DisplayName("script hooks (§6): publish accepts a valid artifact; shape, language, and size reject")
     void scriptHookPublishChecks() throws Exception {
         // valid script hook rides the same review path as flows

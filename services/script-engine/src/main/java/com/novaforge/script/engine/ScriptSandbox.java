@@ -46,7 +46,9 @@ import org.springframework.stereotype.Component;
  * <p>No host I/O and no host classes; the closed surface is exactly {@code $record}
  * (read-only view of the triggering record), {@code $data.query} (the Data Runtime
  * query API under the <em>calling</em> user's authorization — ARCHITECTURE.md §5
- * item 4), and {@code $log} (bounded capture). Executions are stateless (ADR-003 #3);
+ * item 4), {@code $log} (bounded capture), and {@code $decimal} (exact decimal
+ * arithmetic — §3.4 of the PHASE-7 spec, the G-4 harvest; GraalVM JS float64 is
+ * never the money path). Executions are stateless (ADR-003 #3);
  * concurrency is bounded so a script flood cannot take the JVM hostage.</p>
  */
 @Component
@@ -170,6 +172,7 @@ public class ScriptSandbox {
                         record == null ? Map.of() : record));
                 bindings.putMember("$data", new DataSurface(queryProxy, caller));
                 bindings.putMember("$log", new LogSurface(logs));
+                bindings.putMember("$decimal", new DecimalSurface());
                 // $http exists only inside the connector sandbox (§4): a script
                 // outside the declared context never sees the egress at all.
                 if (connectorApp != null) {
@@ -208,6 +211,7 @@ public class ScriptSandbox {
                 // it is a ReferenceError, never a silent empty view
                 context.putMember("$data", new DataSurface(queryProxy, principal, app, true));
                 context.putMember("$log", new LogSurface(logs));
+                context.putMember("$decimal", new DecimalSurface());
                 if (connectorApp != null) {
                     context.putMember("$http", new HttpSurface(httpProxy, principal, connectorApp));
                 }
@@ -443,6 +447,158 @@ public class ScriptSandbox {
     }
 
     /**
+     * $decimal — exact decimal arithmetic in the sandbox (§3.4, the G-4 harvest,
+     * 2026-08-26): GraalVM JS computes in float64, and money through scripts was
+     * exact only by corpus coincidence (the logged workaround). Construction is
+     * string or integral-number only — a non-integral float64 input rejects with
+     * guidance, never silently coerces — and the closed method set mirrors the
+     * expression DSL's numeric vocabulary (PHASE-2 Annex A). No host classes, no
+     * I/O: pure arithmetic, like $log is pure capture.
+     */
+    public static final class DecimalSurface {
+
+        @HostAccess.Export
+        public Decimal of(Object value) {
+            return Decimal.of(value);
+        }
+    }
+
+    /** One exact decimal — the value object scripts hold and compute with. */
+    public static final class Decimal {
+
+        private final java.math.BigDecimal value;
+
+        private Decimal(java.math.BigDecimal value) {
+            this.value = value;
+        }
+
+        /** String input parses exactly; an integral JS number converts exactly; a
+         *  non-integral number rejects — float64 input is what $decimal exists to
+         *  avoid. A Decimal passes through unchanged. */
+        static Decimal of(Object input) {
+            if (input instanceof Decimal decimal) {
+                return decimal;
+            }
+            if (input instanceof String string) {
+                try {
+                    return new Decimal(new java.math.BigDecimal(string.trim()));
+                } catch (NumberFormatException e) {
+                    throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                            "$decimal.of cannot parse a decimal from: " + string, null, e);
+                }
+            }
+            if (input instanceof Byte || input instanceof Short || input instanceof Integer
+                    || input instanceof Long) {
+                return new Decimal(new java.math.BigDecimal(((Number) input).longValue()));
+            }
+            if (input instanceof Number number) {
+                double d = number.doubleValue();
+                if (d == Math.rint(d) && !Double.isInfinite(d)) {
+                    return new Decimal(java.math.BigDecimal.valueOf((long) d));
+                }
+            }
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "$decimal.of takes a string (or an integral number) — pass exact decimal "
+                            + "strings, never float64 literals: " + input);
+        }
+
+        private Decimal other(Object input) {
+            return of(input);
+        }
+
+        @HostAccess.Export
+        public Decimal add(Object operand) {
+            return new Decimal(value.add(other(operand).value));
+        }
+
+        @HostAccess.Export
+        public Decimal subtract(Object operand) {
+            return new Decimal(value.subtract(other(operand).value));
+        }
+
+        @HostAccess.Export
+        public Decimal multiply(Object operand) {
+            return new Decimal(value.multiply(other(operand).value));
+        }
+
+        /** Division is scale-required — an explicit scale pins the repeating-decimal
+         *  question (banker's rounding, the ARCHITECTURE.md §4 context). */
+        @HostAccess.Export
+        public Decimal divide(Object operand, int scale) {
+            return new Decimal(value.divide(other(operand).value, scale,
+                    java.math.RoundingMode.HALF_EVEN));
+        }
+
+        @HostAccess.Export
+        public Decimal negate() {
+            return new Decimal(value.negate());
+        }
+
+        @HostAccess.Export
+        public Decimal abs() {
+            return new Decimal(value.abs());
+        }
+
+        /** Banker's rounding at the scale — the DSL's round(x, scale) semantics. */
+        @HostAccess.Export
+        public Decimal round(int scale) {
+            return new Decimal(value.setScale(scale, java.math.RoundingMode.HALF_EVEN));
+        }
+
+        @HostAccess.Export
+        public Decimal min(Object operand) {
+            return new Decimal(value.min(other(operand).value));
+        }
+
+        @HostAccess.Export
+        public Decimal max(Object operand) {
+            return new Decimal(value.max(other(operand).value));
+        }
+
+        @HostAccess.Export
+        public int compareTo(Object operand) {
+            return value.compareTo(other(operand).value);
+        }
+
+        @HostAccess.Export
+        public boolean isZero() {
+            return value.signum() == 0;
+        }
+
+        @HostAccess.Export
+        public int scale() {
+            return value.scale();
+        }
+
+        /** The exact wire form — monetary values cross as decimal strings
+         *  (PHASE-3 §7); toString renders identically so JS coercion agrees. */
+        @HostAccess.Export
+        public String toPlainString() {
+            return value.toPlainString();
+        }
+
+        @Override
+        @HostAccess.Export
+        public String toString() {
+            return value.toPlainString();
+        }
+
+        java.math.BigDecimal value() {
+            return value;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof Decimal decimal && value.compareTo(decimal.value) == 0;
+        }
+
+        @Override
+        public int hashCode() {
+            return value.stripTrailingZeros().hashCode();
+        }
+    }
+
+    /**
      * Guest-to-host value conversion: JS values become plain Java types the wire can
      * carry (objects → maps, arrays → lists, integral numbers → long, else double).
      * Functions and symbols map to null — the record write-back channel only accepts
@@ -465,6 +621,12 @@ public class ScriptSandbox {
             }
             if (value.isHostObject()) {
                 Object host = value.asHostObject();
+                if (host instanceof Decimal decimal) {
+                    // the exact wire form (§3.4): a computed decimal crosses as its
+                    // plain string — never a float64 — so the PLAN §1 money rule
+                    // holds by construction on the script path
+                    return decimal.toPlainString();
+                }
                 return host instanceof Map<?, ?> || host instanceof List<?> ? host : null;
             }
             if (value.isString()) {
