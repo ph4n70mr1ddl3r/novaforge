@@ -237,34 +237,36 @@ public class ConnectorExecutor {
         }
     }
 
-    private final Map<String, CachedToken> tokenCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.Executor tokenFetchExecutor = java.util.concurrent.Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "connector-oauth-fetch");
+        t.setDaemon(true);
+        return t;
+    });
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<CachedToken>> tokenCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     private record CachedToken(String token, Instant refreshAt) {
     }
 
     /** Client-credentials grant at the credential's token URL (§13 Q1's resolved scope). */
     private String oauthToken(CredentialDefinition credential, String secret) {
-        CachedToken cached = tokenCache.get(credential.id());
-        if (cached != null && Instant.now().isBefore(cached.refreshAt())) {
-            return cached.token();
-        }
-        String form = "grant_type=client_credentials&client_id="
-                + url(credential.clientId()) + "&client_secret=" + url(secret == null ? "" : secret);
-        String response = RestClient.create().post()
-                .uri(credential.tokenUrl())
-                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                .body(form)
-                .retrieve()
-                .body(String.class);
-        Map<String, Object> granted = MAPPER.readValue(response == null ? "{}" : response, Map.class);
-        if (granted.get("access_token") == null) {
-            throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "oauth2 grant at " + credential.tokenUrl() + " returned no token");
-        }
-        long seconds = granted.get("expires_in") instanceof Number number ? number.longValue() : 300;
-        tokenCache.put(credential.id(), new CachedToken(String.valueOf(granted.get("access_token")),
-                Instant.now().plusSeconds(Math.max(0, seconds - 30))));
-        return String.valueOf(granted.get("access_token"));
+        return tokenCache.computeIfAbsent(credential.id(), k -> java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+            String form = "grant_type=client_credentials&client_id="
+                    + url(credential.clientId()) + "&client_secret=" + url(secret == null ? "" : secret);
+            String response = RestClient.create().post()
+                    .uri(credential.tokenUrl())
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .body(form)
+                    .retrieve()
+                    .body(String.class);
+            Map<String, Object> granted = MAPPER.readValue(response == null ? "{}" : response, Map.class);
+            if (granted.get("access_token") == null) {
+                throw new PlatformException(PlatformErrorCode.INTERNAL,
+                        "oauth2 grant at " + credential.tokenUrl() + " returned no token");
+            }
+            long seconds = granted.get("expires_in") instanceof Number number ? number.longValue() : 300;
+            return new CachedToken(String.valueOf(granted.get("access_token")),
+                    Instant.now().plusSeconds(Math.max(0, seconds - 30)));
+        }, tokenFetchExecutor)).join().token();
     }
 
     // --- ${…} mapping (ADR-008's shared convention, host-resolved) ---

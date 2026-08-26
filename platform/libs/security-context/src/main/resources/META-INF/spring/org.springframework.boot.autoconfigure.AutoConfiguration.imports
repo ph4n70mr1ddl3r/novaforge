@@ -1,1 +1,2 @@
 com.novaforge.security.ServiceTokenAutoConfiguration
+com.novaforge.security.TenantTaskAutoConfiguration

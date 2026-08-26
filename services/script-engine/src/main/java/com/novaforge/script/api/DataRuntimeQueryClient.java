@@ -67,7 +67,7 @@ public class DataRuntimeQueryClient implements QueryProxy {
             }
         } catch (Exception e) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                    "$data.query expects a {filter, sort, page} JSON object: " + e.getMessage());
+                    "$data.query expects a {filter, sort, page} JSON object: " + e.getMessage(), null, e);
         }
         try {
             // a pre-built URI skips template handling, so the encoded query stays intact

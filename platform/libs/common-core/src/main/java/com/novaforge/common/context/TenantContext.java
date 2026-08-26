@@ -9,6 +9,13 @@ import java.util.Optional;
  * trust the gateway's {@code X-Tenant-Id} header (ARCHITECTURE.md §5.1). Clearing on
  * request end is the caller's responsibility; {@link #with(Context, Runnable)} and
  * {@link #wrap(Context, Runnable)} are provided for scoped use.
+ *
+ * <p>Uses {@link ThreadLocal} (not InheritableThreadLocal) to avoid leaking context
+ * to arbitrarily spawned platform threads. Context propagation to pooled threads
+ * (platform or virtual) is handled by {@link com.novaforge.security.TenantTaskDecorator}
+ * applied to all {@link org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor} beans.
+ * Virtual threads created via Spring's virtual thread support inherit ThreadLocal
+ * values through Continuation mechanics.</p>
  */
 public final class TenantContext {
 

@@ -162,7 +162,7 @@ public class ScriptSandbox {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "script execution interrupted while awaiting a lane");
+                    "script execution interrupted while awaiting a lane", null, e);
         }
         try {
             return runCapped(script, (bindings, logs) -> {
@@ -200,7 +200,7 @@ public class ScriptSandbox {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "script execution interrupted while awaiting a lane");
+                    "script execution interrupted while awaiting a lane", null, e);
         }
         try {
             return runCapped(script, (context, logs) -> {
@@ -226,8 +226,7 @@ public class ScriptSandbox {
     private ScriptResult runCapped(String script, Binder binder) {
         List<String> logs = new CopyOnWriteArrayList<>();
         long startNanos = System.nanoTime();
-        Thread executor = Thread.currentThread();
-        long executorId = executor.getId();
+        long executorId = Thread.currentThread().getId();
         long startCpu = cpuMetering ? Math.max(0L, threads.getThreadCpuTime(executorId)) : 0L;
         long startHeap = usedHeap();
         AtomicReference<String> killReason = new AtomicReference<>();
@@ -248,32 +247,43 @@ public class ScriptSandbox {
                         .statementLimit(statementLimit, null)
                         .build())
                 .build()) {
+            // The executor thread ID is captured at eval start. The watchdog runs on a
+            // different thread but measures the executor's CPU time. Thread ID reuse
+            // across *sequential* executions is harmless because the previous watchdog
+            // is cancelled in the finally block before the next execution starts.
+            // Concurrent executions use different lanes (semaphore) and thus threads.
             ScheduledFuture<?> watch = watchdog.scheduleAtFixedRate(() -> {
-                if (killReason.get() != null || finished.get()) {
-                    return;   // killed already, or result materialized host-side
-                }
-                if (cpuMetering
-                        && threads.getThreadCpuTime(executorId) - startCpu >= cpuBudgetNanos) {
-                    if (killReason.compareAndSet(null, "CPU")) {
-                        context.close(true);
+                try {
+                    if (killReason.get() != null || finished.get()) {
+                        return;   // killed already, or result materialized host-side
                     }
-                } else if (System.nanoTime() - startNanos >= wallBudgetNanos) {
-                    if (killReason.compareAndSet(null, "wall-clock")) {
-                        context.close(true);
+                    if (cpuMetering
+                            && threads.getThreadCpuTime(executorId) - startCpu >= cpuBudgetNanos) {
+                        if (killReason.compareAndSet(null, "CPU")) {
+                            context.close(true);
+                        }
+                    } else if (System.nanoTime() - startNanos >= wallBudgetNanos) {
+                        if (killReason.compareAndSet(null, "wall-clock")) {
+                            context.close(true);
+                        }
+                    } else if (usedHeap() - startHeap >= heapLimitBytes) {
+                        // The heap meter is process-wide (per-context metering is
+                        // Enterprise-only), so unrelated same-JVM allocation churn can
+                        // spike past the cap for one sample. Trip only on two consecutive
+                        // over-budget readings — a real hog holds the growth; a transient
+                        // burst (GC lag, parallel test load) recovers between samples.
+                        if (heapOverBudget.get()
+                                && killReason.compareAndSet(null, "heap")) {
+                            context.close(true);
+                        }
+                        heapOverBudget.set(true);
+                    } else {
+                        heapOverBudget.set(false);
                     }
-                } else if (usedHeap() - startHeap >= heapLimitBytes) {
-                    // The heap meter is process-wide (per-context metering is
-                    // Enterprise-only), so unrelated same-JVM allocation churn can
-                    // spike past the cap for one sample. Trip only on two consecutive
-                    // over-budget readings — a real hog holds the growth; a transient
-                    // burst (GC lag, parallel test load) recovers between samples.
-                    if (heapOverBudget.get()
-                            && killReason.compareAndSet(null, "heap")) {
-                        context.close(true);
-                    }
-                    heapOverBudget.set(true);
-                } else {
-                    heapOverBudget.set(false);
+                } catch (Throwable t) {
+                    // Watchdog must never crash — log and continue
+                    org.slf4j.LoggerFactory.getLogger(ScriptSandbox.class)
+                            .warn("Watchdog iteration failed", t);
                 }
             }, 50, 25, TimeUnit.MILLISECONDS);
             try {
@@ -309,7 +319,7 @@ public class ScriptSandbox {
                         "script failed: " + host.getMessage(), null, host);
             }
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                    "script failed: " + e.getMessage());
+                    "script failed: " + e.getMessage(), null, e);
         }
     }
 

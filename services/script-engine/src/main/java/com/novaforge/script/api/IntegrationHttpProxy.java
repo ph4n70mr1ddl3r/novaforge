@@ -62,12 +62,12 @@ public class IntegrationHttpProxy implements HttpProxy {
         } catch (org.springframework.web.client.RestClientResponseException e) {
             throw new PlatformException(PlatformErrorCode.INTERNAL,
                     "$http call to " + connector + "." + operation + " failed: HTTP "
-                            + e.getStatusCode() + " " + e.getResponseBodyAsString());
+                            + e.getStatusCode() + " " + e.getResponseBodyAsString(), null, e);
         } catch (PlatformException e) {
             throw e;
         } catch (Exception e) {
             throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "$http call unreachable: " + e.getMessage());
+                    "$http call unreachable: " + e.getMessage(), null, e);
         }
     }
 }

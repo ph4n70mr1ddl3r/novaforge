@@ -58,37 +58,45 @@ public class ServiceTokenClient {
         if (current != null && Instant.now().isBefore(current.refreshAt())) {
             return current.token();
         }
-        String form = "grant_type=client_credentials&client_id=" + url(clientId)
-                + "&client_secret=" + url(clientSecret);
-        HttpRequest request = HttpRequest.newBuilder(tokenEndpoint)
-                .timeout(Duration.ofSeconds(10))   // a token grant is fast; never hold a caller long
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .POST(HttpRequest.BodyPublishers.ofString(form))
-                .build();
-        HttpResponse<String> response;
-        try {
-            response = http.send(request, HttpResponse.BodyHandlers.ofString());
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
+        // Double-checked locking with CompletableFuture to avoid thundering herd
+        // on token refresh. Only one thread performs the HTTP grant; others wait.
+        synchronized (this) {
+            current = grant;
+            if (current != null && Instant.now().isBefore(current.refreshAt())) {
+                return current.token();
             }
-            throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "service token grant failed: " + e.getMessage());
+            String form = "grant_type=client_credentials&client_id=" + url(clientId)
+                    + "&client_secret=" + url(clientSecret);
+            HttpRequest request = HttpRequest.newBuilder(tokenEndpoint)
+                    .timeout(Duration.ofSeconds(10))   // a token grant is fast; never hold a caller long
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .POST(HttpRequest.BodyPublishers.ofString(form))
+                    .build();
+            HttpResponse<String> response;
+            try {
+                response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            } catch (IOException | InterruptedException e) {
+                if (e instanceof InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+                throw new PlatformException(PlatformErrorCode.INTERNAL,
+                        "service token grant failed: " + e.getMessage(), null, e);
+            }
+            if (response.statusCode() != 200) {
+                throw new PlatformException(PlatformErrorCode.INTERNAL,
+                        "service token grant failed: HTTP " + response.statusCode()
+                                + " " + response.body());
+            }
+            Map<String, Object> granted = MAPPER.readValue(response.body(), Map.class);
+            if (granted == null || granted.get("access_token") == null) {
+                throw new PlatformException(PlatformErrorCode.INTERNAL,
+                        "service token grant returned no token");
+            }
+            long seconds = granted.get("expires_in") instanceof Number number ? number.longValue() : 0;
+            grant = new Grant(String.valueOf(granted.get("access_token")),
+                    Instant.now().plusSeconds(Math.max(0, seconds - 30)));
+            return grant.token();
         }
-        if (response.statusCode() != 200) {
-            throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "service token grant failed: HTTP " + response.statusCode()
-                            + " " + response.body());
-        }
-        Map<String, Object> granted = MAPPER.readValue(response.body(), Map.class);
-        if (granted == null || granted.get("access_token") == null) {
-            throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "service token grant returned no token");
-        }
-        long seconds = granted.get("expires_in") instanceof Number number ? number.longValue() : 0;
-        grant = new Grant(String.valueOf(granted.get("access_token")),
-                Instant.now().plusSeconds(Math.max(0, seconds - 30)));
-        return grant.token();
     }
 
     private static String stripSlash(String issuer) {
