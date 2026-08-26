@@ -132,17 +132,31 @@ public class TestRunner {
         Map<String, String> rolePasswords = new HashMap<>();
         rolePasswords.put("__admin__", adminPassword);
         rolePasswords.put("__admin-user__", adminUsername);
+        // The provisioned username per role — `actor-<role>-<runId8>` (the token
+        // grant needs the username, never the role name; found live 2026-08-26:
+        // the grant rode the bare role and Keycloak answered user_not_found —
+        // the journey tests stub the token endpoint, so only a real run caught it)
+        Map<String, String> roleUsernames = new HashMap<>();
+        roleUsernames.put("__admin__", adminUsername);
         for (String role : rolesUsedBy(suite)) {
             String username = "actor-" + role + "-" + runId.substring(0, 8);
             String password = SCRATCH_PASSWORD_PREFIX + UUID.randomUUID();
             Map<String, Object> provisioned = adminCall(HttpMethod.POST,
                     "/api/v1/admin/tenants/" + tenantId + "/users",
                     serviceToken(), Map.of("username", username, "password", password));
+            // App roles assign app-scoped (PHASE-2 §9: the store CHECKs
+            // `App.role` — PascalCase app, camelCase role — and RoleMatrix matches
+            // the same spelling); a role already carrying a dot passes verbatim.
+            // Found live 2026-08-26: the bare form 500'd on the constraint — the
+            // journey tests stub this admin leg, so only a real run caught it.
+            String assigned = role.contains(".") ? role
+                    : candidate.apiName() + "." + role;
             adminCall(HttpMethod.POST,
                     "/api/v1/admin/tenants/" + tenantId + "/role-assignments",
                     serviceToken(),
-                    Map.of("userId", provisioned.get("userId"), "role", role));
+                    Map.of("userId", provisioned.get("userId"), "role", assigned));
             rolePasswords.put(role, password);
+            roleUsernames.put(role, username);
         }
 
         // 3. publish the candidate into the scratch tenant (candidate versions only —
@@ -159,8 +173,8 @@ public class TestRunner {
         // 4. cases — fixtures then steps as synthetic actors, assertions frozen-clock
         List<Map<String, Object>> caseResults = new ArrayList<>();
         for (TestCase testCase : suite.cases()) {
-            caseResults.add(runCase(testCase, rolePasswords, frozenAt, candidate.apiName(),
-                    tenantId, hookSecrets));
+            caseResults.add(runCase(testCase, rolePasswords, roleUsernames, frozenAt,
+                    candidate.apiName(), tenantId, hookSecrets));
         }
         boolean green = caseResults.stream().allMatch(r -> Boolean.TRUE.equals(r.get("passed")));
         // §9 suite pass-rate telemetry — the promotion gate's health at a glance.
@@ -184,7 +198,8 @@ public class TestRunner {
     }
 
     private Map<String, Object> runCase(TestCase testCase, Map<String, String> rolePasswords,
-                                        Instant frozenAt, String appApiName, String tenantId,
+                                        Map<String, String> roleUsernames, Instant frozenAt,
+                                        String appApiName, String tenantId,
                                         Map<String, String> hookSecrets) {
         Map<String, Object> scope = new LinkedHashMap<>();   // "Entity[n]" → last record map
         List<String> failures = new ArrayList<>();
@@ -201,7 +216,7 @@ public class TestRunner {
         }
         try {
             for (var fixture : testCase.fixtures()) {
-                String token = actorToken(fixture.asRole(), rolePasswords);
+                String token = actorToken(fixture.asRole(), rolePasswords, roleUsernames);
                 // fixture actors without a named role run as the scratch admin
                 token = token.equals("__admin__")
                         ? passwordGrantAdmin(rolePasswords) : token;
@@ -211,7 +226,7 @@ public class TestRunner {
                 remember(scope, fixture.entity(), created);
             }
             for (Step step : testCase.steps()) {
-                String token = actorToken(step.asRole(), rolePasswords);
+                String token = actorToken(step.asRole(), rolePasswords, roleUsernames);
                 token = token.equals("__admin__")
                         ? passwordGrantAdmin(rolePasswords) : token;
                 String body = step.template() == null ? "{}"
@@ -600,11 +615,12 @@ public class TestRunner {
     }
 
     /** Actor token: the named role's synthetic actor; the scratch admin by default. */
-    private String actorToken(String role, Map<String, String> rolePasswords) {
+    private String actorToken(String role, Map<String, String> rolePasswords,
+                              Map<String, String> roleUsernames) {
         if (role == null) {
             return "__admin__";
         }
-        return passwordGrant(role, rolePasswords.get(role));
+        return passwordGrant(roleUsernames.get(role), rolePasswords.get(role));
     }
 
     // --- ${…} interpolation ---

@@ -199,7 +199,10 @@ services:
   # Object storage (PHASE-6 §2/§8): the File Service's MinIO — API 9000, console
   # 9001 — with a persistent volume. Buckets auto-create on first service start.
   minio:
-    image: docker.io/minio/minio:RELEASE.2025-11-25T16-26-34Z
+    # Pinned to the newest community release whose tag resolves upstream — the
+    # 2026-08-26 live bring-up found the former pin (RELEASE.2025-11-25T16-26-34Z)
+    # gone from the registry (manifest unknown), failing the stack silently.
+    image: docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: novaforge-minio
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
