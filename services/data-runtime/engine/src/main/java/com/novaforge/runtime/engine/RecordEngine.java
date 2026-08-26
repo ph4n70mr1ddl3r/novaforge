@@ -12,6 +12,7 @@ import com.novaforge.metadata.HookRule;
 import com.novaforge.metadata.PermissionSet;
 import com.novaforge.metadata.RelationshipDefinition;
 import com.novaforge.metadata.RelationshipType;
+import com.novaforge.metadata.RollupExpression;
 import com.novaforge.common.context.TenantContext;
 import com.novaforge.expression.Expression;
 import com.novaforge.runtime.engine.hook.HookExecutor;
@@ -35,6 +36,8 @@ import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The write/query pipeline (PHASE-1 §5 — the Phase 1 slice of ARCHITECTURE.md §2.4):
@@ -1223,23 +1226,27 @@ public class RecordEngine {
                 app.apiName() + "." + entity.apiName());
     }
 
-    /** {@code SUM(lines.debit)} — aggregate op, relationship, child field. */
-    record Rollup(String op, String relationship, String field) {
+    /** {@code SUM(lines.debit)} — aggregate op, relationship, child field; PHASE-7
+     *  §3.5 grows an optional AND-joined WHERE clause over the DSL leaf vocabulary,
+     *  parsed by the shared {@link RollupExpression} so save validation and this
+     *  engine can never disagree about what an authored roll-up means. */
+    record Rollup(String op, String relationship, String field,
+                  List<RollupExpression.Condition> conditions) {
 
         static Rollup parse(String source) {
-            java.util.regex.Matcher matcher = java.util.regex.Pattern
-                    .compile("^(SUM|COUNT|MIN|MAX|AVG)\\(([a-zA-Z]+)(?:\\.([a-zA-Z]+))?\\)$")
-                    .matcher(source.trim());
-            if (!matcher.matches() || ("COUNT".equals(matcher.group(1)) == false
-                    ? matcher.group(3) == null : false)) {
-                throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                        "rollup must be OP(relationship.field) — COUNT(relationship) also allowed: " + source);
-            }
-            return new Rollup(matcher.group(1), matcher.group(2), matcher.group(3));
+            RollupExpression expression = RollupExpression.parse(source);
+            return new Rollup(expression.op(), expression.relationship(), expression.field(),
+                    expression.conditions());
         }
 
-        /** Aggregates the in-memory inline child set (create path — no store round-trip). */
+        /** Aggregates the in-memory inline child set (create path — no store round-trip).
+         *  Conditions filter first (PHASE-7 §3.5): strings verbatim, numbers as exact
+         *  decimals — never a float compare on the money path. */
         Object aggregateInMemory(List<Map<String, Object>> childRows) {
+            if (!conditions.isEmpty()) {
+                childRows = childRows.stream().filter(row -> conditions.stream()
+                        .allMatch(c -> rowMatches(row, c))).toList();
+            }
             if (op.equals("COUNT")) {
                 return java.math.BigDecimal.valueOf(childRows.size());
             }
@@ -1284,10 +1291,18 @@ public class RecordEngine {
 
         Object aggregate(RecordStore records, UUID tenantId, EntityHandle childHandle,
                          String bindingField, UUID parentId, String field) {
-            String queryJson = "{\"filter\":{\"field\":\"" + bindingField + "\",\"op\":\"eq\","
-                    + "\"value\":\"" + parentId + "\"}"
-                    + (op.equals("COUNT") ? "" : ",\"aggregates\":[{\"op\":\"" + op.toLowerCase()
-                    + "\",\"field\":\"" + field + "\"}]") + "}";
+            // The binding leaf rides the same parser/lowering as every list query;
+            // conditional roll-ups AND their authored leaves onto it (PHASE-7 §3.5),
+            // serialized as DSL leaves so parse validation + lowering stay canonical.
+            String bindingLeaf = "{\"field\":\"" + bindingField + "\",\"op\":\"eq\"," 
+                    + "\"value\":\"" + parentId + "\"}";
+            String filterJson = conditions.isEmpty() ? bindingLeaf
+                    : "{\"and\":[" + bindingLeaf + ","
+                    + conditionLeavesJson() + "]}";
+            String aggregatesJson = op.equals("COUNT") ? ""
+                    : ",\"aggregates\":[{\"op\":\"" + op.toLowerCase()
+                    + "\",\"field\":\"" + field + "\"}]";
+            String queryJson = "{\"filter\":" + filterJson + aggregatesJson + "}";
             if (op.equals("COUNT")) {
                 QueryModel.ListQuery query = QueryParser.parseList(queryJson, childHandle.entity());
                 QueryLowering lowering = new QueryLowering(childHandle.entity());
@@ -1308,6 +1323,105 @@ public class RecordEngine {
             }
             return outcome instanceof java.math.BigDecimal decimal ? decimal
                     : new java.math.BigDecimal(String.valueOf(outcome));
+        }
+
+        /** Condition leaves in DSL wire shape — the mapper serializes exact-decimal/
+         *  boolean values canonically; isNull carries no value. */
+        private String conditionLeavesJson() {
+            JsonMapper mapper = JsonMapper.builder().build();
+            StringBuilder leaves = new StringBuilder();
+            for (RollupExpression.Condition condition : conditions) {
+                if (!leaves.isEmpty()) {
+                    leaves.append(',');
+                }
+                Map<String, Object> leaf = new LinkedHashMap<>();
+                leaf.put("field", condition.field());
+                leaf.put("op", condition.op());
+                if (condition.value() != null) {
+                    leaf.put("value", condition.value() instanceof List<?> items
+                            ? items : condition.value());
+                }
+                try {
+                    leaves.append(mapper.writeValueAsString(leaf));
+                } catch (JacksonException e) {
+                    throw new PlatformException(PlatformErrorCode.INTERNAL,
+                            "rollup condition serialization failed: " + e.getMessage(), null, e);
+                }
+            }
+            return leaves.toString();
+        }
+
+        /** One condition against an in-memory inline child row — the same verdicts
+         *  the store path's lowering would produce: numeric-parsable pairs compare
+         *  as exact decimals, everything else as canonical strings. */
+        private static boolean rowMatches(Map<String, Object> row,
+                                          RollupExpression.Condition condition) {
+            Object actual = row.get(condition.field());
+            Object expected = condition.value();
+            return switch (condition.op()) {
+                case "isNull" -> actual == null;
+                case "in" -> expected instanceof List<?> values && values.stream()
+                        .anyMatch(v -> equivalent(actual, v));
+                case "eq" -> equivalent(actual, expected);
+                case "ne" -> !equivalent(actual, expected);
+                default -> {
+                    int c = compare(actual, expected);
+                    yield switch (condition.op()) {
+                        case "gt" -> c > 0;
+                        case "gte" -> c >= 0;
+                        case "lt" -> c < 0;
+                        default -> c <= 0;   // lte
+                    };
+                }
+            };
+        }
+
+        private static boolean equivalent(Object a, Object b) {
+            if (a == null || b == null) {
+                return a == b;
+            }
+            Integer numeric = numericCompare(a, b);
+            if (numeric != null) {
+                return numeric == 0;
+            }
+            return stringOf(a).equals(stringOf(b));
+        }
+
+        private static int compare(Object a, Object b) {
+            Integer numeric = numericCompare(a, b);
+            if (numeric != null) {
+                return numeric;
+            }
+            return stringOf(a).compareTo(stringOf(b));   // enums, ISO dates — lexical is the order
+        }
+
+        /** Exact decimal comparison when both sides are numbers or number-strings; null otherwise. */
+        private static Integer numericCompare(Object a, Object b) {
+            java.math.BigDecimal left = asDecimal(a);
+            java.math.BigDecimal right = asDecimal(b);
+            return left != null && right != null ? left.compareTo(right) : null;
+        }
+
+        private static java.math.BigDecimal asDecimal(Object value) {
+            if (value instanceof java.math.BigDecimal decimal) {
+                return decimal;
+            }
+            if (value instanceof Number number) {
+                return new java.math.BigDecimal(number.toString());
+            }
+            if (value instanceof Boolean || value instanceof List<?>) {
+                return null;
+            }
+            try {
+                return new java.math.BigDecimal(String.valueOf(value));
+            } catch (NumberFormatException notNumeric) {
+                return null;
+            }
+        }
+
+        private static String stringOf(Object value) {
+            return value instanceof java.math.BigDecimal decimal ? decimal.toPlainString()
+                    : String.valueOf(value);
         }
     }
 

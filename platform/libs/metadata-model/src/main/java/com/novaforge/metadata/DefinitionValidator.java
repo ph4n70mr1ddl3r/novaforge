@@ -1127,6 +1127,8 @@ public final class DefinitionValidator {
                     "displayField must name an existing field", entity.displayField()));
         }
 
+        validateRollups(app, entity, scope, errors);
+
         Set<String> indexFieldsChecked = new HashSet<>();
         for (EntityDefinition.IndexDefinition index : entity.indexes()) {
             for (String fieldName : index.fields()) {
@@ -1221,6 +1223,64 @@ public final class DefinitionValidator {
                 errors.add(field(lockScope + "dateField",
                         "periodLock requires a date/datetime field on " + entity.apiName()
                                 + ": " + lock.dateField(), lock.dateField()));
+            }
+        }
+    }
+
+    /**
+     * Roll-up rules (PHASE-3 §3; PHASE-7 §3.5 grows the conditional form): the
+     * shared {@link RollupExpression} grammar, relationship + child-entity
+     * resolution of every referenced name — the aggregate field's numeric
+     * requirement mirrors what the aggregate pipeline itself enforces at run time,
+     * so an authoring error rejects at save with guidance instead of aggregating a
+     * full (unfiltered) set in production.
+     */
+    private static void validateRollups(AppDefinition app, EntityDefinition entity,
+                                        String scope, List<ProblemErrors.FieldError> errors) {
+        for (FieldDefinition f : entity.fields()) {
+            if (f.rollup() == null) {
+                continue;
+            }
+            String rScope = scope + "fields[" + f.apiName() + "].rollup";
+            RollupExpression rollup;
+            try {
+                rollup = RollupExpression.parse(f.rollup());
+            } catch (IllegalArgumentException malformed) {
+                errors.add(field(rScope, malformed.getMessage(), f.rollup()));
+                continue;
+            }
+            var relationship = entity.relationship(rollup.relationship());
+            if (relationship.isEmpty()) {
+                errors.add(field(rScope,
+                        "rollup relationship must exist on " + entity.apiName() + ": "
+                                + rollup.relationship(), rollup.relationship()));
+                continue;
+            }
+            var child = app.entity(relationship.get().target());
+            if (child.isEmpty()) {
+                errors.add(field(rScope,
+                        "rollup relationship target must resolve within the app: "
+                                + relationship.get().target(), relationship.get().target()));
+                continue;
+            }
+            if (rollup.field() != null) {
+                var aggregated = child.get().field(rollup.field());
+                if (aggregated.isEmpty()) {
+                    errors.add(field(rScope,
+                            "rollup aggregate field must exist on " + child.get().apiName()
+                                    + ": " + rollup.field(), rollup.field()));
+                } else if (!aggregated.get().type().numeric()) {
+                    errors.add(field(rScope,
+                            "rollup op " + rollup.op() + " requires a numeric field: "
+                                    + rollup.field(), rollup.field()));
+                }
+            }
+            for (RollupExpression.Condition condition : rollup.conditions()) {
+                if (child.get().field(condition.field()).isEmpty()) {
+                    errors.add(field(rScope,
+                            "rollup condition field must exist on " + child.get().apiName()
+                                    + ": " + condition.field(), condition.field()));
+                }
             }
         }
     }

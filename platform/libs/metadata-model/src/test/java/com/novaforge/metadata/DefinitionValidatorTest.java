@@ -842,4 +842,61 @@ class DefinitionValidatorTest {
         assertThat(GapLogEntry.resolving("wontfix-with-workaround")).isFalse();
         assertThat(GapLogEntry.resolving("open")).isFalse();
     }
+
+    // --- roll-up rules (PHASE-3 §3; PHASE-7 §3.5 grows the conditional form) ---
+
+    /** Replaces the first roll-up source on the baseline journal app (totalDebit). */
+    private static AppDefinition withRollup(AppDefinition app, String rollup) {
+        EntityDefinition entry = app.entities().getFirst();
+        FieldDefinition totalDebit = new FieldDefinition("totalDebit", "Total Debit", null,
+                FieldType.DECIMAL, null, null, null, 18, 4, 4, null, null, null,
+                null, null, null, rollup);
+        return new AppDefinition(app.id(), app.apiName(), app.label(), app.labelI18n(),
+                app.description(),
+                java.util.List.of(EntityDefinition.copyWithField(entry, 4, totalDebit),
+                        app.entities().get(1), app.entities().get(2)),
+                app.pages(), app.settings());
+    }
+
+    @Test
+    @DisplayName("rule: a conditional roll-up saves clean when every name resolves")
+    void conditionalRollupSavesClean() {
+        assertThat(validate(withRollup(baseApp(),
+                "SUM(lines.debit WHERE debit > 0 AND credit isNull)"))
+                .isEmpty()).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: rollup relationship must resolve on the entity")
+    void rollupRelationshipResolves() {
+        assertThat(mentions(validate(withRollup(baseApp(),
+                "SUM(ghostRows.debit)")), "rollup relationship must exist")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: rollup aggregate field must exist and be numeric")
+    void rollupAggregateFieldRules() {
+        assertThat(mentions(validate(withRollup(baseApp(),
+                "SUM(lines.ghostField)")), "aggregate field must exist")).isTrue();
+        assertThat(mentions(validate(withRollup(baseApp(),
+                "SUM(lines.entryId)")), "requires a numeric field")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: condition fields must exist on the child entity")
+    void rollupConditionFieldsResolve() {
+        assertThat(mentions(validate(withRollup(baseApp(),
+                "SUM(lines.debit WHERE ghostCond = 'X')")),
+                "condition field must exist")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: malformed rollup grammar rejects with guidance verbatim")
+    void rollupGrammarRejects() {
+        assertThat(mentions(validate(withRollup(baseApp(),
+                "SUM(lines.debit WHERE debit like '%x')")), "unknown rollup condition operator"))
+                .isTrue();
+        assertThat(mentions(validate(withRollup(baseApp(),
+                "AVG(lines)")), "requires relationship.field")).isTrue();
+    }
 }

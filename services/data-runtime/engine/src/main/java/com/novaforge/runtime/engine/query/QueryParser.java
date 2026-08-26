@@ -10,6 +10,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -44,7 +46,7 @@ public final class QueryParser {
             }
             for (JsonNode item : sortNode) {
                 String field = requiredText(item, "field", "sort.field");
-                requireField(entity, field, "sort.field");
+                requireSortField(entity, field);
                 String dir = item.hasNonNull("dir") ? item.get("dir").asString() : "asc";
                 if (!dir.equals("asc") && !dir.equals("desc")) {
                     throw validation("sort.dir", "sort dir must be asc|desc");
@@ -159,12 +161,16 @@ public final class QueryParser {
             return composite("or", node.get("or"), entity);
         }
         String field = requiredText(node, "field", "filter.field");
-        requireField(entity, field, "filter.field");
+        Optional<FieldDefinition> fieldDef = entity.field(field);
+        if (fieldDef.isEmpty() && !SYSTEM_LEAF_FIELDS.contains(field)) {
+            // PHASE-7 §3.6: the two operational keys filter like authored fields;
+            // every other reserved name stays rejected
+            throw validation("filter.field", "unknown field on " + entity.apiName() + ": " + field);
+        }
         String op = requiredText(node, "op", "filter.op");
         if (!QueryModel.OPERATORS.contains(op)) {
             throw validation("filter.op", "unknown operator: " + op);
         }
-        Optional<FieldDefinition> fieldDef = entity.field(field);
         if ("contains".equals(op)
                 && (fieldDef.isEmpty() || !fieldDef.get().type().textual())) {
             throw validation("filter.op", "contains is allowed on text fields only");
@@ -195,7 +201,7 @@ public final class QueryParser {
         if ("in".equals(op) && !(javaValue instanceof List)) {
             throw validation("filter.value", "in requires an array value");
         }
-        return new QueryModel.Filter.Leaf(field, op, javaValue);
+        return new QueryModel.Filter.Leaf(field, op, canonicalizeSystemLeaf(field, javaValue));
     }
 
     private static QueryModel.Filter composite(String op, JsonNode children, EntityDefinition entity) {
@@ -212,6 +218,45 @@ public final class QueryParser {
     private static void requireField(EntityDefinition entity, String field, String scope) {
         if (entity.field(field).isEmpty()) {
             throw validation(scope, "unknown field on " + entity.apiName() + ": " + field);
+        }
+    }
+
+    /** Filter/sort leaf fields the DSL accepts beyond authored fields (PHASE-7 §3.6,
+     *  the G-5 harvest): the record's two operational keys — identity and optimistic-
+     *  locking version. Every other reserved name stays rejected; queries by audit
+     *  metadata ride the audit trail instead (PHASE-3 §5). */
+    static final Set<String> SYSTEM_LEAF_FIELDS = Set.of("id", "version");
+
+    /** Sort fields ride the same exemption: id/version order by their projection
+     *  columns; authored names only otherwise. */
+    private static void requireSortField(EntityDefinition entity, String field) {
+        if (!SYSTEM_LEAF_FIELDS.contains(field)) {
+            requireField(entity, field, "sort.field");
+        }
+    }
+
+    /**
+     * System-field leaves parse to their canonical forms at the door (PHASE-7 §3.6):
+     * {@code id} to a UUID, {@code version} to an integer — so the lowering binds
+     * JDBC-typed params against the projection columns and a malformed value rejects
+     * VALIDATION_FAILED with field scope instead of surfacing downstream.
+     */
+    private static Object canonicalizeSystemLeaf(String field, Object value) {
+        if (!SYSTEM_LEAF_FIELDS.contains(field) || value == null) {
+            return value;
+        }
+        if (value instanceof List<?> items) {
+            return items.stream().map(item -> canonicalizeSystemLeaf(field, item)).toList();
+        }
+        try {
+            if ("id".equals(field)) {
+                return UUID.fromString(String.valueOf(value));
+            }
+            java.math.BigDecimal decimal = new java.math.BigDecimal(String.valueOf(value));
+            return decimal.longValueExact();   // version — non-integral rejects
+        } catch (RuntimeException bad) {
+            throw validation("filter.value", field + " leaf requires a "
+                    + ("id".equals(field) ? "uuid" : "integer") + " value: " + value);
         }
     }
 

@@ -1813,7 +1813,8 @@
       "workaround": "Script scans the first page (≤200 rows) and matches client-side",
       "proposed": "allow id (and version) as filterable system fields in the DSL leaf",
       "priority": "medium",
-      "disposition": "backlog"
+      "disposition": "closed",
+      "resolvedIn": "spec §3.6 (2026-08-27): id/version join the query-DSL leaf set with canonical value parsing at the door"
     },
     {
       "id": "G-6",
@@ -1922,7 +1923,8 @@
       "workaround": "The costMovement script discounts the row's own quantity (preQty = qtyOnHand - $record.qty) before dividing - correct for the machine-bound post-at-update shape; found live running the suites",
       "proposed": "conditional roll-ups (SUM(movements.qty WHERE status = 'POSTED')) or a stampOnTransition-scoped roll-up recompute",
       "priority": "high",
-      "disposition": "backlog"
+      "disposition": "closed",
+      "resolvedIn": "spec §3.5 (2026-08-27): conditional roll-ups — SUM(rel.field WHERE status = 'POSTED'), both aggregation paths filter identically"
     }
   ]
 }

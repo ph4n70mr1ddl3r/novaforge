@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -206,12 +207,28 @@ public final class QueryLowering {
 
     // --- expressions ---
 
+    /** System leaf fields (PHASE-7 §3.6) lower to their own projection columns, not
+     *  the JSONB extract — a data->>'id' lookup would read nothing. */
+    private static final Map<String, String> SYSTEM_COLUMN_EXPR = Map.of(
+            "id", "id",
+            "version", "version");
+
+    private static final Set<String> SYSTEM_NUMERIC_FIELDS = Set.of("version");
+
     private String textExpr(String field) {
+        String system = SYSTEM_COLUMN_EXPR.get(field);
+        if (system != null) {
+            return system;
+        }
         String column = promotedColumns.get(field);
         return column != null ? column : "(data->>'" + field + "')";
     }
 
     private String numericExpr(String field) {
+        String system = SYSTEM_COLUMN_EXPR.get(field);
+        if (system != null) {
+            return system;
+        }
         String column = promotedColumns.get(field);
         return column != null ? column : "((data->>'" + field + "')::numeric)";
     }
@@ -228,7 +245,8 @@ public final class QueryLowering {
                     .orElseThrow();
         }
         Filter.Leaf leaf = (Filter.Leaf) filter;
-        boolean numeric = numericFields.getOrDefault(leaf.field(), false);
+        boolean numeric = SYSTEM_NUMERIC_FIELDS.contains(leaf.field())
+                || numericFields.getOrDefault(leaf.field(), false);
         String expr = numeric ? numericExpr(leaf.field()) : textExpr(leaf.field());
         return switch (leaf.op()) {
             case "eq" -> {
