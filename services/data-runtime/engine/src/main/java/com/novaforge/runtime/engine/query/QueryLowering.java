@@ -149,7 +149,10 @@ public final class QueryLowering {
         for (QueryModel.GroupBy group : query.groupBy()) {
             String alias = Snake.caseName(group.field());
             if (!group.bucketed()) {
-                selects.add(textExpr(group.field()) + " AS " + alias);
+                // quoted — Postgres folds unquoted aliases to lowercase, which
+                // rewrites authored camelCase group keys in the result map (found
+                // live: the ERP trial balance's rows lost their authored aliases)
+                selects.add(textExpr(group.field()) + " AS \"" + alias + "\"");
                 continue;
             }
             StringBuilder branch = new StringBuilder("CASE");
@@ -163,7 +166,7 @@ public final class QueryLowering {
                 params.add(bucket.label());
             }
             branch.append(" ELSE NULL END");
-            selects.add(branch + " AS " + alias);
+            selects.add(branch + " AS \"" + alias + "\"");
         }
         for (Aggregate aggregate : query.aggregates()) {
             String alias = aggregate.alias() != null ? aggregate.alias()
@@ -176,7 +179,11 @@ public final class QueryLowering {
                 case min -> "min(" + numericExpr(aggregate.field()) + ")";
                 case max -> "max(" + numericExpr(aggregate.field()) + ")";
             };
-            selects.add(expr + " AS " + alias);
+            // quoted — an authored camelCase alias ("debitTotal") must survive the
+            // round trip; unquoted, Postgres answers "debittotal" and every
+            // caller keyed on the authored alias reads nulls (found live: the
+            // trial-balance totals read null through the reporting run path)
+            selects.add(expr + " AS \"" + alias + "\"");
         }
         params.add(tenantId);
         StringBuilder sql = new StringBuilder("SELECT ")

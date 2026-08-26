@@ -254,6 +254,13 @@ public class HookExecutor {
                 context.currentHook = hook.name();
                 context.transition = transition;
                 context.fireKey = fireKey;
+                // before-hooks merge into the pending write (the enclosing write
+                // persists the field and the write path's state-machine check
+                // validates it); every other trigger persists through its own
+                // guarded write — an afterSave transition mutates an
+                // already-persisted record, so an in-memory merge alone would be a
+                // silent no-op on the store
+                context.preWrite = trigger != null && trigger.startsWith("before");
                 context.index(hook.flow());
                 executeIndexed(hook.flow(), context);
             }
@@ -430,10 +437,14 @@ public class HookExecutor {
                     // match binding), exactly like a human-driven state change
                     context.transition = prior + "->" + to;
                 }
-                if (context.resume) {
-                    // no enclosing write carries the field here — the transition
-                    // rides the standard guarded write (updateAsPrincipal enforces
-                    // the machine; no bypass exists).
+                if (context.resume || !context.preWrite) {
+                    // No enclosing write persists the field here — the resume leg
+                    // and every post-persist trigger (afterSave/afterDelete) alike
+                    // ride the standard guarded write (updateAsPrincipal enforces
+                    // the machine; no bypass exists). Found live authoring the
+                    // Phase 4 exit journey: afterSave transitions mutated only the
+                    // in-memory record map — the persisted record never moved and
+                    // the machine never checked the edge.
                     context.sink.writeRecord(context.handle.entity().apiName(),
                             Map.of(machine.get().stateField(), to),
                             context.recordId == null ? null : context.recordId.toString(),
@@ -569,6 +580,7 @@ public class HookExecutor {
         final HookSink sink;
         final int depth;
         boolean resume;
+        boolean preWrite;
         UUID initiatingActor;
         String currentHook;
         String transition;

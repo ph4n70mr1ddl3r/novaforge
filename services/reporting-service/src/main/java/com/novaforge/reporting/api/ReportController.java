@@ -52,7 +52,7 @@ public class ReportController {
         this.exportMaxRows = exportMaxRows;
     }
 
-    public record RunRequest(String app, Map<String, Object> params) {
+    public record RunRequest(String app, Map<String, Object> params, Boolean fresh) {
     }
 
     @PostMapping("/{id}/run")
@@ -60,7 +60,7 @@ public class ReportController {
         var ctx = requireContext();
         requireApp(request);
         return runner.run(tenant(ctx), actor(ctx), request.app(), id, request.params(),
-                callerToken());
+                callerToken(), Boolean.TRUE.equals(request.fresh()));
     }
 
     @GetMapping("/{id}/export")

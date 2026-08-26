@@ -103,7 +103,14 @@ public class EntityResolver {
     }
 
     private void refreshTenant(UUID tenantId) {
-        List<MetadataClient.PublishedApp> apps = client.publishedApps();
+        // The service-caller index is cross-tenant (the materializer's union needs
+        // every tenant — projections are shared DDL); the resolver's view is THIS
+        // tenant's apps only, so scratch-tenant publishes can never collide with a
+        // same-named entity elsewhere (found live: unqualified resolution turned
+        // ambiguous platform-wide once a second tenant published the same apiName).
+        List<MetadataClient.PublishedApp> apps = client.publishedApps().stream()
+                .filter(app -> app.tenantId() == null || app.tenantId().equals(tenantId))
+                .toList();
         indexes.put(tenantId, new IndexEntry(System.currentTimeMillis(), apps));
         for (MetadataClient.PublishedApp app : apps) {
             bundles.computeIfAbsent(tenantId + ":" + app.appId(), k -> {

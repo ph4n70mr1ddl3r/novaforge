@@ -69,16 +69,23 @@ class PurchasingAppArtifactTests {
                 .isEqualTo("total > 0");
 
         // item 2 — the submit flow branches on the threshold into requestApproval
-        // (managers, all-must-approve), the rejection routes the onReject subgraph,
-        // and the approve resume chains APPROVED → POSTED → the posted event
+        // (managers, all-must-approve); a create-time firing (status DRAFT) does
+        // nothing — the outer guard's else is empty, so a draft order is never
+        // posted by accident. The rejection routes the onReject subgraph, and the
+        // approve resume chains APPROVED → POSTED → the posted event
         EntityDefinition po = app.entity("PurchaseOrder").orElseThrow();
         var hook = po.hooks().stream()
                 .filter(h -> "submitForApproval".equals(h.name())).findFirst().orElseThrow();
         assertThat(hook.trigger()).isEqualTo("afterSave");
-        var branch = hook.flow();
-        assertThat(branch.op()).isEqualTo("branch");
-        assertThat(branch.onTrue()).isEqualTo("a1");
-        assertThat(branch.onFalse()).isEqualTo("p2");   // below threshold: no approval
+        var submit = hook.flow();
+        assertThat(submit.op()).isEqualTo("branch");
+        assertThat(submit.onTrue()).isEqualTo("b2");
+        assertThat(submit.onFalse()).isNull();   // create-time (DRAFT) does nothing
+        var threshold = step(hook.flow(), "b2");
+        assertThat(threshold.op()).isEqualTo("branch");
+        assertThat(threshold.param("guard")).isEqualTo("total > threshold");
+        assertThat(threshold.onTrue()).isEqualTo("a1");
+        assertThat(threshold.onFalse()).isEqualTo("p2");   // below threshold: auto-post
         var approval = step(hook.flow(), "a1");
         assertThat(approval.op()).isEqualTo("requestApproval");
         assertThat(approval.param("approvers")).isEqualTo("Purchasing.manager");

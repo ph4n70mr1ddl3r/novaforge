@@ -11,7 +11,19 @@ import java.util.UUID;
  */
 public interface MetadataClient {
 
-    record PublishedApp(UUID appId, String apiName, int version) {
+    /**
+     * One published app in the index. {@code tenantId} rides the service-caller
+     * (cross-tenant) view — the resolver filters the index to the requesting
+     * tenant, so another tenant's published app can never shadow or collide with
+     * same-named entities (found live: accumulated scratch-tenant publishes made
+     * unqualified entity resolution ambiguous platform-wide).
+     */
+    record PublishedApp(UUID tenantId, UUID appId, String apiName, int version) {
+
+        /** The user-caller view shape (tenant-scoped server-side, no tenant field). */
+        public PublishedApp(UUID appId, String apiName, int version) {
+            this(null, appId, apiName, version);
+        }
     }
 
     record PublishedBundle(int version, AppDefinition app) {

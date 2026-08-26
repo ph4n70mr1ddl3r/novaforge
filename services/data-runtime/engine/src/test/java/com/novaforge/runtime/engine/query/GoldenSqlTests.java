@@ -110,9 +110,9 @@ class GoldenSqlTests {
         // GROUP BY addresses select ordinals since PHASE-5 §3 (a bucketed CASE in the
         // select list would rebind every parameter if repeated in the tail)
         assertThat(lowered.sql()).isEqualTo(
-                "SELECT (data->>'status') AS status, count(*) AS count, "
-                        + "sum(((data->>'amount')::numeric)) AS total, "
-                        + "max(((data->>'amount')::numeric)) AS max_amount "
+                "SELECT (data->>'status') AS \"status\", count(*) AS \"count\", "
+                        + "sum(((data->>'amount')::numeric)) AS \"total\", "
+                        + "max(((data->>'amount')::numeric)) AS \"max_amount\" "
                         + "FROM rec_journal_entry WHERE tenant_id = ? AND deleted = false "
                         + "GROUP BY 1");
     }

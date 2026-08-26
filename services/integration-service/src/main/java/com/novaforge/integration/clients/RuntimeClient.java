@@ -28,6 +28,9 @@ public class RuntimeClient {
     private final RestClient runtime;
     private final ServiceTokenClient serviceToken;
 
+    // dual constructors demand the marker: without it Spring falls back to the
+    // no-arg hermetic base and every field stays null (found live, §)
+    @org.springframework.beans.factory.annotation.Autowired
     public RuntimeClient(@Value("${novaforge.data-runtime.url:http://localhost:8083}") String url,
                          ServiceTokenClient serviceToken) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();

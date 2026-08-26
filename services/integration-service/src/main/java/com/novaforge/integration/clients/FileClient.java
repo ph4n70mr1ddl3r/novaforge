@@ -27,6 +27,9 @@ public class FileClient {
     private final RestClient files;
     private final ServiceTokenClient serviceToken;
 
+    // dual constructors demand the marker: without it Spring falls back to the
+    // no-arg hermetic base and every field stays null (found live, §)
+    @org.springframework.beans.factory.annotation.Autowired
     public FileClient(@Value("${novaforge.file.url:http://localhost:8091}") String url,
                       ServiceTokenClient serviceToken) {
         this.files = RestClient.builder().baseUrl(url).build();

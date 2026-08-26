@@ -21,9 +21,25 @@
       }
     ],
     "objectPermissions": [
-      { "role": "buyer", "entity": "PurchaseOrder", "create": true, "read": true, "update": true },
-      { "role": "manager", "entity": "PurchaseOrder", "create": true, "read": true, "update": true },
-      { "role": "seniorManager", "entity": "PurchaseOrder", "read": true }
+      {
+        "role": "buyer",
+        "entity": "PurchaseOrder",
+        "create": true,
+        "read": true,
+        "update": true
+      },
+      {
+        "role": "manager",
+        "entity": "PurchaseOrder",
+        "create": true,
+        "read": true,
+        "update": true
+      },
+      {
+        "role": "seniorManager",
+        "entity": "PurchaseOrder",
+        "read": true
+      }
     ]
   },
   "entities": [
@@ -39,7 +55,11 @@
           "required": true,
           "uniqueness": true
         },
-        { "apiName": "label", "type": "text", "required": true },
+        {
+          "apiName": "label",
+          "type": "text",
+          "required": true
+        },
         {
           "apiName": "total",
           "type": "money",
@@ -49,12 +69,20 @@
           "apiName": "threshold",
           "type": "money",
           "required": true,
-          "default": { "value": 1000 }
+          "default": {
+            "value": 1000
+          }
         },
         {
           "apiName": "status",
           "type": "enum",
-          "values": ["DRAFT", "SUBMITTED", "APPROVED", "REJECTED", "POSTED"]
+          "values": [
+            "DRAFT",
+            "SUBMITTED",
+            "APPROVED",
+            "REJECTED",
+            "POSTED"
+          ]
         }
       ],
       "validations": [
@@ -72,34 +100,57 @@
           "flow": {
             "id": "b1",
             "op": "branch",
-            "params": { "guard": "status == 'SUBMITTED'" },
-            "onTrue": "a1",
-            "onFalse": "p2",
+            "params": {
+              "guard": "status == 'SUBMITTED'"
+            },
+            "onTrue": "b2",
+            "onFalse": null,
             "body": {
-              "id": "a1",
-              "op": "requestApproval",
-              "params": { "approvers": "Purchasing.manager", "mode": "all" },
-              "next": "p2",
+              "id": "b2",
+              "op": "branch",
+              "params": {
+                "guard": "total > threshold"
+              },
+              "onTrue": "a1",
+              "onFalse": "p2",
               "body": {
-                "id": "r1",
-                "op": "transitionState",
-                "params": { "to": "REJECTED" },
+                "id": "a1",
+                "op": "requestApproval",
+                "params": {
+                  "approvers": "Purchasing.manager",
+                  "mode": "all"
+                },
+                "next": "p2",
                 "body": {
-                  "id": "p2",
+                  "id": "r1",
                   "op": "transitionState",
-                  "params": { "to": "APPROVED" },
-                  "next": "p3",
+                  "params": {
+                    "to": "REJECTED"
+                  },
                   "body": {
-                    "id": "p3",
+                    "id": "p2",
                     "op": "transitionState",
-                    "params": { "to": "POSTED" },
-                    "next": "e1",
+                    "params": {
+                      "to": "APPROVED"
+                    },
+                    "next": "p3",
                     "body": {
-                      "id": "e1",
-                      "op": "publishEvent",
+                      "id": "p3",
+                      "op": "transitionState",
                       "params": {
-                        "name": "po.posted",
-                        "payload": { "number": "${number}", "total": "${total}" }
+                        "to": "POSTED"
+                      },
+                      "next": "e1",
+                      "body": {
+                        "id": "e1",
+                        "op": "publishEvent",
+                        "params": {
+                          "name": "po.posted",
+                          "payload": {
+                            "number": "${number}",
+                            "total": "${total}"
+                          }
+                        }
                       }
                     }
                   }
@@ -110,8 +161,16 @@
         }
       ],
       "indexes": [
-        { "fields": ["status"] },
-        { "fields": ["total"] }
+        {
+          "fields": [
+            "status"
+          ]
+        },
+        {
+          "fields": [
+            "total"
+          ]
+        }
       ]
     }
   ],
@@ -122,17 +181,42 @@
       "stateField": "status",
       "initial": "DRAFT",
       "states": [
-        { "name": "DRAFT" },
-        { "name": "SUBMITTED" },
-        { "name": "APPROVED" },
-        { "name": "REJECTED", "terminal": true },
-        { "name": "POSTED", "terminal": true }
+        {
+          "name": "DRAFT"
+        },
+        {
+          "name": "SUBMITTED"
+        },
+        {
+          "name": "APPROVED"
+        },
+        {
+          "name": "REJECTED",
+          "terminal": true
+        },
+        {
+          "name": "POSTED",
+          "terminal": true
+        }
       ],
       "transitions": [
-        { "from": "DRAFT", "to": "SUBMITTED", "guard": "total > 0" },
-        { "from": "SUBMITTED", "to": "APPROVED" },
-        { "from": "SUBMITTED", "to": "REJECTED" },
-        { "from": "APPROVED", "to": "POSTED" }
+        {
+          "from": "DRAFT",
+          "to": "SUBMITTED",
+          "guard": "total > 0"
+        },
+        {
+          "from": "SUBMITTED",
+          "to": "APPROVED"
+        },
+        {
+          "from": "SUBMITTED",
+          "to": "REJECTED"
+        },
+        {
+          "from": "APPROVED",
+          "to": "POSTED"
+        }
       ]
     }
   ],
@@ -145,7 +229,10 @@
       },
       "target": "PT1H",
       "warnAt": 0.5,
-      "onBreach": { "escalateTo": "Purchasing.seniorManager", "notify": true }
+      "onBreach": {
+        "escalateTo": "Purchasing.seniorManager",
+        "notify": true
+      }
     }
   ]
 }

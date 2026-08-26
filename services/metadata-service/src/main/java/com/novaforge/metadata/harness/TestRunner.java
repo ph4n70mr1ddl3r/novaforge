@@ -45,6 +45,9 @@ public class TestRunner {
 
     private static final Pattern REFERENCE = Pattern.compile("\\$\\{([A-Za-z0-9_.\\[\\]]+)}");
 
+    /** A template value that is exactly one reference — keeps the referenced type. */
+    private static final Pattern WHOLE_REFERENCE = Pattern.compile("^\\$\\{([A-Za-z0-9_.\\[\\]]+)}$");
+
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     /** The admin/synthetic actor password grant — scratch tenants only, rotated per run. */
@@ -372,9 +375,18 @@ public class TestRunner {
         body.put("app", appApiName);
         body.put("params", step.template() == null ? Map.of()
                 : interpolate(step.template(), scope));
+        // suite steps must observe current state — a settlement between two identical
+        // report runs would otherwise serve the cached pre-settlement aggregate
+        body.put("fresh", true);
         JsonNode run = MAPPER.readTree(call(reports, HttpMethod.POST,
                 "/api/v1/reports/" + url(step.entity()) + "/run", token,
                 MAPPER.writeValueAsString(body)));
+        // the shaping below would hide a problem body behind {rowCount: 0, totals: {}}
+        // — surface it raw so expect: ok fails loudly (the same predicate the step
+        // loop applies, applied before this handler shapes its own result)
+        if (isProblem(run)) {
+            return run;
+        }
         Map<String, Object> shaped = new LinkedHashMap<>();
         shaped.put("rowCount", run.path("rows").size());
         shaped.put("totals", MAPPER.convertValue(run.path("totals"), Map.class));
@@ -446,8 +458,21 @@ public class TestRunner {
         return MAPPER.readTree(call(workflow, method, uri, token, body));
     }
 
+    /** A problem+json body (the platform's uniform error shape). */
+    private static boolean isProblem(JsonNode result) {
+        return result.isObject() && result.hasNonNull("code")
+                && result.hasNonNull("type") && result.path("type").asString("")
+                        .contains("/problems/");
+    }
+
     private boolean expectationHolds(String expect, JsonNode result) {
         if ("ok".equals(expect)) {
+            // a problem payload is never ok — its numeric "status" field used to
+            // satisfy this check, hiding real failures behind green steps (found
+            // live: a 400 VALIDATION_FAILED on an update read as a pass)
+            if (isProblem(result)) {
+                return false;
+            }
             return result.isObject() && result.hasNonNull("id")
                     || (result.isObject() && result.has("status"))
                     || (result.isObject() && result.has("count"))   // queryRecord results
@@ -671,6 +696,14 @@ public class TestRunner {
 
     private Object interpolateValue(Object value, Map<String, Object> scope) {
         if (value instanceof String text) {
+            // a value that is EXACTLY one reference keeps the referenced JSON type —
+            // `${R.version}` must arrive as the number the runtime's optimistic-lock
+            // check reads (a stringified "1" 400s; found live), while embedded
+            // references inside larger text stay string concatenation
+            java.util.regex.Matcher whole = WHOLE_REFERENCE.matcher(text);
+            if (whole.matches()) {
+                return lookup(scope, whole.group(1));
+            }
             return interpolateText(text, scope);
         }
         if (value instanceof Map<?, ?> map) {

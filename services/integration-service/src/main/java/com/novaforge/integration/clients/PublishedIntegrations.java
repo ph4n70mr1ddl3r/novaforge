@@ -58,6 +58,10 @@ public class PublishedIntegrations {
         this.tracer = null;
     }
 
+    // Two constructors and no marker would make Spring fall back to the no-arg
+    // default (every field null — found live: the inbound webhook 500'd NPE while
+    // the CI contexts, which supply their own beans, never exercised this wiring)
+    @org.springframework.beans.factory.annotation.Autowired
     public PublishedIntegrations(
             @Value("${novaforge.metadata.url:http://localhost:8081}") String metadataUrl,
             StringRedisTemplate redis,

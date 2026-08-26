@@ -285,7 +285,7 @@ class TestRunnerJourneyTests {
         // (PHASE-5 §9: the step's actor token, the candidate app's apiName)
         assertEquals("POST", REPORT_METHOD.get());
         assertEquals(MAPPER.readValue(
-                "{\"app\":\"JourneyApp\",\"params\":{\"status\":\"POSTED\",\"asOf\":\"2026-08-23\"}}", Map.class),
+                "{\"app\":\"JourneyApp\",\"params\":{\"status\":\"POSTED\",\"asOf\":\"2026-08-23\"},\"fresh\":true}", Map.class),
                 MAPPER.readValue(REPORT_BODY.get(), Map.class));
         // §12's clock leg: the scan rode the internal surface, POST-only, with the
         // service client's token — never an actor's — and the scratch tenant bound

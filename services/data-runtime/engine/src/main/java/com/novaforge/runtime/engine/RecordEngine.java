@@ -105,6 +105,7 @@ public class RecordEngine {
         persistWithChildren(tenantId, actorId, app, handle, id, canonical, children, errors);
 
         events.publish(event("record.created", tenantId, handle.entityKey(), id, actorId));
+        recomputeParentRollups(tenantId, actorId, app, handle, canonical, null);
         runHooks(app, handle, tenantId, id, canonical, "afterSave", appSystemPrincipal(handle), actorId, null);
         return shape(handle.entity(), records.find(tenantId, handle.entityKey(), id, false)
                 .orElseThrow(), strip(tenantId, actorId, handle, app));
@@ -153,6 +154,7 @@ public class RecordEngine {
         replaceChildren(tenantId, actorId, app, handle, id, children);
         newVersion = recomputeRollupsIfChanged(tenantId, actorId, app, handle, id, merged, newVersion);
         events.publish(event("record.updated", tenantId, handle.entityKey(), id, actorId));
+        recomputeParentRollups(tenantId, actorId, app, handle, merged, existing.data());
         runHooks(app, handle, tenantId, id, merged, "afterSave", appSystemPrincipal(handle), actorId, transition);
 
         Map<String, Object> shaped = shape(handle.entity(),
@@ -181,6 +183,7 @@ public class RecordEngine {
         records.softDelete(tenantId, handle.entityKey(), id, expectedVersion, actorId);
         cascadeChildren(tenantId, actorId, app, handle, id);
         events.publish(event("record.deleted", tenantId, handle.entityKey(), id, actorId));
+        recomputeParentRollups(tenantId, actorId, app, handle, existingData, existingData);
         runHooks(app, handle, tenantId, id, existingData, "afterDelete",
                 appSystemPrincipal(handle), actorId, null);
     }
@@ -1148,6 +1151,67 @@ public class RecordEngine {
                     currentVersion, actorId);
         }
         return currentVersion;
+    }
+
+    /**
+     * Standalone child writes recompute every parent roll-up that names this
+     * entity's relationship (PHASE-3 §3: "updates recompute in the child's write
+     * transaction") — inline children always did via the parent's own write; found
+     * live running the ERP suites: a StockLedger row created on its own (the
+     * warehouse's real write shape) left the Item's roll-ups stale, so the costing
+     * script read qtyOnHand 0 and divided its way to NaN. Runs as the write's actor,
+     * in the same transaction; a re-parenting update refreshes old and new parents;
+     * frozen parents never reach here (their binding writes reject upstream, §3.1).
+     */
+    private void recomputeParentRollups(UUID tenantId, UUID actorId, AppDefinition app,
+                                        EntityHandle child, Map<String, Object> childData,
+                                        Map<String, Object> priorData) {
+        for (EntityDefinition parent : app.entities()) {
+            boolean relevant = false;
+            for (FieldDefinition field : parent.fields()) {
+                if (field.rollup() != null) {
+                    relevant = true;
+                    break;
+                }
+            }
+            if (!relevant) {
+                continue;
+            }
+            EntityHandle parentHandle = resolveLocal(app, parent.apiName());
+            String binding;
+            try {
+                binding = bindingLookupField(parent, child.entity());
+            } catch (PlatformException notBound) {
+                continue;   // this parent's roll-ups do not ride this child entity
+            }
+            java.util.Set<UUID> parents = new java.util.LinkedHashSet<>();
+            for (Map<String, Object> source : List.of(childData, priorData == null
+                    ? Map.<String, Object>of() : priorData)) {
+                Object value = source.get(binding);
+                if (value != null) {
+                    try {
+                        parents.add(UUID.fromString(String.valueOf(value)));
+                    } catch (IllegalArgumentException ignored) {
+                        // a malformed binding cannot happen post-canonicalize; skip
+                    }
+                }
+            }
+            for (UUID parentId : parents) {
+                records.find(tenantId, parentHandle.entityKey(), parentId, false)
+                        .ifPresent(stored -> recomputeRollupsIfChanged(tenantId, actorId,
+                                app, parentHandle, parentId, stored.data(), stored.version()));
+            }
+        }
+    }
+
+    /** Same-app handle for a parent entity (no cross-tenant resolution needed). */
+    private EntityHandle resolveLocal(AppDefinition app, String entityApiName) {
+        EntityDefinition entity = app.entity(entityApiName).orElseThrow(() ->
+                new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                        "app entity missing: " + entityApiName));
+        UUID appId = app.id() == null ? null : UUID.fromString(app.id());
+        return new EntityHandle(appId, app.apiName(), 0, entity,
+                app.apiName() + "." + entity.apiName());
     }
 
     /** {@code SUM(lines.debit)} — aggregate op, relationship, child field. */

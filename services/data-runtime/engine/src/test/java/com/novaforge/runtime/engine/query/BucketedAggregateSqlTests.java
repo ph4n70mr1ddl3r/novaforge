@@ -61,8 +61,8 @@ class BucketedAggregateSqlTests {
                         LocalDate.of(2026, 8, 23));
 
         assertThat(lowered.sql()).isEqualTo(
-                "SELECT customer_name AS customer_name, " + CASE_EXPR + " AS due_date, "
-                        + "sum(amount_outstanding) AS sum_amount_outstanding "
+                "SELECT customer_name AS \"customer_name\", " + CASE_EXPR + " AS \"due_date\", "
+                        + "sum(amount_outstanding) AS \"sum_amount_outstanding\" "
                         + "FROM rec_aging_ar WHERE tenant_id = ? AND deleted = false "
                         + "GROUP BY 1, 2");
         // binds follow placeholder order: SELECT-list CASE first, tenant after
@@ -86,7 +86,7 @@ class BucketedAggregateSqlTests {
         QueryLowering.Lowered lowered = new QueryLowering(entity)
                 .aggregate("AgingAr", UUID.randomUUID(), query, null);
         assertThat(lowered.sql()).isEqualTo(
-                "SELECT customer_name AS customer_name, count(*) AS count "
+                "SELECT customer_name AS \"customer_name\", count(*) AS \"count\" "
                         + "FROM rec_aging_ar WHERE tenant_id = ? AND deleted = false "
                         + "GROUP BY 1");
         assertThat(lowered.params()).hasSize(1);

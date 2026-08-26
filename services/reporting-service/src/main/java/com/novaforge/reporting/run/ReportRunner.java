@@ -77,12 +77,26 @@ public class ReportRunner {
     public Map<String, Object> run(UUID tenantId, UUID actor, String appApiName,
                                    String reportId, Map<String, Object> params,
                                    String callerToken) {
+        return run(tenantId, actor, appApiName, reportId, params, callerToken, false);
+    }
+
+    /**
+     * The interactive run with a cache-bypass: {@code fresh} skips the cache READ
+     * (the write still lands) — a sequential caller whose writes changed the data
+     * must not read its own pre-write aggregate back (found live: the bank-feed
+     * suite's post-settlement aging served the cached pre-settlement total).
+     */
+    public Map<String, Object> run(UUID tenantId, UUID actor, String appApiName,
+                                   String reportId, Map<String, Object> params,
+                                   String callerToken, boolean fresh) {
         Resolved resolved = resolve(tenantId, appApiName, reportId);
         requireExecuteGrant(tenantId, actor, resolved);
         String cacheKey = cacheKey(tenantId, actor, resolved, params);
-        String cached = cacheGet(cacheKey);
-        if (cached != null) {
-            return MAPPER.readValue(cached, Map.class);
+        if (!fresh) {
+            String cached = cacheGet(cacheKey);
+            if (cached != null) {
+                return MAPPER.readValue(cached, Map.class);
+            }
         }
         Map<String, Object> result = execute(resolved, params,
                 query -> runtime.queryAsCaller(resolved.report().entity(), query, callerToken));

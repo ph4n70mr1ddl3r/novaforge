@@ -116,6 +116,25 @@ public class ScriptSandbox {
     }
 
     /**
+     * Boot warmup: the first {@code Context.eval} in a JVM pays GraalVM's one-time
+     * truffle-JS bootstrap (class loading + compilation) — easily a second or more of
+     * CPU, which lands inside whichever guest script runs first and trips its CPU
+     * budget for work the script never did (found live: the ERP costing script died
+     * on the first fire after a cold start). A no-op eval at startup moves that cost
+     * outside every guest budget; ADR-003's deferred warm pools stay deferred — this
+     * is initialization, not pooling. Failures are swallowed: a warmup miss only
+     * means the first real execution pays bootstrap, exactly the old behavior.
+     */
+    @jakarta.annotation.PostConstruct
+    void warmEngine() {
+        try {
+            runCapped("0", (bindings, logs) -> { });
+        } catch (RuntimeException ignored) {
+            // never a boot failure — see above
+        }
+    }
+
+    /**
      * Executes {@code script} against the read-only {@code record} view as
      * {@code caller}. Throws {@link PlatformException} VALIDATION_FAILED for every
      * author-side outcome (script error, cap kill, malformed result); host errors

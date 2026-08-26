@@ -174,9 +174,13 @@ public class InboundProcessor {
         String entity = hook.webhook().entity();
         String mode = mapping.mode() == null ? WebhookDefinition.Mapping.MODE_CREATE : mapping.mode();
         if (WebhookDefinition.Mapping.MODE_UPSERT.equals(mode) && !mapping.keyFields().isEmpty()) {
+            // the query-DSL leaf shape the runtime's list parser pins (field/op/value) —
+            // a bare {field: value} map 400s ("filter.field is required"; found live)
             Map<String, Object> filter = new LinkedHashMap<>();
             for (String keyField : mapping.keyFields()) {
-                filter.put(keyField, body.get(keyField));
+                filter.put("field", keyField);
+                filter.put("op", "eq");
+                filter.put("value", body.get(keyField));
             }
             RuntimeClient.ListPage found = runtime.lookup(tenantId, entity,
                     Map.of("filter", filter, "page", Map.of("size", 1)));
