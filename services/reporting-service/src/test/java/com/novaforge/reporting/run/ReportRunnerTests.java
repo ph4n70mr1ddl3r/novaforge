@@ -103,8 +103,11 @@ class ReportRunnerTests {
         // the runtime leg answers the grouped query and its totals twin distinctly
         // (the twin drops groupBy) and counts *runs* — one grouped call per run; the
         // sharing-rule row filters the real runtime applies are invisible here by
-        // design: this suite pins that the runner never bypasses the actor boundary
-        when(runtime.queryAsCaller(eq("Invoice"), any(), any())).thenAnswer(inv -> {
+        // design: this suite pins that the runner never bypasses the actor boundary.
+        // The entity address is app-qualified — the owning app disambiguates a
+        // tenant's same-named entities (found live: ERP and the A/R demo both
+        // define `Invoice`; the unqualified leg rejected as ambiguous)
+        when(runtime.queryAsCaller(eq("ArDesk.Invoice"), any(), any())).thenAnswer(inv -> {
             Map<String, Object> query = inv.getArgument(1, Map.class);
             if (query.containsKey("groupBy")) {
                 executions.incrementAndGet();

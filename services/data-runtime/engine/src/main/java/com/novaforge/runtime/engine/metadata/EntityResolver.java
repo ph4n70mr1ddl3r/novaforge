@@ -49,6 +49,15 @@ public class EntityResolver {
     }
 
     public EntityHandle resolve(UUID tenantId, String entityApiName) {
+        // The app-qualified form `App.Entity` — the runtime's disambiguation surface
+        // when a tenant's published apps collide on an entity apiName (the ambiguity
+        // error below names it). ApiNames carry no dots (save-validation: word
+        // characters only), so a dotted name can only be the qualified form.
+        int dot = entityApiName.indexOf('.');
+        if (dot > 0 && dot < entityApiName.length() - 1) {
+            return resolveQualified(tenantId, entityApiName.substring(0, dot),
+                    entityApiName.substring(dot + 1));
+        }
         EntityHandle handle = searchCached(tenantId, entityApiName);
         if (handle == null) {
             refreshTenant(tenantId);
@@ -59,6 +68,32 @@ public class EntityResolver {
                     "no published entity named " + entityApiName);
         }
         return handle;
+    }
+
+    /**
+     * The qualified resolution: the app's apiName pins the bundle, the entity
+     * resolves within it — a same-named entity in another published app of the
+     * tenant can never shadow or be shadowed (the exact collision the unqualified
+     * path rejects as ambiguous).
+     */
+    private EntityHandle resolveQualified(UUID tenantId, String appApiName, String entityApiName) {
+        java.util.function.Predicate<MetadataClient.PublishedApp> isApp =
+                app -> app.apiName().equals(appApiName);
+        MetadataClient.PublishedApp indexed = index(tenantId).stream().filter(isApp).findFirst().orElse(null);
+        if (indexed == null) {
+            refreshTenant(tenantId);
+            indexed = index(tenantId).stream().filter(isApp).findFirst().orElse(null);
+        }
+        if (indexed == null) {
+            throw new PlatformException(PlatformErrorCode.NOT_FOUND,
+                    "no published app named " + appApiName + " for this tenant");
+        }
+        AppDefinition bundle = bundle(tenantId, indexed.appId());
+        EntityDefinition entity = bundle.entity(entityApiName).orElseThrow(() ->
+                new PlatformException(PlatformErrorCode.NOT_FOUND,
+                        "no published entity named " + appApiName + "." + entityApiName));
+        return new EntityHandle(indexed.appId(), bundle.apiName(), indexed.version(), entity,
+                bundle.apiName() + "." + entityApiName);
     }
 
     /** The published bundle for an app (cached, version-checked against the index). */

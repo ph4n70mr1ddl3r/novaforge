@@ -80,7 +80,7 @@ public class RecordEngine {
                                       Map<String, Object> body) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         AppDefinition app = resolver.bundle(tenantId, handle.appId());
-        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.CREATE, entityApiName,
+        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.CREATE, handle.entity().apiName(),
                 handle.appApiName(), app.permissionSet());
 
         List<ProblemErrors.FieldError> errors = new ArrayList<>();
@@ -116,7 +116,7 @@ public class RecordEngine {
                                       UUID id, int expectedVersion, Map<String, Object> body) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         AppDefinition app = resolver.bundle(tenantId, handle.appId());
-        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.UPDATE, entityApiName,
+        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.UPDATE, handle.entity().apiName(),
                 handle.appApiName(), app.permissionSet());
 
         RecordStore.StoredRecord existing = records.find(tenantId, handle.entityKey(), id, false)
@@ -169,7 +169,7 @@ public class RecordEngine {
                        int expectedVersion) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         AppDefinition app = resolver.bundle(tenantId, handle.appId());
-        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.DELETE, entityApiName,
+        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.DELETE, handle.entity().apiName(),
                 handle.appApiName(), app.permissionSet());
 
         RecordStore.StoredRecord existingRecord = records.find(tenantId, handle.entityKey(),
@@ -194,7 +194,7 @@ public class RecordEngine {
                                    boolean includeDeleted) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         AppDefinition app = resolver.bundle(tenantId, handle.appId());
-        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, entityApiName,
+        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, handle.entity().apiName(),
                 handle.appApiName(), app.permissionSet());
         if (includeDeleted) {
             roleMatrix.requireAdmin(tenantId, actorId);   // admin-only (PHASE-1 §5)
@@ -228,7 +228,7 @@ public class RecordEngine {
                                        String queryJson) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         AppDefinition app = resolver.bundle(tenantId, handle.appId());
-        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, entityApiName,
+        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, handle.entity().apiName(),
                 handle.appApiName(), app.permissionSet());
         QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
         QueryLowering lowering = new QueryLowering(handle.entity());
@@ -258,20 +258,20 @@ public class RecordEngine {
                                                 String queryJson) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         AppDefinition app = resolver.bundle(tenantId, handle.appId());
-        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, entityApiName,
+        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, handle.entity().apiName(),
                 handle.appApiName(), app.permissionSet());
         QueryModel.AggregateQuery query = QueryParser.parseAggregate(queryJson, handle.entity());
         // aggregates leak values, not rows — hidden group-by/aggregate fields fail closed
         for (QueryModel.GroupBy group : query.groupBy()) {
             requireFieldVisible(roleMatrix.fieldAccess(tenantId, actorId, handle.appApiName(),
-                    app.permissionSet(), entityApiName, group.field()), entityApiName,
-                    group.field());
+                    app.permissionSet(), handle.entity().apiName(), group.field()),
+                    handle.entity().apiName(), group.field());
         }
         for (QueryModel.Aggregate aggregate : query.aggregates()) {
             if (aggregate.field() != null) {
                 requireFieldVisible(roleMatrix.fieldAccess(tenantId, actorId, handle.appApiName(),
-                        app.permissionSet(), entityApiName, aggregate.field()), entityApiName,
-                        aggregate.field());
+                        app.permissionSet(), handle.entity().apiName(), aggregate.field()),
+                        handle.entity().apiName(), aggregate.field());
             }
         }
         QueryLowering.Lowered lowered = new QueryLowering(handle.entity())
@@ -301,7 +301,7 @@ public class RecordEngine {
                     "runAsRole must resolve against the app's roles: " + asRole);
         }
         boolean granted = app.permissionSet().objectPermissions().stream()
-                .filter(p -> p.entity().equals(entityApiName))
+                .filter(p -> p.entity().equals(handle.entity().apiName()))
                 .filter(p -> p.role().equals(asRole))
                 .anyMatch(p -> p.allows("read"));
         if (!granted) {
@@ -310,14 +310,14 @@ public class RecordEngine {
         }
         QueryModel.AggregateQuery query = QueryParser.parseAggregate(queryJson, handle.entity());
         for (QueryModel.GroupBy group : query.groupBy()) {
-            requireFieldVisible(roleFieldAccess(app, entityApiName, group.field(), asRole),
-                    entityApiName, group.field());
+            requireFieldVisible(roleFieldAccess(app, handle.entity().apiName(), group.field(), asRole),
+                    handle.entity().apiName(), group.field());
         }
         for (QueryModel.Aggregate aggregate : query.aggregates()) {
             if (aggregate.field() != null) {
                 requireFieldVisible(
-                        roleFieldAccess(app, entityApiName, aggregate.field(), asRole),
-                        entityApiName, aggregate.field());
+                        roleFieldAccess(app, handle.entity().apiName(), aggregate.field(), asRole),
+                        handle.entity().apiName(), aggregate.field());
             }
         }
         QueryLowering.Lowered lowered = new QueryLowering(handle.entity())
@@ -559,7 +559,7 @@ public class RecordEngine {
                     "runAsRole must resolve against the app's roles: " + asRole);
         }
         boolean granted = app.permissionSet().objectPermissions().stream()
-                .filter(p -> p.entity().equals(entityApiName))
+                .filter(p -> p.entity().equals(handle.entity().apiName()))
                 .filter(p -> p.role().equals(asRole))
                 .anyMatch(p -> p.allows("read"));
         if (!granted) {
@@ -583,7 +583,7 @@ public class RecordEngine {
                 listSql.sql(), listSql.params());
         java.util.function.Predicate<String> hidden = field ->
                 com.novaforge.metadata.PermissionSet.FieldSecurity.HIDDEN.equals(
-                        roleFieldAccess(app, entityApiName, field, asRole));
+                        roleFieldAccess(app, handle.entity().apiName(), field, asRole));
         List<Map<String, Object>> rows = page.rows().stream()
                 .filter(row -> restriction == null || restriction.recordVisible().test(row))
                 .map(row -> stripHidden(row, hidden))
@@ -944,7 +944,7 @@ public class RecordEngine {
                                              UUID recordId, String hookName) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         AppDefinition app = resolver.bundle(tenantId, handle.appId());
-        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, entityApiName,
+        roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, handle.entity().apiName(),
                 handle.appApiName(), app.permissionSet());
         RecordStore.StoredRecord record = records.find(tenantId, handle.entityKey(), recordId,
                         false)

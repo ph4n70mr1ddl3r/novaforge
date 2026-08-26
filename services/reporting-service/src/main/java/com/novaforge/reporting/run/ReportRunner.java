@@ -99,7 +99,7 @@ public class ReportRunner {
             }
         }
         Map<String, Object> result = execute(resolved, params,
-                query -> runtime.queryAsCaller(resolved.report().entity(), query, callerToken));
+                query -> runtime.queryAsCaller(qualified(resolved), query, callerToken));
         cacheSet(cacheKey, MAPPER.writeValueAsString(result));
         return result;
     }
@@ -124,10 +124,19 @@ public class ReportRunner {
         Resolved resolved = resolve(tenantId, appApiName, reportId);
         requireExecuteGrant(tenantId, actor, resolved);
         return execute(resolved, params, query ->
-                runtime.queryAsCaller(resolved.report().entity(), query, callerToken));
+                runtime.queryAsCaller(qualified(resolved), query, callerToken));
     }
 
     // --- internals ---
+
+    /**
+     * The runtime leg's entity address, app-qualified: a tenant's published apps may
+     * collide on an entity apiName (found live: the ERP and the A/R demo both define
+     * `Invoice`), and the report's owning app is the qualification the runtime needs.
+     */
+    private static String qualified(Resolved resolved) {
+        return resolved.app().apiName() + "." + resolved.report().entity();
+    }
 
     private Map<String, Object> execute(Resolved resolved, Map<String, Object> params,
                                         java.util.function.Function<Map<String, Object>,

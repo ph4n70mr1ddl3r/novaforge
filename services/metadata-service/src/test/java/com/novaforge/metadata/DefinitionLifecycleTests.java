@@ -362,6 +362,70 @@ class DefinitionLifecycleTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("app PATCH-merge never wipes the permission set (roles/matrix/sharing survive a label edit)")
+    void appPatchKeepsPermissionSet() throws Exception {
+        // the ERP shape: roles + a report job pinning runAsRole + a role-visible
+        // dashboard — found live driving the Phase 8 exit leg (a description PATCH
+        // rejected with must-resolve role errors; on apps without role references
+        // the same PATCH silently dropped the whole permission set)
+        MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps")
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                  "apiName": "PermissionMerge", "label": "Permission Merge",
+                                  "entities": [
+                                    { "apiName": "Invoice", "displayField": "name",
+                                      "fields": [ { "apiName": "name", "type": "text" },
+                                        { "apiName": "status", "type": "enum",
+                                          "values": ["DRAFT", "POSTED"] } ] } ],
+                                  "reports": [ { "id": "rep_ar", "entity": "Invoice",
+                                    "aggregates": [ { "op": "count" } ] } ],
+                                  "dashboards": [ { "id": "exec", "roles": ["controller"],
+                                    "widgets": [ { "widget": "kpi", "reportRef": "rep_ar", "span": 6 } ] } ],
+                                  "jobs": [ { "name": "nightlyAging", "cron": "0 0 2 * * *",
+                                    "target": "report",
+                                    "params": { "reportId": "rep_ar", "runAsRole": "reporting",
+                                      "recipients": { "roles": ["controller"] }, "format": "csv" } } ],
+                                  "permissionSet": {
+                                    "roles": [ { "name": "controller" },
+                                               { "name": "reporting" } ],
+                                    "objectPermissions": [
+                                      { "role": "controller", "entity": "Invoice",
+                                        "read": true } ] }
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+        String appId = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+
+        // a patch that touches nothing but the description must not adopt the patch's
+        // (empty-by-default) permission set — the merge treats absent as absent
+        mockMvc.perform(patch("/api/v1/metadata/apps/" + appId)
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("{ \"description\": \"patched live\" }"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.description").value("patched live"))
+                .andExpect(jsonPath("$.permissionSet.roles[?(@.name=='reporting')]").isNotEmpty())
+                .andExpect(jsonPath("$.permissionSet.roles[?(@.name=='controller')]").isNotEmpty())
+                .andExpect(jsonPath("$.permissionSet.objectPermissions[0].entity").value("Invoice"));
+
+        // an explicit permissionSet patch still lands (the RBAC editor's save path)
+        mockMvc.perform(patch("/api/v1/metadata/apps/" + appId)
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "permissionSet": {
+                                    "roles": [ { "name": "controller" },
+                                               { "name": "reporting" },
+                                               { "name": "clerk" } ] } }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.permissionSet.roles[?(@.name=='clerk')]").isNotEmpty());
+    }
+
+    @Test
     @DisplayName("expression slots compile-check at save: unresolved references and clock-in-formulas reject")
     void expressionCompileCheck() throws Exception {
         // validation rule referencing an unknown field → 4000 with the expression error

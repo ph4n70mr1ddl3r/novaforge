@@ -505,11 +505,12 @@ public class DefinitionService {
                 current.pages(),
                 patch.settings() != null && !patch.settings().sequences().isEmpty()
                         ? patch.settings() : current.settings(),
-                patch.permissionSet() != null && (patch.permissionSet().roles() != null
-                        || !patch.permissionSet().objectPermissions().isEmpty()
-                        || !patch.permissionSet().fieldSecurity().isEmpty()
-                        || !patch.permissionSet().sharingRules().isEmpty())
-                        ? patch.permissionSet() : current.permissionSet(),
+                patch.permissionSet() == null
+                        || (patch.permissionSet().roles().isEmpty()
+                        && patch.permissionSet().objectPermissions().isEmpty()
+                        && patch.permissionSet().fieldSecurity().isEmpty()
+                        && patch.permissionSet().sharingRules().isEmpty())
+                        ? current.permissionSet() : patch.permissionSet(),
                 patch.testSuites().isEmpty() ? current.testSuites() : patch.testSuites(),
                 patch.stateMachines().isEmpty() ? current.stateMachines() : patch.stateMachines(),
                 patch.slas().isEmpty() ? current.slas() : patch.slas(),

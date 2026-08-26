@@ -1773,3 +1773,45 @@ per-class test methods total on this runner — earlier passes' headline totals 
 double-counted surefire's per-module summary lines) and the frontend workspace
 unchanged-green (147 vitest). The gateway's health suite again needed a local Redis
 on 6379 (the standing environmental note).
+
+**Spec-review closeout (2026-08-26, tenth pass) — same-named entities across two
+published apps had no disambiguation surface, and an app PATCH could silently wipe
+the permission set.** Found live driving the Phase 8 exit leg: the ERP and the A/R
+demo both define `Invoice` in the dev workspace, and every unqualified runtime path
+— reports included — rejected as ambiguous with no way through:
+- **The resolver grows the app-qualified form `App.Entity`** (`EntityResolver.resolve`):
+  apiNames carry no dots (save-validation restricts them to word characters), so a
+  dotted name can only be the qualified form — it pins the bundle by app apiName and
+  resolves the entity within it; unknown apps/entities reject NOT_FOUND naming the
+  qualified name. The bare-name path is unchanged (unshared apiNames resolve exactly
+  as before; shared ones still reject as ambiguous — but now the error's escape hatch
+  exists). Every RecordEngine role-matrix and field-access check now addresses the
+  canonical `handle.entity().apiName()` instead of the raw caller string, so the
+  qualified form authorizes identically.
+- **Reporting rides the qualification**: the runner's runtime leg addresses
+  `<owning-app>.<entity>` (`ReportRunner.qualified`) — the report's owning app is the
+  disambiguation the runtime needs, so a published report over a colliding apiName
+  executes against its own app's entity. Pinned by `EntityResolverQualifiedTests`
+  (4 — ambiguity rejects, both qualified sides of a collision resolve to their own
+  field shapes, unknown qualified names NOT_FOUND, the common path unchanged) and
+  `ReportRunnerTests`' app-qualified stub.
+- **Live defect — the app PATCH-merge wiped the permission set.** The merge adopted
+  the patch's permissionSet whenever *any* branch was non-empty — but a JSON body that
+  omits the branch deserializes to an all-empty object, so any patch touching nothing
+  but the description dropped roles/objectPermissions/sharing entirely (on apps whose
+  reports pin `runAsRole`, the next publish then rejected with must-resolve role
+  errors). The merge now treats absent-or-empty as absent (keeps current) and only an
+  explicit non-empty patch replaces. Pinned by
+  `DefinitionLifecycleTests.appPatchKeepsPermissionSet` (label-only PATCH keeps the
+  ERP-shaped permission set; an explicit roles PATCH still lands).
+- **§12's second line measured**: "Dashboard initial load = N report runs" — 100
+  sequential three-widget ArDesk loads through the gateway recorded in
+  `docs/loadtests/results-2026-08-23-report-perf.md` (p50 63.9 ms / p95 179.6 ms,
+  re-measured after the app-qualified leg landed).
+- **Ops helper committed**: `deploy/scripts/start-live-stack.sh` launches every
+  service jar as a host JVM against the compose infra (the Phases 4–8 exit-leg
+  launcher the live runs used, previously ad-hoc shell history).
+
+Verified: `./mvnw verify` green end to end (+5 test methods this pass — 4
+`EntityResolverQualifiedTests`, 1 `DefinitionLifecycleTests`; `ReportRunnerTests`
+re-pinned) with the frontend workspace unchanged.

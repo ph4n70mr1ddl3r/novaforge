@@ -58,3 +58,21 @@ the `published-apps` service-caller index omitted `apiName` (every service-consu
 sync — Scheduler jobs, workflow processes/SLAs, Reporting definitions — synced from a
 null/empty app key), and the scheduler's registry never pruned vanished definitions
 (the resulting orphan row fired and failed forever). See IMPLEMENTATION.md Phase 5.
+
+## Dashboard initial load (§12's second line — measured 2026-08-26, same stack)
+
+§12: "Dashboard initial load = N report runs; measured and reported, not gated." The
+`ArDesk` `exec` dashboard composes three widgets over `arAging` (kpi/chart/table —
+one report run each, PHASE-5 §5): 100 sequential initial loads through the gateway
+with full JWT validation, warm result cache, as `demo`:
+
+| Leg | p50 | p95 |
+|---|---|---|
+| Dashboard initial load (3 widget runs) | 63.9 ms | 179.6 ms |
+
+Context: the ArDesk fixture is small (6 invoices); the per-run cost at scale is
+bounded by the 1M-row legs above (warm p95 132.6 ms per run — a 3-widget dashboard
+over that fixture composes to roughly 3× the warm per-run p95, still far under any
+perceived-latency bar). Re-measured after the app-qualified report leg landed: the
+same run now executes with a second published app defining `Invoice` in the tenant
+(the ERP dogfood) — the disambiguation adds no measurable cost.
