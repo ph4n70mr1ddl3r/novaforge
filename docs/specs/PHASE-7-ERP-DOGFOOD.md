@@ -57,12 +57,14 @@ per tenant; documents may be issued in a document currency converted at the rate
 the document date (rate table entity); GL posts in book currency; realized
 gain/loss posts on settlement. Revaluation/unrealized gain is a logged gap, not v1.
 
-## 3. The Two Anticipated Platform Enhancements
+## 3. Platform Enhancements (the two anticipated harvests, plus the 2026-08-26 harvested pair)
 
-Both are *expected harvests* — PLAN.md §5 says the GL "may require platform
+§§3.1–3.2 are *expected harvests* — PLAN.md §5 says the GL "may require platform
 enhancements"; the spec pre-proposes their shape so implementation can land them
 as versioned platform features (ADR-008 #2's growth path) mid-phase once the gap
-is confirmed in practice.
+is confirmed in practice. §§3.3–3.4 are the gap log's own growth: two entries
+triaged *accept-as-platform-feature* at the weekly review (§8), specified here
+(their own sections, per the SDD rule) before implementation.
 
 ### 3.1 `freezeOnTerminal` (posting/immutability primitive)
 
@@ -86,6 +88,61 @@ feature's harvest section per §8 before implementation.
 
 Both land behind the same publish/compile machinery as every other definition, with
 harness vocabulary to assert them (§9).
+
+### 3.3 `createRecord` Step Results + Deep Template Resolution (the G-1 harvest, 2026-08-26)
+
+Logged at the dogfood (G-1) and triaged *accept-as-platform-feature* per §8 — this
+section is the versioned feature's spec; it lands as flow-IR growth compatible with
+already-published graphs (nothing existing changes meaning).
+
+- **The created record enters step scope.** A `createRecord` step's created record —
+  the canonical field view plus the generated `id` — is captured into flow scope,
+  addressed by later steps of the same graph through the template reference form
+  `${record.<stepId>.<path…>}`: the exact mirror of the existing
+  `${connector.<stepId>.<path…>}` convention (PHASE-6 §3), so the two step-result
+  namespaces read identically. `${record.<stepId>.id}` is the created id — G-1's
+  logged `${step.id}` proposal, pinned here in the namespaced form for that
+  symmetry. The publish compiler checks the step reference exactly as connector
+  references are checked: the addressed step must be a `createRecord` step of the
+  same graph; the path below it resolves (or resolves empty) against the created
+  view at run time — a promoted field is addressable, a failed create never lands
+  in scope (the step failed, the failure policy already governs), and references
+  from a resumed suspension resolve empty like every other pre-suspension step
+  result. `iterate` bodies inherit the scope (a body step may address a
+  pre-iterate `createRecord` result, per row); `updateRecord` deliberately stays
+  out — the created record is the version-stamped result of a create, and an
+  updated view would be a stale lie one write later.
+- **`${…}` template resolution is deep.** Record-template resolution recurses into
+  nested maps and arrays: an inline children array inside a `createRecord`
+  template — the §2 GL shape, *create journal lines from templates* (§5) — resolves
+  `${…}` references per row against the same bindings as top-level values (record
+  fields, `id`, connector results, step results). The write path is unchanged:
+  inline children were already accepted (PHASE-1 §5); only template resolution was
+  top-level. The compile checks deepen identically — connector/record references
+  anywhere in a template or payload tree are step-checked at publish.
+
+### 3.4 `$decimal` — Exact Decimals in the Script Sandbox (the G-4 harvest, 2026-08-26)
+
+Logged at the dogfood (G-4) and triaged *accept-as-platform-feature* per §8. GraalVM
+JS computes in float64; money through scripts was exact only by corpus coincidence
+(the logged workaround). The sandbox's closed surface grows one member:
+
+- `$decimal.of(x)` constructs an exact decimal: from a **string** (`'50.00'`) or an
+  **integral JS number** (converted exactly); a non-integral number rejects with
+  guidance — float64 input is precisely what this surface exists to avoid, so it is
+  never silently coerced.
+- The decimal value carries a closed method set mirroring the expression DSL's
+  numeric vocabulary (PHASE-2 Annex A): `add`, `subtract`, `multiply`, `divide`
+  (scale-required — an explicit scale argument, banker's rounding), `negate`,
+  `abs`, `round(scale)` (banker's rounding, the ARCHITECTURE.md §4 context), `min`,
+  `max`, `compareTo`, `isZero`, `scale`, `toPlainString`/`toString`.
+- **Crossing back:** a decimal value returned by the script (directly or inside the
+  result) canonicalizes to its exact plain string — the same wire form monetary
+  step templates pin (PHASE-3 §7) and the write path's decimal coercion accepts
+  exactly (PHASE-1 §5). The PLAN.md §1 money rule holds *by construction* on the
+  script path: nothing a script computes crosses as a float.
+- No host classes, no I/O — the binding is pure arithmetic like `$log` is pure
+  capture; the ADR-003 surface stays closed.
 
 ## 4. Period Close Mechanics
 
