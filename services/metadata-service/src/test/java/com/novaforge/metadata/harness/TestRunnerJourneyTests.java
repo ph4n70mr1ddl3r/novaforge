@@ -93,6 +93,8 @@ class TestRunnerJourneyTests {
     private static final AtomicReference<String> SCAN_PATH = new AtomicReference<>();
     private static final AtomicReference<String> SCAN_BODY = new AtomicReference<>();
     private static final AtomicReference<String> SCAN_TOKEN = new AtomicReference<>();
+    private static final AtomicReference<String> REOBSERVE_METHOD = new AtomicReference<>();
+    private static final AtomicReference<String> REOBSERVE_PATH = new AtomicReference<>();
 
     @BeforeAll
     static void stubs() throws IOException {
@@ -110,6 +112,15 @@ class TestRunnerJourneyTests {
             if (path.startsWith("/api/v1/admin/")) {
                 respond(exchange, 200, path.endsWith("/role-assignments")
                         ? "{}" : "{\"tenantId\":\"11111111-1111-1111-1111-111111111111\",\"userId\":\"22222222-2222-2222-2222-222222222222\"}");
+                return;
+            }
+            if ("GET".equals(exchange.getRequestMethod())
+                    && path.equals("/api/v1/runtime/Thing/r-1")) {
+                // the resolveTask re-observation leg: a successful resolution re-reads
+                // the task's record so ${Entity[n]} assertions see the resumed state
+                REOBSERVE_METHOD.set(exchange.getRequestMethod());
+                REOBSERVE_PATH.set(path);
+                respond(exchange, 200, "{\"id\":\"r-1\",\"name\":\"t-1\",\"status\":\"POSTED\"}");
                 return;
             }
             if ("GET".equals(exchange.getRequestMethod()) && path.equals("/api/v1/runtime/Thing")) {
@@ -159,7 +170,8 @@ class TestRunnerJourneyTests {
             }
             if (path.endsWith("/approve") && "POST".equals(method)) {
                 respond(exchange, 200, "{\"id\":\"t-1\",\"type\":\"approval\","
-                        + "\"status\":\"APPROVED\",\"assignee\":\"actor-manager\"}");
+                        + "\"status\":\"APPROVED\",\"assignee\":\"actor-manager\","
+                        + "\"entity\":\"JourneyApp.Thing\",\"recordId\":\"r-1\"}");
                 return;
             }
             if (path.endsWith("/reject") && "POST".equals(method)) {
@@ -248,6 +260,7 @@ class TestRunnerJourneyTests {
                         new Step("scanSla", null, null, null,
                                 Map.of("advance", "PT26H"), "ok")),
                         List.of("${Task[0].status} == 'APPROVED'",
+                                "${Thing[0].status} == 'POSTED'",
                                 "${Query[0].count} == 1",
                                 "${Query[1].count} == 1",
                                 "${Report[0].rowCount} == 1",
@@ -282,6 +295,11 @@ class TestRunnerJourneyTests {
                 "{\"tenantId\":\"11111111-1111-1111-1111-111111111111\",\"advance\":\"PT26H\"}", Map.class),
                 MAPPER.readValue(SCAN_BODY.get(), Map.class));
         assertEquals("Bearer svc", SCAN_TOKEN.get());
+        // the resolveTask re-observation: a successful resolution re-reads the task's
+        // record through the runtime (a GET, the app-prefixed entity stripped) so
+        // post-resolution assertions read the resumed state — never a stale snapshot
+        assertEquals("GET", REOBSERVE_METHOD.get());
+        assertEquals("/api/v1/runtime/Thing/r-1", REOBSERVE_PATH.get());
     }
 
     @Test

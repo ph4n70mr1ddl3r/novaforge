@@ -1,0 +1,253 @@
+{
+  "apiName": "exitJourney",
+  "label": "Phase 4 exit journey — PO above threshold: approval, SoD, escalation (PHASE-4 §1/§14 item 1)",
+  "cases": [
+    {
+      "name": "approve-to-posted",
+      "fixtures": [],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "template": {
+            "number": "PO-APPROVE-1",
+            "label": "Forklift service contract",
+            "total": "5000.0000",
+            "threshold": "1000.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "recordId": "${PurchaseOrder[0].id}",
+          "template": { "version": "${PurchaseOrder[0].version}", "status": "SUBMITTED" },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "manager",
+          "template": { "filter": { "status": "OPEN" } },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "manager",
+          "recordId": "${Task[0].id}",
+          "template": { "action": "approve", "comment": "within Q3 budget" },
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${Task[0].status} == 'APPROVED'",
+        "${PurchaseOrder[0].status} == 'POSTED'"
+      ]
+    },
+    {
+      "name": "reject-path",
+      "fixtures": [],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "template": {
+            "number": "PO-REJECT-1",
+            "label": "Unbudgeted conference sponsorship",
+            "total": "2500.0000",
+            "threshold": "1000.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "recordId": "${PurchaseOrder[0].id}",
+          "template": { "version": "${PurchaseOrder[0].version}", "status": "SUBMITTED" },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "manager",
+          "template": { "filter": { "status": "OPEN" } },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "manager",
+          "recordId": "${Task[0].id}",
+          "template": { "action": "reject", "comment": "no budget line" },
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${Task[0].status} == 'REJECTED'",
+        "${PurchaseOrder[0].status} == 'REJECTED'"
+      ]
+    },
+    {
+      "name": "below-threshold-auto-posts",
+      "fixtures": [],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "template": {
+            "number": "PO-AUTO-1",
+            "label": "Office supplies",
+            "total": "250.0000",
+            "threshold": "1000.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "recordId": "${PurchaseOrder[0].id}",
+          "template": { "version": "${PurchaseOrder[0].version}", "status": "SUBMITTED" },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "manager",
+          "template": { "filter": { "status": "OPEN" } },
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${PurchaseOrder[0].status} == 'POSTED'",
+        "${Query[0].count} == 0"
+      ]
+    },
+    {
+      "name": "sla-warn-breach-escalation",
+      "fixtures": [],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "template": {
+            "number": "PO-SLA-1",
+            "label": "Fleet renewal deposit",
+            "total": "9000.0000",
+            "threshold": "1000.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "recordId": "${PurchaseOrder[0].id}",
+          "template": { "version": "${PurchaseOrder[0].version}", "status": "SUBMITTED" },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "manager",
+          "template": { "filter": { "status": "OPEN" } },
+          "expect": "ok"
+        },
+        {
+          "op": "scanSla",
+          "asRole": "manager",
+          "template": { "advance": "PT50M" },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "manager",
+          "template": { "filter": { "status": "OPEN" } },
+          "expect": "ok"
+        },
+        {
+          "op": "scanSla",
+          "asRole": "manager",
+          "template": { "advance": "PT2H" },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "manager",
+          "template": { "filter": { "status": "ESCALATED" } },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "seniorManager",
+          "template": { "filter": { "status": "OPEN" } },
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${Scan[0].warned} == 1",
+        "${Scan[0].breached} == 0",
+        "${Task[0].sla.warned} == true",
+        "${Scan[1].warned} == 0",
+        "${Scan[1].breached} == 1",
+        "${Task[0].status} == 'ESCALATED'",
+        "${Task[1].role} == 'Purchasing.seniorManager'",
+        "${Task[1].status} == 'OPEN'"
+      ]
+    },
+    {
+      "name": "sod-requester-cannot-approve",
+      "fixtures": [],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "manager",
+          "template": {
+            "number": "PO-SOD-1",
+            "label": "Self-approval attempt",
+            "total": "7500.0000",
+            "threshold": "1000.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "manager",
+          "recordId": "${PurchaseOrder[0].id}",
+          "template": { "version": "${PurchaseOrder[0].version}", "status": "SUBMITTED" },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "manager",
+          "template": { "filter": { "status": "OPEN" } },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "manager",
+          "recordId": "${Task[0].id}",
+          "template": { "action": "approve" },
+          "expect": "error(SOD_VIOLATION)"
+        }
+      ],
+      "assertExpressions": [
+        "${PurchaseOrder[0].status} == 'SUBMITTED'"
+      ]
+    }
+  ]
+}

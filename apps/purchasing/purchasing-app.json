@@ -1,0 +1,151 @@
+{
+  "apiName": "Purchasing",
+  "label": "Purchasing — the Phase 4 exit journey (PHASE-4 §1)",
+  "description": "PLAN.md's Phase 4 exit as an authored app: a purchase order requires manager approval above a threshold, with escalation. The §1 decomposition is the contract — machine (DRAFT→SUBMITTED→APPROVED|REJECTED; APPROVED→POSTED; REJECTED/POSTED terminal), threshold branch into requestApproval (managers, all-must-approve), SoD excluding the submitter, and a governing SLA whose breach escalates to the senior manager role. Zero scripts: the whole journey is declarative metadata verified by the exitJourney suite (§14 item 1) through the ADR-010 harness.",
+  "permissionSet": {
+    "roles": [
+      {
+        "name": "seniorManager",
+        "description": "Escalation target — receives the breach replacement task (§1 item 5)",
+        "level": 5
+      },
+      {
+        "name": "manager",
+        "description": "Approves purchase orders above threshold (SoD: never the submitter)",
+        "level": 10
+      },
+      {
+        "name": "buyer",
+        "description": "Raises and submits purchase orders (the requesting role)",
+        "level": 20
+      }
+    ],
+    "objectPermissions": [
+      { "role": "buyer", "entity": "PurchaseOrder", "create": true, "read": true, "update": true },
+      { "role": "manager", "entity": "PurchaseOrder", "create": true, "read": true, "update": true },
+      { "role": "seniorManager", "entity": "PurchaseOrder", "read": true }
+    ]
+  },
+  "entities": [
+    {
+      "apiName": "PurchaseOrder",
+      "label": "Purchase Order",
+      "displayField": "number",
+      "module": "PO",
+      "fields": [
+        {
+          "apiName": "number",
+          "type": "text",
+          "required": true,
+          "uniqueness": true
+        },
+        { "apiName": "label", "type": "text", "required": true },
+        {
+          "apiName": "total",
+          "type": "money",
+          "required": true
+        },
+        {
+          "apiName": "threshold",
+          "type": "money",
+          "required": true,
+          "default": { "value": 1000 }
+        },
+        {
+          "apiName": "status",
+          "type": "enum",
+          "values": ["DRAFT", "SUBMITTED", "APPROVED", "REJECTED", "POSTED"]
+        }
+      ],
+      "validations": [
+        {
+          "name": "totalNonnegative",
+          "scope": "record",
+          "expression": "total >= 0",
+          "message": "Order total cannot be negative"
+        }
+      ],
+      "hooks": [
+        {
+          "name": "submitForApproval",
+          "trigger": "afterSave",
+          "flow": {
+            "id": "b1",
+            "op": "branch",
+            "params": { "guard": "status == 'SUBMITTED'" },
+            "onTrue": "a1",
+            "onFalse": "p2",
+            "body": {
+              "id": "a1",
+              "op": "requestApproval",
+              "params": { "approvers": "Purchasing.manager", "mode": "all" },
+              "next": "p2",
+              "body": {
+                "id": "r1",
+                "op": "transitionState",
+                "params": { "to": "REJECTED" },
+                "body": {
+                  "id": "p2",
+                  "op": "transitionState",
+                  "params": { "to": "APPROVED" },
+                  "next": "p3",
+                  "body": {
+                    "id": "p3",
+                    "op": "transitionState",
+                    "params": { "to": "POSTED" },
+                    "next": "e1",
+                    "body": {
+                      "id": "e1",
+                      "op": "publishEvent",
+                      "params": {
+                        "name": "po.posted",
+                        "payload": { "number": "${number}", "total": "${total}" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "indexes": [
+        { "fields": ["status"] },
+        { "fields": ["total"] }
+      ]
+    }
+  ],
+  "stateMachines": [
+    {
+      "id": "sm_po",
+      "entity": "PurchaseOrder",
+      "stateField": "status",
+      "initial": "DRAFT",
+      "states": [
+        { "name": "DRAFT" },
+        { "name": "SUBMITTED" },
+        { "name": "APPROVED" },
+        { "name": "REJECTED", "terminal": true },
+        { "name": "POSTED", "terminal": true }
+      ],
+      "transitions": [
+        { "from": "DRAFT", "to": "SUBMITTED", "guard": "total > 0" },
+        { "from": "SUBMITTED", "to": "APPROVED" },
+        { "from": "SUBMITTED", "to": "REJECTED" },
+        { "from": "APPROVED", "to": "POSTED" }
+      ]
+    }
+  ],
+  "slas": [
+    {
+      "id": "poApprovalSla",
+      "scope": {
+        "taskType": "approval",
+        "match": "entity == 'Purchasing.PurchaseOrder'"
+      },
+      "target": "PT1H",
+      "warnAt": 0.5,
+      "onBreach": { "escalateTo": "Purchasing.seniorManager", "notify": true }
+    }
+  ]
+}

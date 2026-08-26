@@ -141,7 +141,7 @@
             "onTrue": "a1", "onFalse": null,
             "body": {
               "id": "a1", "op": "requestApproval",
-              "params": { "approvers": "accountingManager", "mode": "any" },
+              "params": { "approvers": "Erp.accountingManager", "mode": "any" },
               "next": "p1",
               "body": {
                 "id": "r1", "op": "publishEvent",
@@ -220,7 +220,7 @@
             "onTrue": "a1", "onFalse": null,
             "body": {
               "id": "a1", "op": "requestApproval",
-              "params": { "approvers": "accountingManager", "mode": "any" },
+              "params": { "approvers": "Erp.accountingManager", "mode": "any" },
               "next": "p1",
               "body": {
                 "id": "r1", "op": "publishEvent",

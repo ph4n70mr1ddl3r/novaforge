@@ -244,7 +244,7 @@ public class TestRunner {
                                     String.valueOf(step.template().get("version")), scope),
                             token, null);
                     case "queryRecord" -> queryRecord(step, token, scope);
-                    case "resolveTask" -> resolveTask(step, token, scope);
+                    case "resolveTask" -> resolveTask(step, token, scope, appApiName);
                     case "runReport" -> runReport(step, token, scope, appApiName);
                     case "postWebhook" -> postWebhook(step, scope, tenantId, hookSecrets);
                     case "scanSla" -> scanSla(step, scope, tenantId);
@@ -381,8 +381,21 @@ public class TestRunner {
         return MAPPER.valueToTree(remember(scope, "Report", MAPPER.valueToTree(shaped)));
     }
 
-    /** resolveTask (§12): approve/reject through the inbox API — no back door. */
-    private JsonNode resolveTask(Step step, String token, Map<String, Object> scope) {
+    /**
+     * resolveTask (§12): approve/reject through the inbox API — no back door.
+     *
+     * <p>On a successful resolution the resolved task's <em>record</em> is
+     * re-observed (a best-effort read as the resolving actor, remembered in place)
+     * — the suspension resume is synchronous, so the record's post-resolution
+     * state (an approval's {@code transitionState}, the onReject routing) is what
+     * {@code ${Entity[n]}} assertions read, never the stale pre-resolution snapshot.
+     * Found authoring the Phase 4 exit journey: resume-driven transitions were
+     * invisible to assertions because only the write steps re-observed records.
+     * A failed resolution (SoD, races) answers the problem body and re-observes
+     * nothing; an unreadable record degrades to the remembered snapshot.</p>
+     */
+    private JsonNode resolveTask(Step step, String token, Map<String, Object> scope,
+                                 String appApiName) {
         String taskId = interpolateText(step.recordId(), scope);
         String action = step.template() == null ? "approve"
                 : String.valueOf(step.template().getOrDefault("action", "approve"));
@@ -395,8 +408,33 @@ public class TestRunner {
             body = MAPPER.writeValueAsString(Map.of("comment",
                     interpolateText(String.valueOf(step.template().get("comment")), scope)));
         }
-        return workflowCall(HttpMethod.POST,
+        JsonNode resolved = workflowCall(HttpMethod.POST,
                 "/api/v1/workflow/tasks/" + url(taskId) + "/" + action, token, body);
+        if (resolved.isObject() && resolved.hasNonNull("id")
+                && resolved.hasNonNull("recordId")) {
+            reobserve(resolved.path("entity").asString(""),
+                    resolved.path("recordId").asString(), token, scope, appApiName);
+        }
+        return resolved;
+    }
+
+    /** Best-effort current-state read of a remembered record (degrades silently). */
+    private void reobserve(String entityKey, String recordId, String token,
+                           Map<String, Object> scope, String appApiName) {
+        String entity = entityKey.startsWith(appApiName + ".")
+                ? entityKey.substring(appApiName.length() + 1) : entityKey;
+        if (entity.isBlank() || recordId.isBlank()) {
+            return;
+        }
+        try {
+            JsonNode current = runtimeCall(HttpMethod.GET,
+                    "/api/v1/runtime/" + url(entity) + "/" + url(recordId), token, null);
+            if (current.isObject() && current.hasNonNull("id")) {
+                remember(scope, entity, current);
+            }
+        } catch (RuntimeException ignored) {
+            // no read grant or a gone record — the remembered snapshot stands
+        }
     }
 
     /**
