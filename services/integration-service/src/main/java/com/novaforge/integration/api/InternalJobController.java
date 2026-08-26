@@ -49,7 +49,7 @@ public class InternalJobController {
                     ? "00000000-0000-0000-0000-000000000000" : request.initiatedBy());
         } catch (IllegalArgumentException e) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                    "tenantId/initiatedBy must be uuids: " + e.getMessage());
+                    "tenantId/initiatedBy must be uuids: " + e.getMessage(), null, e);
         }
         UUID job = jobs.create(tenantId, JobStore.Kind.EXPORT_REPORT, request.app(), null, null,
                 request.reportId(), request.runAsRole(), request.params(), null, null,

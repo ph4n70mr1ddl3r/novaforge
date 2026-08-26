@@ -14,6 +14,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -21,7 +22,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -36,13 +40,16 @@ import org.testcontainers.containers.wait.strategy.Wait;
  * §11 item 3's executor half: the mock connector journey (a stub provider answers a
  * templated GET), delivery idempotency (a dedupe key returns the recorded outcome —
  * never a second provider call), and terminal failure parking in the DLQ with the
- * request preserved for builder replay. The timeout/failure-policy legs against the
- * flow engine live in the Data Runtime suite (callConnector before/after).
+ * request preserved for builder replay. The OAuth2 leg rides a mock token endpoint:
+ * RFC 6749 §2.3.1 Basic client authentication, tokens cached per credential until
+ * expiry, and a failed grant that never poisons the cache. The timeout/failure-policy
+ * legs against the flow engine live in the Data Runtime suite (callConnector before/after).
  */
 @SpringBootTest(properties = {
         "novaforge.connector.attempts=2",
         "novaforge.connector.backoff-initial-ms=20",
 })
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class ConnectorExecutorTests extends PostgresTestBase {
 
     static final UUID TENANT = UUID.fromString("11111111-1111-4111-8111-111111111111");
@@ -62,9 +69,30 @@ class ConnectorExecutorTests extends PostgresTestBase {
                     "operations": [
                       { "name": "listTransactions", "method": "GET",
                         "path": "/balance_transactions",
-                        "query": { "limit": "${limit}" } } ] } ],
+                        "query": { "limit": "${limit}" } } ] },
+                  { "id": "con_oauth", "type": "rest",
+                    "baseUrl": "OAUTH_A",
+                    "credential": "cred_oauth",
+                    "operations": [
+                      { "name": "ping", "method": "GET", "path": "/ping" } ] },
+                  { "id": "con_oauth_exp", "type": "rest",
+                    "baseUrl": "OAUTH_B",
+                    "credential": "cred_oauth_exp",
+                    "operations": [
+                      { "name": "ping", "method": "GET", "path": "/ping" } ] },
+                  { "id": "con_oauth_flaky", "type": "rest",
+                    "baseUrl": "OAUTH_C",
+                    "credential": "cred_oauth_flaky",
+                    "operations": [
+                      { "name": "ping", "method": "GET", "path": "/ping" } ] } ],
                 "credentials": [
-                  { "id": "cred_stripe", "kind": "api_key", "header": "Authorization" } ] } }
+                  { "id": "cred_stripe", "kind": "api_key", "header": "Authorization" },
+                  { "id": "cred_oauth", "kind": "oauth2_client_credentials",
+                    "tokenUrl": "TOKENENDPOINT", "clientId": "erp-client" },
+                  { "id": "cred_oauth_exp", "kind": "oauth2_client_credentials",
+                    "tokenUrl": "TOKENENDPOINT", "clientId": "erp-client" },
+                  { "id": "cred_oauth_flaky", "kind": "oauth2_client_credentials",
+                    "tokenUrl": "TOKENENDPOINT", "clientId": "erp-client" } ] } }
             """;
 
     static AppDefinition app;
@@ -82,6 +110,13 @@ class ConnectorExecutorTests extends PostgresTestBase {
     static volatile boolean failAll = false;
     static volatile String lastAuthorization;
     static volatile String lastQuery;
+
+    /** The mock token endpoint: hit count, the Basic grant it saw, and its TTL knob. */
+    static final AtomicInteger TOKEN_HITS = new AtomicInteger();
+    static volatile String lastTokenAuthorization;
+    static volatile String lastTokenBody;
+    static volatile long tokenExpiresIn = 300;
+    static volatile boolean tokenEndpointFails = false;
 
     @TestConfiguration
     static class Stubs {
@@ -135,9 +170,32 @@ class ConnectorExecutorTests extends PostgresTestBase {
             }
             respond(exchange, 200, "{\"object\":\"list\",\"data\":[{\"id\":\"txn_1\"}]}");
         });
+        // the OAuth2 connectors' provider legs — every one echoes the bearer it rode
+        for (String oauthConnector : List.of("con_oauth", "con_oauth_exp", "con_oauth_flaky")) {
+            provider.createContext("/" + oauthConnector, exchange -> {
+                lastAuthorization = exchange.getRequestHeaders().getFirst("Authorization");
+                respond(exchange, 200, "{\"ok\":true}");
+            });
+        }
+        provider.createContext("/token", exchange -> {
+            TOKEN_HITS.incrementAndGet();
+            lastTokenAuthorization = exchange.getRequestHeaders().getFirst("Authorization");
+            lastTokenBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            if (tokenEndpointFails) {
+                respond(exchange, 500, "{\"error\":\"token endpoint down\"}");
+                return;
+            }
+            respond(exchange, 200, "{\"access_token\":\"tok-" + TOKEN_HITS.get()
+                    + "\",\"expires_in\":" + tokenExpiresIn + "}");
+        });
         provider.start();
-        app = DefinitionParser.parseApp(APP_JSON.replace("STUB",
-                "http://127.0.0.1:" + provider.getAddress().getPort() + "/con_stripe_tx"));
+        String base = "http://127.0.0.1:" + provider.getAddress().getPort();
+        app = DefinitionParser.parseApp(APP_JSON
+                .replace("STUB", base + "/con_stripe_tx")
+                .replace("TOKENENDPOINT", base + "/token")
+                .replace("OAUTH_A", base + "/con_oauth")
+                .replace("OAUTH_B", base + "/con_oauth_exp")
+                .replace("OAUTH_C", base + "/con_oauth_flaky"));
     }
 
     @AfterAll
@@ -161,9 +219,13 @@ class ConnectorExecutorTests extends PostgresTestBase {
     @BeforeAll
     static void provisionSecret(@Autowired SecretStore secretStore) {
         secretStore.put(TENANT, "cred_stripe", SecretStore.PURPOSE_CREDENTIAL, "sk-test-123");
+        for (String credential : List.of("cred_oauth", "cred_oauth_exp", "cred_oauth_flaky")) {
+            secretStore.put(TENANT, credential, SecretStore.PURPOSE_CREDENTIAL, "sk-oauth-1");
+        }
     }
 
     @Test
+    @Order(1)
     @DisplayName("mock connector journey: templated call executes with credentials and returns the body")
     void mockJourney() {
         int before = HITS.get();
@@ -178,6 +240,7 @@ class ConnectorExecutorTests extends PostgresTestBase {
     }
 
     @Test
+    @Order(2)
     @DisplayName("idempotent deliveries: a dedupe key returns the recorded outcome, never a second call")
     void dedupeKeyCollapses() {
         connectors.execute(TENANT, "Erp", "con_stripe_tx", "listTransactions",
@@ -190,6 +253,7 @@ class ConnectorExecutorTests extends PostgresTestBase {
     }
 
     @Test
+    @Order(3)
     @DisplayName("terminal failure: bounded retries exhaust, the request parks in the DLQ")
     void terminalFailureParksInDlq() {
         failAll = true;
@@ -206,6 +270,7 @@ class ConnectorExecutorTests extends PostgresTestBase {
     }
 
     @Test
+    @Order(4)
     @DisplayName("unknown operations reject before any provider call (publish-checked, executor-gated)")
     void unknownOperationRejects() {
         int before = HITS.get();
@@ -214,5 +279,62 @@ class ConnectorExecutorTests extends PostgresTestBase {
                 .isInstanceOf(PlatformException.class)
                 .hasMessageContaining("no operation noSuchOperation");
         assertThat(HITS.get()).isEqualTo(before);
+    }
+
+    // --- the OAuth2 client-credentials leg (RFC 6749 §2.3.1, against the mock token endpoint) ---
+
+    @Test
+    @Order(5)
+    @DisplayName("oauth2 journey: a Basic-auth grant fetches the token once and caches it")
+    void oauthJourneyRidesBasicGrantAndCaches() {
+        tokenExpiresIn = 300;
+        int before = TOKEN_HITS.get();
+        var execution = connectors.execute(TENANT, "Erp", "con_oauth", "ping",
+                Map.of(), "oauth-key-1");
+        assertThat(execution.status()).isEqualTo(200);
+        int fetched = TOKEN_HITS.get();
+        assertThat(fetched).isEqualTo(before + 1);
+        // RFC 6749 §2.3.1: the client credentials ride the Basic header — never the body
+        assertThat(lastTokenAuthorization).isEqualTo("Basic " + Base64.getEncoder()
+                .encodeToString("erp-client:sk-oauth-1".getBytes(StandardCharsets.UTF_8)));
+        assertThat(lastTokenBody).isEqualTo("grant_type=client_credentials");
+        assertThat(lastAuthorization).isEqualTo("Bearer tok-" + fetched);
+        // fresh token — the second call rides the cache, no second grant
+        connectors.execute(TENANT, "Erp", "con_oauth", "ping", Map.of(), "oauth-key-2");
+        assertThat(TOKEN_HITS.get()).isEqualTo(fetched);
+    }
+
+    @Test
+    @Order(6)
+    @DisplayName("an expired grant refetches — the cache honors the refresh window, not the first fetch")
+    void expiredGrantRefetches() {
+        tokenExpiresIn = 0;   // refreshAt lands in the past — every grant is born expired
+        try {
+            connectors.execute(TENANT, "Erp", "con_oauth_exp", "ping", Map.of(), "oauth-key-3");
+            int afterFirst = TOKEN_HITS.get();
+            connectors.execute(TENANT, "Erp", "con_oauth_exp", "ping", Map.of(), "oauth-key-4");
+            assertThat(TOKEN_HITS.get()).isEqualTo(afterFirst + 1);
+        } finally {
+            tokenExpiresIn = 300;
+        }
+    }
+
+    @Test
+    @Order(7)
+    @DisplayName("a failed grant never poisons the cache — recovery follows the endpoint back up")
+    void failedGrantDoesNotPoisonTheCache() {
+        tokenEndpointFails = true;
+        try {
+            assertThatThrownBy(() -> connectors.execute(TENANT, "Erp", "con_oauth_flaky",
+                    "ping", Map.of(), "oauth-key-5"))
+                    .isInstanceOf(PlatformException.class)
+                    .hasMessageContaining("failed terminally");
+        } finally {
+            tokenEndpointFails = false;
+        }
+        // the failure cached nothing — the next call fetches and succeeds
+        var recovered = connectors.execute(TENANT, "Erp", "con_oauth_flaky",
+                "ping", Map.of(), "oauth-key-6");
+        assertThat(recovered.status()).isEqualTo(200);
     }
 }

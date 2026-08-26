@@ -90,7 +90,7 @@ public class SecretStore {
             return hex.toString();
         } catch (Exception e) {
             throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "sha-256 unavailable: " + e.getMessage());
+                    "sha-256 unavailable: " + e.getMessage(), null, e);
         }
     }
 }

@@ -3,6 +3,7 @@ package com.novaforge.runtime.api;
 import com.novaforge.common.context.TenantContext;
 import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
+import com.novaforge.common.error.ProblemErrors;
 import com.novaforge.runtime.engine.RecordEngine;
 import com.novaforge.runtime.engine.idempotency.IdempotencyRecorder;
 import com.novaforge.runtime.engine.query.QueryModel;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -161,27 +163,33 @@ public class RecordController {
 
     /**
      * The GET list canonical encoding (§5): each of filter/sort/page holds its DSL node
-     * as compact JSON, percent-encoded per RFC 3986 — no bespoke flattening.
+     * as compact JSON, percent-encoded per RFC 3986. Composed through the mapper — never
+     * hand-built strings — with each node parsed once at the door, so a malformed DSL
+     * node rejects as VALIDATION_FAILED here rather than as a parse error downstream.
      */
     static String encodeQuery(String filter, String sort, String page) {
-        StringBuilder json = new StringBuilder("{");
+        Map<String, JsonNode> query = new LinkedHashMap<>();
         if (filter != null && !filter.isBlank()) {
-            json.append("\"filter\":").append(decode(filter)).append(',');
+            query.put("filter", dslNode("filter", filter));
         }
         if (sort != null && !sort.isBlank()) {
-            json.append("\"sort\":").append(decode(sort)).append(',');
+            query.put("sort", dslNode("sort", sort));
         }
         if (page != null && !page.isBlank()) {
-            json.append("\"page\":").append(decode(page)).append(',');
+            query.put("page", dslNode("page", page));
         }
-        if (json.charAt(json.length() - 1) == ',') {
-            json.setLength(json.length() - 1);
-        }
-        return json.append('}').toString();
+        return MAPPER.writeValueAsString(query);
     }
 
-    private static String decode(String encoded) {
-        return java.net.URLDecoder.decode(encoded, StandardCharsets.UTF_8);
+    private static JsonNode dslNode(String name, String encoded) {
+        try {
+            return MAPPER.readTree(java.net.URLDecoder.decode(encoded, StandardCharsets.UTF_8));
+        } catch (tools.jackson.core.JacksonException e) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "the " + name + " query parameter is not a valid JSON DSL node",
+                    ProblemErrors.of(new ProblemErrors.FieldError(name,
+                            "must be a JSON DSL node, percent-encoded per RFC 3986", encoded)), e);
+        }
     }
 
     private static Map<String, Object> sparse(Map<String, Object> shaped, String fields) {

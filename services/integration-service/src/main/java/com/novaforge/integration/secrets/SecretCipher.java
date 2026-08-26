@@ -64,7 +64,7 @@ public final class SecretCipher {
             return out;
         } catch (Exception e) {
             throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "secret encryption failed: " + e.getMessage());
+                    "secret encryption failed: " + e.getMessage(), null, e);
         }
     }
 

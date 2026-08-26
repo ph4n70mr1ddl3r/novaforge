@@ -48,7 +48,7 @@ public interface StoragePort {
                 }
             } catch (Exception e) {
                 throw new PlatformException(PlatformErrorCode.INTERNAL,
-                        "storage bucket check failed: " + e.getMessage());
+                        "storage bucket check failed: " + e.getMessage(), null, e);
             }
         }
 
@@ -63,7 +63,7 @@ public interface StoragePort {
                         .build());
             } catch (Exception e) {
                 throw new PlatformException(PlatformErrorCode.INTERNAL,
-                        "storage put failed: " + e.getMessage());
+                        "storage put failed: " + e.getMessage(), null, e);
             }
         }
 
@@ -74,7 +74,7 @@ public interface StoragePort {
                 return stream.readAllBytes();
             } catch (Exception e) {
                 throw new PlatformException(PlatformErrorCode.NOT_FOUND,
-                        "object " + objectKey + " not readable: " + e.getMessage());
+                        "object " + objectKey + " not readable: " + e.getMessage(), null, e);
             }
         }
 
@@ -90,7 +90,7 @@ public interface StoragePort {
                         .build());
             } catch (Exception e) {
                 throw new PlatformException(PlatformErrorCode.INTERNAL,
-                        "presign failed: " + e.getMessage());
+                        "presign failed: " + e.getMessage(), null, e);
             }
         }
 
@@ -101,7 +101,7 @@ public interface StoragePort {
                         .bucket(bucket).object(objectKey).build());
             } catch (Exception e) {
                 throw new PlatformException(PlatformErrorCode.INTERNAL,
-                        "storage remove failed: " + e.getMessage());
+                        "storage remove failed: " + e.getMessage(), null, e);
             }
         }
     }

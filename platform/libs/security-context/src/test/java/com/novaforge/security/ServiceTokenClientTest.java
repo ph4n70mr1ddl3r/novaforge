@@ -17,9 +17,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * The one grant every trusted-service caller rides: form-encoded credentials
- * (a secret carrying form-reserved characters must not corrupt the body), one
- * fetch per TTL with the cached grant served until 30 s before expiry, and a
+ * The one grant every trusted-service caller rides: RFC 6749 §2.3.1 Basic
+ * client authentication (the secret rides the Authorization header — a secret
+ * carrying form-reserved characters stays intact, and never appears in a body),
+ * one fetch per TTL with the cached grant served until 30 s before expiry, and a
  * grant without a token fails loudly (INTERNAL, the house rule). Serves the
  * endpoint through the JDK's own HttpServer — the client itself speaks the
  * zero-web JDK HttpClient (the lib family's charter, PHASE-0 §5.1).
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.Test;
 class ServiceTokenClientTest {
 
     private final List<String> bodies = new CopyOnWriteArrayList<>();
+    private final List<String> authorizations = new CopyOnWriteArrayList<>();
     private final HttpServer server;
     private final ServiceTokenClient client;
     private volatile String response = "{\"access_token\":\"tok-1\",\"expires_in\":300}";
@@ -36,6 +38,7 @@ class ServiceTokenClientTest {
         server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         server.createContext("/protocol/openid-connect/token", exchange -> {
             bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            authorizations.add(exchange.getRequestHeaders().getFirst("Authorization"));
             byte[] body = response.getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(status, body.length);
             exchange.getResponseBody().write(body);
@@ -54,13 +57,15 @@ class ServiceTokenClientTest {
     }
 
     @Test
-    @DisplayName("credentials ride form-encoded; the token caches until the refresh window")
+    @DisplayName("credentials ride RFC 6749 §2.3.1 Basic auth; the token caches until the refresh window")
     void grantEncodesAndCaches() {
         assertThat(client.token()).isEqualTo("tok-1");
         assertThat(client.token()).isEqualTo("tok-1");   // cached — no second grant
-        assertThat(bodies).containsExactly(
-                "grant_type=client_credentials&client_id=novaforge-runtime"
-                        + "&client_secret=s3cr%26et%3Dwith%3Dspecials");
+        assertThat(bodies).containsExactly("grant_type=client_credentials");
+        // the secret never leaves the Authorization header — the body carries no credentials
+        assertThat(authorizations).containsExactly("Basic " + java.util.Base64.getEncoder()
+                .encodeToString(("novaforge-runtime:s3cr&et=with=specials")
+                        .getBytes(StandardCharsets.UTF_8)));
     }
 
     @Test

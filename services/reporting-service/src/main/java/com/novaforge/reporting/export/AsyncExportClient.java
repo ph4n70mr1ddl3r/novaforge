@@ -71,7 +71,7 @@ public class AsyncExportClient {
             throw e;
         } catch (Exception e) {
             throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "integration service unreachable for the async export: " + e.getMessage());
+                    "integration service unreachable for the async export: " + e.getMessage(), null, e);
         }
     }
 }

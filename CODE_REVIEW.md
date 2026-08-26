@@ -270,3 +270,55 @@ All fixes should be validated by:
 2. New unit tests for the fixed race conditions
 3. Load testing for ScriptSandbox concurrency
 4. Chaos testing for token refresh under Keycloak latency
+---
+
+## Second-Pass Review — 2026-08-26 (verification of the first-pass fixes + remaining items)
+
+**Scope:** verify the committed critical fixes, then close the high-priority remainder.
+
+### Findings on the committed fixes
+
+1. **ConnectorExecutor token cache — the fix regressed (CRITICAL, fixed now).** The
+   `computeIfAbsent(CompletableFuture)` rewrite cached the *future*, not the value:
+   `refreshAt` was never consulted (tokens served forever once fetched — exactly the
+   expiry bug it replaced), and a failed grant cached a failed future permanently —
+   one auth-server blip poisoned the credential for the JVM's lifetime. It also kept
+   an unbounded cached-thread pool alive. Rewritten as a single-flight,
+   expiry-aware `compute` over plain values: fresh entries serve uncontended,
+   expired ones refetch under the map lock (concurrent callers coalesce), failed
+   fetches leave nothing cached, and the pool is gone.
+2. **ServiceTokenClient** — double-checked locking verified sound. Note: a failed
+   grant correctly leaves the old (expired) token in place; next call retries.
+3. **TenantTaskAutoConfiguration** — the BeanPostProcessor approach works on Spring
+   Framework 7 (verified against 7.0.8 bytecode: the decorator is resolved per
+   submitted task, not at pool creation), **but the javadoc claimed virtual threads
+   "inherit ThreadLocal values through Continuation mechanics" — false.** Plain
+   ThreadLocals are never inherited by any thread. The doc claims are corrected;
+   the code was already right (the decorator is the carrier in both pool and
+   virtual-thread models — Boot's virtual-thread executor is a
+   `SimpleAsyncTaskExecutor`, which applies the decorator bean per task).
+4. **ScriptSandbox watchdog** — cancellation and CPU metering fixes verified sound.
+
+### Fixes implemented this pass
+
+| # | Issue | Fix |
+|---|-------|-----|
+| H7 | `RestClient` rebuilt per connector call (and the token grant used bare `RestClient.create()` — no timeout at all) | one shared client per executor with the §4 read timeout |
+| H8 | OAuth2/Keycloak client secrets in request bodies | RFC 6749 §2.3.1 Basic client authentication on both grant legs (`ServiceTokenClient`, `ConnectorExecutor.fetchToken`) |
+| H9 | ~20 `PlatformException` throws dropped the cause | every wrap now passes `cause` (file, notification, reporting, workflow, metadata, integration, data-runtime) |
+| H10 | `RecordController.encodeQuery` hand-built JSON; malformed DSL nodes surfaced as downstream 500s | mapper-composed query + each node parsed/validated at the door → VALIDATION_FAILED with a field-scoped error |
+| — | OAuth2 credential leg had zero test coverage | 3 journey tests against a mock token endpoint (Basic auth shape, cache-until-expiry, no cache poisoning) — verified they fail against the old implementation |
+| — | Malformed-DSL rejection untested | new `malformedDslNodeRejects` test in `RecordApiTests` |
+
+### Deferred (unchanged from first pass, by scope decision)
+
+- M11 duplicate web infra per service (extract `novaforge-common-web`) — worthwhile, but a structural refactor across 10+ services, not a review-commit item.
+- M12 magic limits → `@ConfigurationProperties` — the `@Value` defaults are already per-bean and documented; batching this with M11.
+- M13 per-tenant circuit breakers — deliberate isolation (a noisy tenant must not open *other* tenants' breakers); reopening would change failure semantics. Keeping, with this note as the record.
+- L15–L17 style items — no functional impact.
+
+### Verification
+
+`security-context` (17), `integration-service` ConnectorExecutorTests (7),
+`data-runtime` api+engine (73), `file-service` (5), `notification-service` (8),
+`metadata-service` (45), `workflow-service` (27), `reporting-service` (16) — all green.

@@ -120,7 +120,7 @@ public class ReportExporter {
             return buffer.toByteArray();
         } catch (Exception e) {
             throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "xlsx render failed: " + e.getMessage());
+                    "xlsx render failed: " + e.getMessage(), null, e);
         }
     }
 

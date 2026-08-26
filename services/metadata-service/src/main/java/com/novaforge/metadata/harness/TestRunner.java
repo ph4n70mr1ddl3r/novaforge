@@ -907,7 +907,7 @@ public class TestRunner {
                 return mock;
             } catch (IOException e) {
                 throw new PlatformException(PlatformErrorCode.INTERNAL,
-                        "mock connector failed to start: " + e.getMessage());
+                        "mock connector failed to start: " + e.getMessage(), null, e);
             }
         }
 

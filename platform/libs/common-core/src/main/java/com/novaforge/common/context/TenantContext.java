@@ -10,12 +10,13 @@ import java.util.Optional;
  * request end is the caller's responsibility; {@link #with(Context, Runnable)} and
  * {@link #wrap(Context, Runnable)} are provided for scoped use.
  *
- * <p>Uses {@link ThreadLocal} (not InheritableThreadLocal) to avoid leaking context
- * to arbitrarily spawned platform threads. Context propagation to pooled threads
- * (platform or virtual) is handled by {@link com.novaforge.security.TenantTaskDecorator}
- * applied to all {@link org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor} beans.
- * Virtual threads created via Spring's virtual thread support inherit ThreadLocal
- * values through Continuation mechanics.</p>
+ * <p>Uses {@link ThreadLocal} (not InheritableThreadLocal) deliberately: plain
+ * ThreadLocals are never inherited by spawned threads (platform or virtual), so a
+ * pooled worker cannot smear one request's identity onto unrelated work.
+ * Propagation to executor threads is explicit — {@link
+ * com.novaforge.security.TenantTaskDecorator} captures the binding at submit time and
+ * rebinds it per run — and the request thread itself binds and clears inside the
+ * auth filter.</p>
  */
 public final class TenantContext {
 

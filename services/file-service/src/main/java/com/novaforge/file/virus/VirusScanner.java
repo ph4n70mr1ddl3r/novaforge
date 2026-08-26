@@ -61,7 +61,7 @@ public interface VirusScanner {
                 return response.toString().contains("FOUND");
             } catch (Exception e) {
                 throw new PlatformException(PlatformErrorCode.INTERNAL,
-                        "clamd scan failed: " + e.getMessage());
+                        "clamd scan failed: " + e.getMessage(), null, e);
             }
         }
 

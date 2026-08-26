@@ -631,6 +631,18 @@ class RecordApiTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("GET list: a malformed DSL node rejects at the door as 400, not a downstream 500")
+    void malformedDslNodeRejects() throws Exception {
+        String malformed = java.net.URLEncoder.encode("{not json",
+                java.nio.charset.StandardCharsets.UTF_8);
+        mockMvc.perform(get("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
+                        .param("filter", malformed))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("4000"))
+                .andExpect(jsonPath("$.errors[?(@.field=='filter')]").isNotEmpty());
+    }
+
+    @Test
     @DisplayName("POST query: aggregate groupBy + sum; plain filtered list")
     void aggregateQuery() throws Exception {
         mockMvc.perform(post("/api/v1/runtime/JournalEntry").with(jwtFor(TENANT))

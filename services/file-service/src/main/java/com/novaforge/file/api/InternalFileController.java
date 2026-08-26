@@ -49,7 +49,7 @@ public class InternalFileController {
             content = Base64.getDecoder().decode(request.contentBase64());
         } catch (IllegalArgumentException e) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                    "contentBase64 does not decode: " + e.getMessage());
+                    "contentBase64 does not decode: " + e.getMessage(), null, e);
         }
         UUID tenantId = UUID.fromString(request.tenantId());
         var completion = attachments.storeServiceUpload(tenantId,

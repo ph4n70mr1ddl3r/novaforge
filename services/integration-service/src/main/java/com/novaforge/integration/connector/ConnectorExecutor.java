@@ -20,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
@@ -59,6 +60,8 @@ public class ConnectorExecutor {
     private final DeliveryStore deliveries;
     private final CircuitBreakerRegistry breakers;
     private final RetryRegistry retries;
+    /** One shared client for every connector call and token grant — pooled connections, never rebuilt per call. */
+    private final RestClient restClient;
     public ConnectorExecutor(PublishedIntegrations definitions, SecretStore secrets,
                              DeliveryStore deliveries,
                              @Value("${novaforge.connector.timeout-ms:10000}") long timeoutMs,
@@ -76,6 +79,9 @@ public class ConnectorExecutor {
                 .intervalFunction(in -> Math.min(backoffInitial * (1L << (in - 1)), backoffMax))
                 .build();
         this.retries = RetryRegistry.of(config);
+        this.restClient = RestClient.builder()
+                .requestFactory(timedFactory())
+                .build();
     }
 
     /** A settled connector call: status, body, and the delivery id it logged. */
@@ -148,7 +154,7 @@ public class ConnectorExecutor {
                     "status", "dlq", "error", error));
             throw new PlatformException(PlatformErrorCode.INTERNAL,
                     "connector " + connectorId + "." + operationName + " failed terminally "
-                            + "after bounded retries: " + error);
+                            + "after bounded retries: " + error, null, e);
         }
     }
 
@@ -168,10 +174,7 @@ public class ConnectorExecutor {
             }
             uri.append(query);
         }
-        RestClient client = RestClient.builder()
-                .requestFactory(timedFactory())
-                .build();
-        RestClient.RequestBodySpec spec = client.method(HttpMethod.valueOf(operation.method()))
+        RestClient.RequestBodySpec spec = restClient.method(HttpMethod.valueOf(operation.method()))
                 .uri(uri.toString())
                 .accept(MediaType.APPLICATION_JSON);
         for (Map.Entry<String, Object> header : operation.headers().entrySet()) {
@@ -237,36 +240,55 @@ public class ConnectorExecutor {
         }
     }
 
-    private final java.util.concurrent.Executor tokenFetchExecutor = java.util.concurrent.Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "connector-oauth-fetch");
-        t.setDaemon(true);
-        return t;
-    });
-    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<CachedToken>> tokenCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, CachedToken> tokenCache = new ConcurrentHashMap<>();
 
     private record CachedToken(String token, Instant refreshAt) {
     }
 
-    /** Client-credentials grant at the credential's token URL (§13 Q1's resolved scope). */
+    /**
+     * Client-credentials grant at the credential's token URL (§13 Q1's resolved scope).
+     * Single-flight and expiry-aware: a fresh token serves from the cache, an expired
+     * one refetches under {@code compute} (concurrent callers coalesce onto one grant),
+     * and a failed fetch leaves nothing cached — an auth-server blip never poisons the
+     * credential's next call. Cache entries are values, not futures: a cached failed
+     * future would replay its failure forever.
+     */
     private String oauthToken(CredentialDefinition credential, String secret) {
-        return tokenCache.computeIfAbsent(credential.id(), k -> java.util.concurrent.CompletableFuture.supplyAsync(() -> {
-            String form = "grant_type=client_credentials&client_id="
-                    + url(credential.clientId()) + "&client_secret=" + url(secret == null ? "" : secret);
-            String response = RestClient.create().post()
-                    .uri(credential.tokenUrl())
-                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                    .body(form)
-                    .retrieve()
-                    .body(String.class);
-            Map<String, Object> granted = MAPPER.readValue(response == null ? "{}" : response, Map.class);
-            if (granted.get("access_token") == null) {
-                throw new PlatformException(PlatformErrorCode.INTERNAL,
-                        "oauth2 grant at " + credential.tokenUrl() + " returned no token");
+        CachedToken cached = tokenCache.get(credential.id());
+        if (cached != null && Instant.now().isBefore(cached.refreshAt())) {
+            return cached.token();   // fresh — serve without contending the map
+        }
+        return tokenCache.compute(credential.id(), (id, existing) -> {
+            if (existing != null && Instant.now().isBefore(existing.refreshAt())) {
+                return existing;   // refreshed by another caller while this one waited
             }
-            long seconds = granted.get("expires_in") instanceof Number number ? number.longValue() : 300;
-            return new CachedToken(String.valueOf(granted.get("access_token")),
-                    Instant.now().plusSeconds(Math.max(0, seconds - 30)));
-        }, tokenFetchExecutor)).join().token();
+            return fetchToken(credential, secret);
+        }).token();
+    }
+
+    /** One grant — RFC 6749 §2.3.1 Basic client authentication: the secret rides the Authorization header, never a body that logs or proxies could capture. */
+    private CachedToken fetchToken(CredentialDefinition credential, String secret) {
+        if (secret == null || secret.isBlank()) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "credential " + credential.id() + " has no secret provisioned");
+        }
+        String basic = Base64.getEncoder().encodeToString(
+                (credential.clientId() + ":" + secret).getBytes(StandardCharsets.UTF_8));
+        String response = restClient.post()
+                .uri(credential.tokenUrl())
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .header("Authorization", "Basic " + basic)
+                .body("grant_type=client_credentials")
+                .retrieve()
+                .body(String.class);
+        Map<String, Object> granted = MAPPER.readValue(response == null ? "{}" : response, Map.class);
+        if (granted.get("access_token") == null) {
+            throw new PlatformException(PlatformErrorCode.INTERNAL,
+                    "oauth2 grant at " + credential.tokenUrl() + " returned no token");
+        }
+        long seconds = granted.get("expires_in") instanceof Number number ? number.longValue() : 300;
+        return new CachedToken(String.valueOf(granted.get("access_token")),
+                Instant.now().plusSeconds(Math.max(0, seconds - 30)));
     }
 
     // --- ${…} mapping (ADR-008's shared convention, host-resolved) ---
@@ -319,14 +341,11 @@ public class ConnectorExecutor {
     }
 
     private org.springframework.http.client.ClientHttpRequestFactory timedFactory() {
-        SimpleFactory factory = new SimpleFactory();
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2_000);
         factory.setReadTimeout((int) timeout.toMillis());
         return factory;
-    }
-
-    /** A plain factory with the §4 timeout applied per request (read = the call budget). */
-    static class SimpleFactory extends org.springframework.http.client.SimpleClientHttpRequestFactory {
     }
 
     private static String stripSlash(String url) {

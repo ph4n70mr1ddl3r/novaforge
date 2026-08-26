@@ -507,7 +507,7 @@ public class LifecycleService {
             throw e;
         } catch (Exception e) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                    "artifact is not a readable novaforge-app ZIP: " + e.getMessage());
+                    "artifact is not a readable novaforge-app ZIP: " + e.getMessage(), null, e);
         }
     }
 

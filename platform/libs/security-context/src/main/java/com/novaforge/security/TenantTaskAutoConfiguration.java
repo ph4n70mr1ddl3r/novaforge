@@ -8,10 +8,13 @@ import org.springframework.core.task.TaskDecorator;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 /**
- * Auto-applies {@link TenantTaskDecorator} to all {@link ThreadPoolTaskExecutor} beans
- * so tenant context propagates to pooled platform threads (PHASE-1 §3).
- * Services using virtual threads (Java 21+) inherit context via {@link InheritableThreadLocal}
- * in {@link com.novaforge.common.context.TenantContext} and do not need decoration.
+ * Auto-applies {@link TenantTaskDecorator} so tenant context propagates to executor
+ * threads (PHASE-1 §3). Two legs: the decorator bean itself is consumed by Boot's
+ * auto-configured application executor — in both the pool and the virtual-thread
+ * model, where {@code SimpleAsyncTaskExecutor} applies the decorator per submitted
+ * task (a virtual thread inherits nothing: TenantContext is a plain ThreadLocal, and
+ * the decorator is the only carrier) — and the post-processor below covers additional
+ * custom {@link ThreadPoolTaskExecutor} beans.
  */
 @AutoConfiguration
 @ConditionalOnClass(ThreadPoolTaskExecutor.class)
@@ -43,8 +46,8 @@ public class TenantTaskAutoConfiguration {
         @Override
         public Object postProcessAfterInitialization(Object bean, String beanName) {
             if (bean instanceof ThreadPoolTaskExecutor executor) {
-                // Spring Boot 4 / Spring Framework 7: setTaskDecorator is idempotent
-                // (re-setting the same decorator is a no-op).
+                // Effective even here, after initialization: Spring Framework 7
+                // resolves the decorator per submitted task, not once at pool creation.
                 executor.setTaskDecorator(decorator);
             }
             return bean;

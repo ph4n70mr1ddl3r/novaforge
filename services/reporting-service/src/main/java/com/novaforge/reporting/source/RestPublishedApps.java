@@ -133,7 +133,7 @@ public class RestPublishedApps implements PublishedApps {
             throw e;
         } catch (Exception e) {
             throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "published-apps fetch failed: " + e.getMessage());
+                    "published-apps fetch failed: " + e.getMessage(), null, e);
         }
     }
 

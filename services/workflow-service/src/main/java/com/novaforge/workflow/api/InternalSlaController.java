@@ -62,7 +62,7 @@ public class InternalSlaController {
                     : Instant.parse(request.asOf());
         } catch (Exception e) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                    "sla scan could not parse its governing instant: " + e.getMessage());
+                    "sla scan could not parse its governing instant: " + e.getMessage(), null, e);
         }
         SlaScanner.ScanCounts counts = scanner.scanOnce(asOf, request.tenantId());
         Map<String, Object> result = new LinkedHashMap<>();

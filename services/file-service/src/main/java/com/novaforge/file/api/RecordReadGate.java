@@ -50,7 +50,7 @@ public class RecordReadGate {
             return false;   // 403/404 — the runtime's verdict stands
         } catch (Exception e) {
             throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "owning-record read gate unreachable: " + e.getMessage());
+                    "owning-record read gate unreachable: " + e.getMessage(), null, e);
         }
     }
 

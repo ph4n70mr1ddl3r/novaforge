@@ -286,7 +286,7 @@ public class ReportRunner {
                     sha.digest(canonical.getBytes(StandardCharsets.UTF_8))).substring(0, 16);
         } catch (Exception e) {
             throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "cache key digest failed: " + e.getMessage());
+                    "cache key digest failed: " + e.getMessage(), null, e);
         }
     }
 }

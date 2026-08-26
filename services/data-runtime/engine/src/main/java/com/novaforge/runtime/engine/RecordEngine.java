@@ -388,7 +388,7 @@ public class RecordEngine {
                 throw new PlatformException(PlatformErrorCode.FORBIDDEN,
                         "a sharing criterion does not lower for aggregate scope — reports "
                                 + "over " + handle.entity().apiName() + " stay fail closed: "
-                                + e.getMessage());
+                                + e.getMessage(), null, e);
             }
         }
         if (alternatives.isEmpty()) {

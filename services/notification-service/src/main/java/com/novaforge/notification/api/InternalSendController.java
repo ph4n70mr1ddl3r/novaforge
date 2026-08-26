@@ -88,7 +88,7 @@ public class InternalSendController {
                         Base64.getDecoder().decode(request.attachment().contentBase64()));
             } catch (IllegalArgumentException e) {
                 throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                        "attachment contentBase64 does not decode: " + e.getMessage());
+                        "attachment contentBase64 does not decode: " + e.getMessage(), null, e);
             }
         }
         int delivered = notifier.deliverDirect(tenantId, request.category(),
@@ -113,7 +113,7 @@ public class InternalSendController {
             return users.stream().map(u -> UUID.fromString(String.valueOf(u))).toList();
         } catch (IllegalArgumentException e) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                    "recipient users must be uuids: " + e.getMessage());
+                    "recipient users must be uuids: " + e.getMessage(), null, e);
         }
     }
 }
