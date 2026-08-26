@@ -57,14 +57,14 @@ per tenant; documents may be issued in a document currency converted at the rate
 the document date (rate table entity); GL posts in book currency; realized
 gain/loss posts on settlement. Revaluation/unrealized gain is a logged gap, not v1.
 
-## 3. Platform Enhancements (the two anticipated harvests, plus the 2026-08-26 harvested pair)
+## 3. Platform Enhancements (the two anticipated harvests, plus the gap-log harvests)
 
 §§3.1–3.2 are *expected harvests* — PLAN.md §5 says the GL "may require platform
 enhancements"; the spec pre-proposes their shape so implementation can land them
 as versioned platform features (ADR-008 #2's growth path) mid-phase once the gap
-is confirmed in practice. §§3.3–3.4 are the gap log's own growth: two entries
-triaged *accept-as-platform-feature* at the weekly review (§8), specified here
-(their own sections, per the SDD rule) before implementation.
+is confirmed in practice. §§3.3–3.6 are the gap log's own growth: entries triaged
+*accept-as-platform-feature* at review (§8), each specified here (their own
+sections, per the SDD rule) before implementation.
 
 ### 3.1 `freezeOnTerminal` (posting/immutability primitive)
 
@@ -143,6 +143,56 @@ JS computes in float64; money through scripts was exact only by corpus coinciden
   script path: nothing a script computes crosses as a float.
 - No host classes, no I/O — the binding is pure arithmetic like `$log` is pure
   capture; the ADR-003 surface stays closed.
+
+### 3.5 Conditional Roll-Ups (the G-15 harvest, 2026-08-27)
+
+Logged live running the ERP corpus (G-15): a roll-up cannot say *which* children
+count — `SUM(movements.qty)` aggregates every child row from its create, so a
+roll-up-maintained `qtyOnHand` counted DRAFT movements the machine had not posted
+yet, and the costing script (running at the POSTED update) read an Item that
+already included the issue's own quantity. Triaged *accept-as-platform-feature*
+per §8; this section is the feature's spec before implementation.
+
+- **The roll-up grammar grows an optional WHERE clause** — same string encoding,
+  a versioned growth compatible with already-published definitions (ADR-008 #2's
+  path): `OP(relationship.field WHERE <condition> [AND <condition>…])`, COUNT
+  without a field allowed exactly as before. A condition reuses the query DSL's
+  leaf vocabulary verbatim (`field op value`; `eq ne gt gte lt lte in isNull` —
+  `contains`/`ne` excluded: conditions bind machine-typed state values), joined
+  by AND only in v1; condition fields resolve against the roll-up's child entity
+  at save.
+- **Both aggregation paths filter identically.** The store path ANDs the
+  condition leaves onto the binding leaf of the aggregate/count query it already
+  builds — the same parser, lowering, and canonical-value semantics every list
+  and aggregate rides (`'true'/'false'` text for booleans, exact decimals for
+  numbers); the inline-create path filters the in-memory child rows by the same
+  leaf evaluation before aggregating (strings verbatim, numbers as exact
+  decimals — never float compare).
+- **Save validation** joins the validator rule matrix: grammar shape,
+  relationship resolution on the parent, aggregated-field existence + numeric
+  requirement, condition-field existence on the child entity — authoring errors
+  reject at save/publish with field-scoped guidance, never silently aggregate a
+  full set.
+- **Nothing existing changes meaning**: a roll-up without a WHERE clause behaves
+  byte-for-byte as before (pinned by regression).
+
+### 3.6 System-Field Query Leaves (the G-5 harvest, 2026-08-27)
+
+Logged at the dogfood (G-5): `$data.query` could not filter by `id` — system
+fields are not authored fields, so the query-DSL leaf rejected them and scripts
+scanned pages client-side to match identity (the logged workaround). Triaged
+*accept-as-platform-feature* per §8.
+
+- **The DSL leaf accepts `id` and `version`.** Filters and sorts name them like
+  any authored field; values parse to their canonical forms at the door (UUID
+  for `id`, integer for `version` — a malformed value rejects VALIDATION_FAILED
+  with field scope) and lower to their projection columns through the shared
+  pipeline. The other reserved names stay rejected (authored-data fields remain
+  the only beyond these two operational keys — queries by audit metadata ride
+  the trail instead, PHASE-3 §5).
+- **The roll-up store path inherits the leaves for free** (its queries already
+  ride the same parser), so §3.5's conditions may address child identity and
+  version too.
 
 ## 4. Period Close Mechanics
 
