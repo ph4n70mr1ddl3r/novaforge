@@ -6,6 +6,7 @@ import com.novaforge.common.error.ProblemErrors;
 import com.novaforge.metadata.EntityDefinition;
 import com.novaforge.metadata.FieldDefinition;
 import com.novaforge.metadata.FieldType;
+import com.novaforge.metadata.ReportDefinition;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -134,8 +135,19 @@ public final class QueryParser {
                     requireField(entity, field, "aggregates.field");
                     requireNumeric(entity, field, aggregateOp);
                 }
-                aggregates.add(new QueryModel.Aggregate(aggregateOp, field,
-                        node.hasNonNull("alias") ? node.get("alias").asString() : null));
+                String alias = node.hasNonNull("alias") ? node.get("alias").asString() : null;
+                // The alias rides the lowered SELECT list as a quoted identifier
+                // (QueryLowering), so it is grammar-bound at the parse door exactly
+                // like a report key — a quote, paren, or comma in an authored alias
+                // must reject VALIDATION_FAILED here, before any SQL is built
+                // (found in the 2025-08-27 review: identifier breakout otherwise
+                // splices caller SQL into the aggregate statement).
+                if (alias != null && !ReportDefinition.REPORT_KEY.matcher(alias).matches()) {
+                    throw validation("aggregates.alias",
+                            "alias must be a plain identifier (a letter or underscore, then "
+                                    + "word characters): " + alias);
+                }
+                aggregates.add(new QueryModel.Aggregate(aggregateOp, field, alias));
             }
         }
         if (aggregates.isEmpty() && groupBy.isEmpty()) {

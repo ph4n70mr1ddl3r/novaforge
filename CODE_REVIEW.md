@@ -322,3 +322,67 @@ All fixes should be validated by:
 `security-context` (17), `integration-service` ConnectorExecutorTests (7),
 `data-runtime` api+engine (73), `file-service` (5), `notification-service` (8),
 `metadata-service` (45), `workflow-service` (27), `reporting-service` (16) — all green.
+
+---
+
+## Third Pass — 2025-08-27 (full-repo sweep: platform libs, all services, frontend, deploy)
+
+Scope beyond the first two passes: query lowering, expression SQL, materializer DDL,
+migrations, gateway, SPAs, helm/compose/keycloak. All first/second-pass fixes
+re-verified in place. Two new findings, both HIGH, both closed this pass:
+
+### H-TP1. SQL injection via aggregate `alias` (query DSL) — HIGH
+`POST /api/v1/runtime/{entity}/query` accepted `aggregates[].alias` as an arbitrary
+string; `QueryLowering` splices it into the SELECT list as a quoted identifier, so a
+crafted alias (`x", (SELECT …) AS "leak`) broke out of the quotes and appended
+caller-chosen SQL to the statement — same-tenant cross-entity reads bypassing sharing
+rules and hidden-field security (injected select expressions never reach
+`requireFieldVisible`). Metadata report aliases were grammar-bound
+(`ReportDefinition.REPORT_KEY`); the runtime parse door was not.
+
+**Fix:** `QueryParser.parseAggregate` now grammar-binds every authored alias with
+`ReportDefinition.REPORT_KEY` (`^[a-zA-Z_][a-zA-Z0-9_]*$` — same rule as report keys,
+so `debitTotal`/`sum_debit` ride) and rejects anything else as VALIDATION_FAILED
+before SQL is built. Regression: `AggregateAliasValidationTests` (plain aliases
+parse; quote/paren/space/digit breakouts reject). Bucket labels were already bind
+params; group/filter/sort fields were already metadata-validated — the alias was the
+one hole.
+
+### H-TP2. Missing transaction boundaries on five RecordEngine entry points — HIGH
+`@Transactional` existed only on `create/update/delete/integrationCreate/
+integrationUpdate`; `HookExecutor` carries none. Consequences: (1) `batch()` —
+unannotated *and* self-invoking `this.create/update/delete` past the Spring proxy —
+auto-committed every statement independently: a failing inline child committed an
+orphaned parent, outbox rows decoupled from the writes they describe, and `seq_state`
+draws stopped being rollback-safe (the gapless-sequence guarantee, PHASE-1 §5).
+(2) `runManualHook`, `runScheduledHook`, `resumeApproval`, `retryAfterHook` — flow
+writes and outbox appends piecemeal, against the PHASE-3 §4 "events ride the record
+transaction" design.
+
+**Fix:** the four hook entry points are `@Transactional` (they are invoked through
+the proxy from controllers/scanner, so the boundary applies; hook machinery inside
+matches the write path, which already runs hooks in-transaction). `batch()` routes
+each item through an injected `ObjectProvider<RecordEngine>` self-proxy — per-item
+transactions restore item atomicity (parent + children + outbox + sequence draws)
+while per-item outcomes survive: a SQL-level abort poisons only that item's
+transaction, never the rest of the batch.
+
+### Open items from this pass (recorded, not fixed here)
+
+- M-TP1 idempotency-key TOCTOU (`replay → execute → record` not fenced; use `setIfAbsent`)
+- M-TP2 `SecretCipher` silently falls back to an all-zeros key when the env var is unset
+- M-TP3 default service-client secret is committed and admin-equivalent (`ServiceClientGate`/AdminController service-client branch)
+- M-TP4 list-path criteria sharing post-filters a fetched page — criteria-only rows beyond the window unreachable; reuse the aggregate path's `applySharing` lowering
+- M-TP5 `ExpressionSql` contains/startsWith lower the needle unescaped — `%`/`_` act as wildcards in SQL but literals in the evaluator (parity divergence)
+- L-TP1 `RecordController.query` routes aggregate vs list via raw `body.contains("\"aggregates\"")` — misroutes when a filter value is that string
+- L-TP2 SPA auth stores the session (access token) in `sessionStorage` contra its own doc; restored sessions are never expiry-checked; `refresh_token` unused
+- L-TP7 actuator `prometheus` permitAll on every service — keep service ports unexposed
+
+### Verification (this pass)
+
+Full reactor `-DskipTests install` green on Java 21; engine module tests green
+(15/15: GoldenSql 5, BucketedAggregateSql 3, EntityResolverQualified 4, the new
+AggregateAliasValidation 3). Container-based suites not run this pass (no Docker in
+the review environment) — the changed paths are covered by the unit tests above;
+the transaction-boundary change is proxy wiring, exercised by the existing
+api-module suites when run in a container-capable environment.

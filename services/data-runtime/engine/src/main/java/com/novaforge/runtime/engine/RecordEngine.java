@@ -60,12 +60,18 @@ public class RecordEngine {
     private final DomainEventPublisher events;
     private final HookExecutor hooks;
     private final HookExecutor.HookSink hookSink;
+    /** The engine's own proxy, injected as a provider (no eager self-reference
+     *  cycle): {@link #batch} routes each item through it so the per-item
+     *  @Transactional boundaries apply — this-side calls would bypass the proxy and
+     *  leave every statement to auto-commit (found in the 2025-08-27 review). */
+    private final org.springframework.beans.factory.ObjectProvider<RecordEngine> self;
 
     public RecordEngine(EntityResolver resolver, RoleMatrix roleMatrix,
                         com.novaforge.runtime.authorization.SharingGate sharing,
                         RecordStore records,
                         SequenceService sequences, DomainEventPublisher events,
-                        HookExecutor hooks) {
+                        HookExecutor hooks,
+                        org.springframework.beans.factory.ObjectProvider<RecordEngine> self) {
         this.resolver = resolver;
         this.roleMatrix = roleMatrix;
         this.sharing = sharing;
@@ -74,6 +80,7 @@ public class RecordEngine {
         this.events = events;
         this.hooks = hooks;
         this.hookSink = new EngineHookSink();
+        this.self = self;
     }
 
     // --- write path ---
@@ -411,15 +418,24 @@ public class RecordEngine {
         List<Map<String, Object>> outcomes = new ArrayList<>();
         for (Map<String, Object> item : items) {
             try {
+                // Through the proxy, never this-side: each item runs inside its own
+                // transaction (create/update/delete are @Transactional), so a failing
+                // item's partial writes roll back — parent + inline children + outbox
+                // rows + sequence draws all atomic — while per-item outcomes survive
+                // (a SQL-level abort poisons only that item's transaction, never the
+                // rest of the batch).
+                RecordEngine proxied = self.getObject();
                 Map<String, Object> result = switch (String.valueOf(item.get("op"))) {
-                    case "create" -> create(tenantId, actorId, String.valueOf(item.get("entity")),
+                    case "create" -> proxied.create(tenantId, actorId,
+                            String.valueOf(item.get("entity")),
                             typedFields(item.get("record")));
-                    case "update" -> update(tenantId, actorId, String.valueOf(item.get("entity")),
+                    case "update" -> proxied.update(tenantId, actorId,
+                            String.valueOf(item.get("entity")),
                             UUID.fromString(String.valueOf(item.get("id"))),
                             ((Number) item.get("version")).intValue(),
                             typedFields(item.get("record")));
                     case "delete" -> {
-                        delete(tenantId, actorId, String.valueOf(item.get("entity")),
+                        proxied.delete(tenantId, actorId, String.valueOf(item.get("entity")),
                                 UUID.fromString(String.valueOf(item.get("id"))),
                                 ((Number) item.get("version")).intValue());
                         yield Map.<String, Object>of("status", "ok");
@@ -857,7 +873,11 @@ public class RecordEngine {
      * compiled graph as the per-app system principal against the record's current
      * state. Callers bind the tenant context; failures surface to the Workflow
      * Service as problem+json (the instance stays resolvable, never silently lost).
+     * Transactional like the write path's own hook legs — every flow write and its
+     * outbox appends land or roll back as one unit (the 2025-08-27 review closed
+     * the missing boundary here).
      */
+    @Transactional
     public void resumeApproval(UUID tenantId, String entityApiName, UUID recordId,
                                String hookName, String afterStep,
                                com.novaforge.metadata.FlowStep onReject, boolean approved) {
@@ -923,8 +943,11 @@ public class RecordEngine {
      * The Scheduler's flow target (PHASE-4 §7): runs one named hook in the synthetic
      * {@code scheduled} trigger context — no record, empty bindings, the per-app
      * system principal. Flows here create records, publish events, or drive other
-     * entities; own-record references resolve empty.
+     * entities; own-record references resolve empty. Transactional like the write
+     * path's hook legs — flow writes and their outbox appends land or roll back as
+     * one unit (the 2025-08-27 review closed the missing boundary here).
      */
+    @Transactional
     public void runScheduledHook(UUID tenantId, String entityApiName, String hookName) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         AppDefinition app = resolver.bundle(tenantId, handle.appId());
@@ -942,7 +965,11 @@ public class RecordEngine {
      * entity READ grant and sharing visibility (the button renders on a page they can
      * see); the flow itself runs as the per-app system principal with the initiating
      * actor recorded (PHASE-4 §13's system-identity-with-human-context audit shape).
+     * Transactional — the flow's writes and outbox appends are one unit, exactly
+     * like a write-path afterSave hook (the 2025-08-27 review closed the missing
+     * boundary here).
      */
+    @Transactional
     public Map<String, Object> runManualHook(UUID tenantId, UUID actorId, String entityApiName,
                                              UUID recordId, String hookName) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
@@ -978,7 +1005,10 @@ public class RecordEngine {
      * current state, the per-app system principal, the standard hook sink — the same
      * context the original execution had. Callers bind the tenant context; failures
      * surface as {@link PlatformException} for the scanner's attempt bookkeeping.
+     * Transactional — the re-driven hook's writes and outbox appends are one unit,
+     * mirroring the original write-path execution (2025-08-27 review).
      */
+    @Transactional
     public RetryOutcome retryAfterHook(UUID tenantId, String entityApiName, UUID recordId,
                                        String trigger, String hookName) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
