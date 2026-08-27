@@ -386,3 +386,69 @@ AggregateAliasValidation 3). Container-based suites not run this pass (no Docker
 the review environment) — the changed paths are covered by the unit tests above;
 the transaction-boundary change is proxy wiring, exercised by the existing
 api-module suites when run in a container-capable environment.
+
+---
+
+## Fourth Pass — 2025-08-27 (follow-up: the recorded-open mediums and lows)
+
+Every open item from the third pass is closed, except L-TP7 (actuator prometheus
+permitAll — unchanged by decision: scraping has no credential channel today; the
+posture is "service ports never leave the cluster," now noted in the helm values).
+
+### M-TP1 — Idempotency claim fence
+`replay → execute → record` raced: two concurrent requests with one key both
+executed. `IdempotencyRecorder.claim` now takes the key with a Redis
+`SETNX` pending marker (10-min TTL, long enough for a 500-item batch) before
+execution — `Acquired` / `Replay(settled)` / `InFlight` verdicts; create and batch
+in `RecordController` release the fence on execution failure so a client may retry
+immediately, and a duplicate in flight renders 409 with guidance instead of racing.
+
+### M-TP2 — secrets data key fails closed
+`SecretCipher` no longer silently mints the all-zeros key: the public dev key is
+allowed only under `novaforge.integration.secrets.allow-dev-key` (default true,
+loud multi-line WARN naming the risk); the integration helm chart sets
+`NOVAFORGE_SECRETS_ALLOW_DEV_KEY=false` + sources `NOVAFORGE_SECRETS_DATA_KEY`
+from a Kubernetes Secret — a misconfigured staged deployment fails at boot
+instead of encrypting tenant secrets under a repo-published key.
+
+### M-TP3 — service-client secret fails closed
+`ServiceTokenAutoConfiguration` now refuses the committed
+`novaforge-runtime-secret` when `novaforge.auth.service-client.allow-default-secret`
+is false (all eight service charts set it + source the secret from a K8s Secret);
+locally the default boots with a startup warning. Constant hoisted to
+`ServiceClientGate.DEFAULT_DEV_SECRET`.
+
+### M-TP4 — list-path sharing lowers into SQL
+`RecordEngine.list`/`listAsRole` now reuse the aggregate path's `applySharing`
+(owners `created_by IN (…)` OR lowered criteria), replacing the owner-only SQL +
+JVM post-filter hybrid: criteria-only rows beyond the fetched page window are
+reachable again, `total` matches the visible rows, and a non-lowerable criterion
+fails closed exactly as reports do. Point reads keep the JVM predicate (no
+windowing exists there).
+
+### M-TP5 — LIKE-wildcard parity
+`ExpressionSql` `contains`/`startsWith` escape the needle in SQL (backslash
+first, then `%`/`_`, explicit `ESCAPE '\'`); the DSL's `contains` leaf escapes
+the bound value at bind time. A literal `%`/`_` in a needle now matches itself on
+both execution surfaces — the evaluator's substring semantics hold in SQL.
+Golden expectations updated (plain values like `spike` are byte-identical).
+
+### L-TP1 — query routing parses once
+`RecordController.query` routes aggregate-vs-list on the parsed body's shape;
+a list filter whose *value* is the string "aggregates" no longer misroutes, and a
+malformed JSON body rejects VALIDATION_FAILED at the door.
+
+### L-TP2 — SPA session honesty
+Both `auth.ts` copies: the session (in `sessionStorage`, now acknowledged in the
+doc — memory-only was never true) carries `expiresAt` + `refreshToken`; restore
+expiry-checks before use, silently refreshes via the refresh-token grant while it
+is valid, and clears unrecoverable sessions to the sign-in action.
+
+### Verification (this pass)
+
+Full reactor `-DskipTests install` green on Java 21. Module tests green:
+expression-dsl 16/16 (incl. the updated parity test), security-context 17/17,
+data-runtime engine 15/15. Frontend: builder-ui 40/40, runtime-ui 11/11.
+Container suites (api module: RecordApi/Sharing/…, integration: webhooks)
+not run here (no Docker) — the api-module suites exercise the new claim fence,
+lowered sharing, and query routing end-to-end and must run in CI.

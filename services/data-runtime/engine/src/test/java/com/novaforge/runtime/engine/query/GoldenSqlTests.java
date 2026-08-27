@@ -67,7 +67,7 @@ class GoldenSqlTests {
                 "SELECT id, version, created_at, updated_at, created_by, updated_by, deleted, data "
                         + "FROM rec_journal_entry WHERE tenant_id = ? AND deleted = false "
                         + "AND (((data->>'status') = ?) AND (entry_date >= ?) "
-                        + "AND ((data->>'memo') ILIKE ?) AND (((data->>'amount')::numeric) > ?)) "
+                        + "AND ((data->>'memo') ILIKE ? ESCAPE '\\') AND (((data->>'amount')::numeric) > ?)) "
                         + "ORDER BY entry_date DESC, id LIMIT ? OFFSET ?");
         assertThat(lowered.params()).containsExactly(
                 TENANT, "POSTED", "2026-01-01", "%spike%", new BigDecimal("100.5"), 50, 100L);

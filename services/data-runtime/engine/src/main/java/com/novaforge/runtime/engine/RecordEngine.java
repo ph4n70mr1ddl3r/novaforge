@@ -245,20 +245,21 @@ public class RecordEngine {
         QueryLowering.Lowered countSql = lowering.count(handle.entity().apiName(), tenantId,
                 query.filter());
         QueryLowering.Lowered listSql = lowering.list(handle.entity().apiName(), tenantId, query);
+        // Sharing lowers into the pipeline exactly as the aggregate path does
+        // (PHASE-5 §4): owners as created_by IN (…), criteria as compiled boolean
+        // SQL — one OR over both. The old shape (owner set in SQL, criteria
+        // post-filtered in Java over the fetched page) skewed pagination: rows
+        // visible only by criteria sat beyond the page window forever, and `total`
+        // counted rows the filter then removed (the 2025-08-27 review closed it).
+        // A criterion that cannot lower fails closed — the same stance reports
+        // already carry (applySharing).
         var restriction = sharing.forActor(tenantId, actorId, handle.entity(), app);
-        if (restriction != null) {
-            String placeholders = restriction.visibleOwners().stream().map(o -> "?")
-                    .reduce((a, b) -> a + "," + b).orElse("?");
-            List<Object> owners = List.copyOf(restriction.visibleOwners());
-            countSql = countSql.and("created_by IN (" + placeholders + ")", owners);
-            listSql = listSql.and("created_by IN (" + placeholders + ")", owners);
-        }
+        countSql = applySharing(countSql, handle, restriction);
+        listSql = applySharing(listSql, handle, restriction);
         RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
                 listSql.sql(), listSql.params());
         java.util.function.Predicate<String> strip = strip(tenantId, actorId, handle, app);
         List<Map<String, Object>> rows = page.rows().stream()
-                .filter(row -> restriction == null   // criteria rules post-filter the
-                        || restriction.recordVisible().test(row))   // page (§10 note)
                 .map(row -> stripHidden(row, strip))
                 .toList();
         return new QueryModel.QueryResult(rows, page.total());
@@ -590,21 +591,18 @@ public class RecordEngine {
         QueryLowering.Lowered countSql = lowering.count(handle.entity().apiName(), tenantId,
                 query.filter());
         QueryLowering.Lowered listSql = lowering.list(handle.entity().apiName(), tenantId, query);
+        // The export scope rides the same lowered sharing as user lists (the
+        // 2025-08-27 review unified the two paths) — never the page-skewing
+        // post-filter.
         var restriction = sharing.forRole(tenantId, handle.entity(), app, asRole);
-        if (restriction != null) {
-            String placeholders = restriction.visibleOwners().stream().map(o -> "?")
-                    .reduce((a, b) -> a + "," + b).orElse("?");
-            List<Object> owners = List.copyOf(restriction.visibleOwners());
-            countSql = countSql.and("created_by IN (" + placeholders + ")", owners);
-            listSql = listSql.and("created_by IN (" + placeholders + ")", owners);
-        }
+        countSql = applySharing(countSql, handle, restriction);
+        listSql = applySharing(listSql, handle, restriction);
         RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
                 listSql.sql(), listSql.params());
         java.util.function.Predicate<String> hidden = field ->
                 com.novaforge.metadata.PermissionSet.FieldSecurity.HIDDEN.equals(
                         roleFieldAccess(app, handle.entity().apiName(), field, asRole));
         List<Map<String, Object>> rows = page.rows().stream()
-                .filter(row -> restriction == null || restriction.recordVisible().test(row))
                 .map(row -> stripHidden(row, hidden))
                 .toList();
         return new QueryModel.QueryResult(rows, page.total());

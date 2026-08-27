@@ -55,6 +55,9 @@ novaforge:
     service-client:
       id: ${NOVAFORGE_SERVICE_CLIENT_ID:novaforge-runtime}
       secret: ${NOVAFORGE_SERVICE_CLIENT_SECRET:novaforge-runtime-secret}
+      # Fail-closed switch for staged environments (the helm charts set it false):
+      # the committed dev secret never authenticates outside local bring-up.
+      allow-default-secret: ${NOVAFORGE_AUTH_ALLOW_DEFAULT_SECRET:true}
   data-runtime:
     # Suite steps replay through the generic runtime APIs as the actors (ADR-010 #3).
     url: ${NOVAFORGE_DATA_RUNTIME_URL:http://localhost:8083}

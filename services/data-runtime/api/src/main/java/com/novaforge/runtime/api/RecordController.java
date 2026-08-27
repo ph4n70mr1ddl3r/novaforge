@@ -6,6 +6,7 @@ import com.novaforge.common.error.PlatformException;
 import com.novaforge.common.error.ProblemErrors;
 import com.novaforge.runtime.engine.RecordEngine;
 import com.novaforge.runtime.engine.idempotency.IdempotencyRecorder;
+import com.novaforge.runtime.engine.idempotency.IdempotencyRecorder.Claim;
 import com.novaforge.runtime.engine.query.QueryModel;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
@@ -55,16 +56,29 @@ public class RecordController {
                                          @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         var ctx = requireContext();
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
-            var replay = idempotency.replay(tenant(ctx), actor(ctx), idempotencyKey);
-            if (replay.isPresent()) {
-                return ResponseEntity.status(replay.get().status())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body(replay.get().body());
+            // The claim fence: exactly one in-flight request per key executes —
+            // duplicates replay the settled outcome or reject 409 while the first
+            // still runs (never a double write, never a double sequence draw).
+            switch (idempotency.claim(tenant(ctx), actor(ctx), idempotencyKey)) {
+                case Claim.Replay replay -> {
+                    return ResponseEntity.status(replay.recorded().status())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(replay.recorded().body());
+                }
+                case Claim.InFlight ignored -> throw new PlatformException(PlatformErrorCode.CONFLICT_VERSION,
+                        "an identical request with this Idempotency-Key is already in flight "
+                                + "— retry when it settles");
+                case Claim.Acquired ignored -> { }
             }
-            String body_ = MAPPER.writeValueAsString(
-                    engine.create(tenant(ctx), actor(ctx), entity, body));
-            idempotency.record(tenant(ctx), actor(ctx), idempotencyKey, 200, body_);
-            return ResponseEntity.ok(body_);
+            try {
+                String body_ = MAPPER.writeValueAsString(
+                        engine.create(tenant(ctx), actor(ctx), entity, body));
+                idempotency.record(tenant(ctx), actor(ctx), idempotencyKey, 200, body_);
+                return ResponseEntity.ok(body_);
+            } catch (RuntimeException e) {
+                idempotency.release(tenant(ctx), actor(ctx), idempotencyKey);
+                throw e;
+            }
         }
         return ResponseEntity.ok(MAPPER.writeValueAsString(
                 engine.create(tenant(ctx), actor(ctx), entity, body)));
@@ -111,33 +125,55 @@ public class RecordController {
         return shaped;
     }
 
-    /** Complex queries (aggregations) — anything richer than the GET DSL (§5). */
+    /** Complex queries (aggregations) — anything richer than the GET DSL (§5). Routed
+     *  on the parsed body's shape, never a raw substring scan (the 2025-08-27 low:
+     *  a list whose filter value was the string "aggregates" misrouted into the
+     *  aggregate parser). */
     @PostMapping("/{entity}/query")
     public Object query(@PathVariable String entity, @RequestBody String body) {
         var ctx = requireContext();
-        if (body.contains("\"aggregates\"") || body.contains("\"groupBy\"")) {
+        JsonNode root;
+        try {
+            root = MAPPER.readTree(body);
+        } catch (tools.jackson.core.JacksonException e) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "the query body is not valid JSON", ProblemErrors.of(
+                            new ProblemErrors.FieldError("query", "must be a JSON object", body)), e);
+        }
+        if (root != null && (root.hasNonNull("aggregates") || root.hasNonNull("groupBy"))) {
             return engine.aggregate(tenant(ctx), actor(ctx), entity, body);
         }
         return engine.list(tenant(ctx), actor(ctx), entity, body);
     }
 
-    /** Bulk ops with per-item outcomes, max 500 (§5). */
+    /** Bulk ops with per-item outcomes, max 500 (§5). The claim fence rides the
+     *  whole batch exactly as it does a single create. */
     @PostMapping("/batch")
     public ResponseEntity<String> batch(@RequestBody BatchRequest request,
                                         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         var ctx = requireContext();
         List<Map<String, Object>> outcomes = List.of();
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
-            var replay = idempotency.replay(tenant(ctx), actor(ctx), idempotencyKey);
-            if (replay.isPresent()) {
-                return ResponseEntity.status(replay.get().status())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body(replay.get().body());
+            switch (idempotency.claim(tenant(ctx), actor(ctx), idempotencyKey)) {
+                case Claim.Replay replay -> {
+                    return ResponseEntity.status(replay.recorded().status())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(replay.recorded().body());
+                }
+                case Claim.InFlight ignored -> throw new PlatformException(PlatformErrorCode.CONFLICT_VERSION,
+                        "an identical request with this Idempotency-Key is already in flight "
+                                + "— retry when it settles");
+                case Claim.Acquired ignored -> { }
             }
-            outcomes = engine.batch(tenant(ctx), actor(ctx), request.items());
-            String body_ = MAPPER.writeValueAsString(Map.of("outcomes", outcomes));
-            idempotency.record(tenant(ctx), actor(ctx), idempotencyKey, 200, body_);
-            return ResponseEntity.ok(body_);
+            try {
+                outcomes = engine.batch(tenant(ctx), actor(ctx), request.items());
+                String body_ = MAPPER.writeValueAsString(Map.of("outcomes", outcomes));
+                idempotency.record(tenant(ctx), actor(ctx), idempotencyKey, 200, body_);
+                return ResponseEntity.ok(body_);
+            } catch (RuntimeException e) {
+                idempotency.release(tenant(ctx), actor(ctx), idempotencyKey);
+                throw e;
+            }
         }
         outcomes = engine.batch(tenant(ctx), actor(ctx), request.items());
         return ResponseEntity.ok(MAPPER.writeValueAsString(Map.of("outcomes", outcomes)));

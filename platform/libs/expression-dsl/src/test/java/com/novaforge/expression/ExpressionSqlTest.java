@@ -118,7 +118,11 @@ class ExpressionSqlTest {
         assertThat(lower("upper(status) == 'POSTED'").sql())
                 .isEqualTo("(upper('status') = ?)");
         assertThat(lower("contains(status, 'PENDING')").sql())
-                .isEqualTo("(('status') LIKE '%' || (?) || '%')");
+                .isEqualTo("(('status') LIKE '%' || (replace(replace(replace((?), '\\', '\\\\'), '%', '\\%'), '_', '\\_')) || '%' ESCAPE '\\')");
+        // wildcard literals in the needle must not widen the SQL match past the
+        // evaluator's substring semantics — escaping is the parity fix
+        assertThat(lower("contains(status, '50%_off')").sql())
+                .contains("replace");
     }
 
     @Test

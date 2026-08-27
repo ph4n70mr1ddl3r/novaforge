@@ -317,10 +317,17 @@ public final class ExpressionSql {
                 Lowered needle = lower(call.args().get(1));
                 requireType(haystack, SqlType.TEXT, call.name());
                 requireType(needle, SqlType.TEXT, call.name());
+                // The needle is LIKE-escaped in SQL (backslash first, then % and _)
+                // so a literal '%', '_', or '\\' in the authored needle matches
+                // itself — exactly the evaluator's substring semantics. Unescaped,
+                // the wildcards would widen the SQL match past the JVM verdict
+                // (the parity divergence the 2025-08-27 review closed).
+                String escaped = "replace(replace(replace((" + needle.sql()
+                        + "), '\\', '\\\\'), '%', '\\%'), '_', '\\_')";
                 String pattern = call.name().equals("contains")
-                        ? "'%' || (" + needle.sql() + ") || '%'"
-                        : "(" + needle.sql() + ") || '%'";
-                yield new Lowered("((" + haystack.sql() + ") LIKE " + pattern + ")",
+                        ? "'%' || (" + escaped + ") || '%'"
+                        : "(" + escaped + ") || '%'";
+                yield new Lowered("((" + haystack.sql() + ") LIKE " + pattern + " ESCAPE '\\')",
                         List.copyOf(params), SqlType.BOOLEAN);
             }
             // Parity guards (class javadoc): these functions' SQL and JVM semantics

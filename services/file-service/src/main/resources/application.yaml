@@ -57,6 +57,9 @@ novaforge:
     service-client:
       id: ${NOVAFORGE_SERVICE_CLIENT_ID:novaforge-runtime}
       secret: ${NOVAFORGE_SERVICE_CLIENT_SECRET:novaforge-runtime-secret}
+      # Fail-closed switch for staged environments (the helm charts set it false):
+      # the committed dev secret never authenticates outside local bring-up.
+      allow-default-secret: ${NOVAFORGE_AUTH_ALLOW_DEFAULT_SECRET:true}
   storage:
     endpoint: ${NOVAFORGE_MINIO_ENDPOINT:http://localhost:9000}
     access-key: ${NOVAFORGE_MINIO_USER:novaforge}

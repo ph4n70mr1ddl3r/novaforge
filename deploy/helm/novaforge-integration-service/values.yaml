@@ -16,4 +16,25 @@ resources:
   limits:
     memory: 768Mi
 
-env: []
+# Staged environments fail closed on the committed development secrets
+# (2025-08-27 review): the service-client default never authenticates here, and
+# the integration secrets store refuses the public dev data key. Create the
+# referenced Kubernetes Secrets before deploying:
+#   kubectl create secret generic novaforge-service-client --from-literal=secret=<real-secret>
+#   kubectl create secret generic novaforge-secrets --from-literal=data-key=<base64-32B-key>
+env:
+  - name: NOVAFORGE_AUTH_ALLOW_DEFAULT_SECRET
+    value: "false"
+  - name: NOVAFORGE_SERVICE_CLIENT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: novaforge-service-client
+        key: secret
+  - name: NOVAFORGE_SECRETS_ALLOW_DEV_KEY
+    value: "false"
+  - name: NOVAFORGE_SECRETS_DATA_KEY
+    valueFrom:
+      secretKeyRef:
+        name: novaforge-secrets
+        key: data-key
+

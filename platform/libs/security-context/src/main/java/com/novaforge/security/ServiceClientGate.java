@@ -20,6 +20,13 @@ public final class ServiceClientGate {
     /** The Keycloak confidential service client (realm export under deploy/). */
     public static final String CLIENT_ID = "novaforge-runtime";
 
+    /** The committed development secret for that client — local bring-up only. It
+     *  is never accepted where novaforge.auth.service-client.allow-default-secret
+     *  is false (the auto-configuration fails boot on it there), because a bearer
+     *  of the service-client token passes every internal gate (the 2025-08-27
+     *  review closed the committed-default hole for staged environments). */
+    public static final String DEFAULT_DEV_SECRET = "novaforge-runtime-secret";
+
     private ServiceClientGate() {
     }
 

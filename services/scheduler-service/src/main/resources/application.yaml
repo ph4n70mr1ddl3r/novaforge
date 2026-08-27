@@ -61,6 +61,9 @@ novaforge:
     service-client:
       id: ${NOVAFORGE_SERVICE_CLIENT_ID:novaforge-runtime}
       secret: ${NOVAFORGE_SERVICE_CLIENT_SECRET:novaforge-runtime-secret}
+      # Fail-closed switch for staged environments (the helm charts set it false):
+      # the committed dev secret never authenticates outside local bring-up.
+      allow-default-secret: ${NOVAFORGE_AUTH_ALLOW_DEFAULT_SECRET:true}
   reporting:
     # §7's report target: scheduled delivery fires the Reporting Service's internal
     # surface (run + render + notify under the job's runAsRole).

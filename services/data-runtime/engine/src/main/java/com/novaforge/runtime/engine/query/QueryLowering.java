@@ -268,8 +268,12 @@ public final class QueryLowering {
                 yield expr + " " + op + " ?";
             }
             case "contains" -> {
-                params.add("%" + canonicalValue(leaf.value()) + "%");
-                yield textExpr(leaf.field()) + " ILIKE ?";
+                // LIKE-escaped at bind time (backslash, then % and _) so a literal
+                // wildcard in the searched value matches itself — strict substring
+                // semantics, never an accidental wildcard search (the 2025-08-27
+                // review aligned this leaf with the expression lowering's parity).
+                params.add("%" + escapeLike(canonicalValue(leaf.value())) + "%");
+                yield textExpr(leaf.field()) + " ILIKE ? ESCAPE '\\'";
             }
             case "isNull" -> textExpr(leaf.field()) + " IS NULL";
             case "in" -> {
@@ -293,5 +297,13 @@ public final class QueryLowering {
             return decimal;
         }
         return value;
+    }
+
+    /** Escapes a value for LIKE/ILIKE matching: backslash first, then the wildcards. */
+    static String escapeLike(Object value) {
+        return String.valueOf(value)
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
     }
 }

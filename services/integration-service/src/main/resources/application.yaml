@@ -57,6 +57,9 @@ novaforge:
     service-client:
       id: ${NOVAFORGE_SERVICE_CLIENT_ID:novaforge-runtime}
       secret: ${NOVAFORGE_SERVICE_CLIENT_SECRET:novaforge-runtime-secret}
+      # Fail-closed switch for staged environments (the helm charts set it false):
+      # the committed dev secret never authenticates outside local bring-up.
+      allow-default-secret: ${NOVAFORGE_AUTH_ALLOW_DEFAULT_SECRET:true}
   metadata:
     url: ${NOVAFORGE_METADATA_URL:http://localhost:8081}
   data-runtime:
@@ -70,7 +73,10 @@ novaforge:
   secrets:
     # AES-GCM data key (32 bytes, base64) — locally a compose-provided dev key;
     # staging/prod hold it in KMS/Vault (ARCHITECTURE.md §5 item 6, PHASE-6 §9).
+    # allow-dev-key=false (the helm chart) fails boot on the dev key instead of
+    # storing tenant secrets under a key that ships in the public repo.
     data-key: ${NOVAFORGE_SECRETS_DATA_KEY:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+    allow-dev-key: ${NOVAFORGE_SECRETS_ALLOW_DEV_KEY:true}
   connector:
     # §4's pinned timeout: connector calls are synchronous — 10 s, no suspension.
     timeout-ms: 10000

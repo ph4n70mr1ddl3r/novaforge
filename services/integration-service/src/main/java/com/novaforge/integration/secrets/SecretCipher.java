@@ -9,6 +9,8 @@ import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -18,9 +20,23 @@ import org.springframework.stereotype.Component;
  * environments — encrypts every stored secret as {@code IV ‖ ciphertext+tag} with a
  * fresh 96-bit IV per write. The key itself never persists beside the data and never
  * rides an app artifact.
+ *
+ * <p><b>Fail-closed on the dev key (the 2025-08-27 review closed the silent
+ * fallback):</b> the all-zeros development key — previously handed out silently
+ * whenever {@code NOVAFORGE_SECRETS_DATA_KEY} was unset — now demands an explicit
+ * opt-in. {@code novaforge.integration.secrets.allow-dev-key} (default true) keeps
+ * local bring-up working while logging a loud warning naming the risk; staged
+ * environments (the helm chart sets it false) refuse to start on the dev key, so a
+ * misconfigured deployment fails at boot instead of storing tenant secrets under a
+ * key that ships in the public repository.</p>
  */
 @Component
 public final class SecretCipher {
+
+    private static final Logger LOG = LoggerFactory.getLogger(SecretCipher.class);
+
+    /** The published all-zeros development key (32 zero bytes, base64) — local only. */
+    static final String DEV_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
     private static final int IV_BYTES = 12;
     private static final int TAG_BITS = 128;
@@ -28,13 +44,22 @@ public final class SecretCipher {
     private final SecretKey key;
     private final SecureRandom random = new SecureRandom();
 
-    public SecretCipher(@Value("${novaforge.integration.secrets.data-key:}") String base64Key) {
-        if (base64Key == null || base64Key.isBlank()) {
-            // A compose-provided default (32 zero bytes) keeps local bring-up working;
-            // staged environments set NOVAFORGE_SECRETS_DATA_KEY from the KMS/Vault
-            // source. The key rotates by re-encrypting the store — v1 pins the
-            // mechanism, not the ceremony.
-            base64Key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    public SecretCipher(@Value("${novaforge.integration.secrets.data-key:" + DEV_KEY + "}") String base64Key,
+                        @Value("${novaforge.integration.secrets.allow-dev-key:true}") boolean allowDevKey) {
+        boolean devKey = DEV_KEY.equals(base64Key);
+        if (devKey && !allowDevKey) {
+            throw new PlatformException(PlatformErrorCode.INTERNAL,
+                    "the secrets data key is the public development key and dev keys are not "
+                            + "allowed here — set NOVAFORGE_SECRETS_DATA_KEY from the KMS/Vault "
+                            + "source before starting this deployment");
+        }
+        if (devKey) {
+            LOG.warn("╔══ SECRETS STORE RUNS ON THE PUBLIC DEVELOPMENT KEY ══╗");
+            LOG.warn("║ NOVAFORGE_SECRETS_DATA_KEY is unset or carries the dev key: every stored  ║");
+            LOG.warn("║ secret is encrypted under a key that ships in the public repository.     ║");
+            LOG.warn("║ Local bring-up only — staged environments set                               ║");
+            LOG.warn("║ novaforge.integration.secrets.allow-dev-key=false and fail boot instead.   ║");
+            LOG.warn("╚══════════════════════════════════════════════════════════════════════╝");
         }
         byte[] decoded;
         try {
