@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
     ApiError,
     type EntityDefinition,
@@ -75,7 +75,10 @@ export function EntityBuilder({ app, appId, onSave, onDelete }: EntityBuilderPro
                                 aria-current={selected?.apiName === entity.apiName}
                                 onClick={() => pick(entity.apiName)}
                             >
-                                {entity.label ?? entity.apiName}
+                                {/* blank labels fall back to the apiName — `??` alone
+                                    keeps "" and the button loses its accessible name
+                                    (found live at the golden journey) */}
+                                {entity.label?.trim() ? entity.label : entity.apiName}
                             </button>
                         </li>
                     ))}
@@ -85,10 +88,18 @@ export function EntityBuilder({ app, appId, onSave, onDelete }: EntityBuilderPro
                     className="nf-action-primary"
                     disabled={busy}
                     onClick={() =>
+                        // a fresh object identity every click — EntityEditor resets its
+                        // draft when the selection prop changes (found live at the
+                        // golden-journey run: a stale draft from the app the shell
+                        // first loaded, hooks included, rode into every "new" entity
+                        // and failed the save compile-check)
                         setSelected({
                             apiName: "",
                             label: "",
-                            displayField: "",
+                            // the seeded field is the display field — an empty
+                            // displayField fails save-validation ("must name an
+                            // existing field"), found live at the golden journey
+                            displayField: "name",
                             module: "",
                             fields: [{ apiName: "name", type: "text", required: true }],
                             relationships: [],
@@ -129,6 +140,13 @@ function EntityEditor({
     onDelete: (apiName: string) => Promise<void>;
 }): ReactNode {
     const [draft, setDraft] = useState<EntityDefinition>(entity);
+    // selection resets the draft: a fresh "New entity" selection or picking another
+    // entity must never carry the previous draft's fields/hooks — found live at the
+    // golden-journey run (a stale draft from the shell's first-loaded app rode into
+    // every "new" entity and failed the save compile-check)
+    useEffect(() => {
+        setDraft(entity);
+    }, [entity]);
     const update = (patch: Partial<EntityDefinition>): void => {
         setDraft((current) => ({ ...current, ...patch }));
     };

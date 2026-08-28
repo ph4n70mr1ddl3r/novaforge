@@ -16,25 +16,19 @@
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
       "redirectUris": [
-        "http://localhost:*/*",
-        "http://127.0.0.1:*/*"
+        "http://localhost:8080/*",
+        "http://127.0.0.1:8080/*",
+        "http://localhost:5173/*",
+        "http://localhost:5174/*"
       ],
       "webOrigins": [
         "+"
       ],
       "defaultClientScopes": [
-        "web-origins",
-        "acr",
-        "roles",
-        "profile",
-        "email",
         "novaforge.api"
       ],
       "optionalClientScopes": [
-        "address",
-        "phone",
-        "offline_access",
-        "microprofile-jwt"
+        "offline_access"
       ]
     },
     {

@@ -94,7 +94,7 @@ describe("Onboarding (T10)", () => {
             const url = String(input);
             calls.push({ path: url, method: (init?.method ?? "GET").toUpperCase(), body: init?.body ? JSON.parse(String(init.body)) : undefined });
             if (url.includes("/api/v1/admin/tenants") && !url.includes("role-assignments")) {
-                return new Response(JSON.stringify({ tenantId: "t-1" }), { status: 200 });
+                return new Response(JSON.stringify({ tenantId: "t-1", adminUserId: "user-9" }), { status: 200 });
             }
             if (url.includes("role-assignments")) {
                 return new Response(JSON.stringify({ ok: true }), { status: 200 });
@@ -112,13 +112,17 @@ describe("Onboarding (T10)", () => {
         const onAppCreated = vi.fn();
         render(createElement(Onboarding, { client: clientWith(calls), onAppCreated }));
 
-        fireEvent.change(screen.getByLabelText(/Tenant label/), { target: { value: "Acme" } });
+        fireEvent.change(screen.getByLabelText(/Tenant apiName/), { target: { value: "acme" } });
+        fireEvent.change(screen.getByLabelText(/Tenant display name/), { target: { value: "Acme" } });
         fireEvent.change(screen.getByLabelText(/First admin username/), { target: { value: "admin" } });
         fireEvent.change(screen.getByLabelText(/First admin email/), { target: { value: "admin@acme.test" } });
+        fireEvent.change(screen.getByLabelText(/First admin password/), { target: { value: "acme-secret" } });
         screen.getByRole("button", { name: "Create tenant + admin" }).click();
         await waitFor(() => expect(screen.getByText(/assign the first admin/i)).toBeTruthy());
 
-        fireEvent.change(screen.getByLabelText("Username"), { target: { value: "admin" } });
+        // the admin step rides the provisioned admin's userId (createTenant returns it)
+        const tenantBody = calls.find((call) => call.path.endsWith("/admin/tenants"));
+        fireEvent.change(screen.getByLabelText("Role (e.g. admin)"), { target: { value: "admin" } });
         screen.getByRole("button", { name: "Assign role" }).click();
         await waitFor(() => expect(screen.getByLabelText(/App apiName/)).toBeTruthy());
 
@@ -126,9 +130,20 @@ describe("Onboarding (T10)", () => {
         screen.getByRole("button", { name: "Create first app" }).click();
         await waitFor(() => expect(onAppCreated).toHaveBeenCalledWith("app-9"));
 
+        const rolePost = calls.find((call) => call.path.includes("/role-assignments"));
+        expect((rolePost?.body as Record<string, unknown>).userId).toBe("user-9");
         const tenantPost = calls.find((call) => call.path.endsWith("/admin/tenants"));
         expect(tenantPost?.method).toBe("POST");
-        expect((tenantPost?.body as Record<string, unknown>).adminEmail).toBe("admin@acme.test");
+        // the platform admin API's exact shape (PHASE-2 §10) — apiName + displayName
+        // + the admin's credentials; the old form sent `label` and no password and the
+        // stubbed journey never saw the API reject it (found live, golden-journey run)
+        expect(tenantPost?.body).toMatchObject({
+            apiName: "acme",
+            displayName: "Acme",
+            adminUsername: "admin",
+            adminEmail: "admin@acme.test",
+            adminPassword: "acme-secret",
+        });
         const appPost = calls.find((call) => call.path.endsWith("/metadata/apps"));
         expect((appPost?.body as Record<string, unknown>).apiName).toBe("Erp");
     });

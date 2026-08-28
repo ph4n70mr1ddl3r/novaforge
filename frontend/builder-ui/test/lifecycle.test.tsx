@@ -62,6 +62,18 @@ const app: AppDefinition = {
 };
 
 describe("Lifecycle change-set review (PHASE-8 §3)", () => {
+    it("publishes the dev version from the builder (PHASE-2 §8: authoring without an API leg)", async () => {
+        const publish = vi.fn(async () => ({ version: 7 }));
+        const client = {
+            ...stubClient(review),
+            publish,
+        } as unknown as PlatformClient;
+        render(createElement(Lifecycle, { client, appId: "app-1" }));
+        fireEvent.click(screen.getByTestId("publish"));
+        await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Published v7"));
+        expect(publish).toHaveBeenCalledWith("app-1");
+    });
+
     it("renders the real payload: diff rows, version-bound suites, ratio, re-bind union, resolved gaps, override history", async () => {
         render(createElement(Lifecycle, { client: stubClient(review), appId: "app-1" }));
 

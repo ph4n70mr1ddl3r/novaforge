@@ -529,6 +529,13 @@ export function resolveLabel(
     locale: string | undefined,
     apiName: string,
 ): string {
+    // The pinned chain (PHASE-8 §7): label_i18n[locale] → label → apiName, never
+    // blank — blanks fall through (an authored "" label must not strip nav buttons
+    // and fields of their accessible names; found live at the golden journey)
     const localized = locale ? labeled?.label_i18n?.[locale] : undefined;
-    return localized ?? labeled?.label ?? apiName;
+    return nonBlank(localized) ?? nonBlank(labeled?.label) ?? apiName;
+}
+
+function nonBlank(value: string | undefined): string | undefined {
+    return value && value.trim() ? value : undefined;
 }

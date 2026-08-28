@@ -67,6 +67,7 @@ export function NavList(props: LayoutProps): ReactNode {
 }
 
 export function FormLayout(props: LayoutProps & { columns?: number; section?: string | null }): ReactNode {
+    const renderer = useRenderer();
     const columns = Number(props.columns ?? 2);
     return (
         <form
@@ -77,6 +78,23 @@ export function FormLayout(props: LayoutProps & { columns?: number; section?: st
         >
             {props.section ? <h3 className="nf-section-title">{props.section}</h3> : null}
             {props.children}
+            {/* The form's action bar: L1 form defaults carry save/cancel as page
+                actions — without a rendering surface here the auto-generated form
+                had no submit path at all (found live at the golden journey) */}
+            {(renderer.pageActions ?? []).length > 0 ? (
+                <div className="nf-form-actions nf-full" role="group" aria-label="Form actions">
+                    {(renderer.pageActions ?? []).map((action, index) => (
+                        <button
+                            key={index}
+                            type="button"
+                            className={action.type === "save" ? "nf-action nf-action-primary" : "nf-action"}
+                            onClick={() => void dispatchAction(renderer, action)}
+                        >
+                            {actionLabel(action.type)}
+                        </button>
+                    ))}
+                </div>
+            ) : null}
         </form>
     );
 }

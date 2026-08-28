@@ -70,6 +70,33 @@ export function Lifecycle({ client, appId }: { client: PlatformClient; appId: st
             <h2>Promotion</h2>
             {error ? <p role="alert">{error}</p> : null}
             {flash ? <p role="status" aria-live="polite">{flash}</p> : null}
+            <div className="nf-b-publish">
+                <button
+                    type="button"
+                    data-testid="publish"
+                    disabled={busy}
+                    onClick={async () => {
+                        setBusy(true);
+                        try {
+                            // The dev publish (PHASE-1 §4): validation + compatibility
+                            // check; a published version is what the gate promotes —
+                            // without this control the builder could author but never
+                            // ship (found wiring the PHASE-2 §11 golden journey).
+                            const version = await client.publish(appId) as { version?: number };
+                            setFlash(`Published v${version?.version ?? "?"}`);
+                            const fresh = await client.changeset(appId, env) as ChangeSet;
+                            setChangeset(fresh);
+                        } catch (caught) {
+                            setError(caught instanceof Error ? caught.message : String(caught));
+                        } finally {
+                            setBusy(false);
+                        }
+                    }}
+                >
+                    Publish dev version
+                </button>
+                <p className="nf-hint">Publishes the draft (validation + compatibility check). Promotion below is gated on suite runs against the published version.</p>
+            </div>
             <label>
                 Environment
                 <select value={env} onChange={(event) => setEnv(event.target.value as typeof env)}>

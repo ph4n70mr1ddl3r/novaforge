@@ -12,6 +12,7 @@ type Step = "tenant" | "admin" | "app" | "done";
 export function Onboarding({ client, onAppCreated }: { client: PlatformClient; onAppCreated: (appId: string) => void }): ReactNode {
     const [step, setStep] = useState<Step>("tenant");
     const [tenantId, setTenantId] = useState<string>("");
+    const [adminUserId, setAdminUserId] = useState<string>("");
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
@@ -44,23 +45,29 @@ export function Onboarding({ client, onAppCreated }: { client: PlatformClient; o
                         event.preventDefault();
                         const form = new FormData(event.currentTarget);
                         void run(async () => {
+                            // the platform admin API's exact shape (PHASE-2 §10):
+                            // apiName + displayName + the first admin's credentials —
+                            // found live at the golden-journey wiring: the form used to
+                            // send `label` and never a password, and the stubbed journey
+                            // could not see the API rejecting it.
                             const tenant = (await client.createTenant({
-                                label: String(form.get("label")),
-                                adminEmail: String(form.get("adminEmail")),
+                                apiName: String(form.get("apiName")),
+                                displayName: String(form.get("displayName")),
                                 adminUsername: String(form.get("adminUsername")),
-                                adminFirstName: String(form.get("firstName") ?? ""),
-                                adminLastName: String(form.get("lastName") ?? ""),
-                            })) as { tenantId?: string; id?: string };
+                                adminEmail: String(form.get("adminEmail")),
+                                adminPassword: String(form.get("adminPassword")),
+                            })) as { tenantId?: string; id?: string; adminUserId?: string };
                             setTenantId(String(tenant.tenantId ?? tenant.id ?? ""));
+                            setAdminUserId(String(tenant.adminUserId ?? ""));
                             setStep("admin");
                         });
                     }}
                 >
-                    <label>Tenant label <input name="label" required /></label>
+                    <label>Tenant apiName <input name="apiName" required /></label>
+                    <label>Tenant display name <input name="displayName" required /></label>
                     <label>First admin username <input name="adminUsername" required /></label>
                     <label>First admin email <input name="adminEmail" type="email" required /></label>
-                    <label>First name <input name="firstName" /></label>
-                    <label>Last name <input name="lastName" /></label>
+                    <label>First admin password <input name="adminPassword" type="password" required /></label>
                     <button type="submit" className="nf-action-primary" disabled={busy}>Create tenant + admin</button>
                 </form>
             ) : null}
@@ -70,19 +77,21 @@ export function Onboarding({ client, onAppCreated }: { client: PlatformClient; o
                         event.preventDefault();
                         const form = new FormData(event.currentTarget);
                         void run(async () => {
+                            // the platform admin API's exact shape: the provisioned
+                            // admin's userId (createTenant returns it) + the role —
+                            // the first admin already carries admin/builder/user from
+                            // provisioning, so this step grants any additional role
                             await client.assignRole(tenantId, {
-                                username: String(form.get("username")),
+                                userId: adminUserId,
                                 role: String(form.get("role")),
-                                app: String(form.get("app") ?? ""),
                             });
                             setStep("app");
                         });
                     }}
                 >
                     <p role="status">Tenant {tenantId} created — assign the first admin roles.</p>
-                    <label>Username <input name="username" required /></label>
+                    <label>Admin userId <input value={adminUserId} readOnly aria-label="Admin userId" /></label>
                     <label>Role (e.g. admin) <input name="role" defaultValue="admin" required /></label>
-                    <label>App scope (optional) <input name="app" /></label>
                     <button type="submit" className="nf-action-primary" disabled={busy}>Assign role</button>
                 </form>
             ) : null}

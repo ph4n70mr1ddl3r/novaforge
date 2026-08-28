@@ -99,6 +99,7 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                     <>
                         {screen === "entities" ? (
                             <EntityBuilder
+                                key={String(app.id)}
                                 app={app}
                                 appId={app.id ?? ""}
                                 onSave={async (entity: EntityDefinition) => {

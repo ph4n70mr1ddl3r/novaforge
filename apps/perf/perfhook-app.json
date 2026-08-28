@@ -1,0 +1,93 @@
+{
+ "apiName": "PerfHook",
+ "label": "PerfHook",
+ "description": "PHASE-3 \u00a711 / PHASE-8 \u00a78 perf fixture \u2014 the write path with exactly one synchronous beforeSave hook (setField) plus one record-scope validation rule, measured at the 1M-row tenant dataset (ARCHITECTURE.md \u00a79: write p95 < 150 ms; read < 50 ms; filtered list < 300 ms).",
+ "permissionSet": {
+  "roles": [
+   {
+    "name": "clerk",
+    "description": "Raises perf documents"
+   }
+  ],
+  "objectPermissions": [
+   {
+    "role": "clerk",
+    "entity": "PerfDoc",
+    "create": true,
+    "read": true,
+    "update": true,
+    "delete": true
+   }
+  ]
+ },
+ "entities": [
+  {
+   "apiName": "PerfDoc",
+   "label": "Perf Doc",
+   "displayField": "name",
+   "fields": [
+    {
+     "apiName": "name",
+     "type": "text",
+     "required": true
+    },
+    {
+     "apiName": "status",
+     "type": "enum",
+     "values": [
+      "DRAFT",
+      "POSTED"
+     ],
+     "required": true
+    },
+    {
+     "apiName": "dueDate",
+     "type": "date",
+     "required": true
+    },
+    {
+     "apiName": "amount",
+     "type": "money"
+    },
+    {
+     "apiName": "stamp",
+     "type": "text"
+    }
+   ],
+   "validations": [
+    {
+     "name": "amountNotNegative",
+     "scope": "record",
+     "expression": "amount >= 0",
+     "message": "amount must not be negative"
+    }
+   ],
+   "hooks": [
+    {
+     "name": "stampLabel",
+     "trigger": "beforeSave",
+     "flow": {
+      "id": "s1",
+      "op": "setField",
+      "params": {
+       "field": "stamp",
+       "expression": "upper(name)"
+      }
+     }
+    }
+   ],
+   "indexes": [
+    {
+     "fields": [
+      "status"
+     ]
+    },
+    {
+     "fields": [
+      "dueDate"
+     ]
+    }
+   ]
+  }
+ ]
+}

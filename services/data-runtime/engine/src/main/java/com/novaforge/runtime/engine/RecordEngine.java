@@ -1757,12 +1757,30 @@ public class RecordEngine {
     /**
      * Field security (PHASE-2 §9): the predicate reports fields hidden for this actor —
      * projections strip them server-side (enforcement; the UI only renders).
+     *
+     * <p>Resolved <b>once per request</b>: {@code fieldAccess} is row-independent (each
+     * call is a platform-store role lookup), and the lazy per-row evaluation made list
+     * pages cost O(rows × fields) DB round trips — a 50-row page issued ~250 of them
+     * (~450 ms), blowing the ARCHITECTURE.md §9 list target at the 1M-row PHASE-3 §11
+     * measurement (2026-08-28, docs/loadtests/results-2026-08-28-hook-perf.md). The
+     * hidden set is precomputed over the entity's fields; keys outside it (system
+     * fields, unknown keys) stay visible exactly as {@code fieldAccess}'s default
+     * already reports.</p>
      */
     private java.util.function.Predicate<String> strip(UUID tenantId, UUID actorId,
                                                        EntityHandle handle, AppDefinition app) {
-        return field -> com.novaforge.metadata.PermissionSet.FieldSecurity.HIDDEN.equals(
-                roleMatrix.fieldAccess(tenantId, actorId, handle.appApiName(),
-                        app.permissionSet(), handle.entity().apiName(), field));
+        if (app.permissionSet().fieldSecurity().isEmpty()) {
+            return field -> false;
+        }
+        java.util.Set<String> hiddenFields = new java.util.HashSet<>();
+        for (FieldDefinition field : handle.entity().fields()) {
+            if (PermissionSet.FieldSecurity.HIDDEN.equals(
+                    roleMatrix.fieldAccess(tenantId, actorId, handle.appApiName(),
+                            app.permissionSet(), handle.entity().apiName(), field.apiName()))) {
+                hiddenFields.add(field.apiName());
+            }
+        }
+        return hiddenFields::contains;
     }
 
     private static Map<String, Object> stripHidden(Map<String, Object> row,

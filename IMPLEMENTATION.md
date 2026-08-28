@@ -203,13 +203,55 @@ nested paths, the checkPage verdict).
   Data Runtime DSL and forms ride controlled catalog inputs with the same
   JSON-Schema validation; the binder swap joins when widget-authoring demand
   justifies it (recorded here so the absence is a decision, not an omission).
-  Playwright per-component stories + the scripted E2E golden
-  journey (§11 items 2–3) ride the vitest+axe pattern the Phase 5 catalog work
-  established (jsdom journeys + axe; browser-runner wiring lands with the live
-  Phase 2 exit demo against the compose stack); the page-builder canvas is a
-  structural tree editor with palette/canvas/property-panel/preview rather than a
-  free-form React-Flow graph (form trees are the v1 page shape; §2's React-Flow
-  pin joins when flow-graph authoring — Phase 3's designer — needs it).
+  The page-builder canvas is a structural tree editor with
+  palette/canvas/property-panel/preview rather than a free-form React-Flow graph
+  (form trees are the v1 page shape; §2's React-Flow pin joins when flow-graph
+  authoring — Phase 3's designer — needs it).
+
+**Playwright landed + the live exit demo ran (2026-08-28) — the deviation closed.**
+  `@playwright/test` rides the frontend workspace (`pnpm exec playwright test`,
+  `frontend/playwright.config.ts`) with one scripted golden journey
+  (`frontend/e2e/golden-journey.spec.ts`) that IS the §1 exit against the live
+  stack: builder sign-in through the real PKCE flow → §10 onboarding (tenant →
+  first-admin role → first app) → three entities through the entity builder
+  (Customer/Order/OrderLine, the lookup authored as a typed field with its target
+  picker) → a `user` role + CRUD matrix through the RBAC editor → **dev publish
+  from the builder** (the lifecycle screen — see below) → the runtime shell
+  rendering the published app with zero page definitions → a Customer created
+  through the auto-generated form and verified in the server-paged list. Same-origin
+  hosting rides the built bundles embedded in the gateway jar (vite
+  `--base=/runtime/` + `/builder/`, gitignored under the gateway's static tree;
+  `pnpm package` remains the volume-mount path). **Six live defects the journey
+  shook out, all fixed with pinned regressions:** (1) the SPA fallback read an
+  unbound request param — every deep link served the runtime shell — and asset
+  URLs content-negotiated to JSON-typed shells; the controller now serves real
+  bundle files with their filename's media type and the prefix's own shell
+  (`GatewayApplicationTests`, 4 new pins). (2) The realm export's redirect URIs
+  carried two wildcards (Keycloak allows one) — the SPAs' PKCE flow could never
+  complete against a realm imported from the export; fixed in
+  `novaforge-realm.json` (+ the live realm re-imported). (3) The SPAs requested
+  the `profile` scope, which the realm never carried (imports don't merge the
+  standard scopes in) — the scope is now `openid novaforge.api`. (4) The
+  onboarding form sent `label`/no-password where the admin API pins
+  `apiName`/`displayName`/credentials, and its role step sent `username` where the
+  API pins the provisioned `userId` — the stubbed journey could never see the
+  rejections (`editors.test.tsx` re-pinned on the real shapes). (5) The entity
+  editor's draft never reset on selection/app swap — a stale draft from the
+  shell's first-loaded app (hooks included) rode into every "new" entity and
+  failed the save compile-check; selection now resets the draft (effect-synced,
+  `entity-builder.test.tsx` pinned), the shell keys the builder by app id, blank
+  labels fall back to apiName in both builders' lists, and the seeded displayField
+  rides the seeded `name` field. (6) The runtime's `openPage` action stripped
+  `customerForm` back to `customer` (case-sensitive) and EntityPage crashed on the
+  undefined entity; the resolution is case-insensitive now, and — the deepest —
+  **FormLayout never rendered the page's actions**, so every auto-generated form
+  lacked a submit path; the action bar renders save/cancel through the shared
+  dispatch (`resolveLabel`'s never-blank chain also fixed — `""` labels no longer
+  strip nav buttons and fields of their accessible names). The builder also grew
+  the missing **dev-publish control** (lifecycle screen `Publish dev version` —
+  without it the builder could author but never ship; `lifecycle.test.tsx`
+  pinned). Frontend totals: 96 shared + 42 builder + 11 runtime vitest + the E2E
+  journey.
 
 ## Phase 3 — Business Logic ◐ (spec: PHASE-3-BUSINESS-LOGIC.md)
 
@@ -365,6 +407,27 @@ service-account fallback (ADR-003 #2, amended with this note).
 **Phase 3 closed:** all §1–§9 surfaces implemented. The environment track's live
 Kind-cluster bring-up remains the one outstanding operational check (declaratively
 validated; carried from Phase 1).
+
+**§11 performance validation recorded (2026-08-28, the gap the ledger owed):**
+`docs/loadtests/results-2026-08-28-hook-perf.md` — the `PerfHook` fixture
+(`apps/perf/perfhook-app.json`, one beforeSave `setField` hook + one validation
+rule, 1M rows via the ADR-001 seeding methodology) measured through the gateway:
+**write-with-hook p95 112.0 ms (< 150) PASS**, point read p95 37.3 ms (< 50) PASS,
+filtered list p95 68.9 ms (< 300) PASS — the first at-scale run of the §9 read/list
+rows too (Phase 1's record measured a small dataset). The run caught a real defect
+the small-scale runs could not see: the list path's hidden-field predicate evaluated
+`RoleMatrix.fieldAccess` (a platform-store role lookup under the RLS set_config
+dance) once per field **per row** — ~250 role queries on a 50-row page, p95 750.7 ms
+against the 300 ms target. Fixed in `RecordEngine.strip()`: field access is
+row-independent, the hidden set resolves once per request (apps without fieldSecurity
+entries skip the lookups entirely); regression-pinned by `FieldStripCostTests`
+(engine module — at most one fieldAccess call per entity field over a 50-row page,
+hidden fields still strip). Two authoring-time findings from the same session are
+gap-logged for the next pass, not fixed here: the publish compile-check accepts a
+`setField` expression whose `+` operands are text (numeric-only per Annex A — the
+error surfaced at runtime as 500 INTERNAL, never at save), and an app PATCH replacing
+an entity's hook did not replace the nested `flow` (published v2 carried v1's
+expression; delete + re-import works around it).
 
 **Spec-review closeout (2026-08-25, fourth pass) — §4's trace propagation and the
 §13 Q3 key never landed, and §5's read gate was missing.** Three findings:
@@ -864,9 +927,12 @@ fell back to the initial state's edges). Closed:
   rules + levels, `logic.test.tsx` +the guided approval params,
   `notifications.test.tsx` (2 — inbox mark-read/reload, preference load/toggle)
 
-**Phase 4 remainder:** the §1 exit-journey demo (T12 — needs the full stack live;
-its runner leg is authored and CI-gated — see the 2026-08-26 exit-journey
-authoring below; the SLA leg rides `scanSla`). T10's surfaces all landed: the approval inbox and
+**Phase 4 remainder:** closed live (2026-08-28) — the §1 exit journey
+(`apps/purchasing` + `exitJourney`) ran GREEN against the full stack through
+`docs/loadtests/live-run-suites.py`: approve→POSTED, reject-path, below-threshold
+auto-post, SLA warn→breach→escalation, and `error(SOD_VIOLATION)` — 7.7 s, real
+Keycloak actors, the scanSla clock leg (no sleeps). T10's surfaces all landed long
+since (the approval inbox and
 notification inbox/preferences in `frontend/runtime-ui`, state-machine
 transitions as record actions from published machine metadata (reading the real
 `stateField`), the automation screen, the sharing-rule editor, guided
@@ -1271,11 +1337,13 @@ never landed:**
 
 ## Phase 6 — Integration Layer ◐ (spec: PHASE-6-INTEGRATION.md)
 
-**Status:** T1–T9 landed and suite-green (T3's builder leg included — the 2026-08-24
-review closeout below); T10 (the live exit walkthrough — Stripe/bank feed →
-Payments visible in reports against the running stack) remains the exit-review leg,
-per the task table's own definition. The authored `bankFeed` suite
-(`apps/erp/suites/`) is T10's journey as a runnable contract — its live execution
+**Status:** T1–T10 closed. T1–T9 landed and suite-green (T3's builder leg included
+— the 2026-08-24 review closeout below); **T10 (the live exit walkthrough) ran
+GREEN 2026-08-28** — the ERP `bankFeed` suite through the full stack (the real
+HMAC path → Payment lands → settlement decrements the POSTED invoice → aging
+reconciles 50.0000 decimal-exact), alongside the other four ERP suites. The
+authored `bankFeed` suite (`apps/erp/suites/`) is T10's journey as a runnable
+contract — its live execution
 rides the walkthrough.
 
 **Fixed at the 2026-08-24 spec review — the secrets package was never committed.**
@@ -1421,11 +1489,17 @@ by the integrations vitest journey (counters render, resume fires, ledger opens)
 >
 > The platform harvests (§3 + §4's soft close) are complete and suite-green; the
 > ERP app ships as authored metadata with its acceptance suites and the binding
-> gap log. The live-stack walkthrough (the §1 exit demo against the running
-> compose stack — the same leg Phases 5/6 exercised) is the remaining leg; the
+> gap log. **The live-stack walkthrough ran GREEN 2026-08-28** — all five suites
+> (reconciliation, controls, inventoryCosting, bankFeed, creditAndCurrency — 12
+> cases) through the full stack via `docs/loadtests/live-run-suites.py`: book →
+> approval → POSTED → trial balance nets → aging reconciles, freeze/period-lock/
+> soft-close controls, weighted-average costing decimal-exact, the bank-feed
+> HMAC leg, credit-note allocation, EUR-at-date-rate posting in USD book currency,
+> dunning mirroring its aging bucket, and the AP vendor subledger — the §1 exit
+> ("book invoice → auto journal → post → financial reports reconcile")
+> demonstrated on demand. The
 > builder-UI authoring surface (G-7) closed when the Phase 2 shells landed. The
-> §9 suites are authored as the contract; their live execution rides the full
-> stack (as the Phase 5/6 exits did).
+> §9 suites remain the standing contract; re-running them is one driver command.
 >
 > **Spec-review closeout (2026-08-24):** reviewing the artifact against §2/§4/§9
 > found and closed four gaps — §4's CLOSING-unless-close-journal gate had no
@@ -1801,6 +1875,17 @@ definition diff (entities/state machines/reports/suites/translations by apiName:
   owning suites); the live executions (load validation at full scale, the pen
   pass, the restore drill) run against the live stack — the Phases 5/6
   live-exit pattern — and record here when run.
+
+**T8's load validation — recorded 2026-08-28**
+(`docs/loadtests/results-2026-08-28-hook-perf.md`): every ARCHITECTURE.md §9 row
+measured and green — read p95 37.3 ms (< 50), 1M-row filtered list p95 68.9 ms
+(< 300) — the first at-scale run of that row —, write-with-1-sync-hook p95
+112.0 ms (< 150, PHASE-3 §11's row), report @1M p95 1379.9 ms cold / 132.6 ms warm
+(< 2 s, 2026-08-23); script-warm stays N/A (pools deferred, ADR-003 #4). The run
+caught and closed the list path's O(rows × fields) role-lookup defect
+(`FieldStripCostTests`, see Phase 3's §11 closeout above) — the exact outcome
+PLAN §6's "load-test early" mitigation exists for. T9 (pen pass) and T10
+(restore drill) remain the open operational legs.
 
 **Spec-review closeout (2026-08-25, third pass) — §3's gap-log surface, and the
 review screen read a payload the API never sends.** Three findings:

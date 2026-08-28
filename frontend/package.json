@@ -1,14 +1,15 @@
 {
   "name": "novaforge-frontend",
   "private": true,
-  "description": "NovaForge frontend workspace (PHASE-2 \u00a72): runtime-ui, builder-ui, and the shared package (page model, expression twin, component catalog, resolver, renderer, gateway client).",
+  "description": "NovaForge frontend workspace (PHASE-2 §2): runtime-ui, builder-ui, and the shared package (page model, expression twin, component catalog, resolver, renderer, gateway client).",
   "scripts": {
     "test": "pnpm -r --no-bail test",
     "build": "pnpm -r --no-bail build",
     "check": "pnpm -r --no-bail check",
-    "package": "pnpm -r --no-bail build && node -e \"const fs=require('fs');fs.rmSync('dist',{recursive:true,force:true});fs.mkdirSync('dist/runtime',{recursive:true});fs.mkdirSync('dist/builder',{recursive:true});fs.cpSync('runtime-ui/dist','dist/runtime',{recursive:true});fs.cpSync('builder-ui/dist','dist/builder',{recursive:true});console.log('assembled dist/runtime + dist/builder \u2014 mount at /static for the gateway')\""
+    "package": "pnpm -r --no-bail build && node -e \"const fs=require('fs');fs.rmSync('dist',{recursive:true,force:true});fs.mkdirSync('dist/runtime',{recursive:true});fs.mkdirSync('dist/builder',{recursive:true});fs.cpSync('runtime-ui/dist','dist/runtime',{recursive:true});fs.cpSync('builder-ui/dist','dist/builder',{recursive:true});console.log('assembled dist/runtime + dist/builder — mount at /static for the gateway')\""
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "typescript": "^5.9.2"
   }
 }

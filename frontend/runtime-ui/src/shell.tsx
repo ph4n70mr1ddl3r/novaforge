@@ -242,7 +242,14 @@ function EntityPage(props: EntityPageProps): ReactNode {
             openPage: async (target, targetId) => {
                 const kindOf = target.endsWith("List") ? "list" : target.endsWith("Detail") ? "detail" : "form";
                 const entityName = target.replace(/(Form|List|Detail)$/, "");
-                navigate(entityName, kindOf, targetId);
+                // pageApiName lowercases its input, so the strip must resolve back
+                // case-insensitively against the app's entities — a bare map lookup
+                // on the stripped name returned undefined and EntityPage crashed
+                // (found live at the golden journey: "customerForm" → "customer" ≠ "Customer")
+                const resolved = app.entities.find(
+                    (candidate) => candidate.apiName.toLowerCase() === entityName.toLowerCase(),
+                );
+                navigate(resolved?.apiName ?? entityName, kindOf, targetId);
             },
             runFlow: async (hook) => {
                 // PHASE-3 §8: the named flow runs server-side (system principal, the

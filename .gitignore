@@ -60,3 +60,7 @@ coverage/
 # Compose env overrides (secrets — never commit)
 deploy/compose/.env
 deploy/compose/.env.*
+
+# Gateway SPA bundles (frontend `pnpm package` output embedded for same-origin hosting;
+# built artifacts never ride the repo — the CI gateway test ships its own marker bundle)
+services/gateway/src/main/resources/static/

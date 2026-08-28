@@ -52,6 +52,33 @@ class GatewayApplicationTests {
     }
 
     @Test
+    @DisplayName("each prefix serves its OWN shell, and bundle files serve as files (found live at the 2026-08-28 golden-journey wiring)")
+    void spaPrefixServesItsOwnShellAndAssetsServeAsFiles() throws Exception {
+        // /builder must answer the builder shell — the old controller read an
+        // unbound request param, so every deep link served the runtime shell.
+        mockMvc.perform(get("/builder"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers
+                        .containsString("<title>NovaForge Builder</title>")));
+        mockMvc.perform(get("/runtime"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers
+                        .containsString("<title>NovaForge</title>")));
+        // a real bundle file serves as the file — with the filename's media type,
+        // never the content-negotiated shell (browsers reject JSON-typed modules)
+        mockMvc.perform(get("/runtime/assets/marker.js"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith("text/javascript"))
+                .andExpect(content().string(org.hamcrest.Matchers
+                        .containsString("runtime-asset")));
+        // an unknown asset-looking path is still the shell (SPA routing decides)
+        mockMvc.perform(get("/runtime/assets/nope.js"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers
+                        .containsString("<!doctype html>")));
+    }
+
+    @Test
     @DisplayName("no token → 401 problem+json")
     void unauthenticatedIsProblemJson() throws Exception {
         mockMvc.perform(get("/api/v1/metadata/ping"))

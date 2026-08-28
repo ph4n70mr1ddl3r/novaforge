@@ -10,7 +10,7 @@
  */
 
 const CLIENT_ID = "novaforge-api";
-const SCOPE = "openid profile novaforge.api";
+const SCOPE = "openid novaforge.api";
 
 /** Refresh when the access token is within this window of expiring (ms). */
 const EXPIRY_MARGIN_MS = 30_000;
