@@ -168,19 +168,12 @@ public class RecordStore {
         row.put("createdBy", rs.getObject("created_by", UUID.class));
         row.put("updatedBy", rs.getObject("updated_by", UUID.class));
         row.put("deleted", rs.getBoolean("deleted"));
-        JsonNode data = MAPPER.readTree(rs.getString("data"));
-        data.properties().forEach(p -> row.put(p.getKey(), p.getValue().isNumber()
-                ? p.getValue().decimalValue() : p.getValue().isBoolean()
-                ? p.getValue().asBoolean() : p.getValue().asString()));
+        row.putAll(dataFields(rs.getString("data")));
         return row;
     }
 
     private static StoredRecord mapRow(ResultSet rs, int rowNum) throws SQLException {
-        JsonNode data = MAPPER.readTree(rs.getString("data"));
-        Map<String, Object> fields = new LinkedHashMap<>();
-        data.properties().forEach(p -> fields.put(p.getKey(), p.getValue().isNumber()
-                ? p.getValue().decimalValue() : p.getValue().isBoolean()
-                ? p.getValue().asBoolean() : p.getValue().asString()));
+        Map<String, Object> fields = dataFields(rs.getString("data"));
         return new StoredRecord(
                 rs.getObject("id", UUID.class),
                 rs.getObject("tenant_id", UUID.class),
@@ -192,5 +185,37 @@ public class RecordStore {
                 rs.getObject("updated_by", UUID.class),
                 rs.getBoolean("deleted"),
                 fields);
+    }
+
+    /**
+     * The stored data jsonb → the record's field map. Scalars decode as before
+     * (numbers exact as BigDecimal, booleans, strings); a nested object or array —
+     * a json-typed field's opaque value — round-trips as a map/list instead of
+     * reaching {@code asString()}, which throws for non-scalar nodes on Jackson 3
+     * (and silently erased them to "" on Jackson 2): one such field poisoned every
+     * read of the record — point finds, list pages, the update merge, child walks.
+     * An explicit JSON null decodes as null, never "".
+     */
+    static Map<String, Object> dataFields(String dataJson) {
+        JsonNode data = MAPPER.readTree(dataJson);
+        Map<String, Object> fields = new LinkedHashMap<>();
+        data.properties().forEach(p -> fields.put(p.getKey(), fieldValue(p.getValue())));
+        return fields;
+    }
+
+    private static Object fieldValue(JsonNode node) {
+        if (node.isNumber()) {
+            return node.decimalValue();
+        }
+        if (node.isBoolean()) {
+            return node.asBoolean();
+        }
+        if (node.isString()) {
+            return node.asString();
+        }
+        if (node.isNull() || node.isMissingNode()) {
+            return null;
+        }
+        return MAPPER.convertValue(node, Object.class);
     }
 }
