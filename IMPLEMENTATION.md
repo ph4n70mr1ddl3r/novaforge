@@ -1884,8 +1884,30 @@ measured and green — read p95 37.3 ms (< 50), 1M-row filtered list p95 68.9 ms
 (< 2 s, 2026-08-23); script-warm stays N/A (pools deferred, ADR-003 #4). The run
 caught and closed the list path's O(rows × fields) role-lookup defect
 (`FieldStripCostTests`, see Phase 3's §11 closeout above) — the exact outcome
-PLAN §6's "load-test early" mitigation exists for. T9 (pen pass) and T10
-(restore drill) remain the open operational legs.
+PLAN §6's "load-test early" mitigation exists for.
+
+**T9's pen pass — recorded 2026-08-28**
+(`docs/runbooks/pen-pass-2026-08-28.md`, driver `docs/loadtests/pen-pass-probes.py`):
+**15/15 live probes PASS** against the deployed stack — unauthenticated 401s,
+cross-tenant list/id/write/delete isolation under a fresh tenant admin (RLS
+fail-closed, no existence leak), tenant-admin ≠ platform-admin, audit gating,
+the inbound-HMAC matrix (stale/mangled → 401/4012, indistinguishable), tampered
+promotion artifacts rejected with the pristine control importing clean, the
+anonymous webhook prefix rate-limiting under sustained load, and internal hook
+surfaces unrouted at the gateway. Two low findings triaged to backlog: hook
+existence enumerable on the anonymous route (404 vs 401) and wrong-shape webhook
+URLs answering 500 instead of 404.
+
+**T10's restore drill — recorded 2026-08-28**
+(`docs/runbooks/dr-drill-2026-08-28.md`): full-stack `pg_dumpall` (13 databases,
+196 MB gz, 26 s) restored into a fresh DR Postgres (3 m 07 s) with every exit
+criterion green — all 5 published apps with versions, 1,000,231 records
+count-exact, the audit trail byte-identical (1,934 events, same max timestamp).
+The drill's configured-state legs are its findings, triaged per the §8
+discipline: WAL archiving off (PITR impossible as configured), no nightly backup
+jobs, the MinIO bucket un-versioned, the runbook's compose `dr` profile absent —
+**the restore path passes; the backup configuration fails by finding, which is
+exactly what the drill exists to surface.**
 
 **Spec-review closeout (2026-08-25, third pass) — §3's gap-log surface, and the
 review screen read a payload the API never sends.** Three findings:
