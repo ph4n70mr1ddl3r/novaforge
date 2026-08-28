@@ -1655,21 +1655,37 @@ public class RecordEngine {
 
     private List<RecordStore.StoredRecord> currentChildren(UUID tenantId, EntityHandle childHandle,
                                                            String bindingField, UUID parentId) {
-        String queryJson = "{\"filter\":{\"field\":\"" + bindingField + "\",\"op\":\"eq\","
-                + "\"value\":\"" + parentId + "\"}}";
-        QueryModel.ListQuery query = QueryParser.parseList(queryJson, childHandle.entity());
-        QueryLowering lowering = new QueryLowering(childHandle.entity());
-        QueryLowering.Lowered countSql = lowering.count(childHandle.entity().apiName(), tenantId,
-                query.filter());
-        QueryLowering.Lowered listSql = lowering.list(childHandle.entity().apiName(), tenantId, query);
-        RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
-                listSql.sql(), listSql.params());
+        // The child walk pages to exhaustion, never the list default (50): inline
+        // children are legal to 100 per request and standalone/batch writes grow a
+        // parent's set without bound, so a single-page walk orphaned every child past
+        // page one — replace-children left stale rows behind (duplicated by the new
+        // set), cascade-delete left live children under a deleted parent, and both
+        // stayed counted by the roll-ups, which aggregate in SQL unwindowed (found in
+        // the 2026-08-28 hunt). The list lowers a deterministic ORDER BY id, so offset
+        // paging is stable; callers mutate only after the walk completes.
         List<RecordStore.StoredRecord> children = new ArrayList<>();
-        for (Map<String, Object> row : page.rows()) {
-            records.find(tenantId, childHandle.entityKey(), (UUID) row.get("id"), false)
-                    .ifPresent(children::add);
+        long offset = 0;
+        while (true) {
+            String queryJson = "{\"filter\":{\"field\":\"" + bindingField + "\",\"op\":\"eq\","
+                    + "\"value\":\"" + parentId + "\"},"
+                    + "\"page\":{\"size\":" + QueryModel.MAX_PAGE_SIZE
+                    + ",\"offset\":" + offset + "}}";
+            QueryModel.ListQuery query = QueryParser.parseList(queryJson, childHandle.entity());
+            QueryLowering lowering = new QueryLowering(childHandle.entity());
+            QueryLowering.Lowered countSql = lowering.count(childHandle.entity().apiName(), tenantId,
+                    query.filter());
+            QueryLowering.Lowered listSql = lowering.list(childHandle.entity().apiName(), tenantId, query);
+            RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
+                    listSql.sql(), listSql.params());
+            for (Map<String, Object> row : page.rows()) {
+                records.find(tenantId, childHandle.entityKey(), (UUID) row.get("id"), false)
+                        .ifPresent(children::add);
+            }
+            if (page.rows().size() < QueryModel.MAX_PAGE_SIZE) {
+                return children;
+            }
+            offset += QueryModel.MAX_PAGE_SIZE;
         }
-        return children;
     }
 
     private EntityHandle childHandle(UUID tenantId, AppDefinition app, EntityHandle parent,

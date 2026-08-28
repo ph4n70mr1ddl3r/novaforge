@@ -452,3 +452,41 @@ data-runtime engine 15/15. Frontend: builder-ui 40/40, runtime-ui 11/11.
 Container suites (api module: RecordApi/Sharing/…, integration: webhooks)
 not run here (no Docker) — the api-module suites exercise the new claim fence,
 lowered sharing, and query routing end-to-end and must run in CI.
+
+---
+
+## Fifth Pass — 2026-08-28 (bug hunt: the child walk's silent page truncation)
+
+### H-5P1 — `currentChildren` walked one default page (50 rows), orphaning every child past it
+
+`RecordEngine.currentChildren` — the shared child walk behind the update path's
+inline-array replace (`replaceChildren`), the delete path's cascade
+(`cascadeChildren`), and the flow `iterate` step (`EngineHookSink.children`) —
+issued its binding-filter list with no `page`, so the DSL lowered its default:
+`LIMIT 50 OFFSET 0`. Inline children are legal to 100 per request, and
+standalone/batch writes grow a parent's child set without bound, so the walk
+silently stopped at 50:
+
+- **replace-children** soft-deleted only page one, then inserted the new set —
+  every old child past row 50 survived as an orphan *and duplicated* the new set;
+- **cascade-delete** left up to N−50 live children under a deleted parent;
+- both stayed counted by the roll-ups (`Rollup.aggregate` runs unwindowed SQL
+  aggregates), so a replaced document summed old + new lines — corrupted totals,
+  not just stray rows;
+- the flow `iterate` step observed only the first 50 children.
+
+The walk now pages to exhaustion at `MAX_PAGE_SIZE` (200) — stable under the
+list lowering's deterministic `ORDER BY id`, and safe because every caller
+mutates only after the walk completes.
+
+Regression: `ChildReplacePagingTests` (engine module, no containers) — a mocked
+`RecordStore` honoring the lowered `LIMIT ?/OFFSET ?` binds serves a 250-child
+parent; against the bug the walk deleted 50/250 (replace) and 51/251
+(cascade); the tests pin all-children deletion on both paths plus the
+binding-correct insert of the new set.
+
+### Verification (this pass)
+
+Full reactor `-DskipTests install` green on Java 21. Module tests green:
+expression-dsl 16/16, security-context 17/17, data-runtime engine 17/17
+(incl. the new 2). Container suites unchanged and still owed to CI.
