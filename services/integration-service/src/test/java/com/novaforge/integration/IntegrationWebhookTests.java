@@ -73,7 +73,7 @@ class IntegrationWebhookTests extends PostgresTestBase {
                 { "apiName": "Payment",
                   "displayField": "reference",
                   "fields": [
-                    { "apiName": "reference", "type": "text", "required": true },
+                    { "apiName": "reference", "type": "text", "required": true, "uniqueness": true },
                     { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 } ],
                   "validations": [
                     { "name": "positive", "scope": "record",

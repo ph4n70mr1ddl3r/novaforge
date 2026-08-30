@@ -620,6 +620,12 @@ class DefinitionValidatorTest {
                 INTEGRATIONS_APP.replace("\"reference\": \"${data.ref}\"",
                         "\"ghostField\": \"${data.ref}\""))),
                 "mapped field must exist")).isTrue();
+        // upsert keys are the concurrency fence: only a unique index turns a
+        // concurrent same-key delivery into a shaped retry instead of a duplicate
+        assertThat(mentions(validate(withIntegrations(baseApp(),
+                INTEGRATIONS_APP.replace("\"keyFields\": [\"reference\"]",
+                        "\"keyFields\": [\"entryDate\"]"))),
+                "upsert key fields must be unique")).isTrue();
         // imports: upsert requires keys; mappings address real fields
         assertThat(mentions(validate(withIntegrations(baseApp(),
                 INTEGRATIONS_APP.replace("\"keyFields\": [\"reference\"]",

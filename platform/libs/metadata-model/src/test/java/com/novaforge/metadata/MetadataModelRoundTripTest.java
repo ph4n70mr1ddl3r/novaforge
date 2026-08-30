@@ -26,6 +26,7 @@ class MetadataModelRoundTripTest {
                   "displayField": "reference",
                   "fields": [
                     { "apiName": "reference", "type": "text", "length": 32, "required": true,
+                      "uniqueness": true,
                       "default": { "sequence": "entryNumber" } },
                     { "apiName": "entryDate", "type": "date", "required": true },
                     { "apiName": "status", "type": "enum", "values": ["DRAFT", "POSTED"] },

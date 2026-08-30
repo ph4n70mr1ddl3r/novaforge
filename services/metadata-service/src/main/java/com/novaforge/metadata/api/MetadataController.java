@@ -57,7 +57,7 @@ public class MetadataController {
     }
 
     @PatchMapping("/apps/{appId}")
-    public AppDefinition updateApp(@PathVariable UUID appId, @RequestBody AppDefinition patch) {
+    public AppDefinition updateApp(@PathVariable UUID appId, @RequestBody AppPatch patch) {
         var ctx = requireContext();
         return definitions.updateApp(UUID.fromString(ctx.tenantId()), UUID.fromString(ctx.actorId()),
                 appId, patch);

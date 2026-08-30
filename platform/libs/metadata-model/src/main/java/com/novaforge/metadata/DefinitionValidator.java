@@ -873,6 +873,16 @@ public final class DefinitionValidator {
                             errors.add(field(scope + ".mapping.keyFields",
                                     "key field must exist on " + entity.get().apiName() + ": "
                                             + keyField, keyField));
+                        } else if (!entity.get().field(keyField).orElseThrow().uniqueOn()) {
+                            // the concurrency fence: an upsert key resolves by lookup-
+                            // then-write, and only the field's unique index turns a
+                            // concurrent same-key delivery into a shaped retry instead
+                            // of a silent duplicate (§6)
+                            errors.add(field(scope + ".mapping.keyFields",
+                                    "upsert key fields must be unique — without the index, "
+                                            + "two concurrent deliveries of one key both "
+                                            + "create: " + keyField
+                                            + " on " + entity.get().apiName(), keyField));
                         }
                     }
                     for (Map.Entry<String, Object> entry : mapping.fields().entrySet()) {
@@ -918,6 +928,14 @@ public final class DefinitionValidator {
                     errors.add(field(scope + ".keyFields",
                             "key field must exist on " + entity.get().apiName() + ": " + keyField,
                             keyField));
+                } else if (!entity.get().field(keyField).orElseThrow().uniqueOn()) {
+                    // the concurrency fence: an upsert key resolves by lookup-then-write,
+                    // and only the field's unique index turns a concurrent same-key chunk
+                    // into a shaped retry instead of a silent duplicate (§7)
+                    errors.add(field(scope + ".keyFields",
+                            "upsert key fields must be unique — without the index, two "
+                                    + "concurrent deliveries of one key both create: "
+                                    + keyField + " on " + entity.get().apiName(), keyField));
                 }
             }
             if (mapping.mapping().isEmpty()) {

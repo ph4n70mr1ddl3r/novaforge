@@ -2274,3 +2274,19 @@ Verified: full serial `./mvnw verify` green end to end (23 reactor modules, cont
 suites on the podman socket). Remaining recorded open (CODE_REVIEW.md, tenth pass):
 promotion multi-system atomicity, per-app unique-index scoping, the last-list-branch
 PATCH semantics, the webhook upsert fence.
+
+**Tenth-pass addendum — the last two recorded items close too.** The webhook/import
+upsert fence becomes save-validation: `keyFields` entries must be declared
+`uniqueness: true` (only the key's unique index turns a concurrent same-key
+delivery into a shaped retry instead of a silent duplicate); the ERP corpus already
+complied, the fixtures now declare it, pinned in `DefinitionValidatorTest`. And the
+PATCH surface binds a presence-preserving `AppPatch`: null keeps a branch, an
+explicit empty list clears it, non-empty replaces — the last dashboard/state
+machine/… is finally removable through the API (the SPA's delete-last-dashboard
+silently no-opped before); sub-branch presence inside `integrations`/`permissionSet`
+is whole-branch replace (the RBAC editor round-trips the full set; an all-empty
+permissionSet fails validation loudly rather than wiping). The DTO's first draft
+missed `gapLog` — `changeSetRendersResolvedGaps` caught the dropped branch live.
+Pinned (`appPatchEmptyListClears` + the validator pin). Remaining recorded open:
+promotion multi-system atomicity and per-app unique-index scoping — the two
+deep-structural items, each a scoped next pass of its own.

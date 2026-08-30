@@ -445,6 +445,53 @@ class DefinitionLifecycleTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("PATCH list branches: an explicit empty list clears — the last item is removable")
+    void appPatchEmptyListClears() throws Exception {
+        // Anti-regression (2026-08-31): AppDefinition's canonical constructor
+        // normalizes absent branches to empty lists, so the PATCH merge could never
+        // distinguish "omitted" (keep) from "emptied" (clear) — {"dashboards": []}
+        // silently kept the branch and the last item of every list branch was
+        // unremovable through the API. AppPatch binds presence verbatim.
+        MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps")
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                  "apiName": "LastDashboard", "label": "Last Dashboard",
+                                  "entities": [
+                                    { "apiName": "Invoice", "displayField": "name",
+                                      "fields": [ { "apiName": "name", "type": "text" } ] } ],
+                                  "reports": [ { "id": "rep_ar", "entity": "Invoice",
+                                    "aggregates": [ { "op": "count" } ] } ],
+                                  "dashboards": [ { "id": "exec", "roles": ["controller"],
+                                    "widgets": [ { "widget": "kpi", "reportRef": "rep_ar", "span": 6 } ] } ],
+                                  "permissionSet": { "roles": [ { "name": "controller" } ] }
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+        String appId = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+
+        // an absent branch keeps — a label-only patch never touches dashboards
+        mockMvc.perform(patch("/api/v1/metadata/apps/" + appId)
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("{ \"label\": \"Renamed\" }"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dashboards.length()").value(1))
+                .andExpect(jsonPath("$.label").value("Renamed"));
+
+        // an explicit empty list clears — the last dashboard finally leaves
+        mockMvc.perform(patch("/api/v1/metadata/apps/" + appId)
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("{ \"dashboards\": [] }"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dashboards.length()").value(0))
+                .andExpect(jsonPath("$.reports.length()").value(1));   // untouched branches stay
+    }
+
+    @Test
     @DisplayName("expression slots compile-check at save: unresolved references and clock-in-formulas reject")
     void expressionCompileCheck() throws Exception {
         // validation rule referencing an unknown field → 4000 with the expression error

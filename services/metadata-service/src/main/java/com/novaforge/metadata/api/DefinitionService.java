@@ -59,9 +59,12 @@ public class DefinitionService {
         return store.requireApp(tenantId, appId);
     }
 
-    public AppDefinition updateApp(UUID tenantId, UUID actorId, UUID appId, AppDefinition patch) {
+    public AppDefinition updateApp(UUID tenantId, UUID actorId, UUID appId, AppPatch patch) {
         AppDefinition current = store.requireApp(tenantId, appId);
-        AppDefinition merged = mergeApp(current, patch);
+        // the presence-preserving merge (AppPatch): null keeps a branch, an explicit
+        // empty list clears it, a non-empty list replaces it — the last item of a
+        // list branch became removable through the API
+        AppDefinition merged = patch.mergeOver(current);
         ProblemErrors errors = DefinitionValidator.validate(merged);
         if (!errors.isEmpty()) {
             throw validationFailure("app update failed save validation", errors);
@@ -519,40 +522,6 @@ public class DefinitionService {
     }
 
     // --- merging ---
-
-    private static AppDefinition mergeApp(AppDefinition current, AppDefinition patch) {
-        return new AppDefinition(
-                current.id(),
-                current.apiName(),
-                patch.label() != null ? patch.label() : current.label(),
-                patch.labelI18n().isEmpty() ? current.labelI18n() : patch.labelI18n(),
-                patch.description() != null ? patch.description() : current.description(),
-                current.entities(),
-                current.pages(),
-                patch.settings() != null && !patch.settings().sequences().isEmpty()
-                        ? patch.settings() : current.settings(),
-                patch.permissionSet() == null
-                        || (patch.permissionSet().roles().isEmpty()
-                        && patch.permissionSet().objectPermissions().isEmpty()
-                        && patch.permissionSet().fieldSecurity().isEmpty()
-                        && patch.permissionSet().sharingRules().isEmpty())
-                        ? current.permissionSet() : patch.permissionSet(),
-                patch.testSuites().isEmpty() ? current.testSuites() : patch.testSuites(),
-                patch.stateMachines().isEmpty() ? current.stateMachines() : patch.stateMachines(),
-                patch.slas().isEmpty() ? current.slas() : patch.slas(),
-                patch.jobs().isEmpty() ? current.jobs() : patch.jobs(),
-                patch.workflows().isEmpty() ? current.workflows() : patch.workflows(),
-                patch.reports().isEmpty() ? current.reports() : patch.reports(),
-                patch.dashboards().isEmpty() ? current.dashboards() : patch.dashboards(),
-                patch.integrations() == null
-                        || (patch.integrations().connectors().isEmpty()
-                        && patch.integrations().webhooks().isEmpty()
-                        && patch.integrations().credentials().isEmpty()
-                        && patch.integrations().imports().isEmpty())
-                        ? current.integrations() : patch.integrations(),
-                patch.translations().isEmpty() ? current.translations() : patch.translations(),
-                patch.gapLog().isEmpty() ? current.gapLog() : patch.gapLog());
-    }
 
     private static EntityDefinition mergeEntity(EntityDefinition current, EntityDefinition patch) {
         return new EntityDefinition(

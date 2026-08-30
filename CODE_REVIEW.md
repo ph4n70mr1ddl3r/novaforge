@@ -1109,7 +1109,35 @@ documented-for-operator, like the existing fail-closed secret steps). Full seria
 ### Recorded open after this pass
 
 The promotion chain's multi-system atomicity (intent row + idempotent provision +
-reconcile), per-app scoping of shared-projection unique indexes, the
-unremovable-last-list-branch PATCH semantics (needs a presence-preserving patch
-shape — an API design decision), and the webhook upsert fence (document that upsert
-keys must be `unique` fields, or add an engine keyed primitive).
+reconcile) and per-app scoping of shared-projection unique indexes. Two of this
+pass's four recorded items closed in the same session's addendum below.
+
+### Addendum — the last two recorded items close too
+
+**The webhook/import upsert fence becomes validation.** Upsert keys resolved by
+lookup-then-write, and only the key field's unique index turns a concurrent
+same-key delivery into a shaped retry instead of a silent duplicate — but nothing
+required the key to be unique. Save-validation now rejects an upsert `keyFields`
+entry that is not declared `uniqueness: true` (webhook mappings and import
+mappings alike), naming the fence in the message. The ERP corpus already keyed on
+a unique field; the fixtures that did not now declare it. Pinned in
+`DefinitionValidatorTest.integrationsRuleMatrix` (a non-unique key field rejects
+with "upsert key fields must be unique").
+
+**The last list item is removable through the API.** `AppDefinition`'s canonical
+constructor normalizes absent branches to empty lists, so the PATCH merge could
+never distinguish "omitted" (keep) from "emptied" (clear) — `{"dashboards": []}`
+silently kept the branch, and the SPA's delete-last-dashboard never worked. The
+PATCH surface now binds a presence-preserving `AppPatch` (null keeps, an explicit
+empty list clears, non-empty replaces; sub-branch presence inside
+`integrations`/`permissionSet` is whole-branch replace — the RBAC editor
+round-trips the full set, so its save shape is unaffected, and an all-empty
+permissionSet that would wipe every role fails save validation loudly). The first
+draft of the DTO missed `gapLog` — `changeSetRendersResolvedGaps` caught the
+dropped branch live, which is the coverage the pin set now guards. Pinned in
+`appPatchEmptyListClears` (absent keeps; `[]` clears the last dashboard;
+untouched branches stay) plus the existing `appPatchKeepsPermissionSet` legs.
+
+Verified: metadata-model (incl. the validator pin), metadata-service (53, incl.
+the AppPatch pin and the gapLog coverage), integration-service, data-runtime —
+all green; full serial `./mvnw verify` recorded in IMPLEMENTATION.md.
