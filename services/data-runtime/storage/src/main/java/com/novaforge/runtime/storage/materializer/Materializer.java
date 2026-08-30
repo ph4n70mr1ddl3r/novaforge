@@ -7,15 +7,20 @@ import com.novaforge.metadata.FieldType;
 import com.novaforge.metadata.PromotionPolicy;
 import com.novaforge.metadata.Snake;
 
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -48,6 +53,14 @@ import org.springframework.stereotype.Component;
  * statement, and per-shape isolation ("one app's bad DDL never blocks the others",
  * retried idempotently on the next publish) needs exactly that. The DDL is idempotent,
  * so any partially applied pass converges on the next publish or restart catch-up.</p>
+ *
+ * <p><b>Pass serialization:</b> Postgres's {@code CREATE … IF NOT EXISTS} is not atomic
+ * against a concurrent creator — two interleaved passes race into {@code pg_class} and
+ * one dies with a duplicate-key error, its shape skipped until an unpromised "next
+ * publish". The subscriber's executor serializes passes only within one JVM; every
+ * replica's subscriber and boot catch-up runs its own pass. Each pass therefore holds a
+ * session-level Postgres advisory lock (cluster-wide, one pass at a time) around the
+ * reconcile — idempotent statements stay per-statement-isolated, but never interleave.</p>
  */
 @Component
 public class Materializer {
@@ -58,6 +71,15 @@ public class Materializer {
     }
 
     private static final Logger LOG = LoggerFactory.getLogger(Materializer.class);
+
+    /**
+     * The cluster-wide reconcile mutex: every pass (publish event, boot catch-up,
+     * direct apply) holds this session advisory lock for its duration, so two passes
+     * never interleave DDL — {@code CREATE … IF NOT EXISTS} is not atomic against a
+     * concurrent creator, and an interleaved loser aborts with a {@code pg_class}
+     * duplicate key, its shape skipped until the next publish.
+     */
+    public static final long PASS_LOCK_KEY = "novaforge.materializer".hashCode();
 
     /** The fixed non-generated columns every projection carries (ADR-001 schema). */
     private static final Set<String> SYSTEM_COLUMNS = Set.of("id", "tenant_id", "version",
@@ -101,24 +123,61 @@ public class Materializer {
         }
         // Projections we own are exactly the trg_<table> triggers on rec_records;
         // a managed table no live shape claims retires (§4 item 5's lazy drop).
-        for (String table : managedTables()) {
-            if (!shapes.containsKey(table)) {
-                try {
-                    retire(table);
-                } catch (Exception e) {
-                    LOG.error("retiring projection {} failed", table, e);
+        withPassLock(() -> {
+            for (String table : managedTables()) {
+                if (!shapes.containsKey(table)) {
+                    try {
+                        retire(table);
+                    } catch (Exception e) {
+                        LOG.error("retiring projection {} failed", table, e);
+                    }
                 }
             }
-        }
-        for (Shape shape : shapes.values()) {
-            try {
-                applyShape(shape);
-            } catch (Exception e) {
-                LOG.error("materializing projection {} failed (retried on the next publish)",
-                        shape.table, e);
+            for (Shape shape : shapes.values()) {
+                try {
+                    applyShape(shape);
+                } catch (Exception e) {
+                    LOG.error("materializing projection {} failed (retried on the next publish)",
+                            shape.table, e);
+                }
             }
-        }
+        });
         LOG.info("materialized {} published app(s) → {} live projection(s)", applied, shapes.size());
+    }
+
+    /**
+     * Runs one reconcile pass holding {@link #PASS_LOCK_KEY}: a session-level advisory
+     * lock on a dedicated guard connection, so concurrent passes — this JVM's executor,
+     * another replica's, a boot catch-up — queue instead of interleaving. The lock
+     * bounds its own wait (a holder doing slow DDL must not wedge waiters forever);
+     * a failed acquisition surfaces as an exception the callers already treat as
+     * "retried on the next publish". The pass's DDL keeps running on pooled
+     * connections — mutual exclusion comes from every pass passing this gate, not
+     * from the statements sharing the guard session.
+     */
+    private void withPassLock(Runnable pass) {
+        var dataSource = Objects.requireNonNull(jdbc.getDataSource(),
+                "the materializer requires a DataSource-backed JdbcTemplate");
+        try (Connection guard = dataSource.getConnection();
+             Statement statement = guard.createStatement()) {
+            guard.setAutoCommit(true);
+            statement.execute("SET lock_timeout = '120s'");
+            statement.execute("SELECT pg_advisory_lock(" + PASS_LOCK_KEY + ")");
+            try {
+                pass.run();
+            } finally {
+                try {
+                    statement.execute("SELECT pg_advisory_unlock(" + PASS_LOCK_KEY + ")");
+                } catch (SQLException unreleased) {
+                    // closing the guard session releases a held advisory lock anyway
+                    LOG.warn("materializer pass-lock unlock failed — the session close releases it",
+                            unreleased);
+                }
+            }
+        } catch (SQLException e) {
+            throw new DataAccessResourceFailureException(
+                    "could not hold the materializer pass lock (retried on the next publish)", e);
+        }
     }
 
     // --- the union of one projection table's needs across every publishing app ---

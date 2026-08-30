@@ -67,6 +67,9 @@ class SchedulerTests extends PostgresTestBase {
     @Autowired
     com.novaforge.scheduler.jobs.JobRunner runner;
 
+    @Autowired
+    com.novaforge.scheduler.events.SchedulerOutboxRelay outboxRelay;
+
     /** The app whose published jobs the stub serves. */
     static volatile List<PublishedJobsSource.AppJobs> published = List.of();
 
@@ -221,6 +224,74 @@ class SchedulerTests extends PostgresTestBase {
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForMap(
                 "SELECT payload->>'status' AS s, payload->>'job' AS j FROM sched_event_outbox")
                 .get("s")).isEqualTo("ok");
+    }
+
+    @Test
+    @DisplayName("a lease from one window never suppresses the next — consecutive windows both fire (§7)")
+    void consecutiveWindowsBothFire() {
+        runner.syncOnce();
+        // window one fires and takes the lease — with no DELETE FROM sched_leases,
+        // the pre-window-keyed lease (locked_until = next_fire + lease) blocked the
+        // next due window forever: every job with a cron period longer than the
+        // lease fired at half its intended rate
+        jdbc.update("UPDATE sched_jobs SET next_fire_at = now() - interval '1 second' "
+                + "WHERE name = 'nightlySweep'");
+        runner.scanOnce();
+        jdbc.update("UPDATE sched_jobs SET next_fire_at = now() - interval '1 second' "
+                + "WHERE name = 'nightlySweep'");
+        runner.scanOnce();
+
+        org.assertj.core.api.Assertions.assertThat(FIRED)
+                .containsExactly("Purch:sweep", "Purch:sweep");
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM sched_runs", Integer.class)).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("one unparseable cron skips its own job, never the rest of the sync pass (§7)")
+    void oneBadCronDoesNotAbortSync() {
+        // save validation's cron check is shape-only (field count and item syntax) —
+        // the parser stays the range authority, so an out-of-range hour reaches the
+        // registry sync and must not stop every app listed after it from syncing
+        published = List.of(
+                new PublishedJobsSource.AppJobs(TENANT, "Bad", List.of(
+                        new ScheduledJobDefinition("badCron", "0 0 25 * * *", "flow",
+                                Map.of("entity", "PurchaseOrder", "hook", "sweep"), true))),
+                new PublishedJobsSource.AppJobs(TENANT, "Good", List.of(
+                        new ScheduledJobDefinition("goodCron", "0 0 3 * * *", "flow",
+                                Map.of("entity", "PurchaseOrder", "hook", "sweep"), true))));
+        runner.syncOnce();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
+                "SELECT app || ':' || name FROM sched_jobs ORDER BY 1", String.class))
+                .containsExactly("Good:goodCron");
+    }
+
+    @Test
+    @DisplayName("outbox retention: published rows older than the window leave; fresh and unpublished stay")
+    void outboxRetentionDropsOldPublishedRows() {
+        for (int i = 0; i < 2; i++) {
+            jdbc.update("""
+                    INSERT INTO sched_event_outbox (id, tenant_id, event_type, payload)
+                    VALUES (?, ?, 'scheduler.job.run', '{}'::jsonb)""",
+                    UUID.randomUUID(), TENANT);
+        }
+        jdbc.update("UPDATE sched_event_outbox SET published_at = now() - interval '30 days'");
+        jdbc.update("""
+                INSERT INTO sched_event_outbox (id, tenant_id, event_type, payload, published_at)
+                VALUES (?, ?, 'scheduler.job.run', '{}'::jsonb, now())""",
+                UUID.randomUUID(), TENANT);
+        jdbc.update("""
+                INSERT INTO sched_event_outbox (id, tenant_id, event_type, payload)
+                VALUES (?, ?, 'scheduler.job.run', '{}'::jsonb)""",
+                UUID.randomUUID(), TENANT);
+
+        outboxRelay.retain();
+
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM sched_event_outbox", Integer.class)).isEqualTo(2);
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM sched_event_outbox WHERE published_at IS NULL",
+                Integer.class)).isEqualTo(1);
     }
 
     @Test

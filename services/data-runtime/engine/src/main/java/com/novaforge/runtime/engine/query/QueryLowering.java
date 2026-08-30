@@ -202,6 +202,10 @@ public final class QueryLowering {
             }
             sql.append(" GROUP BY ").append(String.join(", ", ordinals));
         }
+        if (query.limit() != null) {
+            sql.append(" LIMIT ?");
+            params.add(query.limit());
+        }
         return new Lowered(sql.toString(), params);
     }
 

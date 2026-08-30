@@ -330,6 +330,47 @@ class MaterializerTests extends PostgresTestBase {
         insertRaw(UUID.randomUUID(), "JE-DUP");
     }
 
+    @Test
+    @DisplayName("a reconcile pass holds the cluster-wide advisory lock — a concurrent pass waits, never interleaves")
+    void passLockSerializesConcurrentReconciles() throws Exception {
+        materializer.apply(DefinitionParser.parseApp(APP_JSON));
+
+        // An external holder of the pass lock (another replica's pass, mid-flight)
+        // must block this pass: Postgres's CREATE … IF NOT EXISTS is not atomic
+        // against a concurrent creator, so interleaved passes abort on a pg_class
+        // duplicate key and skip the shape until an unpromised next publish.
+        try (java.sql.Connection holder = jdbc.getDataSource().getConnection();
+             java.sql.Statement statement = holder.createStatement()) {
+            statement.execute("SELECT pg_advisory_lock(" + Materializer.PASS_LOCK_KEY + ")");
+
+            java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+            try {
+                java.util.concurrent.Future<?> pass = pool.submit(() ->
+                        materializer.applyAll(List.of(DefinitionParser.parseApp(APP_JSON))));
+                // blocked behind the holder — it must not finish while the lock is held
+                assertThatThrownBy(() -> pass.get(750, java.util.concurrent.TimeUnit.MILLISECONDS))
+                        .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                statement.execute("SELECT pg_advisory_unlock(" + Materializer.PASS_LOCK_KEY + ")");
+                pass.get(30, java.util.concurrent.TimeUnit.SECONDS);
+
+                // the released pass ran to completion: the projection is whole
+                Integer triggers = jdbc.queryForObject("""
+                        SELECT count(DISTINCT trigger_name) FROM information_schema.triggers
+                         WHERE event_object_table = 'rec_records'
+                           AND trigger_name = 'trg_rec_journal_entry'""",
+                        Integer.class);
+                assertThat(triggers).isEqualTo(1);
+                Integer updatedIndex = jdbc.queryForObject("""
+                        SELECT count(*) FROM pg_indexes
+                         WHERE tablename = 'rec_journal_entry' AND indexname = 'ix_rec_journal_entry_updated'""",
+                        Integer.class);
+                assertThat(updatedIndex).isEqualTo(1);
+            } finally {
+                pool.shutdownNow();
+            }
+        }
+    }
+
     private void insertRaw(UUID id, String reference) {
         jdbc.update("""
                 INSERT INTO rec_records (id, tenant_id, entity_id, created_by, updated_by, data)

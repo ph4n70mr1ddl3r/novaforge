@@ -51,32 +51,56 @@ public class TaskEventConsumer {
     }
 
     void consume(String payload) {
+        Map<String, Object> event;
         try {
-            Map<String, Object> event = MAPPER.readValue(payload, Map.class);
-            String type = String.valueOf(event.get("event"));
-            UUID tenantId = UUID.fromString(String.valueOf(event.get("tenantId")));
-            String eventId = String.valueOf(event.get("eventId"));
-            Map<String, Object> record = recordOf(tenantId, event);
-            switch (type) {
-                case "task.assigned" -> notifier.onEvent(eventId, tenantId,
-                        Notifier.TASK_ASSIGNMENT, event, record,
-                        "Task assigned: ${task.entityId} ${task.taskId}",
-                        "A task awaits you — record ${task.recordId} on "
-                                + "${task.entityId}.");
-                case "sla.warn" -> notifier.onEvent(eventId, tenantId,
-                        Notifier.SLA_WARNING, event, record,
-                        "SLA warning: ${task.entityId} ${task.taskId}",
-                        "The task on record ${task.recordId} is approaching its "
-                                + "SLA target.");
-                case "sla.breach" -> notifier.onEvent(eventId, tenantId,
+            event = MAPPER.readValue(payload, Map.class);
+        } catch (Exception e) {
+            LOG.error("invalid task/sla event ignored: {}", payload, e);
+            return;   // unparseable — no redelivery can fix it
+        }
+        // Processing failures propagate: the spine is at-least-once, so a transient
+        // error (SMTP down, a lock timeout — Notifier's inbox writes roll back with
+        // the failed send) must redeliver rather than ack a dropped fan-out — the
+        // consumer convention RecordEventConsumer pins. The inbox's
+        // (tenant, user, event) dedupe collapses the replay; only envelope-shape
+        // errors are terminal here.
+        try {
+            dispatch(event);
+        } catch (IllegalArgumentException e) {
+            LOG.error("malformed task/sla event ignored: {}", payload, e);
+        }
+    }
+
+    private void dispatch(Map<String, Object> event) {
+        String type = String.valueOf(event.get("event"));
+        UUID tenantId = UUID.fromString(String.valueOf(event.get("tenantId")));
+        String eventId = String.valueOf(event.get("eventId"));
+        Map<String, Object> record = recordOf(tenantId, event);
+        switch (type) {
+            case "task.assigned" -> notifier.onEvent(eventId, tenantId,
+                    Notifier.TASK_ASSIGNMENT, event, record,
+                    "Task assigned: ${task.entityId} ${task.taskId}",
+                    "A task awaits you — record ${task.recordId} on "
+                            + "${task.entityId}.");
+            case "sla.warn" -> notifier.onEvent(eventId, tenantId,
+                    Notifier.SLA_WARNING, event, record,
+                    "SLA warning: ${task.entityId} ${task.taskId}",
+                    "The task on record ${task.recordId} is approaching its "
+                            + "SLA target.");
+            case "sla.breach" -> {
+                // §6's onBreach.notify: an authored "notify: false" escalation rides
+                // the spine for metrics and audit — it never fans out as an sla-warning
+                if (Boolean.FALSE.equals(event.get("notify"))) {
+                    LOG.debug("sla.breach {} authored notify: false — no fan-out", eventId);
+                    return;
+                }
+                notifier.onEvent(eventId, tenantId,
                         Notifier.SLA_WARNING, event, record,
                         "SLA breached: ${task.entityId} ${task.taskId}",
                         "The task on record ${task.recordId} breached its SLA and "
                                 + "has been escalated.");
-                default -> { /* terminal task events carry no notification category in v1 */ }
             }
-        } catch (Exception e) {
-            LOG.error("invalid task/sla event ignored: {}", payload, e);
+            default -> { /* terminal task events carry no notification category in v1 */ }
         }
     }
 

@@ -46,7 +46,12 @@ public class RestPublishedSlaSource implements PublishedSlaSource {
                     .retrieve()
                     .body(new ParameterizedTypeReference<List<Map<String, Object>>>() {
                     })
-                    .stream().filter(app -> appApiName.equals(app.get("apiName")))
+                    // the service-caller index is cross-tenant: two tenants may publish
+                    // same-named apps, and the first apiName match in ANY tenant is not
+                    // this caller's app — the tenant pins the bundle
+                    .stream().filter(app -> appApiName.equals(app.get("apiName"))
+                            && tenantId.equals(UUID.fromString(
+                                    String.valueOf(app.get("tenantId")))))
                     .toList();
             if (apps.isEmpty()) {
                 return List.of();

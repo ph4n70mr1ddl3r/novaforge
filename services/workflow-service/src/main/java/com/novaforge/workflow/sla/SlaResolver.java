@@ -21,8 +21,6 @@ import java.util.concurrent.ConcurrentHashMap;
 @org.springframework.stereotype.Component
 public class SlaResolver {
 
-    private static final double DEFAULT_WARN_AT = 0.8;
-
     /** The resolved timer set for a task: when to warn, when it breaches. */
     public record Timers(Instant warnAt, Instant dueAt, SlaDefinition matched) {
     }
@@ -49,17 +47,19 @@ public class SlaResolver {
         SlaDefinition matched = match(tenantId, appApiName, entityKey, taskType, transition);
         if (matched != null) {
             Duration target = Duration.parse(matched.target());
-            Double warnAt = matched.warnAt() == null ? DEFAULT_WARN_AT : matched.warnAt();
+            // warnAt is presence-normalized at parse: absent authored the 0.8 default,
+            // an explicit null disables the warn timer outright (§6)
             return new Timers(
-                    warnAt == null ? null : createdAt.plusMillis(
-                            (long) (target.toMillis() * warnAt)),
+                    matched.warnAt() == null ? null : createdAt.plusMillis(
+                            (long) (target.toMillis() * matched.warnAt())),
                     createdAt.plus(target), matched);
         }
         if (stepTimeout == null || stepTimeout.isBlank()) {
             return new Timers(null, null, null);   // no timer, no escalation (§6)
         }
         Duration target = Duration.parse(stepTimeout);
-        return new Timers(createdAt.plusMillis((long) (target.toMillis() * DEFAULT_WARN_AT)),
+        return new Timers(createdAt.plusMillis(
+                        (long) (target.toMillis() * SlaDefinition.DEFAULT_WARN_AT)),
                 createdAt.plus(target), null);
     }
 
@@ -87,12 +87,15 @@ public class SlaResolver {
     }
 
     private List<SlaDefinition> slasOf(UUID tenantId, String appApiName) {
-        CacheEntry entry = cache.get(appApiName);
+        // tenant-scoped key: same-named apps across tenants must never serve each
+        // other's SLAs out of a shared 30 s entry
+        String key = tenantId + ":" + appApiName;
+        CacheEntry entry = cache.get(key);
         if (entry != null && System.currentTimeMillis() - entry.fetchedAt() < 30_000) {
             return entry.slas();
         }
         List<SlaDefinition> slas = source.slasOf(tenantId, appApiName);
-        cache.put(appApiName, new CacheEntry(slas, System.currentTimeMillis()));
+        cache.put(key, new CacheEntry(slas, System.currentTimeMillis()));
         return slas;
     }
 }

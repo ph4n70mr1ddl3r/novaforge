@@ -56,6 +56,24 @@ public class RuntimeReportGateway {
                 MAPPER.writeValueAsString(body)).path("result");
     }
 
+    /**
+     * The actor-scoped internal leg (§6's "same authorization as a run" for the async
+     * export handoff): the runtime re-evaluates the actor's matrix, field security,
+     * and owner-based sharing exactly as the interactive run did — a job cannot
+     * re-scope an export wider than the actor who requested it.
+     */
+    public JsonNode queryAsActor(UUID tenantId, String app, String entity, UUID actor,
+                                 Map<String, Object> query) {
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("tenantId", tenantId.toString());
+        body.put("app", app);
+        body.put("entityApiName", entity);
+        body.put("asActor", actor.toString());
+        body.put("query", query);
+        return exchange(HttpMethod.POST, "/api/v1/hooks/reports/query", serviceToken.token(),
+                MAPPER.writeValueAsString(body)).path("result");
+    }
+
     /** The actor's role assignments — the report:execute grant check's input (§8). */
     public List<String> rolesOf(UUID tenantId, UUID actor) {
         JsonNode roles = exchange(HttpMethod.GET,

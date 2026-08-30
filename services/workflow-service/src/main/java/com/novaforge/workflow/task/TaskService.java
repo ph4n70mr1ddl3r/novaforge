@@ -72,6 +72,20 @@ public class TaskService {
                                  UUID assignee, String role, Instant dueAt, Instant warnAt,
                                  UUID createdBy, UUID contextRef, UUID instance,
                                  String escalateTo) {
+        return create(tenantId, type, entityId, recordId, assignee, role, dueAt, warnAt,
+                createdBy, contextRef, instance, escalateTo, true);
+    }
+
+    /**
+     * Full create with the breach-notify switch (§6's {@code onBreach.notify}):
+     * {@code false} authors an escalation that never fans out as an sla-warning —
+     * the flag stamps the task and the breach event's payload.
+     */
+    @Transactional
+    public TaskStore.Task create(UUID tenantId, String type, String entityId, UUID recordId,
+                                 UUID assignee, String role, Instant dueAt, Instant warnAt,
+                                 UUID createdBy, UUID contextRef, UUID instance,
+                                 String escalateTo, boolean notifyOn) {
         if (assignee == null && role == null) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "a task requires an assignee or a role");
@@ -82,7 +96,8 @@ public class TaskService {
         }
         TaskStore.Task task = new TaskStore.Task(UUID.randomUUID(), tenantId, type, entityId,
                 recordId, assignee, role, "OPEN", null, dueAt, warnAt, false, createdBy,
-                contextRef == null ? null : contextRef, instance, escalateTo, Instant.now());
+                contextRef == null ? null : contextRef, instance, escalateTo, notifyOn,
+                Instant.now());
         tasks.insert(task);
         emit(task, "task.created", createdBy, null);
         if (assignee != null) {
@@ -106,6 +121,12 @@ public class TaskService {
     public TaskStore.Task require(UUID tenantId, UUID id) {
         return tasks.find(tenantId, id).orElseThrow(() ->
                 new PlatformException(PlatformErrorCode.NOT_FOUND, "task " + id + " not found"));
+    }
+
+    /** Task read (§13): the same access rule as every mutation — assignee, the task's
+     *  role holders, or admin, enforced server-side. */
+    public TaskStore.Task read(UUID tenantId, UUID actor, UUID id) {
+        return requireAccess(tenantId, actor, id);
     }
 
     /** Approve/reject (§5): the acting user's resolution, audited with the comment. */
@@ -163,11 +184,24 @@ public class TaskService {
             throw new PlatformException(PlatformErrorCode.SOD_VIOLATION,
                     "the initiating actor cannot receive the approval back (§4)");
         }
+        // the delegate must be a reachable assignee: a typo'd UUID (or a user with
+        // no roles in the tenant) would produce an OPEN task nobody's inbox ever
+        // matches — combined with a lost escalation target, an unreachable approval
+        if (roles.of(tenantId, toUser).isEmpty()) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "delegation target " + toUser + " holds no roles in this tenant — "
+                            + "not a reachable assignee (§5)");
+        }
         UUID chainRoot = task.contextRef() == null ? task.id() : task.contextRef();
+        // full-shape constructor: the replacement carries the chain's escalateTo,
+        // warned state, and breach-notify switch — the pre-SLA constructor nulls
+        // escalateTo, and a delegated approval that can never escalate wedges the
+        // record at breach (§6)
         TaskStore.Task replacement = new TaskStore.Task(UUID.randomUUID(), tenantId,
                 task.type(), task.entityId(), task.recordId(), toUser, task.role(),
-                "OPEN", null, task.dueAt(), task.warnAt(), task.createdBy(), chainRoot,
-                task.instance(), Instant.now());
+                "OPEN", null, task.dueAt(), task.warnAt(), task.slaWarned(),
+                task.createdBy(), chainRoot, task.instance(), task.escalateTo(),
+                task.notifyOn(), Instant.now());
         tasks.insert(replacement);
         if (task.contextRef() == null) {
             jdbc.update("UPDATE wf_tasks SET context_ref = ?, updated_at = now() WHERE id = ?",

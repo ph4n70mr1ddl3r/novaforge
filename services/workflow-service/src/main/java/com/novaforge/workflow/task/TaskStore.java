@@ -24,21 +24,23 @@ public class TaskStore {
     public record Task(UUID id, UUID tenantId, String type, String entityId, UUID recordId,
                        UUID assignee, String role, String status, String comment,
                        Instant dueAt, Instant warnAt, boolean slaWarned, UUID createdBy,
-                       UUID contextRef, UUID instance, String escalateTo, Instant createdAt) {
+                       UUID contextRef, UUID instance, String escalateTo,
+                       boolean notifyOn, Instant createdAt) {
 
-        /** Pre-SLA shape (no escalation target resolved; never yet warned). */
+        /** Pre-SLA shape (no escalation target resolved; never yet warned; notifies). */
         public Task(UUID id, UUID tenantId, String type, String entityId, UUID recordId,
                     UUID assignee, String role, String status, String comment,
                     Instant dueAt, Instant warnAt, UUID createdBy, UUID contextRef,
                     UUID instance, Instant createdAt) {
             this(id, tenantId, type, entityId, recordId, assignee, role, status, comment,
-                    dueAt, warnAt, false, createdBy, contextRef, instance, null, createdAt);
+                    dueAt, warnAt, false, createdBy, contextRef, instance, null, true,
+                    createdAt);
         }
 
         public Task withStatus(String newStatus) {
             return new Task(id, tenantId, type, entityId, recordId, assignee, role,
                     newStatus, comment, dueAt, warnAt, slaWarned, createdBy, contextRef,
-                    instance, escalateTo, createdAt);
+                    instance, escalateTo, notifyOn, createdAt);
         }
 
         public Map<String, Object> toJson() {
@@ -72,21 +74,22 @@ public class TaskStore {
         jdbc.update("""
                 INSERT INTO wf_tasks (id, tenant_id, type, entity_id, record_id, assignee,
                                       role, status, comment, due_at, warn_at, created_by,
-                                      context_ref, instance_id, escalate_to, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                      context_ref, instance_id, escalate_to, notify_on,
+                                      created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 task.id(), task.tenantId(), task.type(), task.entityId(), task.recordId(),
                 task.assignee(), task.role(), task.status(), task.comment(),
                 task.dueAt() == null ? null : Timestamp.from(task.dueAt()),
                 task.warnAt() == null ? null : Timestamp.from(task.warnAt()),
                 task.createdBy(), task.contextRef(), task.instance(), task.escalateTo(),
-                Timestamp.from(task.createdAt()));
+                task.notifyOn(), Timestamp.from(task.createdAt()));
     }
 
     public Optional<Task> find(UUID tenantId, UUID id) {
         return jdbc.query("""
                         SELECT id, tenant_id, type, entity_id, record_id, assignee, role,
                                status, comment, due_at, warn_at, sla_warned, escalate_to,
-                               created_by, context_ref, instance_id, created_at
+                               notify_on, created_by, context_ref, instance_id, created_at
                           FROM wf_tasks WHERE tenant_id = ? AND id = ?""",
                 TaskStore::mapRow, tenantId, id).stream().findFirst();
     }
@@ -116,22 +119,28 @@ public class TaskStore {
                 assignee, role, tenantId, id);
     }
 
-    /** Cancel every open task for a record — record deletion (§5). */
+    /** Cancel every open task for a record — record deletion (§5). Only the tasks
+     *  actually flipped to CANCELLED return: a terminal task (already approved,
+     *  delegated, escalated) must neither re-notify as cancelled nor drive the
+     *  engine's complete() a second time. */
     public List<Task> cancelForRecord(UUID tenantId, UUID recordId) {
-        List<Task> open = listForRecord(tenantId, recordId);
-        for (Task task : open) {
-            jdbc.update("""
+        List<Task> cancelled = new java.util.ArrayList<>();
+        for (Task task : listForRecord(tenantId, recordId)) {
+            if (jdbc.update("""
                     UPDATE wf_tasks SET status = 'CANCELLED', updated_at = now()
-                     WHERE tenant_id = ? AND id = ? AND status = 'OPEN'""", tenantId, task.id());
+                     WHERE tenant_id = ? AND id = ? AND status = 'OPEN'""",
+                    tenantId, task.id()) > 0) {
+                cancelled.add(task);
+            }
         }
-        return open;
+        return cancelled;
     }
 
     public List<Task> listForRecord(UUID tenantId, UUID recordId) {
         return jdbc.query("""
                         SELECT id, tenant_id, type, entity_id, record_id, assignee, role,
                                status, comment, due_at, warn_at, sla_warned, escalate_to,
-                               created_by, context_ref, instance_id, created_at
+                               notify_on, created_by, context_ref, instance_id, created_at
                           FROM wf_tasks WHERE tenant_id = ? AND record_id = ?
                          ORDER BY created_at""",
                 TaskStore::mapRow, tenantId, recordId);
@@ -168,8 +177,8 @@ public class TaskStore {
         paged.add(page * size);
         List<Task> rows = jdbc.query(
                 "SELECT id, tenant_id, type, entity_id, record_id, assignee, role, status,"
-                        + " comment, due_at, warn_at, sla_warned, escalate_to, created_by,"
-                        + " context_ref, instance_id, created_at"
+                        + " comment, due_at, warn_at, sla_warned, escalate_to, notify_on,"
+                        + " created_by, context_ref, instance_id, created_at"
                         + " FROM wf_tasks WHERE tenant_id = ? AND " + filter
                         + " ORDER BY " + orderBy(sort, dir) + " LIMIT ? OFFSET ?",
                 TaskStore::mapRow, paged.toArray());
@@ -210,6 +219,7 @@ public class TaskStore {
                 rs.getBoolean("sla_warned"),
                 rs.getObject("created_by", UUID.class), rs.getObject("context_ref", UUID.class),
                 rs.getObject("instance_id", UUID.class), rs.getString("escalate_to"),
+                rs.getBoolean("notify_on"),
                 rs.getTimestamp("created_at").toInstant());
     }
 }

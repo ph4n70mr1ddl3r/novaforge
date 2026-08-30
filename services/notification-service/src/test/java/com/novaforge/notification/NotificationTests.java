@@ -79,6 +79,9 @@ class NotificationTests extends PostgresTestBase {
     @Autowired
     Notifier notifier;
 
+    @Autowired
+    com.novaforge.notification.events.NotificationOutboxRelay outboxRelay;
+
     @TestConfiguration
     static class Stubs {
 
@@ -301,6 +304,58 @@ class NotificationTests extends PostgresTestBase {
                                 "SELECT count(*) FROM nf_notifications "
                                         + "WHERE category = 'sla-warning'",
                                 Integer.class)).isEqualTo(1));
+    }
+
+    @Test
+    @DisplayName("onBreach.notify: false — the breach rides the spine but never fans out (§6)")
+    void quietBreachNeverFansOut() throws Exception {
+        String quiet = """
+                { "event": "sla.breach", "eventId": "%s", "taskId": "%s",
+                  "tenantId": "%s", "entityId": "Purch.PurchaseOrder",
+                  "recordId": "%s", "assignee": "%s", "role": "",
+                  "notify": false,
+                  "occurredAt": "2026-08-22T00:00:00Z" }"""
+                .formatted(UUID.randomUUID(), UUID.randomUUID(), TENANT, RECORD, MANAGER);
+        consumer.onEvent(record(quiet));
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM nf_notifications", Integer.class)).isZero();
+        org.assertj.core.api.Assertions.assertThat(EMAILS).isEmpty();
+
+        // without the flag the same breach delivers as an sla-warning
+        String loud = quiet.replace("\"notify\": false,", "");
+        consumer.onEvent(record(loud));
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM nf_notifications WHERE category = 'sla-warning'",
+                Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("outbox retention: published rows older than the window leave; fresh and unpublished stay")
+    void outboxRetentionDropsOldPublishedRows() {
+        for (int i = 0; i < 2; i++) {
+            jdbc.update("""
+                    INSERT INTO nf_event_outbox (id, tenant_id, event_type, payload)
+                    VALUES (?, ?, 'notification.delivered', '{}'::jsonb)""",
+                    UUID.randomUUID(), TENANT);
+        }
+        jdbc.update("UPDATE nf_event_outbox SET published_at = now() - interval '30 days'");
+        jdbc.update("""
+                INSERT INTO nf_event_outbox (id, tenant_id, event_type, payload, published_at)
+                VALUES (?, ?, 'notification.delivered', '{}'::jsonb, now())""",
+                UUID.randomUUID(), TENANT);
+        jdbc.update("""
+                INSERT INTO nf_event_outbox (id, tenant_id, event_type, payload)
+                VALUES (?, ?, 'notification.delivered', '{}'::jsonb)""",
+                UUID.randomUUID(), TENANT);
+
+        outboxRelay.retain();
+
+        // the 30-day-old published rows left; the fresh published and unpublished stay
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM nf_event_outbox", Integer.class)).isEqualTo(2);
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM nf_event_outbox WHERE published_at IS NULL",
+                Integer.class)).isEqualTo(1);
     }
 
     // --- PHASE-5 §7: the internal send surface (scheduled report delivery) ---

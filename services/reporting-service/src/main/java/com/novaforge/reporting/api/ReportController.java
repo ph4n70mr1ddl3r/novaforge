@@ -79,7 +79,7 @@ public class ReportController {
                 ? Map.of() : MAPPER.readValue(params, Map.class);
         ReportRunner.Resolved resolved = runner.resolve(tenant(ctx), app, id);
         Map<String, Object> run = runner.exportRows(tenant(ctx), actor(ctx), app, id,
-                runParams, callerToken());
+                runParams, callerToken(), (int) exportMaxRows);
         // the §6 cap activates the PHASE-6 handoff: over-cap runs answer 202 with
         // the async export job's link instead of the Phase-5 cap error
         long rowCount = ((java.util.List<?>) run.getOrDefault("rows", java.util.List.of())).size();

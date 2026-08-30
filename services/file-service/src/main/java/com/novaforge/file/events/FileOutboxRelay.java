@@ -32,12 +32,15 @@ public class FileOutboxRelay {
     private final JdbcTemplate jdbc;
     private final KafkaTemplate<String, String> kafka;
     private final int batchSize;
+    private final int retentionDays;
 
     public FileOutboxRelay(JdbcTemplate jdbc, KafkaTemplate<String, String> kafka,
-                                  @Value("${novaforge.events.relay-batch:100}") int batchSize) {
+                                  @Value("${novaforge.events.relay-batch:100}") int batchSize,
+                           @Value("${novaforge.events.retention-days:7}") int retentionDays) {
         this.jdbc = jdbc;
         this.kafka = kafka;
         this.batchSize = batchSize;
+        this.retentionDays = retentionDays;
     }
 
     @Scheduled(fixedDelayString = "${novaforge.events.relay-interval-ms:500}")
@@ -83,6 +86,25 @@ public class FileOutboxRelay {
         if (!published.isEmpty()) {
             jdbc.batchUpdate("UPDATE fl_event_outbox SET published_at = now() WHERE id = ?",
                     published.stream().map(p -> new Object[] {p}).toList());
+        }
+    }
+
+    /**
+     * Retention — the outbox is transport state, not history (the spine and its
+     * consumers hold the durable record): published rows older than the configured
+     * window leave on a slow schedule. Unpublished rows never leave (delivery
+     * first); without this the table grew forever on the busiest tenants.
+     */
+    @Scheduled(fixedDelayString = "${novaforge.events.retention-interval-ms:3600000}")
+    public void retain() {
+        int dropped = jdbc.update("""
+                DELETE FROM fl_event_outbox
+                 WHERE published_at IS NOT NULL
+                   AND published_at < now() - (? * interval '1 day')""",
+                retentionDays);
+        if (dropped > 0) {
+            LOG.info("outbox retention dropped {} published row(s) older than {} day(s)",
+                    dropped, retentionDays);
         }
     }
 }

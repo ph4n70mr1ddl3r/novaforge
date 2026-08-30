@@ -89,11 +89,17 @@ class TaskApiTests extends PostgresTestBase {
     /** Resumes the stub observed (the Data Runtime's stand-in). */
     static final List<String> RESUMES = new java.util.concurrent.CopyOnWriteArrayList<>();
 
+    /** When set, the resume stub fails — the transient-runtime-outage stand-in. */
+    static volatile boolean failResumes = false;
+
     @Autowired
     com.novaforge.workflow.task.SuspensionService suspensions;
 
     @Autowired
     com.novaforge.workflow.sla.SlaScanner slaScanner;
+
+    @Autowired
+    com.novaforge.workflow.sla.SlaResolver slaResolver;
 
     @Autowired
     io.micrometer.core.instrument.MeterRegistry meters;
@@ -122,8 +128,15 @@ class TaskApiTests extends PostgresTestBase {
         @Bean
         @Primary
         com.novaforge.workflow.runtime.ResumeClient resumeClient() {
-            return resume -> RESUMES.add(resume.approved() + ":" + resume.hook() + ":"
-                    + (resume.afterStep() == null ? "-" : resume.afterStep()));
+            return resume -> {
+                if (failResumes) {
+                    throw new com.novaforge.common.error.PlatformException(
+                            com.novaforge.common.error.PlatformErrorCode.INTERNAL,
+                            "runtime unreachable (transient)");
+                }
+                RESUMES.add(resume.approved() + ":" + resume.hook() + ":"
+                        + (resume.afterStep() == null ? "-" : resume.afterStep()));
+            };
         }
 
         /** Canned SLA definitions — the governed overlay of §6's precedence. */
@@ -154,6 +167,7 @@ class TaskApiTests extends PostgresTestBase {
         jdbc.update("DELETE FROM wf_suspended_flows");
         jdbc.update("DELETE FROM wf_tasks");
         RESUMES.clear();
+        failResumes = false;
         ROLES.clear();
         ROLES.put(CLERK.toString(), List.of("user"));
         ROLES.put(MANAGER.toString(), List.of("user", "Purch.manager"));
@@ -322,6 +336,234 @@ class TaskApiTests extends PostgresTestBase {
                         .content("{\"toUser\":\"" + CLERK + "\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("4011"));
+    }
+
+    @Test
+    @DisplayName("delegation keeps the escalation target — a delegated approval still escalates at breach (§6)")
+    void delegationKeepsEscalationTarget() throws Exception {
+        var task = tasks.create(TENANT, "approval", "Purch.PurchaseOrder",
+                UUID.randomUUID(), MANAGER, null, null, null, CLERK, null, null,
+                "Purch.seniorManager");
+
+        MvcResult delegated = mockMvc.perform(post("/api/v1/workflow/tasks/" + task.id()
+                        + "/delegate").with(jwtFor(MANAGER)).contentType("application/json")
+                        .content("{\"toUser\":\"" + SENIOR + "\"}"))
+                .andExpect(status().isOk())
+                .andReturn();
+        String replacementId = MAPPER.readTree(delegated.getResponse().getContentAsString())
+                .get("id").asString();
+
+        // the replacement carries the chain's escalation role — the convenience
+        // constructor once nulled it, and a delegated approval that can never
+        // escalate wedges the record at breach
+        assertThat(jdbc.queryForObject(
+                "SELECT escalate_to FROM wf_tasks WHERE id = ?", String.class,
+                UUID.fromString(replacementId))).isEqualTo("Purch.seniorManager");
+        // …and its warned state rides too: no second sla.warn for the same window
+        assertThat(jdbc.queryForObject(
+                "SELECT sla_warned FROM wf_tasks WHERE id = ?", Boolean.class,
+                UUID.fromString(replacementId))).isEqualTo(false);
+    }
+
+    @Test
+    @DisplayName("an any-mode resolution supersedes its losing siblings — no phantom breach later (§4/§6)")
+    void anyModeResolutionSupersedesSiblings() throws Exception {
+        var result = suspensions.request(TENANT, "Purch", "PurchaseOrder",
+                "Purch.PurchaseOrder", UUID.randomUUID(), "submit", "a1", "s2", null,
+                null, List.of(MANAGER.toString(), SENIOR.toString()), "any",
+                "PT2H", null, CLERK, null);
+        UUID instance = UUID.fromString(String.valueOf(result.get("instanceId")));
+        List<UUID> ids = jdbc.queryForList(
+                "SELECT id FROM wf_tasks WHERE instance_id = ? ORDER BY created_at",
+                UUID.class, instance);
+        assertThat(ids).hasSize(2);
+
+        // the first resolution wins and resumes…
+        mockMvc.perform(post("/api/v1/workflow/tasks/" + ids.get(0) + "/approve")
+                        .with(jwtFor(MANAGER)).contentType("application/json").content("{}"))
+                .andExpect(status().isOk());
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_suspended_flows WHERE id = ?", String.class, instance))
+                .isEqualTo("RESUMED");
+        // …and the losing sibling leaves the open set: an OPEN loser would sit past
+        // its dueAt, "breach", and escalate an already-resolved approval
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_tasks WHERE id = ?", String.class, ids.get(1)))
+                .isEqualTo("CANCELLED");
+    }
+
+    @Test
+    @DisplayName("a failed resume rolls the whole resolution back — the approval stays open and retryable (§4)")
+    void failedResumeRollsBackAndStaysOpen() throws Exception {
+        UUID record = UUID.randomUUID();
+        var result = suspensions.request(TENANT, "Purch", "PurchaseOrder",
+                "Purch.PurchaseOrder", record, "submit", "a1", "s2", null,
+                "Purch.manager", null, "any", null, null, CLERK, null);
+        UUID instance = UUID.fromString(String.valueOf(result.get("instanceId")));
+        UUID taskId = jdbc.queryForObject(
+                "SELECT id FROM wf_tasks WHERE instance_id = ?", UUID.class, instance);
+
+        // the runtime is unreachable: the approve fails loudly…
+        failResumes = true;
+        RESUMES.clear();
+        mockMvc.perform(post("/api/v1/workflow/tasks/" + taskId + "/approve")
+                        .with(jwtFor(MANAGER)).contentType("application/json").content("{}"))
+                .andExpect(status().is5xxServerError());
+        assertThat(RESUMES).isEmpty();
+        // …and nothing was consumed: the task stays OPEN (not terminal-and-dead),
+        // the instance stays SUSPENDED — once this parked FAILED with the task
+        // already APPROVED, the record was stuck mid-approval forever
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_tasks WHERE id = ?", String.class, taskId))
+                .isEqualTo("OPEN");
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_suspended_flows WHERE id = ?", String.class, instance))
+                .isEqualTo("SUSPENDED");
+
+        // the runtime heals: the same approval retries and completes
+        failResumes = false;
+        mockMvc.perform(post("/api/v1/workflow/tasks/" + taskId + "/approve")
+                        .with(jwtFor(MANAGER)).contentType("application/json").content("{}"))
+                .andExpect(status().isOk());
+        assertThat(RESUMES).containsExactly("true:submit:s2");
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_suspended_flows WHERE id = ?", String.class, instance))
+                .isEqualTo("RESUMED");
+    }
+
+    @Test
+    @DisplayName("the task read carries the same access rule as the mutations (§13)")
+    void taskReadEnforcesAccess() throws Exception {
+        var task = tasks.create(TENANT, "approval", "Purch.PurchaseOrder",
+                UUID.randomUUID(), MANAGER, null, null, null, CLERK, null);
+        // the assignee reads it…
+        mockMvc.perform(get("/api/v1/workflow/tasks/" + task.id()).with(jwtFor(MANAGER)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("OPEN"));
+        // …an unrelated tenant user cannot — a task id is not a grant
+        mockMvc.perform(get("/api/v1/workflow/tasks/" + task.id()).with(jwtFor(CLERK)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("warnAt: null disables the warn timer; an absent warnAt authors the 0.8 default (§6)")
+    void warnAtNullDisablesWarnTimer() {
+        // an explicit null warnAt — the disable — resolves to no warn timer at all
+        CANNED_SLAS.set(java.util.List.of(
+                new com.novaforge.metadata.SlaDefinition("sla_nowarn",
+                        new com.novaforge.metadata.SlaDefinition.Scope("approval", null),
+                        "PT4H", null, null)));
+        try {
+            // "Ops" — a fresh resolver-cache key: the 30 s entry would serve the
+            // class-default canned SLAs otherwise
+            var timers = slaResolver.resolve(TENANT, "Ops", "Ops.Order",
+                    "approval", null, null, java.time.Instant.now());
+            assertThat(timers.warnAt()).isNull();
+            assertThat(timers.dueAt()).isNotNull();
+        } finally {
+            CANNED_SLAS.set(java.util.List.of(
+                    new com.novaforge.metadata.SlaDefinition("sla_po",
+                            new com.novaforge.metadata.SlaDefinition.Scope("approval",
+                                    "entity == 'Purch.PurchaseOrder'"),
+                            "PT1H", 0.5,
+                            new com.novaforge.metadata.SlaDefinition.OnBreach(
+                                    "role:Purch.seniorManager", true))));
+        }
+    }
+
+    @Test
+    @DisplayName("delegation to an unreachable target rejects — a ghost UUID is not an assignee (§5)")
+    void delegationValidatesTarget() throws Exception {
+        var task = tasks.create(TENANT, "approval", "Purch.PurchaseOrder",
+                UUID.randomUUID(), MANAGER, null, null, null, CLERK, null);
+        mockMvc.perform(post("/api/v1/workflow/tasks/" + task.id() + "/delegate")
+                        .with(jwtFor(MANAGER)).contentType("application/json")
+                        .content("{\"toUser\":\"" + UUID.randomUUID() + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("4000"));
+        // nothing landed — the original alone; no OPEN row for a nobody's inbox
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM wf_tasks", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_tasks WHERE id = ?", String.class, task.id()))
+                .isEqualTo("OPEN");
+    }
+
+    @Test
+    @DisplayName("onBreach.notify: false rides the task and the breach event — escalation without the fan-out (§6)")
+    void onBreachNotifyFalseEscalatesQuietly() throws Exception {
+        CANNED_SLAS.set(java.util.List.of(
+                new com.novaforge.metadata.SlaDefinition("sla_quiet",
+                        new com.novaforge.metadata.SlaDefinition.Scope("approval", null),
+                        "PT1H", null,
+                        new com.novaforge.metadata.SlaDefinition.OnBreach(
+                                "role:Purch.seniorManager", false))));
+        try {
+            // "Quiet" — a fresh resolver-cache key (the 30 s entry serves prior tests)
+            var result = suspensions.request(TENANT, "Quiet", "Order", "Quiet.Order",
+                    UUID.randomUUID(), "submit", "a1", "s2", null,
+                    "Quiet.manager", null, "any", null, null, CLERK, null);
+            UUID instance = UUID.fromString(String.valueOf(result.get("instanceId")));
+            UUID taskId = jdbc.queryForObject(
+                    "SELECT id FROM wf_tasks WHERE instance_id = ?", UUID.class, instance);
+            // the authored switch rode the task
+            assertThat(jdbc.queryForObject(
+                    "SELECT notify_on FROM wf_tasks WHERE id = ?", Boolean.class, taskId))
+                    .isFalse();
+
+            jdbc.update("UPDATE wf_tasks SET due_at = now() - interval '1 second', "
+                    + "warn_at = NULL WHERE id = ?", taskId);
+            slaScanner.scanOnce();
+
+            // the escalation still happened: ESCALATED + the senior-manager replacement
+            assertThat(jdbc.queryForObject(
+                    "SELECT status FROM wf_tasks WHERE id = ?", String.class, taskId))
+                    .isEqualTo("ESCALATED");
+            assertThat(jdbc.queryForObject(
+                    "SELECT count(*) FROM wf_tasks WHERE role = 'Purch.seniorManager' "
+                            + "AND status = 'OPEN'", Integer.class)).isEqualTo(1);
+            // …and the breach event carries the quiet flag for the Notification Service
+            assertThat(jdbc.queryForObject("""
+                    SELECT payload->>'notify' FROM wf_event_outbox
+                     WHERE event_type = 'sla.breach'""", String.class)).isEqualTo("false");
+        } finally {
+            CANNED_SLAS.set(java.util.List.of(
+                    new com.novaforge.metadata.SlaDefinition("sla_po",
+                            new com.novaforge.metadata.SlaDefinition.Scope("approval",
+                                    "entity == 'Purch.PurchaseOrder'"),
+                            "PT1H", 0.5,
+                            new com.novaforge.metadata.SlaDefinition.OnBreach(
+                                    "role:Purch.seniorManager", true))));
+        }
+    }
+
+    @Test
+    @DisplayName("outbox retention: published rows older than the window leave; fresh and unpublished stay")
+    void outboxRetentionDropsOldPublishedRows() {
+        UUID task = UUID.randomUUID();
+        for (int i = 0; i < 2; i++) {
+            jdbc.update("""
+                    INSERT INTO wf_event_outbox (id, tenant_id, task_id, event_type, payload)
+                    VALUES (?, ?, ?, 'task.approved', '{}'::jsonb)""",
+                    UUID.randomUUID(), TENANT, task);
+        }
+        jdbc.update("UPDATE wf_event_outbox SET published_at = now() - interval '30 days'");
+        jdbc.update("""
+                INSERT INTO wf_event_outbox (id, tenant_id, task_id, event_type, payload, published_at)
+                VALUES (?, ?, ?, 'task.approved', '{}'::jsonb, now())""",
+                UUID.randomUUID(), TENANT, task);
+        jdbc.update("""
+                INSERT INTO wf_event_outbox (id, tenant_id, task_id, event_type, payload)
+                VALUES (?, ?, ?, 'task.approved', '{}'::jsonb)""",
+                UUID.randomUUID(), TENANT, task);
+
+        relay.retain();
+
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM wf_event_outbox", Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM wf_event_outbox WHERE published_at IS NULL",
+                Integer.class)).isEqualTo(1);
     }
 
     @Test

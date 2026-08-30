@@ -2031,3 +2031,62 @@ demo both define `Invoice` in the dev workspace, and every unqualified runtime p
 Verified: `./mvnw verify` green end to end (+5 test methods this pass — 4
 `EntityResolverQualifiedTests`, 1 `DefinitionLifecycleTests`; `ReportRunnerTests`
 re-pinned) with the frontend workspace unchanged.
+
+**Spec-review closeout (2026-08-30, sixth pass) — the twin audits
+(workflow/approvals/SLA + reporting/exports) and the materializer race the
+baseline flake exposed.** Twenty-plus live defects closed in one pass:
+
+- **The materializer serializes** (found via a reproduced reactor flake in
+  `HookStepResultTests`): reconcile passes held no cluster-wide mutex, and
+  Postgres `CREATE … IF NOT EXISTS` is not atomic against a concurrent creator —
+  every pass now holds a session advisory lock (`novaforge.materializer` key,
+  120 s bounded wait), statements stay per-statement-isolated. Pinned
+  deterministically against an external lock holder.
+- **The scheduler's lease keyed the wall clock, not the fired window** — every
+  job with a cron period longer than the lease fired at half its intended rate
+  (V2 migration: `sched_leases.fired_window`).
+- **SLA resolution leaked across tenants** (source filtered the cross-tenant
+  index by apiName; the 30 s cache was tenant-blind).
+- **Approval wedges**: delegation nulled `escalate_to` (a delegated approval
+  could never escalate — the record stuck mid-approval forever); a failed resume
+  parked the instance FAILED with the task already consumed (now the whole
+  approve rolls back and retries); `any`-mode losers stayed OPEN to phantom-breach
+  later; `warnAt: null` is presence-parsed per §6 (absent authors 0.8, explicit
+  null disables, the disable round-trips).
+- **The async report export is actor-scoped end to end** (§6's "same
+  authorization as a run"): the runtime's internal report leg grew `asActor`, the
+  runner re-checks the grant, the integration job passes `initiatedBy` — the old
+  handoff re-rendered under the app's `reporting` role (wider data to the
+  requester, and a guaranteed failure for apps without that role). The scheduled
+  leg app-qualifies its entity (same-named entities rejected nightly deliveries).
+- **Filter fields fail closed on HIDDEN** on every door — they were a
+  binary-search value oracle over hidden field values via row counts/totals.
+- **Dashboard widget display config split from report run params** (`options` vs
+  `params`): the ERP `exec` KPI/chart widgets compiled `{aggregate}`/`{x,y}` into
+  filter leaves the runtime rejected, silently; run failures now render an error
+  state, and composition matches ANY held app role.
+- **Export hardening**: CSV formula injection neutralized (both exporters), XLSX
+  sheet names cap at 31 chars, aggregate-only reports carry totals (KPIs and the
+  closing row read them), money exports exact-scale symbol-prefixed decimals,
+  `count` over money is not currency, and every reporting door bounds
+  materialization with a SQL-level `limit` one past its ceiling (run 50k /
+  async 1M, fail closed audibly; the sync export detects over-cap at cap+1 and
+  answers the 202 handoff without draining).
+- **Smaller closes**: §13 access on the task read; the notification consumer
+  rethrows transient failures (redelivery is dedupe-safe); one bad cron never
+  aborts the registry sync; the BPMN bridge carries its SLA's escalation target;
+  `sla.warn` double-fire guard; record-deletion cancellation notifies only what
+  it cancelled; the dead `ReportExportClient` deleted. The three recorded LOWs
+  closed in the same pass's follow-up: delegation validates a reachable target
+  (no roles in the tenant ⇒ reject), `onBreach.notify` rides the task
+  (V5 `wf_tasks.notify_on`) through delegation and the bridge and quiets the
+  breach fan-out while the escalation itself still fires, and all six event
+  outboxes gained a retention pass (published rows older than
+  `retention-days`, default 7, leave on an hourly sweep; unpublished never do).
+
+Verified: `./mvnw verify` green end to end (23 reactor modules, container suites
+on the podman socket) and the frontend workspace unchanged-green (149 vitest +
+typecheck) — +18 new test methods this pass across materializer, scheduler,
+workflow tasks, SLA presence, reporting runner/exporter/aggregate doors, and
++5 more closing the lows (delegation target, quiet breach ×2, outbox
+retention ×3 suites).

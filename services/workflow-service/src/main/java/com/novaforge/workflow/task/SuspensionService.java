@@ -90,20 +90,24 @@ public class SuspensionService {
                 && timers.matched().onBreach().escalateTo() != null
                 ? roleOf(timers.matched().onBreach().escalateTo())
                 : roleOf(stepEscalateTo);
+        // §6's onBreach switch rides the task: notify (the sla-warning fan-out) is
+        // authored independently of escalateTo — "escalate, notify, or both"
+        boolean notifyOn = timers.matched() == null || timers.matched().onBreach() == null
+                || timers.matched().onBreach().notifyOn();
         if (users.isEmpty()) {
             // role-targeted: one task for the role; the initiator cannot resolve it
             tasks.create(tenantId, "approval", entityKey, recordId, null, approversRole,
                     timers.dueAt(), timers.warnAt(),
                     initiatingActor == null ? UUID.nameUUIDFromBytes(
                             ("system:" + app).getBytes()) : initiatingActor, null,
-                    instanceId, escalateTo);
+                    instanceId, escalateTo, notifyOn);
         } else {
             for (String user : users) {
                 tasks.create(tenantId, "approval", entityKey, recordId,
                         UUID.fromString(user), null, timers.dueAt(), timers.warnAt(),
                         initiatingActor == null ? UUID.nameUUIDFromBytes(
                                 ("system:" + app).getBytes()) : initiatingActor, null,
-                        instanceId, escalateTo);
+                        instanceId, escalateTo, notifyOn);
             }
         }
         LOG.info("flow suspended: {} on {}/{} step {} ({} approvers, mode {})",
@@ -135,6 +139,7 @@ public class SuspensionService {
             return;   // already resumed/rejected by a sibling resolution (first wins)
         }
         if (!approved) {
+            supersedeSiblings(tenantId, instanceId);
             resume(tenantId, instanceId, false);
             return;
         }
@@ -144,8 +149,25 @@ public class SuspensionService {
         int needed = ((Number) instance.get("needed")).intValue();
         int approvals = ((Number) instance.get("approvals")).intValue();
         if ("any".equals(instance.get("mode")) || approvals >= needed) {
+            supersedeSiblings(tenantId, instanceId);
             resume(tenantId, instanceId, true);
         }
+    }
+
+    /**
+     * The resolution's losing siblings ({@code any} mode's other approvers, or a
+     * late resolution racing a completed unanimity) leave the open set: an OPEN
+     * loser would sit past its {@code dueAt}, "breach", and spawn a §6 escalation
+     * task for an approval the instance already resolved. The resolution itself is
+     * already audible through the winner's {@code task.approved}/{@code task.rejected}
+     * event — the supersede flips the row, it does not re-notify.
+     */
+    private void supersedeSiblings(UUID tenantId, UUID instanceId) {
+        jdbc.update("""
+                UPDATE wf_tasks SET status = 'CANCELLED',
+                    comment = 'superseded by the instance resolution', updated_at = now()
+                 WHERE tenant_id = ? AND instance_id = ? AND status = 'OPEN'""",
+                tenantId, instanceId);
     }
 
     private void resume(UUID tenantId, UUID instanceId, boolean approved) {
@@ -168,12 +190,20 @@ public class SuspensionService {
                      WHERE id = ?""", approved ? "RESUMED" : "REJECTED", instanceId);
             LOG.info("flow {} resumed (approved={})", instanceId, approved);
         } catch (Exception e) {
-            // The instance stays resolvable — the failure is recorded, never silent;
-            // an operator can re-drive the resolution once the cause heals.
-            jdbc.update("""
-                    UPDATE wf_suspended_flows SET status = 'FAILED', last_error = ?,
-                        updated_at = now() WHERE id = ?""", e.getMessage(), instanceId);
-            LOG.error("flow {} resume failed: {}", instanceId, e.getMessage(), e);
+            // A failed resume must never consume the approval: the task flip and the
+            // instance bookkeeping ride this transaction, so rethrowing rolls them
+            // all back — the task stays OPEN, the instance stays SUSPENDED, and the
+            // approver retries once the cause heals (a runtime hiccup) or the
+            // definition is republished (the renamed-hook NOT_FOUND). Parking the
+            // instance FAILED — as this once did — left nothing re-drivable: the
+            // task was terminal, the record stuck mid-approval forever.
+            LOG.error("flow {} resume failed — the resolution rolls back and stays "
+                    + "open: {}", instanceId, e.getMessage(), e);
+            if (e instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            throw new PlatformException(PlatformErrorCode.INTERNAL,
+                    "flow resume failed: " + e.getMessage(), null, e);
         }
     }
 }

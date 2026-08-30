@@ -86,8 +86,14 @@ public class SlaScanner {
                 ? jdbc.queryForList(sql, Timestamp.from(now))
                 : jdbc.queryForList(sql + " AND tenant_id = ?", Timestamp.from(now), tenantId);
         for (Map<String, Object> task : due) {
-            jdbc.update("UPDATE wf_tasks SET sla_warned = true, updated_at = now() WHERE id = ?",
-                    task.get("id"));
+            // conditional flip: a second replica reading the same due row must not
+            // double-warn (the breach path guards the same way)
+            int warned = jdbc.update("""
+                    UPDATE wf_tasks SET sla_warned = true, updated_at = now()
+                     WHERE id = ? AND sla_warned = false""", task.get("id"));
+            if (warned == 0) {
+                continue;
+            }
             emit(task, "sla.warn", null);
             counted("novaforge.sla.warn", appOf(task.get("entity_id")));
             LOG.info("sla warn: task {}", task.get("task_id"));
@@ -98,7 +104,8 @@ public class SlaScanner {
     private int breach(Instant now, UUID tenantId) {
         String sql = """
                 SELECT id, tenant_id, id AS task_id, assignee, role, type, entity_id,
-                       record_id, created_by, context_ref, instance_id, escalate_to
+                       record_id, created_by, context_ref, instance_id, escalate_to,
+                       notify_on
                   FROM wf_tasks
                  WHERE status = 'OPEN' AND due_at IS NOT NULL AND due_at <= ?""";
         List<Map<String, Object>> due = tenantId == null
@@ -114,7 +121,12 @@ public class SlaScanner {
             }
             breached++;
             emit(task, "task.escalated", "ESCALATED");
-            emit(task, "sla.breach", "ESCALATED");
+            // §6's onBreach.notify: an authored "notify: false" escalation still
+            // rides the spine (metrics, audit) but carries the flag — the
+            // Notification Service skips the sla-warning fan-out on it
+            boolean notifyOn = !Boolean.FALSE.equals(task.get("notify_on"));
+            emit(task, "sla.breach", "ESCALATED",
+                    notifyOn ? Map.of() : Map.of("notify", false));
             counted("novaforge.sla.breach", appOf(task.get("entity_id")));
             String escalateTo = task.get("escalate_to") == null ? null
                     : String.valueOf(task.get("escalate_to"));
@@ -146,7 +158,13 @@ public class SlaScanner {
     }
 
     private void emit(Map<String, Object> task, String event, String status) {
+        emit(task, event, status, Map.of());
+    }
+
+    private void emit(Map<String, Object> task, String event, String status,
+                      Map<String, Object> extra) {
         Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.putAll(extra);
         payload.put("event", event);
         payload.put("eventId", UUID.randomUUID().toString());
         payload.put("taskId", String.valueOf(task.get("task_id")));

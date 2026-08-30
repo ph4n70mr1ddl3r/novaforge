@@ -56,7 +56,11 @@ public class TaskController {
     @GetMapping("/tasks/{id}")
     public Map<String, Object> task(@PathVariable UUID id) {
         var ctx = requireContext();
-        return tasks.require(UUID.fromString(ctx.tenantId()), id).toJson();
+        // §13's access rule binds the read exactly as the mutations: assignee, the
+        // task's role holders, or admin — a task id learned from a notification or
+        // the audit trail is not a grant
+        return tasks.read(UUID.fromString(ctx.tenantId()), UUID.fromString(ctx.actorId()),
+                id).toJson();
     }
 
     @PostMapping("/tasks/{id}/approve")

@@ -41,18 +41,33 @@ public class ReportRunner {
 
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
+    /**
+     * The cache READ keeps decimals decimal: a default re-parse types JSON floats as
+     * Double, and a cached run would answer sub-cent-drifted money where the fresh
+     * path answers BigDecimal (§10 item 1 pins decimal-exact totals).
+     */
+    private static final JsonMapper CACHE_READ = JsonMapper.builder()
+            .enable(tools.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+            .build();
+
     private final PublishedApps published;
     private final RuntimeReportGateway runtime;
     private final StringRedisTemplate redis;
     private final long ttlSeconds;
+    private final int runCeiling;
+    private final int asyncCeiling;
 
     public ReportRunner(PublishedApps published, RuntimeReportGateway runtime,
                         StringRedisTemplate redis,
-                        @Value("${novaforge.reporting.cache-ttl-seconds:60}") long ttlSeconds) {
+                        @Value("${novaforge.reporting.cache-ttl-seconds:60}") long ttlSeconds,
+                        @Value("${novaforge.reporting.run-max-rows:50000}") int runCeiling,
+                        @Value("${novaforge.reporting.async-max-rows:1000000}") int asyncCeiling) {
         this.published = published;
         this.runtime = runtime;
         this.redis = redis;
         this.ttlSeconds = ttlSeconds;
+        this.runCeiling = runCeiling;
+        this.asyncCeiling = asyncCeiling;
     }
 
     /** A resolved report: the definition plus its app's identity and version. */
@@ -95,11 +110,13 @@ public class ReportRunner {
         if (!fresh) {
             String cached = cacheGet(cacheKey);
             if (cached != null) {
-                return MAPPER.readValue(cached, Map.class);
+                return CACHE_READ.readValue(cached, Map.class);
             }
         }
         Map<String, Object> result = execute(resolved, params,
-                query -> runtime.queryAsCaller(qualified(resolved), query, callerToken));
+                query -> runtime.queryAsCaller(qualified(resolved),
+                        bounded(query, runCeiling + 1), callerToken));
+        requireWithinCeiling(result, runCeiling, "run");
         cacheSet(cacheKey, MAPPER.writeValueAsString(result));
         return result;
     }
@@ -113,18 +130,65 @@ public class ReportRunner {
     public Map<String, Object> runScheduled(UUID tenantId, String appApiName, String reportId,
                                             String runAsRole, Map<String, Object> params) {
         Resolved resolved = resolve(tenantId, appApiName, reportId);
-        return execute(resolved, params, query -> runtime.queryAsRole(tenantId, appApiName,
-                resolved.report().entity(), runAsRole, query));
+        Map<String, Object> result = execute(resolved, params, query -> runtime.queryAsRole(
+                tenantId, appApiName, qualified(resolved), runAsRole,
+                bounded(query, asyncCeiling + 1)));
+        requireWithinCeiling(result, asyncCeiling, "delivery");
+        return result;
     }
 
-    /** The export's rows — the same authorization as a run (§6), shaped as columns. */
+    /**
+     * The async export handoff's render (§6's "same authorization as a run"): the
+     * initiating actor's own scopes — never a re-scoped role. The runtime leg
+     * re-evaluates the actor's matrix, field security, and owner-based sharing, and
+     * the {@code report: execute} grant is re-checked so a grant lost between the
+     * handoff and the job's run fails the job audibly instead of exporting anyway.
+     * Never cached (one-shot renders).
+     */
+    public Map<String, Object> runAsActor(UUID tenantId, UUID actor, String appApiName,
+                                          String reportId, Map<String, Object> params) {
+        Resolved resolved = resolve(tenantId, appApiName, reportId);
+        requireExecuteGrant(tenantId, actor, resolved);
+        Map<String, Object> result = execute(resolved, params, query -> runtime.queryAsActor(
+                tenantId, appApiName, qualified(resolved), actor,
+                bounded(query, asyncCeiling + 1)));
+        requireWithinCeiling(result, asyncCeiling, "async export");
+        return result;
+    }
+
+    /**
+     * The export's rows — the same authorization as a run (§6), shaped as columns.
+     * The grouped query is LIMIT-capped one past {@code exportMaxRows}: an over-cap
+     * export materializes at most cap+1 rows before the controller hands off to the
+     * async job — never the whole dataset (§6's cap bounds resources, not just the
+     * response; the pre-limit path drained every group into memory first).
+     */
     public Map<String, Object> exportRows(UUID tenantId, UUID actor, String appApiName,
                                           String reportId, Map<String, Object> params,
-                                          String callerToken) {
+                                          String callerToken, int exportMaxRows) {
         Resolved resolved = resolve(tenantId, appApiName, reportId);
         requireExecuteGrant(tenantId, actor, resolved);
         return execute(resolved, params, query ->
-                runtime.queryAsCaller(qualified(resolved), query, callerToken));
+                runtime.queryAsCaller(qualified(resolved), bounded(query, exportMaxRows + 1),
+                        callerToken));
+    }
+
+    /** The limit key the runtime's aggregate door understands — one past the ceiling,
+     *  so an over-ceiling result is detected by its size, never by draining it all. */
+    private static Map<String, Object> bounded(Map<String, Object> query, int limit) {
+        Map<String, Object> bounded = new LinkedHashMap<>(query);
+        bounded.put("limit", limit);
+        return bounded;
+    }
+
+    private static void requireWithinCeiling(Map<String, Object> result, int ceiling,
+                                             String door) {
+        int rows = ((List<?>) result.getOrDefault("rows", List.of())).size();
+        if (rows > ceiling) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "report " + door + " exceeded the configured ceiling of " + ceiling
+                            + " grouped rows — tighten the filters or narrow the group-by");
+        }
     }
 
     // --- internals ---
@@ -156,12 +220,17 @@ public class ReportRunner {
             if (totalsRow.path("rows").isArray() && !totalsRow.path("rows").isEmpty()) {
                 JsonNode first = totalsRow.path("rows").path(0);
                 resolved.report().aggregates().forEach(aggregate -> {
-                    String key = aggregate.alias() != null ? aggregate.alias()
-                            : aggregate.op().toLowerCase() + (aggregate.field() == null ? ""
-                            : "_" + ReportCompiler.snakeOf(aggregate.field()));
+                    String key = aggregateAlias(aggregate);
                     totals.put(key, valueOf(first.path(key)));
                 });
             }
+        } else if (!rows.isEmpty() && !resolved.report().aggregates().isEmpty()) {
+            // an aggregate-only report (no group-by): its single row IS the totals —
+            // the twin leg is skipped as identical, and KPI tiles plus the export's
+            // closing row read totals, which were empty
+            Map<String, Object> only = rows.getFirst();
+            resolved.report().aggregates().forEach(aggregate ->
+                    totals.put(aggregateAlias(aggregate), only.get(aggregateAlias(aggregate))));
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("columns", compiled.columns());
@@ -171,8 +240,14 @@ public class ReportRunner {
         return result;
     }
 
-    /** A chart-shaped projection for direct ECharts binding (§4): first column the axis. */
-    private static Map<String, Object> chart(List<String> columns, List<Map<String, Object>> rows) {
+    /** The aggregate's result key — its alias, else op_field per the compiler. */
+    private static String aggregateAlias(ReportDefinition.AggregateField aggregate) {
+        return aggregate.alias() != null ? aggregate.alias()
+                : aggregate.op().toLowerCase() + (aggregate.field() == null ? ""
+                        : "_" + ReportCompiler.snakeOf(aggregate.field()));
+    }
+
+    /** A chart-shaped projection for direct ECharts binding (§4): first column the axis. */    private static Map<String, Object> chart(List<String> columns, List<Map<String, Object>> rows) {
         Map<String, Object> chart = new LinkedHashMap<>();
         if (columns.isEmpty() || rows.isEmpty()) {
             chart.put("xAxis", Map.of("data", List.of()));
@@ -225,7 +300,8 @@ public class ReportRunner {
         }
     }
 
-    /** Columns whose aggregate field is money-typed — the §6 formatting rule's scope. */
+    /** Columns whose aggregate field is money-typed — the §6 formatting rule's scope.
+     *  A {@code count} over a money field is a cardinality, not money — never formatted. */
     public static Set<String> moneyColumns(Resolved resolved) {
         ReportDefinition report = resolved.report();
         var entity = resolved.app().definition().entity(report.entity());
@@ -235,7 +311,8 @@ public class ReportRunner {
                 .forEach(f -> moneyFields.add(f.apiName())));
         Set<String> columns = new LinkedHashSet<>();
         for (ReportDefinition.AggregateField aggregate : report.aggregates()) {
-            if (aggregate.field() == null || !moneyFields.contains(aggregate.field())) {
+            if (aggregate.field() == null || !moneyFields.contains(aggregate.field())
+                    || aggregate.op().equalsIgnoreCase("count")) {
                 continue;
             }
             columns.add(aggregate.alias() != null ? aggregate.alias()

@@ -14,12 +14,12 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * PHASE-5 §6's designed handoff, wired (PHASE-6 §7): a sync export over the 10k
- * cap creates its async job on the Integration Service — the job renders under
- * the report's role scope through the internal role-scoped leg, streams to the
- * File Service, and notifies the initiating user; this client returns the job
- * link the export endpoint answers with instead of the cap error. The async job
- * runs under the app's reporting role by default (the scheduled-delivery
- * precedent, PHASE-5 §7) — the initiating actor rides the notification.
+ * cap creates its async job on the Integration Service — the job renders under the
+ * initiating actor's own scopes (§6's "same authorization as a run": matrix, field
+ * security, and owner-based sharing identical to the interactive export, never a
+ * re-scoped role), streams to the File Service, and notifies the initiating user;
+ * this client returns the job link the export endpoint answers with instead of the
+ * cap error.
  */
 @Component
 public class AsyncExportClient {
@@ -51,7 +51,6 @@ public class AsyncExportClient {
                             "tenantId", tenantId.toString(),
                             "app", app,
                             "reportId", reportId,
-                            "runAsRole", "reporting",
                             "format", format,
                             "params", params == null ? Map.of() : params,
                             "initiatedBy", initiatedBy.toString())))

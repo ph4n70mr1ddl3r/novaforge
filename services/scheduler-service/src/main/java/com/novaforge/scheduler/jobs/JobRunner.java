@@ -20,9 +20,10 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Drives the registry (PHASE-4 §7): a sync pass refreshes job definitions from the
  * published surface (metadata is the source of truth; the registry is runtime
- * state), and a scan pass fires due jobs under lease — the atomic conditional
- * update is the distributed lock, so concurrent replicas single-fire (§14 item 4).
- * Misfire policy: fire once, skip missed — {@code next_fire} always advances past
+ * state), and a scan pass fires due jobs under a window-keyed lease — the atomic
+ * conditional upsert is the distributed lock, so concurrent replicas single-fire a
+ * window (§14 item 4) while one window's lease never suppresses the next. Misfire
+ * policy: fire once, skip missed — {@code next_fire} always advances past
  * {@code now}, a missed window waits for the next cron tick. Every fire records a
  * run row and a {@code scheduler.job.run} event (success or failure).
  */
@@ -62,20 +63,28 @@ public class JobRunner {
         java.util.List<PublishedJobsSource.AppJobs> apps = source.all();
         for (PublishedJobsSource.AppJobs app : apps) {
             for (com.novaforge.metadata.ScheduledJobDefinition job : app.jobs()) {
-                jdbc.update("""
-                        INSERT INTO sched_jobs (id, tenant_id, app, name, cron, target,
-                                                params, enabled, next_fire_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, now())
-                        ON CONFLICT (tenant_id, app, name) DO UPDATE SET
-                          cron = EXCLUDED.cron, target = EXCLUDED.target,
-                          params = EXCLUDED.params, enabled = EXCLUDED.enabled,
-                          updated_at = now()""",
-                        UUID.nameUUIDFromBytes((app.tenantId() + ":" + app.appApiName()
-                                + ":" + job.name()).getBytes()),
-                        app.tenantId(), app.appApiName(), job.name(), job.cron(),
-                        job.target(), MAPPER.writeValueAsString(job.params()),
-                        job.enabledOn(),
-                        Timestamp.from(nextFire(job.cron(), Instant.now())));
+                // One unregistrable job (a cron the parser rejects — save validation's
+                // shape check is not the parser's range check) must never abort the
+                // pass: every app listed after it would silently stop syncing.
+                try {
+                    jdbc.update("""
+                            INSERT INTO sched_jobs (id, tenant_id, app, name, cron, target,
+                                                    params, enabled, next_fire_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, now())
+                            ON CONFLICT (tenant_id, app, name) DO UPDATE SET
+                              cron = EXCLUDED.cron, target = EXCLUDED.target,
+                              params = EXCLUDED.params, enabled = EXCLUDED.enabled,
+                              updated_at = now()""",
+                            UUID.nameUUIDFromBytes((app.tenantId() + ":" + app.appApiName()
+                                    + ":" + job.name()).getBytes()),
+                            app.tenantId(), app.appApiName(), job.name(), job.cron(),
+                            job.target(), MAPPER.writeValueAsString(job.params()),
+                            job.enabledOn(),
+                            Timestamp.from(nextFire(job.cron(), Instant.now())));
+                } catch (RuntimeException e) {
+                    LOG.error("job {}.{} not registered — its cron '{}' is not fireable: {}",
+                            app.appApiName(), job.name(), job.cron(), e.getMessage());
+                }
             }
         }
         prune(apps);
@@ -126,7 +135,7 @@ public class JobRunner {
     public void scanOnce() {
         Instant now = Instant.now();
         List<Map<String, Object>> due = jdbc.queryForList("""
-                SELECT id, tenant_id, app, name, cron, target, params
+                SELECT id, tenant_id, app, name, cron, target, params, next_fire_at
                   FROM sched_jobs
                  WHERE enabled AND next_fire_at IS NOT NULL AND next_fire_at <= ?
                  ORDER BY next_fire_at""", Timestamp.from(now));
@@ -135,29 +144,37 @@ public class JobRunner {
             // advance first (misfire: missed windows skip — the next tick wins)
             jdbc.update("UPDATE sched_jobs SET next_fire_at = ?, updated_at = now() WHERE id = ?",
                     Timestamp.from(next), job.get("id"));
-            if (!acquire(job.get("id"), next)) {
-                continue;   // another replica holds the lease — single fire
+            if (!acquire(job.get("id"), asInstant(job.get("next_fire_at")))) {
+                continue;   // another replica already fired this window — single fire
             }
-            fire(job, next, now);
+            fire(job);
         }
     }
 
-    /** The lease: the atomic conditional update is the distributed lock. */
-    private boolean acquire(Object jobId, Instant until) {
-        int taken = jdbc.update("""
-                INSERT INTO sched_leases (job_id, locked_until)
-                VALUES (?, ?)
-                ON CONFLICT (job_id) DO UPDATE SET locked_until = EXCLUDED.locked_until
-                 WHERE sched_leases.locked_until <= now()""",
-                jobId, Timestamp.from(until.plusMillis(leaseMs)));
-        int extended = taken == 0 ? jdbc.update("""
-                UPDATE sched_leases SET locked_until = ?
-                 WHERE job_id = ? AND locked_until <= now()""",
-                Timestamp.from(until.plusMillis(leaseMs)), jobId) : 0;
-        return taken > 0 || extended > 0;
+    private static Instant asInstant(Object timestamp) {
+        return ((java.sql.Timestamp) timestamp).toInstant();
     }
 
-    private void fire(Map<String, Object> job, Instant next, Instant now) {
+    /**
+     * The lease: the atomic conditional upsert is the distributed lock, keyed by the
+     * fired window. A lease taken for window N never suppresses window N+1 — the scan
+     * race it guards spans seconds (two replicas reading the same due row), not the
+     * cron period — while two replicas scanning the same window single-fire: the
+     * loser's upsert no-ops on the window it already sees fired.
+     */
+    private boolean acquire(Object jobId, Instant window) {
+        int taken = jdbc.update("""
+                INSERT INTO sched_leases (job_id, fired_window, locked_until)
+                VALUES (?, ?, ?)
+                ON CONFLICT (job_id) DO UPDATE SET
+                  fired_window = EXCLUDED.fired_window, locked_until = EXCLUDED.locked_until
+                 WHERE sched_leases.fired_window IS DISTINCT FROM EXCLUDED.fired_window""",
+                jobId, Timestamp.from(window),
+                Timestamp.from(Instant.now().plusMillis(leaseMs)));
+        return taken > 0;
+    }
+
+    private void fire(Map<String, Object> job) {
         String target = String.valueOf(job.get("target"));
         String status;
         String detail = null;

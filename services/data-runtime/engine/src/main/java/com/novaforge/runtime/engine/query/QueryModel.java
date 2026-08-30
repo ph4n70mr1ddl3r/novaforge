@@ -69,12 +69,23 @@ public final class QueryModel {
     public record Bucket(String label, String expression) {
     }
 
-    /** Aggregate query (POST /{entity}/query). */
+    /**
+     * Aggregate query (POST /{entity}/query). {@code limit} bounds the grouped
+     * result rows in SQL — the export and run doors set it just past their caps so
+     * over-cap detection never materializes an unbounded dataset (§6's cap bounds
+     * resources, not just the response).
+     */
     public record AggregateQuery(Filter filter, List<GroupBy> groupBy,
-                                 List<Aggregate> aggregates, java.time.LocalDate asOf) {
+                                 List<Aggregate> aggregates, java.time.LocalDate asOf,
+                                 Integer limit) {
 
         public AggregateQuery(Filter filter, List<GroupBy> groupBy, List<Aggregate> aggregates) {
-            this(filter, groupBy, aggregates, null);
+            this(filter, groupBy, aggregates, null, null);
+        }
+
+        public AggregateQuery(Filter filter, List<GroupBy> groupBy, List<Aggregate> aggregates,
+                              java.time.LocalDate asOf) {
+            this(filter, groupBy, aggregates, asOf, null);
         }
     }
 

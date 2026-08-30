@@ -142,9 +142,20 @@ public class ProcessTaskBridge implements FlowableEventListener {
         SlaResolver.Timers timers = slas.resolve(tenantId, deployment.get().app(),
                 entityId == null ? deployment.get().workflowId() : entityId, "todo",
                 stepTimeout, null, now);
+        // the matched SLA's escalation target rides the bridge task like any other
+        // (§9: bridge tasks ride the same task service — SLA resolution included) —
+        // a dropped target warned and breached but never escalated
+        String escalateTo = timers.matched() != null && timers.matched().onBreach() != null
+                && timers.matched().onBreach().escalateTo() != null
+                ? timers.matched().onBreach().escalateTo().replaceFirst("^role:", "")
+                : null;
+        // §6's onBreach switch rides the bridge task like any other (§9)
+        boolean notifyOn = timers.matched() == null || timers.matched().onBreach() == null
+                || timers.matched().onBreach().notifyOn();
         var inboxTask = tasks.create(tenantId, "todo",
                 entityId == null ? deployment.get().workflowId() : entityId,
-                recordId, assignee, role, timers.dueAt(), timers.warnAt(), createdBy, null);
+                recordId, assignee, role, timers.dueAt(), timers.warnAt(), createdBy,
+                null, null, escalateTo, notifyOn);
         registry.linkTask(inboxTask.id(), task.getId(), task.getProcessInstanceId(),
                 deployment.get().workflowId());
         LOG.debug("bridged engine task {} to inbox task {} (workflow {})", task.getId(),

@@ -490,3 +490,137 @@ binding-correct insert of the new set.
 Full reactor `-DskipTests install` green on Java 21. Module tests green:
 expression-dsl 16/16, security-context 17/17, data-runtime engine 17/17
 (incl. the new 2). Container suites unchanged and still owed to CI.
+
+## Sixth Pass — 2026-08-30 (twin audits: workflow/approvals/SLA + reporting/exports, and the materializer's concurrent-DDL race)
+
+The full-reactor baseline flaked first: `HookStepResultTests` NPE'd on an empty
+Voucher list, reproduced root-cause — the boot catch-up's reconcile pass raced the
+test's direct `materializer.apply()` on the same tables, and Postgres
+`CREATE … IF NOT EXISTS` is not atomic against a concurrent creator (one pass died
+on a `pg_class` duplicate key, its shape skipped until an unpromised "next
+publish"; the after-hook failure is swallowed by design, so the write returned 200
+and the voucher never landed).
+
+### H-6P1 — materializer passes never serialized (cross-replica, same-JVM, and test-flake root)
+
+`Materializer.applyAll` now holds a session-level Postgres advisory lock
+(`PASS_LOCK_KEY`, 120 s `lock_timeout`) on a dedicated guard connection around the
+whole reconcile — the subscriber's executor serialized passes only within one JVM,
+while every replica's subscriber and boot catch-up runs its own pass; two passes
+interleaving DDL is the production shape of the same race. Statements keep running
+pooled and per-statement-isolated; mutual exclusion comes from every pass passing
+the gate. Pinned deterministically in `MaterializerTests.passLockSerializesConcurrentReconciles`
+(an external holder of the key blocks a pass; release completes it).
+
+### H-6P2 — the scheduler lease suppressed every other window of every job
+
+`JobRunner`'s lease ran until `next_fire + lease`, but the scan advances
+`next_fire_at` *before* testing the lease — the next due window could never
+acquire: any job with a cron period longer than the lease (default 60 s — i.e.
+every real job) fired at half its intended rate, silently. V2 migration adds
+`sched_leases.fired_window`; the lease now gates on the fired window (a lease for
+window N never suppresses N+1; two replicas scanning the same window still
+single-fire). Pinned by `SchedulerTests.consecutiveWindowsBothFire` (two forced
+windows, no `DELETE FROM sched_leases` — the exact crutch the old tests used).
+
+### H-6P3 — SLA resolution leaked across tenants
+
+`RestPublishedSlaSource` filtered the cross-tenant published-apps index by
+`apiName` only (first match in ANY tenant won the bundle) and `SlaResolver`'s 30 s
+cache was keyed by `appApiName` alone — tenant B's approval could run tenant A's
+timers and escalate to tenant A's role. Both now scope by tenant.
+
+### H-6P4 — a delegated approval could never escalate; a failed resume wedged the record
+
+Two wedges on the approval path: delegation's replacement task used the pre-SLA
+constructor (escalateTo nulled — at breach the scanner flips ESCALATED with no
+replacement, the flow stays suspended forever, `sla.warn` re-fires), and a failed
+`runtime.resume` parked the instance FAILED — a status `resolved()` can never act
+on — with the task already consumed as APPROVED in the same transaction. Delegation
+now carries the full task shape; a failed resume rethrows so the whole approve
+rolls back (task OPEN, instance SUSPENDED, the approver retries once the runtime
+heals or the renamed hook is republished). Also: `any`-mode resolution now
+supersedes its losing siblings (an OPEN loser used to "breach" and spawn a phantom
+escalation for an approval already resolved), and `warnAt: null` (the §6 disable)
+is presence-parsed — an absent `warnAt` authors the 0.8 default, an explicit null
+disables, and the field always serializes so the authored disable round-trips.
+
+### H-6P5 — the async report export re-scoped to the app's `reporting` role
+
+An over-cap interactive export (correctly actor-scoped) handed off to a job that
+re-rendered under the app's `reporting` role — wider data delivered to the
+requester, and apps without that role failed every over-cap export. The chain is
+actor-scoped end to end now: the runtime's internal report-query leg grew
+`asActor` (exactly one of asRole/asActor; `engine.aggregate` re-evaluates the
+actor's matrix, field security, and owner-based sharing), `ReportRunner.runAsActor`
+re-checks the `report: execute` grant, and the integration job passes
+`initiatedBy` as the scope. The scheduled leg stays role-scoped and now addresses
+the app-qualified entity (same-named entities across apps rejected the nightly
+delivery as ambiguous).
+
+### H-6P6 — the reporting surface's long tail
+
+- **Filters were a value oracle over hidden fields** — group-by/aggregate fields
+  failed closed on HIDDEN but filter leaves rode verbatim on every door (report
+  params, list `filter`), so row counts and totals answered binary-searchable
+  questions about values the caller cannot read. Filter trees now fail closed on
+  the actor and role doors (`RecordEngine` list/aggregate, listAsRole/aggregateAsRole).
+- **Widget display config rode report run params** — the ERP `exec` dashboard's
+  `{aggregate: outstanding}` / `{x,y}` compiled into filter leaves the runtime
+  rejected, and the SPA swallowed the error ("Loading arAging…" forever). Widgets
+  gained `options` (display config, never sent as run params; the KPI metric names
+  its aggregate), run failures render an error state, and the corpus is re-authored.
+- **Exports**: CSV formula injection neutralized in both exporters (leading
+  `= + - @`/tab/CR prefixed); XLSX sheet names cap at 31 (a legal 40-char report id
+  failed every render); aggregate-only reports carry totals (the un-grouped twin
+  was skipped as identical — KPIs read `undefined` and the export's closing row
+  printed TOTAL over the money value); money renders exact-scale symbol-prefixed
+  decimals (no rounded, grouped currency format); `count` over a money field is no
+  longer currency-formatted.
+- **Doors bound materialization**: the aggregate DSL grew a SQL-level `limit`, and
+  the reporting doors ride it one past their ceilings — the run door
+  (`run-max-rows`, default 50k) and the async legs (`async-max-rows`, default 1M)
+  fail closed audibly past their ceiling; the sync export door detects over-cap at
+  cap+1 rows and answers the 202 handoff without draining the dataset (a
+  high-cardinality group-by was an OOM vector via a single request).
+- **Smaller**: the task read enforces §13's access rule (a task id from a
+  notification is not a grant); the notification consumer rethrows transient
+  failures (the inbox dedupe collapses redelivery — a swallowed SMTP outage used to
+  ack a dropped fan-out); dashboard composition matches ANY held app role; the
+  cache read keeps decimals decimal; one structurally-invalid cron skips its own
+  job, never the rest of the sync pass; the BPMN bridge carries the matched SLA's
+  escalation target; `sla.warn`'s flip is conditional (no double-warn under
+  replicas); record-deletion cancellation only notifies tasks it actually
+  cancelled (a resolved engine task used to roll the whole cancellation back and
+  poison the `record.deleted` redelivery); the dead `ReportExportClient` (spoke a
+  contract the server never answered) is deleted.
+
+### The recorded lows — closed in the same pass (follow-up commit)
+
+- **L-6P1** delegation now validates the target is a reachable assignee — a
+  target holding no roles in the tenant (a typo'd ghost UUID, or a role-less
+  user whose inbox can never match) rejects VALIDATION_FAILED, transaction
+  rolled back (`delegationValidatesTarget`).
+- **L-6P2** `onBreach.notify` is honored end to end: the switch resolves at task
+  creation from the matching `SlaDefinition` (V5 migration `wf_tasks.notify_on`),
+  rides delegation replacements and the BPMN bridge, and at breach the
+  `sla.breach` event carries `notify: false` — the event still rides the spine
+  (metrics, audit) but the Notification Service skips the sla-warning fan-out
+  (`onBreachNotifyFalseEscalatesQuietly`, `quietBreachNeverFansOut`). The
+  escalation itself still happens — "escalate, notify, or both" is now both
+  switches, not one.
+- **L-6P5** every outbox (the three recorded — `wf_/sched_/nf_` — plus
+  `it_`, `fl_`, and the runtime's own `event_outbox`, the highest-volume one)
+  gained a retention pass: published rows older than
+  `novaforge.events.retention-days` (default 7) leave on a slow schedule
+  (`retention-interval-ms`, default 1 h); unpublished rows never leave —
+  delivery first. Pinned in each service's suite
+  (`outboxRetentionDropsOldPublishedRows`).
+
+### Verification (this pass)
+
+Full `./mvnw verify` green end to end on Java 21 (all 23 reactor modules, with the
+container suites on the podman socket), frontend 149 vitest green + `check`
+(typecheck) clean. New pins this pass: `MaterializerTests` +1 (9), `SchedulerTests`
++2 (11), `TaskApiTests` +5 (20), `SlaWarnAtPresenceTest` (2), `ReportRunnerTests`
++4 (8), `ReportExporterTests` +3 (7), `ReportAggregateTests` +2 (7).

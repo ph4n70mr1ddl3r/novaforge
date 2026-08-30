@@ -1644,18 +1644,14 @@
         {
           "widget": "kpi",
           "reportRef": "arAging",
-          "params": {
-            "aggregate": "outstanding"
+          "options": {
+            "metric": "outstanding"
           },
           "span": 4
         },
         {
           "widget": "chart",
           "reportRef": "arAging",
-          "params": {
-            "x": "bucket",
-            "y": "outstanding"
-          },
           "span": 8
         },
         {

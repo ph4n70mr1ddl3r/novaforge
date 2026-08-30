@@ -2,6 +2,7 @@ package com.novaforge.reporting.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -80,7 +81,7 @@ class AsyncExportHandoffTests {
             rows.add(Map.of("customer", "acme-" + i));
         }
         when(runner.exportRows(any(UUID.class), any(UUID.class), anyString(), anyString(),
-                any(), anyString())).thenReturn(Map.of("rows", rows));
+                any(), anyString(), anyInt())).thenReturn(Map.of("rows", rows));
         UUID job = UUID.randomUUID();
         when(asyncExports.create(eq(TENANT), anyString(), anyString(), anyString(), any(),
                 eq(ACTOR))).thenReturn(new AsyncExportClient.AsyncJob(job,
@@ -106,7 +107,7 @@ class AsyncExportHandoffTests {
         when(runner.resolve(any(UUID.class), anyString(), anyString())).thenReturn(resolved);
         List<Map<String, Object>> rows = List.of(Map.of("customer", "acme"));
         when(runner.exportRows(any(UUID.class), any(UUID.class), anyString(), anyString(),
-                any(), anyString())).thenReturn(Map.of("rows", rows));
+                any(), anyString(), anyInt())).thenReturn(Map.of("rows", rows));
 
         var response = controller(10_000).export("arAging", "Erp", "csv", null, null);
 

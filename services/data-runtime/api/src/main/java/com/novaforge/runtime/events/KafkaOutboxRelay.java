@@ -36,12 +36,15 @@ public class KafkaOutboxRelay {
     private final KafkaTemplate<String, String> kafka;
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final int batchSize;
+    private final int retentionDays;
 
     public KafkaOutboxRelay(OutboxStore outbox, KafkaTemplate<String, String> kafka,
-                            @Value("${novaforge.events.relay-batch:100}") int batchSize) {
+                            @Value("${novaforge.events.relay-batch:100}") int batchSize,
+                            @Value("${novaforge.events.retention-days:7}") int retentionDays) {
         this.outbox = outbox;
         this.kafka = kafka;
         this.batchSize = batchSize;
+        this.retentionDays = retentionDays;
     }
 
     @Scheduled(fixedDelayString = "${novaforge.events.relay-interval-ms:500}")
@@ -65,6 +68,21 @@ public class KafkaOutboxRelay {
             }
         }
         outbox.markPublished(published);
+    }
+
+    /**
+     * Retention on a slow schedule: published rows older than the configured window
+     * leave (the spine and its consumers hold the durable record); unpublished rows
+     * never leave — delivery first. Without this the platform's highest-volume
+     * outbox grew forever.
+     */
+    @Scheduled(fixedDelayString = "${novaforge.events.retention-interval-ms:3600000}")
+    public void retain() {
+        int dropped = outbox.retainPublishedOlderThanDays(retentionDays);
+        if (dropped > 0) {
+            LOG.info("outbox retention dropped {} published row(s) older than {} day(s)",
+                    dropped, retentionDays);
+        }
     }
 
     /** record.created → novaforge.record (family topics, §4 topology). */

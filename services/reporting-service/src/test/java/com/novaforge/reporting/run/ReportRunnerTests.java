@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -73,6 +75,8 @@ class ReportRunnerTests {
               "reports": [
                 { "id": "byCustomer", "entity": "Invoice",
                   "groupBy": [ { "field": "customer" } ],
+                  "aggregates": [ { "op": "sum", "field": "amount", "alias": "sum_amount" } ] },
+                { "id": "totalBook", "entity": "Invoice",
                   "aggregates": [ { "op": "sum", "field": "amount", "alias": "sum_amount" } ] } ] }
             """;
 
@@ -94,7 +98,7 @@ class ReportRunnerTests {
         ValueOperations<String, String> ops = mock(ValueOperations.class);
         values = ops;
         lenient().when(redis.opsForValue()).thenReturn(values);
-        runner = new ReportRunner(published, runtime, redis, 60);
+        runner = new ReportRunner(published, runtime, redis, 60, 50_000, 1_000_000);
 
         AppDefinition app = DefinitionParser.parseApp(APP_JSON);
         PublishedApp bundle = new PublishedApp(TENANT, UUID.randomUUID().toString(), "ArDesk", 3, app);
@@ -107,7 +111,7 @@ class ReportRunnerTests {
         // The entity address is app-qualified — the owning app disambiguates a
         // tenant's same-named entities (found live: ERP and the A/R demo both
         // define `Invoice`; the unqualified leg rejected as ambiguous)
-        when(runtime.queryAsCaller(eq("ArDesk.Invoice"), any(), any())).thenAnswer(inv -> {
+        lenient().when(runtime.queryAsCaller(eq("ArDesk.Invoice"), any(), any())).thenAnswer(inv -> {
             Map<String, Object> query = inv.getArgument(1, Map.class);
             if (query.containsKey("groupBy")) {
                 executions.incrementAndGet();
@@ -224,5 +228,92 @@ class ReportRunnerTests {
         runner.run(TENANT, CLERK_A, "ArDesk", "byCustomer", Map.of(), "token");
         assertThat(executions.get()).isEqualTo(2);
         verify(redis, times(4)).opsForValue();
+    }
+
+    @Test
+    @DisplayName("§6: the async export's render rides the ACTOR's own scope — the grant re-checked, never a re-scoped role")
+    void runAsActorUsesTheActorsOwnScope() {
+        // without the grant the handoff render fails closed before any leg runs
+        rolesOf(MANAGER, "ArDesk.manager");
+        assertThatThrownBy(() -> runner.runAsActor(TENANT, MANAGER, "ArDesk", "byCustomer",
+                Map.of()))
+                .isInstanceOf(PlatformException.class)
+                .extracting(e -> ((PlatformException) e).errorCode())
+                .isEqualTo(PlatformErrorCode.FORBIDDEN);
+
+        rolesOf(CLERK_A, "ArDesk.clerk");
+        when(runtime.queryAsActor(eq(TENANT), eq("ArDesk"), eq("ArDesk.Invoice"),
+                eq(CLERK_A), any())).thenAnswer(inv -> grouped());
+        Map<String, Object> run = runner.runAsActor(TENANT, CLERK_A, "ArDesk", "byCustomer",
+                Map.of());
+        assertThat(((List<?>) run.get("rows"))).hasSize(1);
+        verify(runtime, atLeastOnce()).queryAsActor(eq(TENANT), eq("ArDesk"),
+                eq("ArDesk.Invoice"), eq(CLERK_A), any());
+        // the role-scoped leg was never touched — the export cannot re-scope wider
+        verify(runtime, never()).queryAsRole(any(), any(), any(), any(), any());
+
+    }
+
+    @Test
+    @DisplayName("§7: the scheduled leg addresses the app-qualified entity — same-named entities never collide")
+    void runScheduledAddressesTheAppQualifiedEntity() {
+        when(runtime.queryAsRole(eq(TENANT), eq("ArDesk"), eq("ArDesk.Invoice"),
+                eq("ArDesk.reporting"), any())).thenAnswer(inv -> grouped());
+        Map<String, Object> run = runner.runScheduled(TENANT, "ArDesk", "byCustomer",
+                "ArDesk.reporting", Map.of());
+        assertThat(((List<?>) run.get("rows"))).hasSize(1);
+        verify(runtime, atLeastOnce()).queryAsRole(eq(TENANT), eq("ArDesk"),
+                eq("ArDesk.Invoice"), eq("ArDesk.reporting"), any());
+    }
+
+    @Test
+    @DisplayName("an aggregate-only report carries totals — its single row is the totals")
+    void aggregateOnlyReportCarriesTotals() {
+        rolesOf(CLERK_A, "ArDesk.clerk");
+        when(runtime.queryAsCaller(eq("ArDesk.Invoice"), any(), any()))
+                .thenAnswer(inv -> totals());
+        Map<String, Object> run = runner.run(TENANT, CLERK_A, "ArDesk", "totalBook",
+                Map.of(), "token");
+        // KPI tiles and export closing rows read totals — once empty for every
+        // aggregate-only report (the un-grouped twin was skipped as identical)
+        assertThat(run.get("totals")).isEqualTo(Map.of("sum_amount", "120.0000"));
+        assertThat(((List<?>) run.get("rows"))).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("the doors bound materialization — the limit rides the lowered query, over-ceiling fails closed")
+    void doorsBoundMaterialization() {
+        rolesOf(CLERK_A, "ArDesk.clerk");
+        List<Map<String, Object>> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            many.add(Map.of("customer", "c" + i, "sum_amount", "1.0000"));
+        }
+        JsonNode threeRows = MAPPER.valueToTree(Map.of("rows", many));
+        when(runtime.queryAsCaller(eq("ArDesk.Invoice"), any(), any()))
+                .thenReturn(threeRows);
+
+        // a ceiling of 2: the query carries LIMIT 3 (one past — detection by size),
+        // and 3 rows fail the run closed instead of draining an unbounded dataset
+        ReportRunner bounded = new ReportRunner(published, runtime, redis, 60, 2, 1_000_000);
+        assertThatThrownBy(() -> bounded.run(TENANT, CLERK_A, "ArDesk", "byCustomer",
+                Map.of(), "token"))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("ceiling of 2");
+        org.mockito.ArgumentCaptor<Map<String, Object>> query =
+                org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(runtime, atLeastOnce()).queryAsCaller(eq("ArDesk.Invoice"), query.capture(),
+                anyString());
+        assertThat(query.getValue().get("limit")).isEqualTo(3);
+
+        // the export door bounds one past ITS cap — the controller's over-cap 202
+        // detection materializes at most cap+1 rows
+        org.mockito.Mockito.clearInvocations(runtime);
+        when(runtime.queryAsCaller(eq("ArDesk.Invoice"), any(), any()))
+                .thenReturn(threeRows);
+        bounded.exportRows(TENANT, CLERK_A, "ArDesk", "byCustomer", Map.of(), "token", 2);
+        verify(runtime, atLeastOnce()).queryAsCaller(eq("ArDesk.Invoice"),
+                org.mockito.ArgumentMatchers.<Map<String, Object>>argThat(
+                        body -> Integer.valueOf(3).equals(body.get("limit"))),
+                anyString());
     }
 }

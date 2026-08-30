@@ -29,18 +29,20 @@ export function Dashboards({
     client,
     appApiName,
     app,
-    role,
+    roles,
     onDrill,
 }: {
     client: PlatformClient;
     appApiName: string;
     app: AppDefinition;
-    role?: string;
+    /** Every app role the viewer holds — composition matches any of them (§8). */
+    roles: string[];
     /** Deep-links a drill-through: the entity's list plus the row's filter payload. */
     onDrill?: (entity: string, filter: QueryFilter) => void;
 }): ReactNode {
     const visible = app.dashboards.filter(
-        (dashboard) => !dashboard.roles?.length || (role && dashboard.roles.includes(role)),
+        (dashboard) =>
+            !dashboard.roles?.length || dashboard.roles.some((role) => roles.includes(role)),
     );
     const [selected, setSelected] = useState<DashboardDefinition | undefined>(visible[0]);
     return (
@@ -139,10 +141,14 @@ function WidgetCell({
     drill?: DrillThroughBinding & { drill: (filter: QueryFilter) => void };
 }): ReactNode {
     const [run, setRun] = useState<ReportRun | null>(null);
+    const [failed, setFailed] = useState(false);
     const [tick, setTick] = useState(0);
 
     useEffect(() => {
         let cancelled = false;
+        // params are REPORT RUN PARAMS (filter overrides + asOf) — display config
+        // (the KPI's metric, chart axes) rides `options` and never reaches the
+        // run: unknown params compile into filter leaves the runtime rejects
         client
             .runReport(appApiName, widget.reportRef, widget.params ?? {})
             .then((result) => {
@@ -151,7 +157,10 @@ function WidgetCell({
                 }
             })
             .catch(() => {
-                /* run failures render the empty state */
+                /* a failed run renders the empty state — never "Loading…" forever */
+                if (!cancelled) {
+                    setFailed(true);
+                }
             });
         return () => {
             cancelled = true;
@@ -169,12 +178,21 @@ function WidgetCell({
         return () => clearInterval(timer);
     }, [widget.refreshSeconds]);
 
+    // the KPI's metric is authored display config: the named aggregate, else the
+    // first totals key (an aggregate-only report's totals are its single row)
+    const metric =
+        typeof widget.options?.metric === "string" && widget.options.metric
+            ? widget.options.metric
+            : String(Object.keys(run?.totals ?? {})[0] ?? "");
+
     return (
         <DashboardCell span={widget.span ?? 6}>
-            {!run ? (
+            {failed && !run ? (
+                <p role="status">{widget.reportRef} unavailable — the run failed.</p>
+            ) : !run ? (
                 <p role="status">Loading {widget.reportRef}…</p>
             ) : widget.widget === "kpi" ? (
-                <KpiTile reportRef={widget.reportRef} totals={run.totals} metric={String(Object.keys(run.totals)[0] ?? "")} label={widget.reportRef} />
+                <KpiTile reportRef={widget.reportRef} totals={run.totals} metric={metric} label={widget.reportRef} />
             ) : widget.widget === "chart" ? (
                 <ChartWidget reportRef={widget.reportRef} chart={run.chart} title={widget.reportRef} />
             ) : (

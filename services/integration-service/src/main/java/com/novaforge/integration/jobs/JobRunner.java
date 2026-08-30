@@ -273,8 +273,12 @@ public class JobRunner {
     }
 
     private void runReportExport(JobStore.Job job) {
+        // actor-scoped: the interactive handoff's jobs render under the initiating
+        // actor's own scopes — §6's "same authorization as a run", never a
+        // re-scoped role wider than the requester
         byte[] rendered = reports.export(job.tenantId(), job.app(), job.reportId(),
-                job.runAsRole(), job.format() == null ? "csv" : job.format(), job.params());
+                job.runAsRole(), job.initiatedBy(),
+                job.format() == null ? "csv" : job.format(), job.params());
         UUID fileId = files.upload(job.tenantId(),
                 (job.reportId() == null ? "report" : job.reportId()) + "-"
                         + job.id() + "." + (job.format() == null ? "csv" : job.format()),
@@ -312,12 +316,21 @@ public class JobRunner {
         deliveries.outbox(job.tenantId(), "import.progress", payload);
     }
 
-    /** RFC 4180 cell quoting (the reporting exporter's rule, shared here). */
+    /**
+     * RFC 4180 cell quoting plus formula neutralization (the reporting exporter's
+     * rule, shared here): entity exports carry raw record data, and a leading
+     * {@code =}, {@code +}, {@code -}, {@code @} (or tab/CR) must never ride into a
+     * spreadsheet as a formula on open.
+     */
     static String csvCell(Object value) {
         if (value == null) {
             return "";
         }
         String text = String.valueOf(value);
+        if (!text.isEmpty() && ("=+-@".indexOf(text.charAt(0)) >= 0
+                || text.charAt(0) == '\t' || text.charAt(0) == '\r')) {
+            text = "'" + text;
+        }
         if (text.contains("\"") || text.contains(",") || text.contains("\n")
                 || text.contains("\r")) {
             return '"' + text.replace("\"", "\"\"") + '"';

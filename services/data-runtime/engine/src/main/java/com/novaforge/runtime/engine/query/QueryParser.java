@@ -161,8 +161,15 @@ public final class QueryParser {
                 throw validation("asOf", "asOf must be an ISO date (yyyy-MM-dd)");
             }
         }
+        Integer limit = null;
+        if (root.hasNonNull("limit")) {
+            limit = root.get("limit").asInt();
+            if (limit <= 0) {
+                throw validation("limit", "limit must be a positive integer");
+            }
+        }
         return new QueryModel.AggregateQuery(filter, List.copyOf(groupBy),
-                List.copyOf(aggregates), asOf);
+                List.copyOf(aggregates), asOf, limit);
     }
 
     static QueryModel.Filter parseFilter(JsonNode node, EntityDefinition entity) {

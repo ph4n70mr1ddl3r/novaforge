@@ -15,10 +15,10 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The Reporting Service's internal export leg (PHASE-6 §7): the async job renders
- * under its pinned {@code runAsRole} through the same role-scoped surface the
- * Scheduler's deliveries ride (PHASE-5 §7) — bytes back, no notification; the
- * Integration Service streams them to the File Service and notifies the job's
- * initiating user itself.
+ * under the initiating actor's own scopes — PHASE-5 §6's "same authorization as a
+ * run", so the export can never re-scope wider than the actor who requested it —
+ * bytes back, no notification; the Integration Service streams them to the File
+ * Service and notifies the job's initiating user itself.
  */
 @Component
 public class ReportingClient {
@@ -34,21 +34,30 @@ public class ReportingClient {
         this.serviceToken = serviceToken;
     }
 
-    /** Renders one report export under the role scope; returns the file bytes. */
+    /**
+     * Renders one report export — actor-scoped when the job carries an initiating
+     * actor (the interactive handoff's jobs), else the role scope — and returns the
+     * file bytes.
+     */
     public byte[] export(UUID tenantId, String app, String reportId, String runAsRole,
-                         String format, Map<String, Object> params) {
+                         UUID runAsActor, String format, Map<String, Object> params) {
         try {
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("tenantId", tenantId.toString());
+            body.put("app", app);
+            body.put("reportId", reportId);
+            if (runAsActor != null) {
+                body.put("runAsActor", runAsActor.toString());
+            } else {
+                body.put("runAsRole", runAsRole);
+            }
+            body.put("format", format);
+            body.put("params", params == null ? Map.of() : params);
             Map<String, Object> response = reports.method(HttpMethod.POST)
                     .uri("/api/v1/reports/internal/export")
                     .headers(headers -> headers.setBearerAuth(serviceToken.token()))
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(MAPPER.writeValueAsString(Map.of(
-                            "tenantId", tenantId.toString(),
-                            "app", app,
-                            "reportId", reportId,
-                            "runAsRole", runAsRole,
-                            "format", format,
-                            "params", params == null ? Map.of() : params)))
+                    .body(MAPPER.writeValueAsString(body))
                     .retrieve()
                     .body(Map.class);
             if (response == null || response.get("contentBase64") == null) {

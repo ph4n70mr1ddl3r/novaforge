@@ -67,4 +67,17 @@ public class OutboxStore {
                 "SELECT count(*) FROM event_outbox WHERE published_at IS NULL", Long.class);
         return count == null ? 0 : count;
     }
+
+    /**
+     * Retention — the outbox is transport state, not history (the spine and its
+     * consumers hold the durable record): published rows older than the window
+     * leave. Unpublished rows never leave (delivery first); without this the
+     * table — the platform's highest-volume outbox — grew forever.
+     */
+    public int retainPublishedOlderThanDays(int days) {
+        return jdbc.update("""
+                DELETE FROM event_outbox
+                 WHERE published_at IS NOT NULL
+                   AND published_at < now() - (? * interval '1 day')""", days);
+    }
 }

@@ -320,7 +320,15 @@ export interface ReportDefinition {
 export interface DashboardWidget {
     widget: "kpi" | "chart" | "table";
     reportRef: string;
+    /** Report RUN params — filter overrides and asOf only. They compile into the
+     *  report's filters; anything else the runtime rejects as an unknown field. */
     params?: Record<string, unknown>;
+    /** Widget DISPLAY config — the KPI's metric (an aggregate alias), chart axes.
+     *  Never sent as report run params; client-side shaping only. */
+    options?: {
+        metric?: string;
+        [key: string]: unknown;
+    };
     span?: number;
     /** §5 auto-refresh: the client-timer interval in seconds — absent = static. */
     refreshSeconds?: number;

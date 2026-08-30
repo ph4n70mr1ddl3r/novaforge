@@ -241,6 +241,7 @@ public class RecordEngine {
         roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, handle.entity().apiName(),
                 handle.appApiName(), app.permissionSet());
         QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
+        requireFilterFieldsVisible(tenantId, actorId, handle, app, query.filter());
         QueryLowering lowering = new QueryLowering(handle.entity());
         QueryLowering.Lowered countSql = lowering.count(handle.entity().apiName(), tenantId,
                 query.filter());
@@ -272,6 +273,7 @@ public class RecordEngine {
         roleMatrix.require(tenantId, actorId, RoleMatrix.Action.READ, handle.entity().apiName(),
                 handle.appApiName(), app.permissionSet());
         QueryModel.AggregateQuery query = QueryParser.parseAggregate(queryJson, handle.entity());
+        requireFilterFieldsVisible(tenantId, actorId, handle, app, query.filter());
         // aggregates leak values, not rows — hidden group-by/aggregate fields fail closed
         for (QueryModel.GroupBy group : query.groupBy()) {
             requireFieldVisible(roleMatrix.fieldAccess(tenantId, actorId, handle.appApiName(),
@@ -320,6 +322,7 @@ public class RecordEngine {
                     "role " + asRole + " is not granted read on " + entityApiName);
         }
         QueryModel.AggregateQuery query = QueryParser.parseAggregate(queryJson, handle.entity());
+        requireFilterFieldsVisibleForRole(app, handle, asRole, query.filter());
         for (QueryModel.GroupBy group : query.groupBy()) {
             requireFieldVisible(roleFieldAccess(app, handle.entity().apiName(), group.field(), asRole),
                     handle.entity().apiName(), group.field());
@@ -344,7 +347,42 @@ public class RecordEngine {
     private static void requireFieldVisible(String access, String entityApiName, String field) {
         if (com.novaforge.metadata.PermissionSet.FieldSecurity.HIDDEN.equals(access)) {
             throw new PlatformException(PlatformErrorCode.FORBIDDEN,
-                    "field " + entityApiName + "." + field + " is hidden — aggregates fail closed");
+                    "field " + entityApiName + "." + field + " is hidden — queries fail closed");
+        }
+    }
+
+    /**
+     * Filter fields fail closed exactly like group-by and aggregate fields: a hidden
+     * field in a filter is a value oracle — row counts, totals, and chart shapes
+     * answer questions about values the caller cannot read (binary-searchable).
+     */
+    private void requireFilterFieldsVisible(UUID tenantId, UUID actorId, EntityHandle handle,
+                                           AppDefinition app, QueryModel.Filter filter) {
+        if (filter == null) {
+            return;
+        }
+        if (filter instanceof QueryModel.Filter.Leaf leaf) {
+            requireFieldVisible(roleMatrix.fieldAccess(tenantId, actorId, handle.appApiName(),
+                    app.permissionSet(), handle.entity().apiName(), leaf.field()),
+                    handle.entity().apiName(), leaf.field());
+        } else if (filter instanceof QueryModel.Filter.Composite composite) {
+            composite.children().forEach(child ->
+                    requireFilterFieldsVisible(tenantId, actorId, handle, app, child));
+        }
+    }
+
+    /** The role-scoped twin of the filter walk ({@code listAsRole}/{@code aggregateAsRole}). */
+    private static void requireFilterFieldsVisibleForRole(AppDefinition app, EntityHandle handle,
+                                                          String role, QueryModel.Filter filter) {
+        if (filter == null) {
+            return;
+        }
+        if (filter instanceof QueryModel.Filter.Leaf leaf) {
+            requireFieldVisible(roleFieldAccess(app, handle.entity().apiName(), leaf.field(), role),
+                    handle.entity().apiName(), leaf.field());
+        } else if (filter instanceof QueryModel.Filter.Composite composite) {
+            composite.children().forEach(child ->
+                    requireFilterFieldsVisibleForRole(app, handle, role, child));
         }
     }
 
@@ -587,6 +625,7 @@ public class RecordEngine {
                     "role " + asRole + " is not granted read on " + entityApiName);
         }
         QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
+        requireFilterFieldsVisibleForRole(app, handle, asRole, query.filter());
         QueryLowering lowering = new QueryLowering(handle.entity());
         QueryLowering.Lowered countSql = lowering.count(handle.entity().apiName(), tenantId,
                 query.filter());

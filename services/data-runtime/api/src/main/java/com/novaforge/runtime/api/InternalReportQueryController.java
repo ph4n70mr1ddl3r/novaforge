@@ -30,7 +30,7 @@ public class InternalReportQueryController {
     }
 
     public record ReportQueryRequest(String tenantId, String app, String entityApiName,
-                                     String asRole, Map<String, Object> query) {
+                                     String asRole, String asActor, Map<String, Object> query) {
 
         private static final tools.jackson.databind.json.JsonMapper MAPPER =
                 tools.jackson.databind.json.JsonMapper.builder().build();
@@ -43,17 +43,29 @@ public class InternalReportQueryController {
     @PostMapping("/reports/query")
     public Map<String, Object> query(@RequestBody ReportQueryRequest request) {
         ServiceClientGate.require("report-query");
+        boolean roleScoped = request.asRole() != null && !request.asRole().isBlank();
+        boolean actorScoped = request.asActor() != null && !request.asActor().isBlank();
         if (request.tenantId() == null || request.entityApiName() == null
-                || request.asRole() == null || request.asRole().isBlank()) {
+                || roleScoped == actorScoped) {
+            // exactly one scope: a role for scheduled deliveries, an actor for the
+            // async export handoff (§6's "same authorization as a run")
             throw new IllegalArgumentException(
-                    "tenantId, entityApiName, and asRole are required");
+                    "tenantId, entityApiName, and exactly one of asRole/asActor are required");
         }
         var context = new TenantContext.Context(request.tenantId(),
                 UUID.nameUUIDFromBytes(("system:" + request.app()).getBytes()).toString());
         var result = new Object[] {null};
-        TenantContext.with(context, () -> result[0] = engine.aggregateAsRole(
-                UUID.fromString(request.tenantId()), request.entityApiName(),
-                request.asRole(), request.queryJson()));
+        if (actorScoped) {
+            // the initiating actor's own scopes — matrix, field security, and
+            // owner-based sharing identical to the interactive run
+            TenantContext.with(context, () -> result[0] = engine.aggregate(
+                    UUID.fromString(request.tenantId()), UUID.fromString(request.asActor()),
+                    request.entityApiName(), request.queryJson()));
+        } else {
+            TenantContext.with(context, () -> result[0] = engine.aggregateAsRole(
+                    UUID.fromString(request.tenantId()), request.entityApiName(),
+                    request.asRole(), request.queryJson()));
+        }
         return Map.of("result", result[0]);
     }
 }

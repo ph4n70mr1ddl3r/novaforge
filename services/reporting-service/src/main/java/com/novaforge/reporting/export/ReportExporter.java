@@ -6,7 +6,6 @@ import com.novaforge.common.error.ProblemErrors;
 import com.novaforge.metadata.ReportDefinition;
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
-import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.Currency;
 import java.util.List;
@@ -43,12 +42,21 @@ public class ReportExporter {
         this.currency = currency;
     }
 
-    /** CSV quoting per RFC 4180 — quotes, commas, and newlines escape. */
+    /**
+     * RFC 4180 quoting plus formula neutralization: a leading {@code =}, {@code +},
+     * {@code -}, {@code @} (or tab/CR) makes spreadsheet apps treat the cell as a
+     * formula on open — group-by labels are raw record data, so a crafted label like
+     * {@code =WEBSERVICE(…)} must never ride verbatim into a CSV someone opens.
+     */
     static String csvCell(Object value) {
         if (value == null) {
             return "";
         }
         String text = String.valueOf(value);
+        if (!text.isEmpty() && ("=+-@".indexOf(text.charAt(0)) >= 0
+                || text.charAt(0) == '\t' || text.charAt(0) == '\r')) {
+            text = "'" + text;
+        }
         if (text.contains("\"") || text.contains(",") || text.contains("\n")
                 || text.contains("\r")) {
             return '"' + text.replace("\"", "\"\"") + '"';
@@ -86,7 +94,7 @@ public class ReportExporter {
         List<List<String>> table = table(run, columns, moneyColumns, locale);
         try (Workbook workbook = new XSSFWorkbook();
              ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
-            Sheet sheet = workbook.createSheet(report.id());
+            Sheet sheet = workbook.createSheet(sheetName(report));
             CellStyle header = workbook.createCellStyle();
             Font font = workbook.createFont();
             font.setBold(true);
@@ -126,6 +134,16 @@ public class ReportExporter {
 
     // --- shared shaping: body rows then the totals row, both string-rendered ---
 
+    /**
+     * A sheet name POI accepts: workbook sheet names cap at 31 characters (POI
+     * throws otherwise), and report ids carry no length cap — a legal
+     * 40-character id must not fail every XLSX export.
+     */
+    private static String sheetName(ReportDefinition report) {
+        String id = report.id() == null ? "report" : report.id();
+        return id.length() <= 31 ? id : id.substring(0, 31);
+    }
+
     private List<List<String>> table(Map<String, Object> run, List<String> columns,
                                      Set<String> moneyColumns, Locale locale) {
         List<List<String>> table = new ArrayList<>();
@@ -136,38 +154,47 @@ public class ReportExporter {
             table.add(cells);
         }
         Map<String, Object> totals = totalsOf(run);
-        List<String> totalRow = new ArrayList<>();
-        for (int i = 0; i < columns.size(); i++) {
-            totalRow.add(i == 0 ? "TOTAL"
-                    : format(totals.get(columns.get(i)), moneyColumns.contains(columns.get(i)),
-                            locale));
+        if (!totals.isEmpty()) {
+            List<String> totalRow = new ArrayList<>();
+            for (int i = 0; i < columns.size(); i++) {
+                String column = columns.get(i);
+                // the label rides the first GROUP column — an aggregate-only report
+                // (no group-by) has a value in column 0, and "TOTAL" must not clobber it
+                totalRow.add(i == 0 && !totals.containsKey(column) ? "TOTAL"
+                        : format(totals.get(column), moneyColumns.contains(column), locale));
+            }
+            table.add(totalRow);
         }
-        table.add(totalRow);
         return table;
     }
 
     /**
-     * Money columns render as decimal strings with the currency symbol per locale —
-     * v1 pins one configured currency per service (multi-currency is Phase 7 scope);
-     * everything else rides its natural string form.
+     * Money columns render as decimal strings with the currency symbol — exact
+     * scale preserved ({@code toPlainString}), never a rounded, grouped currency
+     * format: §10 item 1 pins decimal-exact totals, and a scale-4 sum like
+     * {@code 120.1234} must export whole. Everything else rides its natural
+     * string form.
      */
     private String format(Object value, boolean money, Locale locale) {
         if (value == null) {
             return "";
         }
         if (money && value instanceof BigDecimal decimal) {
-            NumberFormat currencyFormat = NumberFormat.getCurrencyInstance(locale);
-            try {
-                currencyFormat.setCurrency(Currency.getInstance(currency));
-            } catch (IllegalArgumentException ignored) {
-                // unknown code — the plain decimal string stays
-            }
-            return currencyFormat.format(decimal);
+            return currencySymbol(locale) + decimal.toPlainString();
         }
         if (value instanceof BigDecimal decimal) {
             return decimal.toPlainString();
         }
         return String.valueOf(value);
+    }
+
+    /** v1 pins one configured currency per service (multi-currency is Phase 7 scope). */
+    private String currencySymbol(Locale locale) {
+        try {
+            return Currency.getInstance(currency).getSymbol(locale);
+        } catch (IllegalArgumentException e) {
+            return currency;
+        }
     }
 
     @SuppressWarnings("unchecked")

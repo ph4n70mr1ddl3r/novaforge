@@ -2,6 +2,7 @@ package com.novaforge.runtime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -288,6 +289,60 @@ class ReportAggregateTests extends PostgresTestBase {
         mockMvc.perform(post("/api/v1/runtime/AgingInvoice/query").with(jwtFor(AR_VIEWER))
                         .contentType(MediaType.APPLICATION_JSON).content(groupHidden))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("hidden fields fail closed in FILTERS — a filter leaf is a value oracle over row counts, on every door")
+    void hiddenFilterFieldsFailClosed() throws Exception {
+        String filtered = AGING_QUERY.replace("{ \"groupBy\": [",
+                "{ \"filter\": { \"field\": \"amountOutstanding\", \"op\": \"gt\", \"value\": 100 }, "
+                        + "\"groupBy\": [");
+        // the aggregate door: the viewer (amountOutstanding hidden) cannot filter on it
+        mockMvc.perform(post("/api/v1/runtime/AgingInvoice/query").with(jwtFor(AR_VIEWER))
+                        .contentType(MediaType.APPLICATION_JSON).content(filtered))
+                .andExpect(status().isForbidden());
+        // the list door: the same leaf through the GET filter param — once it rode
+        // verbatim and row counts answered binary-search questions about hidden values
+        String listFilter = java.net.URLEncoder.encode(
+                "{\"field\":\"amountOutstanding\",\"op\":\"gt\",\"value\":100}",
+                java.nio.charset.StandardCharsets.UTF_8);
+        String page = java.net.URLEncoder.encode("{\"size\":10}",
+                java.nio.charset.StandardCharsets.UTF_8);
+        mockMvc.perform(get("/api/v1/runtime/AgingInvoice").with(jwtFor(AR_VIEWER))
+                        .param("filter", listFilter).param("page", page))
+                .andExpect(status().isForbidden());
+        // a filter on a field the viewer CAN read still answers
+        String visibleFilter = java.net.URLEncoder.encode(
+                "{\"field\":\"status\",\"op\":\"eq\",\"value\":\"POSTED\"}",
+                java.nio.charset.StandardCharsets.UTF_8);
+        mockMvc.perform(get("/api/v1/runtime/AgingInvoice").with(jwtFor(AR_VIEWER))
+                        .param("filter", visibleFilter).param("page", page))
+                .andExpect(status().isOk());
+        // and the role-scoped internal door carries the same stance
+        mockMvc.perform(post("/api/v1/hooks/reports/query").with(serviceJwt())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(MAPPER.writeValueAsString(java.util.Map.of(
+                                "tenantId", TENANT.toString(), "app", "ArDesk",
+                                "entityApiName", "AgingInvoice", "asRole", "arViewer",
+                                "query", MAPPER.readTree(filtered)))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("the aggregate door honors a SQL-level limit — the reporting doors' caps ride it (§6)")
+    void aggregateLimitLowers() throws Exception {
+        String limited = AGING_QUERY.replace("{ \"groupBy\": [",
+                "{ \"limit\": 1, \"groupBy\": [");
+        // the manager sees all customers grouped; the limit bounds the grouped rows
+        // in SQL — over-cap detection never drains the dataset to count it
+        JsonNode rows = aggregateAs(AR_MANAGER, limited);
+        assertThat(rows.get("rows").size()).isEqualTo(1);
+        // a non-positive limit rejects at the parse door
+        String bad = AGING_QUERY.replace("{ \"groupBy\": [",
+                "{ \"limit\": 0, \"groupBy\": [");
+        mockMvc.perform(post("/api/v1/runtime/AgingInvoice/query").with(jwtFor(AR_MANAGER))
+                        .contentType(MediaType.APPLICATION_JSON).content(bad))
+                .andExpect(status().isBadRequest());
     }
 
     // --- §7: the scheduled path's role-scoped internal surface ---

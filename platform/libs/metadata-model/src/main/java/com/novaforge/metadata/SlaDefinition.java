@@ -1,5 +1,6 @@
 package com.novaforge.metadata;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.Map;
 
@@ -16,14 +17,45 @@ import java.util.Map;
  * {@code requestApproval} step's own {@code timeout}/{@code escalateTo} — the
  * governed overlay beats the inline default — and {@code warnAt: null} disables the
  * warn timer outright.
+ *
+ * <p>Because an explicit {@code warnAt: null} (the disable) and an absent
+ * {@code warnAt} (the 0.8 default) are indistinguishable after a plain record
+ * binding, deserialization goes through the presence-aware creator below — and
+ * {@code warnAt} always serializes, so the authored disable round-trips.</p>
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record SlaDefinition(
         String id,
         Scope scope,
         String target,
-        Double warnAt,
+        @JsonInclude(JsonInclude.Include.ALWAYS) Double warnAt,
         OnBreach onBreach) {
+
+    /** The authored-absent {@code warnAt} — the documented default fraction. */
+    public static final double DEFAULT_WARN_AT = 0.8;
+
+    @JsonCreator(mode = JsonCreator.Mode.DELEGATING)
+    static SlaDefinition fromJson(tools.jackson.databind.JsonNode node) {
+        return new SlaDefinition(
+                node.path("id").asString(null),
+                node.hasNonNull("scope")
+                        ? DefinitionParser.mapper().treeToValue(node.get("scope"), Scope.class)
+                        : null,
+                node.path("target").asString(null),
+                warnAtOf(node),
+                node.hasNonNull("onBreach")
+                        ? DefinitionParser.mapper().treeToValue(node.get("onBreach"), OnBreach.class)
+                        : null);
+    }
+
+    /** Absent authors the 0.8 default; an explicit null is the authored disable. */
+    private static Double warnAtOf(tools.jackson.databind.JsonNode node) {
+        if (!node.has("warnAt")) {
+            return DEFAULT_WARN_AT;
+        }
+        tools.jackson.databind.JsonNode warnAt = node.get("warnAt");
+        return warnAt.isNull() ? null : Double.valueOf(warnAt.asDouble());
+    }
 
     /** Which tasks the SLA governs: type + a match expression over scope bindings. */
     @JsonInclude(JsonInclude.Include.NON_NULL)

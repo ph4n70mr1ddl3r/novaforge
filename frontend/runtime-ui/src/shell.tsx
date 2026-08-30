@@ -41,19 +41,24 @@ type Route =
     | { view: "notifications" }
     | { view: "dashboards" };
 
-function effectiveRole(app: AppDefinition, user: { roles: string[] }): string | undefined {
-    // App-scoped roles arrive as `app.role` assignments; the shell maps the first
+function effectiveRoles(app: AppDefinition, user: { roles: string[] }): string[] {
+    // App-scoped roles arrive as `app.role` assignments; the shell maps EVERY
     // app-defined role the user holds (PHASE-2 §9: rendering only — the Data
-    // Runtime enforces server-side).
+    // Runtime enforces server-side). The first one drives single-role surfaces;
+    // dashboard composition matches any held role — a controller who is also a
+    // clerk must still see the executive dashboard (§8 filters composition only).
     const appRoles = new Set(app.permissionSet.roles.map((role) => role.name));
-    return user.roles.map((role) => role.split(".").pop() ?? role).find((role) => appRoles.has(role));
+    return user.roles
+        .map((role) => role.split(".").pop() ?? role)
+        .filter((role) => appRoles.has(role));
 }
 
 export function RuntimeShell({ client, published, user, versionKey }: RuntimeShellProps): ReactNode {
     const app = published.app as AppDefinition;
     const [route, setRoute] = useState<Route>({ view: "home" });
     const [locale, setLocale] = useState<string | undefined>(user.locale);
-    const role = effectiveRole(app, user);
+    const roles = effectiveRoles(app, user);
+    const role = roles[0];
     const entities = useMemo(
         () => new Map(app.entities.map((entity) => [entity.apiName, entity])),
         [app.entities],
@@ -138,7 +143,7 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
                 ) : route.view === "notifications" ? (
                     <Notifications client={client} />
                 ) : route.view === "dashboards" ? (
-                    <Dashboards client={client} appApiName={app.apiName} app={app} role={role} onDrill={drillTo} />
+                    <Dashboards client={client} appApiName={app.apiName} app={app} roles={roles} onDrill={drillTo} />
                 ) : (
                     <EntityPage
                         client={client}

@@ -41,7 +41,8 @@ public class InternalDeliveryController {
 
     public record DeliveryRequest(String tenantId, String app, String reportId,
                                   Map<String, Object> params, String runAsRole,
-                                  Map<String, Object> recipients, String format) {
+                                  String runAsActor, Map<String, Object> recipients,
+                                  String format) {
 
         String effectiveRunAsRole() {
             return runAsRole == null || runAsRole.isBlank() ? "reporting" : runAsRole;
@@ -101,10 +102,13 @@ public class InternalDeliveryController {
     }
 
     /**
-     * The async export leg (PHASE-6 §7): renders the export under the job's
-     * {@code runAsRole} — bytes back, no notification, no delivery — the Integration
-     * Service's job streams them to the File Service and notifies the initiating
-     * user itself. Service-client gated like every internal surface.
+     * The async export leg (PHASE-6 §7): renders the export under the initiating
+     * actor's own scopes when {@code runAsActor} rides the request (§6's "same
+     * authorization as a run" — the interactive handoff's jobs; never a re-scoped
+     * role), else under the job's {@code runAsRole} — bytes back, no notification,
+     * no delivery — the Integration Service's job streams them to the File Service
+     * and notifies the initiating user itself. Service-client gated like every
+     * internal surface.
      */
     @PostMapping("/export")
     public Map<String, Object> export(@RequestBody DeliveryRequest request) {
@@ -127,8 +131,20 @@ public class InternalDeliveryController {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "export format must be csv or xlsx: " + format);
         }
-        Map<String, Object> run = runner.runScheduled(tenantId, request.app(),
-                request.reportId(), request.effectiveRunAsRole(), request.params());
+        UUID runAsActor = null;
+        if (request.runAsActor() != null && !request.runAsActor().isBlank()) {
+            try {
+                runAsActor = UUID.fromString(request.runAsActor());
+            } catch (IllegalArgumentException e) {
+                throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                        "runAsActor must be a uuid: " + request.runAsActor());
+            }
+        }
+        Map<String, Object> run = runAsActor != null
+                ? runner.runAsActor(tenantId, runAsActor, request.app(), request.reportId(),
+                        request.params())
+                : runner.runScheduled(tenantId, request.app(), request.reportId(),
+                        request.effectiveRunAsRole(), request.params());
         Set<String> moneyColumns = ReportRunner.moneyColumns(resolved);
         byte[] rendered = format.equals("xlsx")
                 ? exporter.xlsx(run, resolved.report(), moneyColumns, Locale.getDefault())
@@ -138,7 +154,8 @@ public class InternalDeliveryController {
                 java.util.Base64.getEncoder().encodeToString(rendered));
         summary.put("format", format);
         summary.put("rows", ((List<?>) run.getOrDefault("rows", List.of())).size());
-        summary.put("runAsRole", request.effectiveRunAsRole());
+        summary.put("runAsRole", runAsActor != null ? "actor:" + runAsActor
+                : request.effectiveRunAsRole());
         return summary;
     }
 
