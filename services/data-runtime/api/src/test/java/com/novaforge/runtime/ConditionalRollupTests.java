@@ -178,10 +178,12 @@ class ConditionalRollupTests extends PostgresTestBase {
                 .andExpect(status().isOk()).andReturn();
         var item = MAPPER.readTree(created.getResponse().getContentAsString());
         // both rows ride in pinned at DRAFT — nothing posts yet...
-        assertThat(item.get("qtyOnHand").asText()).isEqualTo("0");
-        assertThat(item.get("postedIssueQty").asText()).isEqualTo("0");
+        // roll-up values ride the field's authored scale (scale-4 storage renders
+        // 0.0/7.0 — the numeric compare is the contract, not the text rendering)
+        assertThat(item.get("qtyOnHand").asDouble()).isZero();
+        assertThat(item.get("postedIssueQty").asDouble()).isZero();
         // ...but the kind-only condition already sees the raw receipt row
-        assertThat(item.get("receivedQty").asText()).isEqualTo("7");
+        assertThat(item.get("receivedQty").asDouble()).isEqualTo(7.0);
     }
 
     @Test
@@ -265,9 +267,9 @@ class ConditionalRollupTests extends PostgresTestBase {
         var record = MAPPER.readTree(mockMvc.perform(
                         get("/api/v1/runtime/Item/" + item).with(jwtFor()))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
-        assertThat(record.get("qtyOnHand").asText()).isEqualTo(onHand);
-        assertThat(record.get("receivedQty").asText()).isEqualTo(received);
-        assertThat(record.get("postedIssueQty").asText()).isEqualTo(issued);
+        assertThat(record.get("qtyOnHand").asDouble()).isEqualTo(Double.parseDouble(onHand));
+        assertThat(record.get("receivedQty").asDouble()).isEqualTo(Double.parseDouble(received));
+        assertThat(record.get("postedIssueQty").asDouble()).isEqualTo(Double.parseDouble(issued));
     }
 
     private static org.springframework.security.test.web.servlet.request

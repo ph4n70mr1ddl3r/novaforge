@@ -89,10 +89,15 @@ public class Notifier {
      * recipients — resolved users — instead of a spine event's task payload. The
      * same preference filtering, inbox row, email leg (with the inline attachment),
      * and notification.delivered audit per channel; synthetic actors skip entirely.
+     * {@code deliveryId} is the caller's idempotency key (the scheduler's fired
+     * window, the job's id): a replayed send collapses on the inbox dedupe and the
+     * email leg is not repeated for it — without it, every caller retry duplicated
+     * inbox rows and emails for each recipient.
      */
     @Transactional
     public int deliverDirect(UUID tenantId, String category, String title, String body,
-                             java.util.List<UUID> users, Attachment attachment) {
+                             java.util.List<UUID> users, Attachment attachment,
+                             String deliveryId) {
         int delivered = 0;
         for (UUID user : users) {
             if (!recipients.hasChannels(user)) {
@@ -100,17 +105,22 @@ public class Notifier {
             }
             boolean inboxOn = preference(tenantId, user, category, "inbox");
             boolean emailOn = preference(tenantId, user, category, "email");
+            String dedupeKey = deliveryId == null || deliveryId.isBlank()
+                    ? UUID.randomUUID().toString() : deliveryId;
             if (inboxOn) {
                 int written = jdbc.update("""
                         INSERT INTO nf_notifications (id, tenant_id, user_id, category,
                                                       title, body, event_id)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT DO NOTHING""",
-                        UUID.randomUUID(), tenantId, user, category, title, body,
-                        UUID.randomUUID().toString());
+                        UUID.randomUUID(), tenantId, user, category, title, body, dedupeKey);
                 if (written > 0) {
                     delivered(tenantId, user, "inbox", category);
                     delivered++;
+                } else if (deliveryId != null && !deliveryId.isBlank()) {
+                    // a keyed replay: the original send already landed this inbox row
+                    // (and its email) — do not duplicate either leg
+                    continue;
                 }
             }
             if (emailOn) {

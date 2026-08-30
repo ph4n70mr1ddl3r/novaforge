@@ -42,7 +42,7 @@ public class InternalDeliveryController {
     public record DeliveryRequest(String tenantId, String app, String reportId,
                                   Map<String, Object> params, String runAsRole,
                                   String runAsActor, Map<String, Object> recipients,
-                                  String format) {
+                                  String format, String deliveryId) {
 
         String effectiveRunAsRole() {
             return runAsRole == null || runAsRole.isBlank() ? "reporting" : runAsRole;
@@ -90,7 +90,7 @@ public class InternalDeliveryController {
                     "deliveries require recipients {roles: […], users: […]}");
         }
         Map<String, Object> delivered = delivery.deliver(tenantId, request.reportId(),
-                request.app(), roles, users, format, rendered);
+                request.app(), roles, users, format, rendered, request.deliveryId());
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("status", "delivered");
         summary.put("report", request.reportId());

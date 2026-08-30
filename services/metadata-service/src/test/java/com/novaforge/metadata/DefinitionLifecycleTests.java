@@ -1073,6 +1073,49 @@ class DefinitionLifecycleTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("deleting a referenced entity rejects at the door — the draft never wedges")
+    void deleteReferencedEntityRejects() throws Exception {
+        // Anti-regression (2026-08-31): the delete path skipped the save-validation
+        // pass every other writer runs — removing an entity referenced by a page,
+        // state machine, or permission branch left the draft failing validation with
+        // publish and every re-save blocked until each referencing definition was
+        // hand-repaired.
+        MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps")
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "apiName": "RefGuard", "entities": [
+                                  { "apiName": "Order",
+                                    "fields": [ { "apiName": "status", "type": "enum",
+                                                  "values": [ "NEW", "DONE" ] } ] },
+                                  { "apiName": "Loose",
+                                    "fields": [ { "apiName": "name", "type": "text" } ] } ],
+                                  "stateMachines": [ { "id": "sm_order", "entity": "Order",
+                                    "stateField": "status", "initial": "NEW",
+                                    "states": [ { "name": "NEW" }, { "name": "DONE", "terminal": true } ],
+                                    "transitions": [ { "from": "NEW", "to": "DONE" } ] } ] }
+                                """))
+                .andExpect(status().isOk()).andReturn();
+        String appId = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+
+        // the referenced entity cannot leave the draft — the validator names the holder
+        mockMvc.perform(delete("/api/v1/metadata/apps/" + appId + "/entities/Order")
+                        .with(builderJwt()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("state machine")))
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("Order")));
+        // the draft is still publishable — nothing wedged
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/publish").with(builderJwt()))
+                .andExpect(status().isOk());
+        // an unreferenced entity deletes freely
+        mockMvc.perform(delete("/api/v1/metadata/apps/" + appId + "/entities/Loose")
+                        .with(builderJwt()))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("page definitions (PHASE-2 §4/§8): save-validate, round-trip, publish with the bundle, delete")
     void pageDefinitionLifecycle() throws Exception {
         MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps")

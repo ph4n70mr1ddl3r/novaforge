@@ -77,6 +77,17 @@ public class AttachmentService {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "uploads are capped at " + maxSizeBytes + " bytes");
         }
+        // Content types normalize to the bare type/subtype pair — parameters are
+        // dropped (the download door forces its own response overrides) and anything
+        // not shaped like a pair (CR/LF, lists, smuggled headers) rejects outright.
+        String normalizedContentType = "application/octet-stream";
+        if (contentType != null && !contentType.isBlank()) {
+            normalizedContentType = contentType.split(";")[0].trim();
+            if (!normalizedContentType.matches("^[\\w.+-]+/[\\w.+-]+$")) {
+                throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                        "contentType must be a type/subtype pair: " + contentType);
+            }
+        }
         UUID id = UUID.randomUUID();
         String objectKey = tenantId + "/" + id;
         jdbc.update("""
@@ -84,8 +95,7 @@ public class AttachmentService {
                                             file_name, content_type, size, virus_scan, uploaded_by)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
                 id, tenantId, entity, recordId, objectKey, fileName,
-                contentType == null || contentType.isBlank()
-                        ? "application/octet-stream" : contentType, size, actor);
+                normalizedContentType, size, actor);
         grant(tenantId, id, "upload");
         String url = storage.presign(objectKey, StoragePort.Mode.UPLOAD, presignExpirySeconds);
         return new UploadGrant(id, url, Instant.now(clock).plusSeconds(presignExpirySeconds));

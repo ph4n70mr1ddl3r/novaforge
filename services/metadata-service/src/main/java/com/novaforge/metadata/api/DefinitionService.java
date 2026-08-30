@@ -102,8 +102,24 @@ public class DefinitionService {
     }
 
     public AppDefinition deleteEntity(UUID tenantId, UUID appId, String entityApiName) {
-        store.deleteEntity(tenantId, appId, entityApiName);
-        return store.requireApp(tenantId, appId);
+        // The post-delete draft must still validate: entities are referenced by pages,
+        // state machines, reports, permission-set branches, webhook/import mappings, and
+        // lookup targets — deleting one that is referenced left the draft failing
+        // validation with no way to publish (or even re-save) until every referencing
+        // definition was hand-repaired. The candidate check names them, at the door.
+        AppDefinition current = store.requireApp(tenantId, appId);
+        if (current.entity(entityApiName).isEmpty()) {
+            throw new PlatformException(PlatformErrorCode.NOT_FOUND,
+                    "entity " + entityApiName + " not found");
+        }
+        List<EntityDefinition> remaining = current.entities().stream()
+                .filter(e -> !e.apiName().equals(entityApiName)).toList();
+        ProblemErrors errors = DefinitionValidator.validate(withEntities(current, remaining));
+        if (!errors.isEmpty()) {
+            throw validationFailure("entity delete failed save validation — referencing "
+                    + "definitions must be removed first", errors);
+        }
+        return store.deleteEntity(tenantId, appId, entityApiName);
     }
 
     public AppDefinition putTestSuite(UUID tenantId, UUID actorId, UUID appId,
@@ -378,8 +394,18 @@ public class DefinitionService {
                             "breaking changes require acknowledgeDataImpact: " + String.join("; ", breaking))));
         }
         int version = (previous == null ? 0 : store.versions(tenantId, appId).getFirst().version()) + 1;
-        MetadataStore.VersionInfo info = store.publish(tenantId, actorId, appId, version,
-                draft, breaking, acknowledgeDataImpact);
+        MetadataStore.VersionInfo info;
+        try {
+            info = store.publish(tenantId, actorId, appId, version, draft, breaking,
+                    acknowledgeDataImpact);
+        } catch (org.springframework.dao.DataIntegrityViolationException lostRace) {
+            // Two concurrent publishes computed the same next version; the unique
+            // (tenant, app, version) constraint holds — the loser is a routine lost
+            // race, not an internal error.
+            throw new PlatformException(PlatformErrorCode.CONFLICT_VERSION,
+                    "a concurrent publish claimed version " + version + " first — retry the "
+                            + "publish", null, lostRace);
+        }
         events.publishMetadataPublished(tenantId, appId, version, actorId, info.publishedAt());
         return info;
     }

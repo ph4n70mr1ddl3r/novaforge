@@ -159,10 +159,11 @@ public class RecordEngine {
         enforceTransition(app, handle, existing.data(), merged);
         enforcePeriodLock(tenantId, app, handle, merged);
 
-        int newVersion = records.update(tenantId, handle.entityKey(), id, merged,
-                expectedVersion, actorId);
+        int newVersion = updateShaped(tenantId, actorId, handle, id, merged,
+                expectedVersion, "update");
         replaceChildren(tenantId, actorId, app, handle, id, children);
-        newVersion = recomputeRollupsIfChanged(tenantId, actorId, app, handle, id, merged, newVersion);
+        newVersion = recomputeRollupsIfChanged(tenantId, actorId, app, handle, id, merged,
+                newVersion, false);
         events.publish(event("record.updated", tenantId, handle.entityKey(), id, actorId));
         recomputeParentRollups(tenantId, actorId, app, handle, merged, existing.data());
         runHooks(app, handle, tenantId, id, merged, "afterSave", appSystemPrincipal(handle), actorId, transition);
@@ -636,11 +637,11 @@ public class RecordEngine {
         enforceTransition(app, handle, existing.data(), merged);
         enforcePeriodLock(tenantId, app, handle, merged);
 
-        int newVersion = records.update(tenantId, handle.entityKey(), id, merged,
-                expectedVersion, principal);
+        int newVersion = updateShaped(tenantId, principal, handle, id, merged,
+                expectedVersion, "integration update");
         replaceChildren(tenantId, principal, app, handle, id, children);
         newVersion = recomputeRollupsIfChanged(tenantId, principal, app, handle, id, merged,
-                newVersion);
+                newVersion, false);
         events.publish(event("record.updated", tenantId, handle.entityKey(), id, principal));
         runHooks(app, handle, tenantId, id, merged, "afterSave", appSystemPrincipal(handle),
                 principal, transition);
@@ -1240,8 +1241,8 @@ public class RecordEngine {
         enforcePeriodLock(tenantId, app, handle, merged);
         int version = body.get("version") instanceof Number number ? number.intValue()
                 : existing.version();
-        records.update(tenantId, handle.entityKey(), UUID.fromString(recordId), merged,
-                version, systemPrincipal);
+        updateShaped(tenantId, systemPrincipal, handle, UUID.fromString(recordId), merged,
+                version, "hook update");
         events.publish(event("record.updated", tenantId, handle.entityKey(),
                 UUID.fromString(recordId), systemPrincipal));
         return merged;
@@ -1266,13 +1267,15 @@ public class RecordEngine {
             Rollup rollup = Rollup.parse(field.rollup());
             List<Map<String, Object>> childRows = children.getOrDefault(rollup.relationship(),
                     List.of());
-            parentData.put(field.apiName(), rollup.aggregateInMemory(childRows));
+            parentData.put(field.apiName(),
+                    normalizeRollupScale(field, rollup.aggregateInMemory(childRows)));
         }
     }
 
     private int recomputeRollupsIfChanged(UUID tenantId, UUID actorId, AppDefinition app,
                                           EntityHandle parent, UUID parentId,
-                                          Map<String, Object> parentData, int currentVersion) {
+                                          Map<String, Object> parentData, int currentVersion,
+                                          boolean publishEvent) {
         boolean changed = false;
         for (FieldDefinition field : parent.entity().fields()) {
             if (field.rollup() == null) {
@@ -1281,18 +1284,60 @@ public class RecordEngine {
             Rollup rollup = Rollup.parse(field.rollup());
             EntityHandle childHandle = childHandle(tenantId, app, parent, rollup.relationship());
             String bindingField = bindingLookupField(parent.entity(), childHandle.entity());
-            Object aggregate = rollup.aggregate(records, tenantId, childHandle, bindingField,
-                    parentId, rollup.field());
-            if (!java.util.Objects.equals(aggregate, parentData.get(field.apiName()))) {
+            Object aggregate = normalizeRollupScale(field, rollup.aggregate(records, tenantId,
+                    childHandle, bindingField, parentId, rollup.field()));
+            if (rollupMoved(aggregate, parentData.get(field.apiName()))) {
                 parentData.put(field.apiName(), aggregate);
                 changed = true;
             }
         }
         if (changed) {
-            return records.update(tenantId, parent.entityKey(), parentId, parentData,
-                    currentVersion, actorId);
+            int newVersion = updateShaped(tenantId, actorId, parent, parentId, parentData,
+                    currentVersion, "roll-up recompute");
+            if (publishEvent) {
+                // A roll-up recompute is a real mutation of the parent — version,
+                // updated_at, updated_by all move — and subscribers (workflow
+                // event-starts, audit) must see it like any other write. The writer's
+                // own update path publishes its record.updated after this call, so it
+                // passes false and the parent is not double-published.
+                events.publish(event("record.updated", tenantId, parent.entityKey(),
+                        parentId, actorId));
+            }
+            return newVersion;
         }
         return currentVersion;
+    }
+
+    /**
+     * Scale-aware change detection: {@code BigDecimal.equals} is scale-sensitive
+     * ({@code 15.5} ≠ {@code 15.50}), so an AVG computed in memory at 34-digit scale
+     * versus the SQL engine's aggregate scale churned the parent's version on every
+     * child write — {@code compareTo} is the equality that matters on the money path.
+     */
+    private static boolean rollupMoved(Object aggregate, Object stored) {
+        if (aggregate == null && stored == null) {
+            return false;
+        }
+        if (aggregate instanceof java.math.BigDecimal next && stored instanceof java.math.BigDecimal prev) {
+            return next.compareTo(prev) != 0;
+        }
+        return !java.util.Objects.equals(aggregate, stored);
+    }
+
+    /**
+     * Roll-up values ride the field's authored scale: the in-memory AVG path divides
+     * at 34-digit MathContext, and every user write is scale-capped by the coercer —
+     * a roll-up field is the one write path that must not smuggle a wider scale into
+     * a DECIMAL(18,4) column than its own writers could put there.
+     */
+    private static Object normalizeRollupScale(FieldDefinition field, Object aggregate) {
+        if (!(aggregate instanceof java.math.BigDecimal decimal)
+                || (field.type() != FieldType.DECIMAL && field.type() != FieldType.MONEY)) {
+            return aggregate;   // COUNT into int fields and text roll-ups ride as-is
+        }
+        int scale = field.scale() == null
+                ? (field.type() == FieldType.MONEY ? 4 : 6) : field.scale();
+        return decimal.setScale(scale, java.math.RoundingMode.HALF_EVEN);
     }
 
     /**
@@ -1341,7 +1386,8 @@ public class RecordEngine {
             for (UUID parentId : parents) {
                 records.find(tenantId, parentHandle.entityKey(), parentId, false)
                         .ifPresent(stored -> recomputeRollupsIfChanged(tenantId, actorId,
-                                app, parentHandle, parentId, stored.data(), stored.version()));
+                                app, parentHandle, parentId, stored.data(), stored.version(),
+                                true));
             }
         }
     }
@@ -1672,15 +1718,7 @@ public class RecordEngine {
                                      Map<String, Object> parentData,
                                      Map<String, List<Map<String, Object>>> children,
                                      List<ProblemErrors.FieldError> errors) {
-        try {
-            records.insert(tenantId, parent.entityKey(), parentId, parentData, actorId);
-        } catch (DataIntegrityViolationException e) {
-            // The partial unique index is the enforcement; shape the friendly error (§6).
-            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                    "create violates a uniqueness rule", ProblemErrors.of(
-                            new ProblemErrors.GlobalError(parent.entity().apiName(),
-                                    "unique constraint violated: " + rootMessage(e))), e);
-        }
+        insertShaped(tenantId, actorId, parent, parentId, parentData);
         for (Map.Entry<String, List<Map<String, Object>>> entry : children.entrySet()) {
             EntityHandle childHandle = childHandle(tenantId, app, parent, entry.getKey());
             String bindingField = bindingLookupField(parent.entity(), childHandle.entity());
@@ -1695,7 +1733,7 @@ public class RecordEngine {
                 // An inline child may name frozen parents through its own lookup fields
                 // (the §3.1 document scope) — the check rides child inserts too.
                 requireParentsNotFrozen(tenantId, app, childHandle, canonicalChild);
-                records.insert(tenantId, childHandle.entityKey(), childId, canonicalChild, actorId);
+                insertShaped(tenantId, actorId, childHandle, childId, canonicalChild);
                 events.publish(event("record.created", tenantId, childHandle.entityKey(), childId, actorId));
             }
         }
@@ -1730,11 +1768,44 @@ public class RecordEngine {
                 // (the §3.1 document scope) — the check rides child inserts too.
                 requireParentsNotFrozen(tenantId, app, childHandle, canonicalChild);
                 UUID childId = UUID.randomUUID();
-                records.insert(tenantId, childHandle.entityKey(), childId, canonicalChild, actorId);
+                insertShaped(tenantId, actorId, childHandle, childId, canonicalChild);
                 events.publish(event("record.created", tenantId, childHandle.entityKey(), childId, actorId));
             }
             reject(errors, "inline children failed validation");
         }
+    }
+
+    /**
+     * Every insert/update leg shapes a unique-index violation into the friendly
+     * field-scoped error — the partial unique indexes are the enforcement (§6), and a
+     * lost pre-check race (or a scale-collision the text pre-check cannot see) on the
+     * update, inline-child, or roll-up legs used to surface as a raw 500 and abort a
+     * whole batch after earlier items committed.
+     */
+    private void insertShaped(UUID tenantId, UUID actorId, EntityHandle handle, UUID id,
+                              Map<String, Object> data) {
+        try {
+            records.insert(tenantId, handle.entityKey(), id, data, actorId);
+        } catch (DataIntegrityViolationException e) {
+            throw uniqueViolation(handle, "create", e);
+        }
+    }
+
+    private int updateShaped(UUID tenantId, UUID actorId, EntityHandle handle, UUID id,
+                             Map<String, Object> data, int expectedVersion, String op) {
+        try {
+            return records.update(tenantId, handle.entityKey(), id, data, expectedVersion, actorId);
+        } catch (DataIntegrityViolationException e) {
+            throw uniqueViolation(handle, op, e);
+        }
+    }
+
+    private static PlatformException uniqueViolation(EntityHandle handle, String op,
+                                                     DataIntegrityViolationException e) {
+        return new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                op + " violates a uniqueness rule", ProblemErrors.of(
+                        new ProblemErrors.GlobalError(handle.entity().apiName(),
+                                "unique constraint violated: " + rootMessage(e))), e);
     }
 
     private void cascadeChildren(UUID tenantId, UUID actorId, AppDefinition app,
@@ -1824,8 +1895,17 @@ public class RecordEngine {
             @Override
             public boolean valueIsUnique(EntityDefinition entity, FieldDefinition field,
                                          String canonicalText, UUID excludeRecordId) {
-                return !records.valueExists(tenantId, handle.appApiName() + "." + entity.apiName(),
-                        field.apiName(), canonicalText, excludeRecordId);
+                String entityKey = handle.appApiName() + "." + entity.apiName();
+                // Numeric fields compare numerically: the projection's unique index
+                // casts, and a text compare cannot see that 10 and a stored 10.00
+                // collide there.
+                boolean numeric = field.type().numeric();
+                boolean exists = numeric
+                        ? records.numericValueExists(tenantId, entityKey, field.apiName(),
+                                canonicalText, excludeRecordId)
+                        : records.valueExists(tenantId, entityKey, field.apiName(),
+                                canonicalText, excludeRecordId);
+                return !exists;
             }
         };
     }

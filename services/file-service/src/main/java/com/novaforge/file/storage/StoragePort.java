@@ -116,6 +116,14 @@ public interface StoragePort {
                         .bucket(bucket)
                         .object(objectKey)
                         .expiry(expirySeconds)
+                        // Downloads are signed with forced response overrides: the
+                        // stored Content-Type is client-chosen at PUT time, and without
+                        // an attachment disposition a browser would render attacker
+                        // HTML/SVG inline on the storage origin.
+                        .extraQueryParams(mode == Mode.DOWNLOAD ? java.util.Map.of(
+                                "response-content-disposition", "attachment",
+                                "response-content-type", "application/octet-stream")
+                                : java.util.Map.of())
                         .build());
             } catch (Exception e) {
                 throw new PlatformException(PlatformErrorCode.INTERNAL,
@@ -175,8 +183,11 @@ public interface StoragePort {
         @Override
         public String presign(String objectKey, Mode mode, int expirySeconds) {
             String url = "http://storage.local/presigned/" + mode.name().toLowerCase()
-                    + "/" + objectKey + "?expires=" + expirySeconds + "&nonce="
-                    + UUID.randomUUID();
+                    + "/" + objectKey + "?expires=" + expirySeconds
+                    // mirrors the MinIO binding's forced download overrides (F3)
+                    + (mode == Mode.DOWNLOAD ? "&response-content-disposition=attachment"
+                            + "&response-content-type=application%2Foctet-stream" : "")
+                    + "&nonce=" + UUID.randomUUID();
             presigned.put(url, objectKey);
             return url;
         }

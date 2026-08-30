@@ -107,6 +107,32 @@ public class RecordStore {
         return count != null && count > 0;
     }
 
+    /**
+     * The numeric-field twin: the text pre-check cannot see that {@code 10} and a
+     * stored {@code 10.00} are the same number — jsonb preserves the written scale,
+     * while the projection's unique index compares the cast numeric, where they do
+     * collide. Compare numerically so the pre-check matches what the index enforces
+     * (and the friendly field-scoped error fires instead of the constraint's).
+     */
+    public boolean numericValueExists(UUID tenantId, String entityId, String field,
+                                      Object value, UUID excludeId) {
+        String exclude = excludeId == null ? "" : " AND id <> ?";
+        Object[] args = excludeId == null
+                ? new Object[] {tenantId, entityId, field, field, String.valueOf(value)}
+                : new Object[] {tenantId, entityId, field, field, String.valueOf(value), excludeId};
+        // The regex gate keeps the cast total: a legacy row holding a non-numeric
+        // string under the field simply fails the shape test (NULL ≠ the number) and
+        // cannot abort the scan.
+        Integer count = jdbc.queryForObject("""
+                SELECT count(*) FROM rec_records
+                 WHERE tenant_id = ? AND entity_id = ?
+                   AND (CASE WHEN data->>? ~ '^-?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?$'
+                             THEN (data->>?)::numeric END) = ?::numeric
+                   AND NOT deleted""" + exclude,
+                Integer.class, args);
+        return count != null && count > 0;
+    }
+
     /** Lookup-target existence check (PHASE-1 §5 validations). */
     public boolean targetExists(UUID tenantId, String targetEntityId, UUID targetId) {
         Integer count = jdbc.queryForObject("""

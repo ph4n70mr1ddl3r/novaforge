@@ -399,6 +399,42 @@ class NotificationTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("internal/send: a keyed replay collapses — no duplicate inbox rows or emails")
+    void internalSendKeyedReplayCollapses() throws Exception {
+        // Anti-regression (2026-08-31): the internal send's event_id was a fresh UUID
+        // per attempt, so any caller retry (report job re-fired, transient 5xx
+        // retried) duplicated the inbox row and the email for every recipient.
+        String body = MAPPER.writeValueAsString(Map.of(
+                "tenantId", TENANT.toString(),
+                "category", "job-completed",
+                "title", "Job done", "body", "summary",
+                "recipients", Map.of("users", List.of(CLERK.toString())),
+                "deliveryId", "job-pin-1"));
+        mockMvc.perform(post("/api/v1/notifications/internal/send")
+                        .with(serviceJwt()).contentType("application/json").content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.delivered").value(2));   // inbox + email
+        mockMvc.perform(post("/api/v1/notifications/internal/send")
+                        .with(serviceJwt()).contentType("application/json").content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.delivered").value(0));   // the replay collapsed
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
+                "SELECT count(*) FROM nf_notifications WHERE category = 'job-completed' "
+                        + "AND user_id = '" + CLERK + "'", Integer.class))
+                .containsExactly(1);
+        // an unkeyed send still delivers every time (fresh content, no false dedupe)
+        String unkeyed = MAPPER.writeValueAsString(Map.of(
+                "tenantId", TENANT.toString(),
+                "category", "job-completed",
+                "title", "Job done again", "body", "summary",
+                "recipients", Map.of("users", List.of(CLERK.toString()))));
+        mockMvc.perform(post("/api/v1/notifications/internal/send")
+                        .with(serviceJwt()).contentType("application/json").content(unkeyed))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.delivered").value(2));
+    }
+
+    @Test
     @DisplayName("internal/send: recipients that resolve to nobody reject audibly (§7)")
     void internalSendWithoutRecipientsRejects() throws Exception {
         String body = MAPPER.writeValueAsString(Map.of(

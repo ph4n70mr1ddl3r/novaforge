@@ -37,12 +37,16 @@ public class RestReportTarget {
 
     /** Fires the scheduled delivery; returns the reporting service's summary. */
     @SuppressWarnings("unchecked")
-    public Map<String, Object> run(UUID tenantId, String appApiName, Map<String, Object> params) {
+    public Map<String, Object> run(UUID tenantId, String appApiName, Map<String, Object> params,
+                                   String deliveryId) {
         try {
             Map<String, Object> body = new java.util.LinkedHashMap<>();
             body.put("tenantId", tenantId.toString());
             body.put("app", appApiName);
             body.put("reportId", String.valueOf(params.get("reportId")));
+            if (deliveryId != null && !deliveryId.isBlank()) {
+                body.put("deliveryId", deliveryId);
+            }
             if (params.get("params") instanceof Map<?, ?> runParams) {
                 body.put("params", runParams);
             }

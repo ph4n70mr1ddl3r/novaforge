@@ -861,3 +861,129 @@ pins), file-service (10, incl. the five new pins), notification-service (11, inc
 recorded in IMPLEMENTATION.md's closeout. The audit-service reactor flake that
 motivated H-7P4 reproduced once under `-T 1C` parallel container load and never
 again after the fix (and in isolation before it).
+
+## Eighth Pass — 2026-08-31 (closing the seventh pass's recorded-open set: the tractable highs)
+
+The seventh pass's recorded-open list, worked top-down; eight more defects closed,
+each pinned. The structural items (non-atomic multi-system promotion, the
+in-transaction Kafka publish wanting the outbox pattern, per-app unique-index
+scoping, audit partition rotation) remain recorded open.
+
+### H-8P1 — numeric unique fields: a text pre-check against a numeric index, and unshaped violations on every leg but the parent create
+
+Two parity holes compounded. The uniqueness pre-check compared jsonb text
+(`data->>? = ?`), so a create sending `10` passed against a live row storing
+`10.00` — the projection's unique index compares cast numerics, where they collide —
+and the enforcement shaping existed only on the parent-create leg: the same lost
+race on the user PATCH, integration update, hook update, inline-child, or roll-up
+legs surfaced as a raw `DataIntegrityViolationException` 500 (and aborted whole
+batches, H-7P3's shape). Numeric fields now pre-check numerically
+(`numericValueExists` — regex-gated cast, total on legacy poisoned rows) and every
+insert/update leg shapes violations through the shared field-scoped error
+(`insertShaped`/`updateShaped`). Pinned in
+`RecordApiTests.numericUniqueScaleCollisionIsFieldScoped` (create and update legs).
+
+### H-8P2 — AVG roll-ups: 34-digit scale churned the parent's version on every write, and the stored value bypassed the field's authored scale
+
+The create path computed roll-ups in memory at `MathContext(34)`, the update path
+in SQL at Postgres' aggregate scale, and the change detector was
+scale-sensitive `Objects.equals` — `15.5 ≠ 15.50`, so every parent write that
+touched nothing roll-up-related still rewrote the parent (version churn → CAS
+conflicts for concurrent readers, `updated_by` attribution to the wrong actor, and
+— with H-8P3 — double events). The stored value also rode past the coercer's
+scale caps (a 34-digit AVG into a DECIMAL(18,4) field). Detection is now
+`compareTo`-based (`rollupMoved`) and both aggregate paths normalize to the field's
+authored scale (`normalizeRollupScale`, HALF_EVEN — the same rule every writer
+passes). Pinned in `avgRollupRidesAuthoredScaleWithoutVersionChurn` (scale-shape
+assertion + exactly-one-version-bump).
+
+### H-8P3 — roll-up recomputes mutated parents with no event: subscriptions and audit never saw them move
+
+`recomputeRollupsIfChanged` rewrote the parent's data/version/`updated_by` with no
+`record.updated` on the spine — a workflow subscribed to the parent entity (the
+documented event-start surface) never fired for roll-up-driven changes, and the
+audit trail attributed nothing. The recompute now publishes `record.updated` for
+every parent it actually rewrites, attributed to the initiating actor; the writer's
+own update path suppresses the duplicate (its publish follows in the same
+transaction). Pinned in `standaloneChildWritePublishesParentRollupEvent` (outbox
+row for the parent + the roll-up value moved).
+
+### M-8P1 — deleting a referenced entity wedged the draft
+
+The delete path was the only writer that skipped the save-validation pass every
+other path runs: removing an entity referenced by a page, state machine, report,
+permission branch, or mapping left the draft failing validation — publish and every
+re-save blocked until each referencing definition was hand-repaired. The
+post-delete candidate now validates, naming the holder. Pinned in
+`deleteReferencedEntityRejects` (referenced rejects naming the branch, the draft
+still publishes, an unreferenced entity deletes freely). `deletePage` stays as-is:
+pages are leaf documents — nothing references them, so their deletion cannot
+dangle a reference.
+
+### M-8P2 — a concurrent publish's loser was a raw 500
+
+Two publishes of one app computed the same next version; the unique
+`(tenant, app, version)` constraint correctly rejected the loser — as an unhandled
+`DataIntegrityViolationException` rendered `500 INTERNAL`. The lost race now
+shapes as `409 CONFLICT_VERSION` with a retry instruction. (Not race-pinnable
+without interleaving hooks; the catch is the seventh pass's H-7P3 pattern applied
+to the version allocation.)
+
+### M-8P3 — file downloads: no forced disposition, and the stored Content-Type was fully client-chosen
+
+Presigned GETs pinned nothing about the response: the storage origin served the
+PUT-time Content-Type (client-controlled) with no `Content-Disposition` — an
+uploaded HTML/SVG rendered inline on the storage origin, attacker-scripted.
+Download presigns now carry signed `response-content-disposition: attachment` +
+`response-content-type: application/octet-stream` overrides, and upload content
+types normalize to a validated bare `type/subtype` pair (parameters dropped,
+malformed shapes rejected). Pinned in
+`downloadsForceDispositionAndContentTypesAreShaped`.
+
+### M-8P4 — the gateway forwarded client-supplied identity headers when no tenant was derived
+
+`TenantHeaderFilter` overlaid `X-Tenant-Id` for token-derived tenants but passed
+the raw request through otherwise — on the anonymous webhook route a client-sent
+`X-Tenant-Id`/`X-Actor-Id`/`X-Event-*` rode upstream verbatim. No service reads
+them today (the tenant is always re-derived from the claim), but the edge contract
+"identity headers downstream are the platform's own" now holds unconditionally:
+the strip set is dropped from anonymous traffic and owned by the filter on
+authenticated traffic. Pinned in `TenantHeaderFilterTest` (×2).
+
+### L-8P1 — internal sends had no idempotency key: caller retries duplicated inbox rows and emails per recipient
+
+`deliverDirect`'s inbox insert used a fresh random `event_id` per attempt — the
+`(tenant, user, event)` dedupe could never collapse a replay, so a retried report
+job or a 5xx-retried send duplicated every recipient's inbox row and email. The
+surface accepts a `deliveryId` key: a keyed replay collapses both legs. The
+scheduled-report chain threads the scheduler's fired window end-to-end (job
+`fire(job, window)` → `RestReportTarget` → reporting `/deliver` → notification) —
+a retried window collapses, the next cron window delivers fresh; the
+job-completed leg keys on the job id. Unkeyed sends behave exactly as before.
+Pinned in `NotificationTests.internalSendKeyedReplayCollapses` + the scheduler
+stub's delivery-key assertion. (Known limit, recorded: email-only recipients of
+unkeyed sends have no inbox row to dedupe on.)
+
+### Verification (this pass)
+
+Module suites green on the podman socket: data-runtime api (24 — three new pins,
+the AVG/batchLot fixture additions) and engine (21), metadata-service (51 — the
+new referenced-entity-delete pin), notification (12 — the keyed-replay pin),
+gateway (16 — two edge-strip pins), scheduler (11), file-service (11 — the
+disposition/content-type pin), reporting and integration unchanged-green (the
+delivery-key pass-through). `ConditionalRollupTests` re-pinned numerically: its
+text assertions held the *incidental* scale-0 rendering of summed roll-ups
+("0"/"15") — H-8P2 stores the field's authored scale, which renders 0.0/15.0 with
+the same value; the numeric compare is the contract. Full serial `./mvnw verify`
+recorded in IMPLEMENTATION.md's closeout.
+
+### Still recorded open (structural, next passes)
+
+The promotion chain's multi-system atomicity (intent row + idempotent provision +
+reconcile), `metadata.published` inside the publish transaction (the outbox
+pattern), per-app scoping of shared-projection unique indexes (two same-named
+entities in one tenant), the unremovable-last-list-branch PATCH semantics
+(absent-vs-empty needs a presence-preserving patch shape), the webhook upsert
+fence, event payloads' before/after depth, abandoned-upload reaping + MinIO
+lifecycle, the deployed ClamAV/MinIO/Postgres env in the helm chart, edge
+prometheus gating, and audit partition rotation.

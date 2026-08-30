@@ -119,12 +119,16 @@ class SchedulerTests extends PostgresTestBase {
                             "id", "secret")) {
                 @Override
                 public Map<String, Object> run(UUID tenantId, String appApiName,
-                                               Map<String, Object> params) {
+                                               Map<String, Object> params, String deliveryId) {
                     if (failReports) {
                         throw new com.novaforge.common.error.PlatformException(
                                 com.novaforge.common.error.PlatformErrorCode.INTERNAL,
                                 "reporting unreachable");
                     }
+                    // the fired-window delivery key rides every scheduled fire — the
+                    // notification leg dedupes retried windows on it
+                    org.assertj.core.api.Assertions.assertThat(deliveryId)
+                            .startsWith("job-").contains("@");
                     REPORTS.add(appApiName + ":" + params.get("reportId"));
                     return Map.of("status", "delivered", "rows", 7);
                 }

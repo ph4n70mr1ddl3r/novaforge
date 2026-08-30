@@ -32,6 +32,15 @@ public class TenantHeaderFilter extends OncePerRequestFilter {
     /** Header carried downstream; informational (services use the claim, not this). */
     public static final String TENANT_HEADER = "X-Tenant-Id";
 
+    /**
+     * The edge-strip set: identity-claim headers the platform's own services may set
+     * internally. No client-supplied value may survive the edge — no service reads
+     * them today (the tenant is always re-derived from the verified claim), and the
+     * strip keeps the edge contract true before the first future consumer appears.
+     */
+    private static final Set<String> STRIP_HEADERS = Set.of(
+            TENANT_HEADER, "X-Actor-Id", "X-Event-Id", "X-Event-Type");
+
     /** Single-realm tenant claim (PHASE-0 §12 Q1: single realm + tenant claim). */
     public static final String TENANT_CLAIM = "tenant_id";
 
@@ -47,7 +56,9 @@ public class TenantHeaderFilter extends OncePerRequestFilter {
                 return;
             }
         }
-        filterChain.doFilter(request, response);
+        // No derived tenant (anonymous webhook traffic, or a claim-less token): a
+        // client-sent X-Tenant-Id would otherwise ride verbatim to every upstream.
+        filterChain.doFilter(new StrippedRequest(request), response);
     }
 
     /** Wraps the request with the derived tenant header overlaid on any client-supplied one. */
@@ -65,7 +76,8 @@ public class TenantHeaderFilter extends OncePerRequestFilter {
             if (TENANT_HEADER.equalsIgnoreCase(name)) {
                 return tenantId;
             }
-            return super.getHeader(name);
+            return STRIP_HEADERS.stream().anyMatch(name::equalsIgnoreCase)
+                    ? null : super.getHeader(name);
         }
 
         @Override
@@ -73,13 +85,46 @@ public class TenantHeaderFilter extends OncePerRequestFilter {
             if (TENANT_HEADER.equalsIgnoreCase(name)) {
                 return Collections.enumeration(List.of(tenantId));
             }
-            return super.getHeaders(name);
+            return STRIP_HEADERS.stream().anyMatch(name::equalsIgnoreCase)
+                    ? Collections.emptyEnumeration() : super.getHeaders(name);
         }
 
         @Override
         public Enumeration<String> getHeaderNames() {
-            Set<String> names = new LinkedHashSet<>(Collections.list(super.getHeaderNames()));
+            Set<String> names = new LinkedHashSet<>();
+            Collections.list(super.getHeaderNames()).stream()
+                    .filter(name -> STRIP_HEADERS.stream().noneMatch(name::equalsIgnoreCase))
+                    .forEach(names::add);
             names.add(TENANT_HEADER);
+            return Collections.enumeration(names);
+        }
+    }
+
+    /** Drops every identity-claim header the client tried to set. */
+    static final class StrippedRequest extends HttpServletRequestWrapper {
+
+        StrippedRequest(HttpServletRequest delegate) {
+            super(delegate);
+        }
+
+        @Override
+        public String getHeader(String name) {
+            return STRIP_HEADERS.stream().anyMatch(name::equalsIgnoreCase)
+                    ? null : super.getHeader(name);
+        }
+
+        @Override
+        public Enumeration<String> getHeaders(String name) {
+            return STRIP_HEADERS.stream().anyMatch(name::equalsIgnoreCase)
+                    ? Collections.emptyEnumeration() : super.getHeaders(name);
+        }
+
+        @Override
+        public Enumeration<String> getHeaderNames() {
+            Set<String> names = new LinkedHashSet<>();
+            Collections.list(super.getHeaderNames()).stream()
+                    .filter(name -> STRIP_HEADERS.stream().noneMatch(name::equalsIgnoreCase))
+                    .forEach(names::add);
             return Collections.enumeration(names);
         }
     }

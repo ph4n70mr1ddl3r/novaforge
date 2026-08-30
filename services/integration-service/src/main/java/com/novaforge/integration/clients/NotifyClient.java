@@ -41,16 +41,20 @@ public class NotifyClient {
     /** Notifies the initiating user; a notification failure never fails the job. */
     public void jobCompleted(UUID tenantId, UUID job, UUID user, String summary) {
         try {
+            Map<String, Object> body = new java.util.LinkedHashMap<>(Map.of(
+                    "tenantId", tenantId.toString(),
+                    "category", CATEGORY_JOB_COMPLETED,
+                    "title", "Job " + job + " completed",
+                    "body", summary,
+                    "recipients", Map.of("users", List.of(user.toString()))));
+            // the job id is the send's idempotency key — a redelivered/retried job
+            // event collapses instead of duplicating the inbox row and email
+            body.put("deliveryId", "job-" + job);
             notifications.method(HttpMethod.POST)
                     .uri("/api/v1/notifications/internal/send")
                     .headers(headers -> headers.setBearerAuth(serviceToken.token()))
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(MAPPER.writeValueAsString(Map.of(
-                            "tenantId", tenantId.toString(),
-                            "category", CATEGORY_JOB_COMPLETED,
-                            "title", "Job " + job + " completed",
-                            "body", summary,
-                            "recipients", Map.of("users", List.of(user.toString())))))
+                    .body(MAPPER.writeValueAsString(body))
                     .retrieve()
                     .body(Map.class);
         } catch (Exception e) {

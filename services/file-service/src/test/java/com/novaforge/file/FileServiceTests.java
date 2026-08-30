@@ -257,4 +257,29 @@ class FileServiceTests extends PostgresTestBase {
                 .isInstanceOf(PlatformException.class)
                 .hasMessageContaining("size cap");
     }
+
+    @Test
+    @DisplayName("download presigns force attachment disposition; content types are type/subtype only")
+    void downloadsForceDispositionAndContentTypesAreShaped() {
+        UUID id = upload("disposition check", "text/html");
+        attachments.complete(TENANT, ACTOR, id, null);
+        String url = attachments.presignDownload(TENANT, id).uploadUrl();
+        // the storage origin serves the object as an opaque download, never inline
+        assertThat(url).contains("response-content-disposition=attachment");
+        assertThat(url).contains("response-content-type=");
+        // malformed content types reject (header injection, non-pair shapes);
+        // parameterized ones normalize to the bare pair
+        assertThatThrownBy(() -> attachments.beginUpload(TENANT, ACTOR, "evil.html",
+                "text/html\r\nEvil: x", 1L, null, null))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("type/subtype");
+        assertThatThrownBy(() -> attachments.beginUpload(TENANT, ACTOR, "evil.html",
+                "not-a-type", 1L, null, null))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("type/subtype");
+        var grant = attachments.beginUpload(TENANT, ACTOR, "report.csv",
+                "text/csv;charset=UTF-8", 1L, null, null);
+        assertThat(attachments.metadata(TENANT, grant.id()).orElseThrow()
+                .get("contentType")).isEqualTo("text/csv");
+    }
 }

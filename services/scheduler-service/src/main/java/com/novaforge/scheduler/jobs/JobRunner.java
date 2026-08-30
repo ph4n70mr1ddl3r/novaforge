@@ -144,10 +144,11 @@ public class JobRunner {
             // advance first (misfire: missed windows skip — the next tick wins)
             jdbc.update("UPDATE sched_jobs SET next_fire_at = ?, updated_at = now() WHERE id = ?",
                     Timestamp.from(next), job.get("id"));
-            if (!acquire(job.get("id"), asInstant(job.get("next_fire_at")))) {
+            Instant window = asInstant(job.get("next_fire_at"));
+            if (!acquire(job.get("id"), window)) {
                 continue;   // another replica already fired this window — single fire
             }
-            fire(job);
+            fire(job, window);
         }
     }
 
@@ -174,7 +175,7 @@ public class JobRunner {
         return taken > 0;
     }
 
-    private void fire(Map<String, Object> job) {
+    private void fire(Map<String, Object> job, Instant window) {
         String target = String.valueOf(job.get("target"));
         String status;
         String detail = null;
@@ -238,8 +239,12 @@ public class JobRunner {
             try {
                 Map<String, Object> params = MAPPER.readValue(
                         String.valueOf(job.get("params")), Map.class);
+                // the fired window is the delivery's idempotency key: a retried fire
+                // of the same window collapses its notifications, the next window
+                // delivers fresh
                 Map<String, Object> summary = reports.getObject().run(
-                        (UUID) job.get("tenant_id"), String.valueOf(job.get("app")), params);
+                        (UUID) job.get("tenant_id"), String.valueOf(job.get("app")), params,
+                        "job-" + job.get("id") + "@" + window);
                 status = "ok";
                 detail = summary == null ? null
                         : String.valueOf(summary.getOrDefault("status", "delivered"));

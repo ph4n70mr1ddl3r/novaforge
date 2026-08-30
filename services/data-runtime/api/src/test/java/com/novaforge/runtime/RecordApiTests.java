@@ -89,6 +89,8 @@ class RecordApiTests extends PostgresTestBase {
                     { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 },
                     { "apiName": "totalLines", "type": "decimal", "precision": 18, "scale": 4,
                       "rollup": "SUM(lines.amount)" },
+                    { "apiName": "avgLine", "type": "decimal", "precision": 18, "scale": 4,
+                      "rollup": "AVG(lines.amount)" },
                     { "apiName": "lineCount", "type": "int",
                       "rollup": "COUNT(lines)" },
                     { "apiName": "memoUpper", "type": "text",
@@ -113,7 +115,9 @@ class RecordApiTests extends PostgresTestBase {
                   "fields": [
                     { "apiName": "sku", "type": "text", "required": true, "uniqueness": true },
                     { "apiName": "onHand", "type": "decimal", "precision": 18, "scale": 4 },
-                    { "apiName": "reserved", "type": "decimal", "precision": 18, "scale": 4 } ] },
+                    { "apiName": "reserved", "type": "decimal", "precision": 18, "scale": 4 },
+                    { "apiName": "batchLot", "type": "decimal", "precision": 18, "scale": 4,
+                      "uniqueness": true } ] },
                 { "apiName": "Order",
                   "displayField": "label",
                   "fields": [
@@ -758,6 +762,109 @@ class RecordApiTests extends PostgresTestBase {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.rows[0].r").isNumber());
+    }
+
+    @Test
+    @DisplayName("numeric uniqueness is scale-blind: 10 collides with a stored 10.0000, field-scoped")
+    void numericUniqueScaleCollisionIsFieldScoped() throws Exception {
+        // Anti-regression (2026-08-31): the pre-check compared text, so 10 passed
+        // against a stored 10.00 — the projection's numeric unique index caught it as
+        // an unshaped constraint violation on every leg but the parent create.
+        mockMvc.perform(post("/api/v1/runtime/InventoryItem").with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"sku\":\"NUM-U-1\",\"batchLot\":10.0000}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/runtime/InventoryItem").with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"sku\":\"NUM-U-2\",\"batchLot\":10}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("batchLot"))
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("must be unique")));
+        // and the update leg rejects with the same field-scoped shape, not a 500:
+        // a live row holding 11 collides with 10.0000's scale-twin only via the
+        // numeric compare
+        mockMvc.perform(post("/api/v1/runtime/InventoryItem").with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"sku\":\"NUM-U-3\",\"batchLot\":11}"))
+                .andExpect(status().isOk());
+        MvcResult third = mockMvc.perform(post("/api/v1/runtime/InventoryItem/query")
+                        .with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"filter\":{\"field\":\"sku\",\"op\":\"eq\",\"value\":\"NUM-U-3\"}}"))
+                .andExpect(status().isOk()).andReturn();
+        String id = MAPPER.readTree(third.getResponse().getContentAsString())
+                .get("rows").get(0).get("id").asString();
+        int version = MAPPER.readTree(third.getResponse().getContentAsString())
+                .get("rows").get(0).get("version").asInt();
+        mockMvc.perform(patch("/api/v1/runtime/InventoryItem/" + id).with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"version\":" + version + ",\"batchLot\":10.000}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("batchLot"));
+    }
+
+    @Test
+    @DisplayName("AVG roll-ups ride the authored scale and never churn the parent's version")
+    void avgRollupRidesAuthoredScaleWithoutVersionChurn() throws Exception {
+        // Anti-regression (2026-08-31): the in-memory AVG divided at 34-digit scale
+        // while the SQL recompute carried its own — BigDecimal.equals is
+        // scale-sensitive, so every parent write churned an extra version bump, and
+        // the stored value could exceed the field's authored DECIMAL(18,4) scale.
+        MvcResult created = mockMvc.perform(post("/api/v1/runtime/JournalEntry")
+                        .with(jwtFor(TENANT))
+                        .contentType("application/json").content("""
+                                { "entryDate": "2026-08-31", "memo": "avg ok",
+                                  "lines": [ { "amount": 5 }, { "amount": 5 } ] }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.avgLine").isNumber())
+                .andReturn();
+        String avgLine = MAPPER.readTree(created.getResponse().getContentAsString())
+                .get("avgLine").asString();
+        assertThat(avgLine).matches("^-?\\d+(\\.\\d{1,4})?$");   // the authored scale
+        String id = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+        MvcResult updated = mockMvc.perform(patch("/api/v1/runtime/JournalEntry/" + id)
+                        .with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"version\":1,\"memo\":\"avg still ok\"}"))
+                .andExpect(status().isOk())
+                .andReturn();
+        // exactly one version bump — the roll-up did not rewrite the parent a second
+        // time over a phantom scale difference
+        assertThat(MAPPER.readTree(updated.getResponse().getContentAsString())
+                .get("version").asInt()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("a standalone child write publishes the parent's roll-up mutation (§3)")
+    void standaloneChildWritePublishesParentRollupEvent() throws Exception {
+        // Anti-regression (2026-08-31): roll-up recomputes rewrote the parent's data,
+        // version, and updated_by with no record.updated on the spine — workflow
+        // subscriptions and audit never saw the parent move.
+        MvcResult entry = mockMvc.perform(post("/api/v1/runtime/JournalEntry")
+                        .with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"entryDate\":\"2026-08-31\",\"memo\":\"rollup event ok\"}"))
+                .andExpect(status().isOk()).andReturn();
+        String entryId = MAPPER.readTree(entry.getResponse().getContentAsString()).get("id").asString();
+        Integer before = jdbc.queryForObject("""
+                SELECT count(*) FROM event_outbox WHERE entity_id = 'Erp.JournalEntry'
+                 AND event_type = 'record.updated'""", Integer.class);
+        mockMvc.perform(post("/api/v1/runtime/JournalLine").with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"entryId\":\"" + entryId + "\",\"amount\":7}"))
+                .andExpect(status().isOk());
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            Integer after = jdbc.queryForObject("""
+                    SELECT count(*) FROM event_outbox WHERE entity_id = 'Erp.JournalEntry'
+                     AND event_type = 'record.updated'""", Integer.class);
+            assertThat(after).isGreaterThan(before == null ? 0 : before);
+        });
+        // and the parent's roll-up actually moved
+        mockMvc.perform(get("/api/v1/runtime/JournalEntry/" + entryId).with(jwtFor(TENANT)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalLines").value(7));
     }
 
     @Test

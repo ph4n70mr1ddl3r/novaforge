@@ -39,7 +39,8 @@ public class InternalSendController {
     }
 
     public record SendRequest(String tenantId, String category, String title, String body,
-                              Map<String, Object> recipients, AttachmentEnvelope attachment) {
+                              Map<String, Object> recipients, AttachmentEnvelope attachment,
+                              String deliveryId) {
     }
 
     /** The inline export — base64 over the wire, bytes at the SMTP leg. */
@@ -60,6 +61,14 @@ public class InternalSendController {
         } catch (IllegalArgumentException e) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "tenantId must be a uuid: " + request.tenantId());
+        }
+        // the caller's idempotency key — a replayed keyed send collapses on the inbox
+        // dedupe instead of duplicating rows and emails for every recipient
+        if (request.deliveryId() != null && !request.deliveryId().isBlank()
+                && (request.deliveryId().length() > 128
+                    || !request.deliveryId().matches("[\\w.:@+-]+"))) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "deliveryId must be a short word-shaped key: " + request.deliveryId());
         }
         // platform role names resolve to holders; explicit users ride verbatim —
         // one deduped recipient list, order-stable for deterministic delivery
@@ -94,7 +103,7 @@ public class InternalSendController {
         int delivered = notifier.deliverDirect(tenantId, request.category(),
                 request.title() == null ? "" : request.title(),
                 request.body() == null ? "" : request.body(),
-                new ArrayList<>(users), attachment);
+                new ArrayList<>(users), attachment, request.deliveryId());
         return Map.of("delivered", delivered, "recipients", users.size());
     }
 

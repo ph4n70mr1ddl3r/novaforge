@@ -42,13 +42,18 @@ public class DeliveryClient {
     /** Delivers to the given recipients; returns the notification service's summary. */
     public Map<String, Object> deliver(UUID tenantId, String reportId, String appApiName,
                                        List<String> recipientRoles, List<String> recipientUsers,
-                                       String format, byte[] attachment) {
+                                       String format, byte[] attachment, String deliveryId) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("tenantId", tenantId.toString());
         body.put("category", "report-delivery");
         body.put("title", "Report " + reportId + " (" + appApiName + ")");
         body.put("body", "The scheduled report " + reportId + " of app " + appApiName
                 + " is attached (" + format + ").");
+        if (deliveryId != null && !deliveryId.isBlank()) {
+            // the scheduler's fired window — a retried fire collapses, the next
+            // window delivers fresh
+            body.put("deliveryId", deliveryId);
+        }
         Map<String, Object> recipients = new LinkedHashMap<>();
         recipients.put("roles", recipientRoles == null ? List.of() : recipientRoles);
         recipients.put("users", recipientUsers == null ? List.of() : recipientUsers);

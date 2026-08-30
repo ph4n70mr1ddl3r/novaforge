@@ -2180,3 +2180,49 @@ Verified: full serial `./mvnw verify` green end to end (23 reactor modules,
 container suites on the podman socket; the pre-fix tree had reproduced an
 audit-trail flake under parallel load that the consumer fix addresses), frontend
 workspace unchanged-green (149 vitest + typecheck).
+
+**Spec-review closeout (2026-08-31, eighth pass) — the seventh pass's recorded-open
+set, worked top-down: eight more defects closed, each pinned.**
+
+- **Numeric unique fields finally match their enforcement** (H-8P1): the pre-check
+  compared jsonb text while the projection's unique index compares cast numerics —
+  `10` slipped past a live `10.00` — and only the parent-create leg shaped the
+  constraint violation, so the same race on the PATCH/integration/hook/inline-child/
+  roll-up legs was a raw 500 (aborting whole batches). Numeric fields pre-check
+  numerically (regex-gated cast, total on legacy rows) and every write leg shapes
+  violations through the shared field-scoped error.
+- **AVG roll-ups stopped churning** (H-8P2): scale-sensitive `Objects.equals`
+  between the in-memory 34-digit aggregate and SQL's aggregate scale rewrote the
+  parent on every write (version churn, misattributed `updated_by`, double events
+  with the next item) and stored wider-than-authored scales past the coercer's
+  caps. `compareTo` detection + authored-scale normalization on both aggregate
+  paths.
+- **Roll-up mutations are events again** (H-8P3): `recomputeRollupsIfChanged` now
+  publishes `record.updated` for every parent it rewrites (attributed to the
+  initiating actor; the writer's own path suppresses the duplicate) — workflow
+  event-starts and the audit trail see the parent move again.
+- **Deleting a referenced entity rejects at the door** (M-8P1): the delete path was
+  the only writer skipping save-validation — it left drafts failing validation with
+  publish and re-save both blocked. The post-delete candidate validates, naming
+  the referencing branch.
+- **A concurrent publish's loser is a 409** (M-8P2), not an unhandled constraint
+  500 — the H-7P3 shaping applied to version allocation.
+- **Downloads force their disposition** (M-8P3): presigned GETs carry signed
+  `response-content-disposition: attachment` + `response-content-type:
+  application/octet-stream` overrides (the stored Content-Type is client-chosen at
+  PUT time — inline HTML/SVG on the storage origin), and upload content types
+  normalize to a validated bare `type/subtype` pair.
+- **The edge owns its identity headers** (M-8P4): `X-Tenant-Id`/`X-Actor-Id`/
+  `X-Event-*` are stripped from anonymous traffic and owned by the filter on
+  authenticated traffic — the contract holds before the first future consumer of
+  those headers appears.
+- **Internal sends dedupe on a caller key** (L-8P1): `deliveryId` collapses
+  replayed sends (inbox + email legs both); the scheduled-report chain threads the
+  scheduler's fired window end-to-end, and job-completed keys on the job id —
+  retried windows collapse, the next cron window delivers fresh.
+
+Verified: full serial `./mvnw verify` green end to end (23 reactor modules,
+container suites on the podman socket); frontend workspace untouched this pass.
+The structural remainder (promotion atomicity, the metadata outbox, per-app unique
+index scoping, the last-list-item PATCH semantics, and the ops postures) stays
+recorded open in CODE_REVIEW.md (eighth pass).
