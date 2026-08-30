@@ -11,6 +11,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * RFC 7807 problem+json with the common-core codes (PHASE-1 §7) — the same shape the
@@ -33,6 +34,18 @@ public class ProblemAdvice {
     public ResponseEntity<Map<String, Object>> badRequest(Exception exception) {
         return problem(HttpStatus.BAD_REQUEST, PlatformErrorCode.VALIDATION_FAILED.code(),
                 PlatformErrorCode.VALIDATION_FAILED.name(), exception.getMessage(), null);
+    }
+
+    /**
+     * Unrouted paths (a wrong-shape webhook URL — one segment where the route pins
+     * three) surface the container's {@link NoResourceFoundException}; without this
+     * handler the catch-all below answers 500 and pollutes monitoring (the
+     * 2026-08-28 pen pass's PF-2 close — noise, no information leak).
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> noRoute(NoResourceFoundException exception) {
+        return problem(HttpStatus.NOT_FOUND, PlatformErrorCode.NOT_FOUND.code(),
+                PlatformErrorCode.NOT_FOUND.name(), "no such route", null);
     }
 
     @ExceptionHandler(Exception.class)

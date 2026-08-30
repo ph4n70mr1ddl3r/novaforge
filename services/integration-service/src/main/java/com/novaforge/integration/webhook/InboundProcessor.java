@@ -55,6 +55,40 @@ public class InboundProcessor {
     public record Hook(AppDefinition app, WebhookDefinition webhook) {
     }
 
+    /**
+     * The anonymous route's full leg: resolve the address, then verify. An address
+     * that binds no published hook — malformed tenant id, unknown tenant, unbound
+     * entity or hook id — verifies against an empty active set, so it walks the
+     * same timestamp-window and signature checks a known hook's wrong-secret
+     * failure does and renders the exact same {@code SIGNATURE_INVALID}: the
+     * anonymous surface never confirms or denies an address's existence (the
+     * 2026-08-28 pen pass's PF-1 close).
+     */
+    public Map<String, Object> receive(String tenant, String entity, String hookId,
+                                       byte[] body, String timestamp, String signature) {
+        UUID tenantId = null;
+        try {
+            tenantId = UUID.fromString(tenant);
+        } catch (IllegalArgumentException malformed) {
+            // an unknown address is an unknown address — verified below like any other
+        }
+        Hook hook = null;
+        if (tenantId != null) {
+            try {
+                hook = resolve(tenantId, entity, hookId);
+            } catch (PlatformException unresolved) {
+                // nothing binds this address — the empty active set answers below
+            }
+        }
+        if (hook == null) {
+            hmac.verify(timestamp, signature, body, List.of());
+            throw new PlatformException(PlatformErrorCode.SIGNATURE_INVALID,
+                    "webhook signature verification failed: "
+                            + "signature does not match any active secret");
+        }
+        return apply(tenantId, hook, body, timestamp, signature);
+    }
+
     /** Resolves {@code /webhooks/inbound/{tenant}/{entity}/{hookId}} against published apps. */
     public Hook resolve(UUID tenantId, String entity, String hookId) {
         for (AppDefinition app : definitions.allApps(tenantId)) {

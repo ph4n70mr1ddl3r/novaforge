@@ -8,6 +8,12 @@ services:
     container_name: novaforge-postgres
     environment:
       POSTGRES_PASSWORD: novaforge
+    # PITR (PHASE-8 §8, DR-drill finding D-1): WAL segments archive to the
+    # wal-archive volume via postgres/entrypoint.sh — it chowns the volume to
+    # the postgres user before the image's own gosu drop, then execs the stock
+    # entrypoint with archive_mode on. Restore leg: deploy/scripts/pitr-restore.sh
+    # (runbook dr-restore-drill.md).
+    entrypoint: ["/bin/bash", "/postgres-entrypoint.sh"]
     ports:
       # Default host port is 5434: this host runs a native Postgres on 5432, and
       # the mda workspace reserves 5433 for its dev database — 5434 keeps every
@@ -16,6 +22,8 @@ services:
       - "${NOVAFORGE_POSTGRES_PORT:-5434}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - wal-archive:/wal_archive
+      - ./postgres/entrypoint.sh:/postgres-entrypoint.sh:ro,Z
       - ../postgres-init:/docker-entrypoint-initdb.d:ro,Z
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
@@ -91,6 +99,9 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_NUM_PARTITIONS: 3
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Replay-window sizing (PHASE-8 §8, DR-drill finding D-4): the runbook's
+      # 7-day retention pinned explicitly instead of riding the broker default.
+      KAFKA_LOG_RETENTION_HOURS: "168"
     ports:
       - "9092:9092"
     volumes:
@@ -231,9 +242,93 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # --- PHASE-8 §8 backup + DR surfaces (runbook: docs/runbooks/dr-restore-drill.md) ---
+
+  # Nightly pg_dumpall snapshots + weekly physical base backup for PITR
+  # (DR-drill findings D-1/D-2 — the 2026-08-28 drill found neither configured).
+  postgres-backup:
+    image: docker.io/library/postgres:16.15
+    container_name: novaforge-postgres-backup
+    entrypoint: ["/bin/sh", "/backup/nightly-backup.sh"]
+    environment:
+      PGPASSWORD: novaforge
+      NOVAFORGE_BACKUP_KEEP: "${NOVAFORGE_BACKUP_KEEP:-7}"
+      NOVAFORGE_BACKUP_INTERVAL_SECONDS: "${NOVAFORGE_BACKUP_INTERVAL_SECONDS:-86400}"
+      NOVAFORGE_BACKUP_BASE_DAYS: "${NOVAFORGE_BACKUP_BASE_DAYS:-7}"
+    volumes:
+      - ./backup/nightly-backup.sh:/backup/nightly-backup.sh:ro,Z
+      - postgres-backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Bucket versioning (DR-drill finding D-3): one-shot — enables versioning on
+  # the file bucket so object overwrite/delete stays recoverable. Tolerates both
+  # orders against the File Service's own create-if-absent bucket init.
+  minio-init:
+    image: docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: novaforge-minio-init
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - mc alias set drprep http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" && (mc version enable "drprep/$$NOVAFORGE_MINIO_BUCKET" || (mc mb "drprep/$$NOVAFORGE_MINIO_BUCKET" && mc version enable "drprep/$$NOVAFORGE_MINIO_BUCKET")) && mc version info "drprep/$$NOVAFORGE_MINIO_BUCKET"
+    environment:
+      MINIO_ROOT_USER: novaforge
+      MINIO_ROOT_PASSWORD: novaforge-secret
+      NOVAFORGE_MINIO_BUCKET: "${NOVAFORGE_MINIO_BUCKET:-novaforge-attachments}"
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+
+  # The DR drill targets (DR-drill finding D-5): a second Postgres + MinIO the
+  # restore runbook exercises — `podman compose -f novaforge.yaml --profile dr up -d`.
+  dr-postgres:
+    image: docker.io/library/postgres:16.15
+    container_name: novaforge-dr-postgres
+    profiles: ["dr"]
+    environment:
+      POSTGRES_PASSWORD: novaforge
+    ports:
+      - "${NOVAFORGE_DR_POSTGRES_PORT:-5435}:5432"
+    volumes:
+      - dr-postgres-data:/var/lib/postgresql/data
+      # the primary's WAL archive, read-only — pitr-restore.sh's restore_command reads it
+      - wal-archive:/wal_archive:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  dr-minio:
+    image: docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: novaforge-dr-minio
+    profiles: ["dr"]
+    command: ["server", "/data", "--console-address", ":9101"]
+    environment:
+      MINIO_ROOT_USER: novaforge
+      MINIO_ROOT_PASSWORD: novaforge-secret
+    ports:
+      - "${NOVAFORGE_DR_MINIO_PORT:-9100}:9000"
+      - "9101:9101"
+    volumes:
+      - dr-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
 volumes:
   postgres-data:
+  wal-archive:
+  postgres-backups:
   minio-data:
+  dr-postgres-data:
+  dr-minio-data:
   keycloak-data:
   redis-data:
   kafka-data:

@@ -13,6 +13,31 @@
 - The DR target: a second Postgres instance + a second MinIO (the compose `dr`
   profile brings both up locally for the drill).
 
+**The compose stack's implementation (landed 2026-08-28, closing the drill's
+D-1/D-2/D-3/D-5 findings):**
+
+| Concern | Compose mechanism |
+|---------|-------------------|
+| WAL archiving (PITR) | `postgres` runs `archive_mode=on`, archiving every segment to the `wal-archive` volume |
+| Nightly snapshots + base backup | the `postgres-backup` sidecar (`deploy/compose/backup/nightly-backup.sh`): nightly `pg_dumpall` into `postgres-backups:/dumps` rotated to the newest `NOVAFORGE_BACKUP_KEEP` (7), plus a weekly physical `pg_basebackup` at `/base` for the PITR leg |
+| MinIO bucket versioning | the `minio-init` one-shot enables `versioning` on the file bucket at stack bring-up |
+| The DR targets | the compose `dr` profile (`--profile dr`): `dr-postgres` (:5435, WAL archive mounted read-only) + `dr-minio` (:9100/9101) |
+
+## The PITR restore (the runbook's §6 mechanism)
+
+```bash
+# target time = the drill's chosen restore point (step 2 below)
+deploy/scripts/pitr-restore.sh '2026-08-28 21:00:00+08'
+```
+
+The helper brings up the DR postgres, lays the sidecar's physical base backup
+over its data dir, appends `restore_command = 'cp /wal_archive/%f %p'` +
+`recovery_target_time` to `postgresql.auto.conf`, touches `recovery.signal`, and
+starts the instance — recovery replays the archived WAL to the target and
+promotes. The nightly-dump restore (the 2026-08-28 drill's executed leg) remains
+the snapshot-granular alternative: replay the newest `dumps/novaforge-*.sql.gz`
+into the DR instance with `psql`.
+
 ## The drill (quarterly)
 
 1. **Snapshot inventory** — verify the last nightly snapshot exists and is younger
@@ -49,5 +74,10 @@ retire the old version, verify retirement left exactly one active secret and the
 |---------|-----------|-----|
 | Postgres | Nightly `pg_dump` snapshot + WAL archiving (PITR) | ≤ 5 min (WAL) |
 | MinIO (files) | Bucket versioning + cross-store replication | ≤ 5 min |
-| Kafka | Topic retention sized for replay (7 d default) | replay window |
+| Kafka | Topic retention sized for replay (7 d pinned explicitly — `KAFKA_LOG_RETENTION_HOURS=168`) | replay window |
 | Realm (Keycloak) | Nightly realm export (`/admin/realms/novaforge/partialExport`) | ≤ 24 h |
+
+> The compose stack's nightly `pg_dumpall` carries the Keycloak realm with it
+> (the realm persists to the cluster's `keycloak` database — the 2026-08-28
+> drill restored it from the dump); the standalone `partialExport` leg applies
+> to staged deployments running Keycloak against its own store.

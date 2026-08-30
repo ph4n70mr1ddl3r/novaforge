@@ -293,6 +293,49 @@ class IntegrationWebhookTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("PF-1: unknown hook/tenant answers the wrong-secret leg's exact problem — no existence leak")
+    void unknownAddressIndistinguishable() throws Exception {
+        String body = """
+                {"data": {"id": "evt-unknown", "ref": "pay-x", "amount": "9"}}""";
+        String timestamp = String.valueOf(Instant.now().getEpochSecond());
+        String signature = HmacScheme.signature("any-secret", timestamp,
+                body.getBytes(StandardCharsets.UTF_8));
+        // the wrong-secret control on the known hook — the verdict every address must match
+        var control = mockMvc.perform(post("/api/v1/webhooks/inbound/" + TENANT + "/Payment/wh_feed")
+                        .header("X-NovaForge-Timestamp", timestamp)
+                        .header("X-NovaForge-Signature", signature)
+                        .contentType("application/json").content(body))
+                .andExpect(status().isUnauthorized()).andReturn();
+        // unknown hook id on the real tenant: same status, same body
+        var unknownHook = mockMvc.perform(post("/api/v1/webhooks/inbound/" + TENANT + "/Payment/wh_nope")
+                        .header("X-NovaForge-Timestamp", timestamp)
+                        .header("X-NovaForge-Signature", signature)
+                        .contentType("application/json").content(body))
+                .andExpect(status().isUnauthorized()).andReturn();
+        // malformed tenant id: still the same answer
+        var unknownTenant = mockMvc.perform(
+                        post("/api/v1/webhooks/inbound/not-a-uuid/Payment/wh_feed")
+                                .header("X-NovaForge-Timestamp", timestamp)
+                                .header("X-NovaForge-Signature", signature)
+                                .contentType("application/json").content(body))
+                .andExpect(status().isUnauthorized()).andReturn();
+        assertThat(unknownHook.getResponse().getContentAsString())
+                .isEqualTo(control.getResponse().getContentAsString());
+        assertThat(unknownTenant.getResponse().getContentAsString())
+                .isEqualTo(control.getResponse().getContentAsString());
+    }
+
+    @Test
+    @DisplayName("PF-2: a wrong-shape webhook URL answers 404 problem+json, never 500")
+    void wrongShapeRouteAnswersNotFound() throws Exception {
+        mockMvc.perform(post("/api/v1/webhooks/inbound/only-segment")
+                        .contentType("application/json").content("{}"))
+                .andExpect(status().isNotFound())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$.code").value("4004"));
+    }
+
+    @Test
     @DisplayName("§11 item 1: rotation — old and new secrets both valid until retirement")
     void rotationAdmitsBoth() throws Exception {
         resetHookSecret("hook-secret-one");

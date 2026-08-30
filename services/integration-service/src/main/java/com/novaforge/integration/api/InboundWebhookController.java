@@ -1,10 +1,7 @@
 package com.novaforge.integration.api;
 
-import com.novaforge.common.error.PlatformException;
 import com.novaforge.integration.webhook.InboundProcessor;
-import com.novaforge.integration.webhook.InboundProcessor.Hook;
 import java.util.Map;
-import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -39,20 +36,7 @@ public class InboundWebhookController {
                                        @RequestHeader(value = "X-NovaForge-Signature",
                                                required = false) String signature,
                                        @RequestBody(required = false) byte[] body) {
-        UUID tenantId;
-        try {
-            tenantId = UUID.fromString(tenant);
-        } catch (IllegalArgumentException e) {
-            throw new com.novaforge.common.error.PlatformException(
-                    com.novaforge.common.error.PlatformErrorCode.NOT_FOUND,
-                    "unknown tenant " + tenant);
-        }
-        byte[] payload = body == null ? new byte[0] : body;
-        Hook hook = inbound.resolve(tenantId, entity, hookId);
-        try {
-            return inbound.apply(tenantId, hook, payload, timestamp, signature);
-        } catch (PlatformException e) {
-            throw e;
-        }
+        return inbound.receive(tenant, entity, hookId,
+                body == null ? new byte[0] : body, timestamp, signature);
     }
 }
