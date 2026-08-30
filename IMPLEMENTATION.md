@@ -2090,3 +2090,93 @@ typecheck) — +18 new test methods this pass across materializer, scheduler,
 workflow tasks, SLA presence, reporting runner/exporter/aggregate doors, and
 +5 more closing the lows (delegation target, quiet breach ×2, outbox
 retention ×3 suites).
+
+**Spec-review closeout (2026-08-31, seventh pass) — four-surface audit (data-runtime
+write path, file service, audit consumers + gateway edge, metadata lifecycle);
+thirteen live defects closed, each pinned.** Found by four parallel deep audits over
+the surfaces the six prior passes had covered least:
+
+- **The cached sequence duplicated its first number** (H-7P1): the first-block
+  anchoring clamped `first` to the authored start — born-exhausted whenever
+  `start > blockSize` (prod default 100) — so `start: 500` served `500` on every
+  one of its first five draws. Duplicate document numbers under default config; a
+  unique-numbered field then bricked creates with generic uniqueness errors. The
+  allocation now pushes the Redis counter to `start-1` and claims a fresh full
+  block (every served window is one atomic increment's range — concurrent claimers
+  never overlap, the counter only moves forward). `SequenceServiceTests` (4) pin it
+  against a Redis-faithful mock; the old `cachedSequenceDraws` assertion only ever
+  held *because* every draw was a duplicate — re-pinned order-independently.
+- **Flow-driven updates bypassed the whole validation pipeline** (H-7P2):
+  `updateAsPrincipal` (every flow `updateRecord`, approval resume, hook field
+  write) merged template values raw — templates render `${…}` bindings as strings,
+  an unbound one as the literal `"null"`, which rode into DECIMAL/ENUM/DATE fields
+  and broke `((data->>'f')::numeric)` for every later aggregate (a wedge only
+  fixable by hand). The path canonicalizes and validates like every writer now;
+  unknown fields stay ignored so flows outlive metadata edits. Pinned end-to-end
+  (`hookTemplateNullBindingDoesNotPoisonTypedField`).
+- **One malformed batch item 500'd the request after earlier items committed**
+  (H-7P3): only `PlatformException` was caught — a missing `version` NPE'd, a
+  non-uuid id threw, a unique race escaped — losing the committed items' verdicts
+  exactly when the caller needs them. Shape guards + a non-Platform catch land
+  per-item verdicts (engine batch + the integration chunk controller).
+- **The audit trail silently dropped events on store failures** (H-7P4): all three
+  audit consumers wrapped the append in a catch-all — a DB blip classified as
+  "invalid event ignored", offset committed, permanent silent trail hole (the
+  reactor flake that opened this session was exactly this, live). Envelope errors
+  stay terminal; processing failures propagate to redelivery; the platform
+  consumer's per-redelivery `Instant.now()` timestamp default (a dedupe-breaker) is
+  gone — a timestamp-less envelope is malformed. `AuditConsumerFailureTests` (2).
+- **The webhook rate limiter keyed on client-supplied XFF** (H-7P5): rotating the
+  header minted fresh limit keys (unlimited HMAC brute-force on the one anonymous
+  route), pinning a victim's IP denied *their* traffic, and CRLF forged logs. The
+  key is the socket peer.
+- **Prod rollback had no admin hop, and promoting an older version dodged the
+  rollback gate** (H-7P6): a builder could roll prod's pin anywhere; a
+  promote-version-below-pin bypassed the storage-compatibility check and the
+  `dataMigrationAcknowledged` requirement. Both doors now enforce symmetrically
+  (`prodRollbackIsTheAdminHop`, `promotingAnOlderVersionIsARollback`).
+- **Suite-run retention evicted gate evidence permanently** (H-7P7): trimming was
+  hash-blind to the newest 25 per suite — a published version's green run died to
+  26 newer-hash runs, and the moved-on draft could never re-record it (the override
+  channel was the only path left). Runs whose hash is a published version's never
+  leave (`retentionKeepsPublishedVersionGateEvidence`).
+- **App deletes leaked every state machine/SLA/job/workflow row** (M-7P1):
+  `md_definitions` was the one child table without the app FK — V10 adds it (with
+  a pre-FK orphan sweep) so the delete cascade completes; pinned by counting the
+  branch row before and after.
+- **Page optimistic locking was bypassable and racy** (M-7P2): a null-revision
+  save clobbered any concurrent edit, and the check was SELECT-then-blind-write —
+  the write is now conditional on the revision and updates *require* the token;
+  two same-token saves yield exactly `{200, 409}`.
+- **The file service's verdicts were TOCTOU** (M-7P3/M-7P4/M-7P5): the presigned
+  PUT outlived completion and addressed the same key downloads served — a replayed
+  PUT silently swapped the bytes behind a recorded clean scan/checksum (completion
+  now finalizes verified bytes under a checksum-keyed copy the upload URL can
+  never address, with tamper-detecting lazy healing + `file.tampered` events); the
+  size cap trusted the declared size and checked *after* buffering the object
+  (stat-before-get kills the OOM vector); completion was open to any same-tenant
+  user (a stranger's bogus-checksum complete deleted the victim's bytes; the
+  follow-on rebind moved a confidential record's attachment onto one the attacker
+  can read) — uploader-only now, bindings write-once; the metadata read skipped the
+  §9 gate the download enforced (same-tenant discovery of record↔file mappings) —
+  uniform now; the internal content leg refuses quarantined rows.
+- **The SMTP boundary carried no line discipline** (L-7P1): CR/LF in a subject or
+  attachment filename serialized into a real `Bcc:` header line on the resolved
+  mail stack (empirically verified) — folded at the boundary now, pinned against
+  the wire-serialized message. Today's callers feed validated values; the
+  `${record.*}` template growth path would not have.
+
+The audits' remainder is recorded in CODE_REVIEW.md (seventh pass, "Recorded
+open"): non-atomic multi-system promotion + the in-transaction Kafka publish
+(wants the outbox pattern), unvalidated entity delete wedging drafts, the
+unremovable-last-list-branch PATCH semantics, the publish version race, unique
+enforcement parity (text-vs-numeric pre-check, unshaped update-leg violations,
+cross-app shared-projection collisions), roll-up event/scale semantics, the
+webhook upsert fence, presign content-disposition + deployed ClamAV posture,
+abandoned-upload reaping, edge header stripping/prometheus gating, internal-send
+idempotency, and audit partition rotation.
+
+Verified: full serial `./mvnw verify` green end to end (23 reactor modules,
+container suites on the podman socket; the pre-fix tree had reproduced an
+audit-trail flake under parallel load that the consumer fix addresses), frontend
+workspace unchanged-green (149 vitest + typecheck).

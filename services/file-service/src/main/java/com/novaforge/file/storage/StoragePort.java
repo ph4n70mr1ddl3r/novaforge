@@ -22,6 +22,12 @@ public interface StoragePort {
     /** Reads the object back (checksum verification, scanning, downloads). */
     byte[] get(String objectKey);
 
+    /** The object's size in bytes, without materializing it (the cap check before a get). */
+    long size(String objectKey);
+
+    /** Server-side copy (finalizing a verified upload under its checksum key). */
+    void copy(String fromKey, String toKey);
+
     /** A presigned URL for the mode and key, valid for {@code expirySeconds}. */
     String presign(String objectKey, Mode mode, int expirySeconds);
 
@@ -79,6 +85,29 @@ public interface StoragePort {
         }
 
         @Override
+        public long size(String objectKey) {
+            try {
+                return client.statObject(io.minio.StatObjectArgs.builder()
+                        .bucket(bucket).object(objectKey).build()).size();
+            } catch (Exception e) {
+                throw new PlatformException(PlatformErrorCode.NOT_FOUND,
+                        "object " + objectKey + " not readable: " + e.getMessage(), null, e);
+            }
+        }
+
+        @Override
+        public void copy(String fromKey, String toKey) {
+            try {
+                client.copyObject(io.minio.CopyObjectArgs.builder()
+                        .source(io.minio.CopySource.builder().bucket(bucket).object(fromKey).build())
+                        .bucket(bucket).object(toKey).build());
+            } catch (Exception e) {
+                throw new PlatformException(PlatformErrorCode.INTERNAL,
+                        "storage copy failed: " + e.getMessage(), null, e);
+            }
+        }
+
+        @Override
         public String presign(String objectKey, Mode mode, int expirySeconds) {
             try {
                 return client.getPresignedObjectUrl(io.minio.GetPresignedObjectUrlArgs.builder()
@@ -125,6 +154,22 @@ public interface StoragePort {
                         "object " + objectKey + " not readable");
             }
             return content;
+        }
+
+        @Override
+        public long size(String objectKey) {
+            byte[] content = objects.get(objectKey);
+            if (content == null) {
+                throw new PlatformException(PlatformErrorCode.NOT_FOUND,
+                        "object " + objectKey + " not readable");
+            }
+            return content.length;
+        }
+
+        @Override
+        public void copy(String fromKey, String toKey) {
+            byte[] content = get(fromKey);
+            objects.put(toKey, java.util.Arrays.copyOf(content, content.length));
         }
 
         @Override

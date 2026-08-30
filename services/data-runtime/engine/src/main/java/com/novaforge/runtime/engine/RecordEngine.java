@@ -448,6 +448,9 @@ public class RecordEngine {
 
     /** Bulk ops with per-item outcomes, max 500 (PHASE-1 §5). */
     public List<Map<String, Object>> batch(UUID tenantId, UUID actorId, List<Map<String, Object>> items) {
+        if (items == null || items.isEmpty()) {
+            return List.of();
+        }
         if (items.size() > MAX_BATCH) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "batch exceeds " + MAX_BATCH + " items",
@@ -464,19 +467,21 @@ public class RecordEngine {
                 // (a SQL-level abort poisons only that item's transaction, never the
                 // rest of the batch).
                 RecordEngine proxied = self.getObject();
-                Map<String, Object> result = switch (String.valueOf(item.get("op"))) {
+                String op = String.valueOf(item.get("op"));
+                Map<String, Object> result = switch (op) {
                     case "create" -> proxied.create(tenantId, actorId,
-                            String.valueOf(item.get("entity")),
+                            requireBatchText(item.get("entity"), "entity"),
                             typedFields(item.get("record")));
                     case "update" -> proxied.update(tenantId, actorId,
-                            String.valueOf(item.get("entity")),
-                            UUID.fromString(String.valueOf(item.get("id"))),
-                            ((Number) item.get("version")).intValue(),
+                            requireBatchText(item.get("entity"), "entity"),
+                            requireBatchUuid(item.get("id")),
+                            requireBatchVersion(item.get("version")),
                             typedFields(item.get("record")));
                     case "delete" -> {
-                        proxied.delete(tenantId, actorId, String.valueOf(item.get("entity")),
-                                UUID.fromString(String.valueOf(item.get("id"))),
-                                ((Number) item.get("version")).intValue());
+                        proxied.delete(tenantId, actorId,
+                                requireBatchText(item.get("entity"), "entity"),
+                                requireBatchUuid(item.get("id")),
+                                requireBatchVersion(item.get("version")));
                         yield Map.<String, Object>of("status", "ok");
                     }
                     default -> throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
@@ -488,9 +493,55 @@ public class RecordEngine {
                         "status", "error",
                         "code", e.errorCode().code(),
                         "detail", e.getMessage()));
+            } catch (RuntimeException e) {
+                // A SQL-level abort — unique-index race, deadlock, serialization failure —
+                // rolls back only this item's transaction (the proxy's tx boundary), so
+                // it reports as that item's error outcome. Letting it escape would 500
+                // the whole request after earlier items already committed, losing their
+                // verdicts exactly when the caller needs them most.
+                outcomes.add(Map.of(
+                        "status", "error",
+                        "code", PlatformErrorCode.INTERNAL.code(),
+                        "detail", "item failed: " + e.getClass().getSimpleName()
+                                + (e.getMessage() == null ? "" : ": " + e.getMessage())));
             }
         }
         return outcomes;
+    }
+
+    /** Batch item shape guards: a malformed item is that item's verdict, never an NPE. */
+    private static String requireBatchText(Object value, String name) {
+        if (value instanceof String text && !text.isBlank()) {
+            return text;
+        }
+        throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                "batch item " + name + " is required",
+                ProblemErrors.of(new ProblemErrors.FieldError(name,
+                        name + " is required", value)));
+    }
+
+    private static UUID requireBatchUuid(Object value) {
+        if (value instanceof String text) {
+            try {
+                return UUID.fromString(text);
+            } catch (IllegalArgumentException e) {
+                // fall through to the shaped rejection
+            }
+        }
+        throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                "batch item id must be a uuid",
+                ProblemErrors.of(new ProblemErrors.FieldError("id",
+                        "id must be a uuid", value)));
+    }
+
+    private static int requireBatchVersion(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                "batch item version must be a number (optimistic locking)",
+                ProblemErrors.of(new ProblemErrors.FieldError("version",
+                        "version must be a number", value)));
     }
 
     // --- the integration principal's write/read paths (PHASE-6 §3/§6/§7) ---
@@ -1165,13 +1216,25 @@ public class RecordEngine {
                 .orElseThrow(() -> new PlatformException(PlatformErrorCode.NOT_FOUND,
                         entityApiName + "/" + recordId + " not found"));
         requireNotFrozen(app, handle, existing.data());
-        Map<String, Object> merged = new LinkedHashMap<>(existing.data());
+        List<ProblemErrors.FieldError> errors = new ArrayList<>();
+        // Templates render every ${…} binding as a string, so the principal path
+        // canonicalizes like any writer — an unbound binding is the literal "null",
+        // which must reject on a typed field, not ride into JSONB and poison the
+        // roll-up SQL ((data->>'f')::numeric). Unknown fields stay ignored (a flow
+        // outliving a metadata edit keeps running; its writes no-op, never wedge).
+        Map<String, Object> fields = new LinkedHashMap<>();
         body.forEach((key, value) -> {
             if (!key.equals("version") && handle.entity().field(key).isPresent()) {
-                merged.put(key, value);
+                fields.put(key, value);
             }
         });
+        Map<String, Object> canonical = FieldCoercer.canonicalize(handle.entity(), fields,
+                externalChecks(tenantId, handle, app), UUID.fromString(recordId), errors);
+        Map<String, Object> merged = new LinkedHashMap<>(existing.data());
+        canonical.forEach(merged::put);
         evaluateFormulas(handle.entity(), merged);
+        evaluateValidationRules(handle.entity(), merged, errors);
+        reject(errors, "hook update " + entityApiName + "/" + recordId + " failed validation");
         requireParentsNotFrozen(tenantId, app, handle, merged);
         enforceTransition(app, handle, existing.data(), merged);
         enforcePeriodLock(tenantId, app, handle, merged);

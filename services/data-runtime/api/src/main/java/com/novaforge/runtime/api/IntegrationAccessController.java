@@ -73,7 +73,7 @@ public class IntegrationAccessController {
                             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                                     "update items require id and version (optimistic locking)");
                         }
-                        UUID recordId = UUID.fromString(item.id());
+                        UUID recordId = parseRecordId(item.id());
                         yield TenantContext.call(integrationContext(tenantId), () ->
                                 engine.integrationUpdate(tenantId, item.entity(), recordId,
                                         item.version(), item.record()));
@@ -89,9 +89,27 @@ public class IntegrationAccessController {
                         // a webhook/import sees exactly which rule rejected
                         "errors", e.detail().map(detail -> (Object) detail.errors())
                                 .orElse(List.of())));
+            } catch (RuntimeException e) {
+                // A SQL-level abort (unique race, deadlock) rolled back only this item's
+                // transaction — it reports as that item's outcome, never a request-level
+                // 500 after earlier items committed and their verdicts vanished.
+                outcomes.add(Map.of("status", "error", "code", PlatformErrorCode.INTERNAL.code(),
+                        "detail", "item failed: " + e.getClass().getSimpleName()
+                                + (e.getMessage() == null ? "" : ": " + e.getMessage()),
+                        "errors", List.of()));
             }
         }
         return Map.of("outcomes", outcomes);
+    }
+
+    /** A malformed record id is the item's verdict, not an unhandled parse error. */
+    private static UUID parseRecordId(String id) {
+        try {
+            return UUID.fromString(id);
+        } catch (IllegalArgumentException e) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "update item id must be a uuid: " + id);
+        }
     }
 
     /** One paged read: role-scoped exports (§7) or integration-scoped key lookups (§6). */

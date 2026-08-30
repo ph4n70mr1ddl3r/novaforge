@@ -6,6 +6,7 @@ import com.novaforge.security.TracePropagation;
 import io.micrometer.tracing.Tracer;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.Map;
 import java.util.UUID;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -59,8 +60,19 @@ public class PlatformEventConsumer {
     }
 
     void consume(String payload) {
+        Map<String, Object> event;
         try {
-            Map<String, Object> event = MAPPER.readValue(payload, Map.class);
+            event = MAPPER.readValue(payload, Map.class);
+        } catch (Exception e) {
+            LOG.error("invalid platform event ignored: {}", payload, e);
+            return;   // unparseable — no redelivery can fix it
+        }
+        // Processing failures propagate: the store's insert failing (pool exhaustion,
+        // failover, a serialization error) must redeliver — committing the offset over
+        // a dropped append would leave a permanent, silent hole in the trail. Only
+        // envelope-shape errors are terminal; the append's (event_id, occurred_at)
+        // dedupe collapses the replay.
+        try {
             String family = String.valueOf(event.get("event"));
             int dot = family.indexOf('.');
             String source = dot > 0 ? family.substring(0, dot) : family;
@@ -71,12 +83,27 @@ public class PlatformEventConsumer {
                     recordKey(event),
                     family,
                     actorId(event, source),
-                    Instant.parse(String.valueOf(event.getOrDefault("occurredAt",
-                            event.getOrDefault("publishedAt", Instant.now().toString())))),
+                    occurredAt(event),
                     payload);
-        } catch (Exception e) {
-            LOG.error("invalid platform event ignored: {}", payload, e);
+        } catch (IllegalArgumentException | DateTimeParseException e) {
+            LOG.error("malformed platform event ignored: {}", payload, e);
         }
+    }
+
+    /**
+     * The envelope's timestamp, {@code occurredAt} or {@code publishedAt}. An event
+     * carrying neither is malformed — and a per-redelivery {@code now()} would defeat
+     * the (event_id, occurred_at) dedupe, duplicating every replay of it.
+     */
+    private static Instant occurredAt(Map<String, Object> event) {
+        Object stamp = event.get("occurredAt");
+        if (stamp == null) {
+            stamp = event.get("publishedAt");
+        }
+        if (stamp == null) {
+            throw new IllegalArgumentException("no occurredAt/publishedAt in event");
+        }
+        return Instant.parse(String.valueOf(stamp));
     }
 
     /** The trail's record key: the family's own record id, else the event id. */

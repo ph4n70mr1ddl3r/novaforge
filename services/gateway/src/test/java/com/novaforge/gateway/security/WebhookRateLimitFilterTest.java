@@ -65,6 +65,35 @@ class WebhookRateLimitFilterTest {
         assertThat(degraded.getStatus()).isEqualTo(200);
     }
 
+    @Test
+    @DisplayName("a spoofed X-Forwarded-For never mints a fresh key — the socket peer is the client")
+    void xffIsNotTrusted() throws Exception {
+        // Anti-regression (2026-08-31): the limiter keyed on the client-supplied first
+        // XFF hop — rotating the header minted a fresh window per request (bypass),
+        // and pinning a victim's address keyed their traffic (cross-victim denial).
+        CountingRedis redis = new CountingRedis();
+        WebhookRateLimitFilter filter = new WebhookRateLimitFilter(redis, 2);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("POST",
+                WebhookRateLimitFilter.PUBLIC_PREFIX + "tenant/Payment/wh_feed");
+        request.setRemoteAddr("203.0.113.9");
+        request.addHeader("X-Forwarded-For", "198.51.100.1");
+
+        for (int i = 0; i < 2; i++) {
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            filter.doFilter(request, response, passing());
+            assertThat(response.getStatus()).isEqualTo(200);
+        }
+        // third call from the same socket, a brand-new spoofed hop — still over limit
+        MockHttpServletRequest rotated = new MockHttpServletRequest("POST",
+                WebhookRateLimitFilter.PUBLIC_PREFIX + "tenant/Payment/wh_feed");
+        rotated.setRemoteAddr("203.0.113.9");
+        rotated.addHeader("X-Forwarded-For", "198.51.100.77");
+        MockHttpServletResponse third = new MockHttpServletResponse();
+        filter.doFilter(rotated, third, passing());
+        assertThat(third.getStatus()).isEqualTo(429);
+    }
+
     private static FilterChain passing() {
         return (request, response) -> {
             // downstream reached (the filter chain continued)

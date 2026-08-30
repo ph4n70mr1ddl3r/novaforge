@@ -624,3 +624,240 @@ container suites on the podman socket), frontend 149 vitest green + `check`
 (typecheck) clean. New pins this pass: `MaterializerTests` +1 (9), `SchedulerTests`
 +2 (11), `TaskApiTests` +5 (20), `SlaWarnAtPresenceTest` (2), `ReportRunnerTests`
 +4 (8), `ReportExporterTests` +3 (7), `ReportAggregateTests` +2 (7).
+
+## Seventh Pass — 2026-08-31 (four-surface audit: data-runtime write path, file service, audit consumers + gateway edge, metadata lifecycle)
+
+Four parallel deep audits over the surfaces the six prior passes had covered least.
+Thirteen live defects closed this pass; the remainder are recorded below with their
+mechanisms. Every fix carries a regression pin that fails against the prior code.
+
+### H-7P1 — the cached sequence re-served its first number up to `start/blockSize` times
+
+`SequenceService.drawCached` clamped a fresh block's `first` up to the authored
+start — manufacturing a born-exhausted block whenever `start > blockSize` (the
+production default block is 100). With `start: 500`: every allocation returned
+`Block(500, 100)`, served 500, found itself exhausted, and re-allocated — the first
+five draws were all `500`. Duplicate document numbers, the exact invariant a
+sequence exists to guarantee; a unique-numbered field bricked creates 2..N with a
+generic uniqueness error until the counter climbed past the start. The allocation
+now pushes the counter to `start-1` and claims a fresh full block there (whole
+window below start), or serves from `start` (window straddles it) — every served
+window is the range of one atomic increment, so concurrent claimers never overlap
+and the counter only moves forward. Pinned in `SequenceServiceTests` (4: strictly
+increasing draws from 500, two claimers never overlap, small-start unchanged,
+raised-start never serves below start) against a per-key Redis-faithful Mockito
+counter; `RecordApiTests.cachedSequenceDraws` re-pinned order-independently — the
+old assertion (`CN-00500` on any draw) only held *because* every draw was a
+duplicate, masking the suite's shared-counter ordering.
+
+### H-7P2 — flow-driven updates bypassed the whole validation pipeline; `"null"` poisoned numeric roll-up SQL
+
+`RecordEngine.updateAsPrincipal` — the write path behind every flow
+`updateRecord` step, approval resume, and hook field-write — merged template values
+raw: no `FieldCoercer.canonicalize`, no `evaluateValidationRules`. Templates render
+every `${…}` binding as a *string* (`HookExecutor.resolveTemplateText`), and an
+unbound binding renders the literal `"null"` — so an OrderLine without `qty`
+wrote the string `"null"` into `InventoryItem.reserved` (DECIMAL), and every later
+`SUM`/roll-up over the entity threw Postgres `22P02` (the in-memory aggregator's
+`!text.equals("null")` guard was the codebase acknowledging the leak the SQL side
+never had). Enum membership, scale caps, and date shapes rode the same hole. The
+path now canonicalizes and validates like every writer (string "3" coerces to
+decimal 3; `"null"` on a typed field rejects as a field-scoped hook failure,
+spine-retried, the stored value untouched); unknown fields stay ignored so a flow
+outliving a metadata edit keeps running. Pinned in
+`RecordApiTests.hookTemplateNullBindingDoesNotPoisonTypedField` (positive control:
+bound template lands as a number; poison case: value unchanged and the aggregate
+door still parses).
+
+### H-7P3 — one malformed batch item 500'd the request after earlier items committed
+
+`RecordEngine.batch` caught only `PlatformException`: an update item missing
+`version` NPE'd, a non-uuid `id` threw `IllegalArgumentException`, and a unique-race
+`DataIntegrityViolationException` escaped — a 500 *after* items 1..k-1 committed in
+their own transactions, their verdicts lost (the design comment's own promise — "a
+SQL-level abort poisons only that item's transaction" — was never implemented on
+the catch side). Items are now shape-guarded into per-item `VALIDATION_FAILED`
+verdicts (`requireBatchText/Uuid/Version`), non-Platform failures report as that
+item's error outcome, and a null/empty item list is an empty response. The
+integration chunk controller (`IntegrationAccessController`) got the same two legs
+(uuid parse shaped per-item, non-Platform catch). Pinned in
+`RecordApiTests.batchMalformedItemsArePerItemOutcomes` (five mixed items → five
+verdicts, request 200).
+
+### H-7P4 — the audit trail silently dropped events on any store failure
+
+All three audit consumers wrapped `store.append` inside a catch-all — a Postgres
+restart, pool exhaustion, or failover was classified "invalid event ignored", the
+offset committed, and the event left a permanent silent hole in the compliance
+trail (this session's own reactor flake — a missing `notification.delivered` row
+under parallel container load — was this mechanism live). The consumers now follow
+the notification consumer's convention: envelope-shape errors (unparseable JSON,
+non-uuid fields, bad timestamps) are terminal; processing failures propagate so the
+spine redelivers, with the append's `(event_id, occurred_at)` dedupe collapsing the
+replay. `PlatformEventConsumer`'s missing-timestamp default was `Instant.now()` per
+redelivery — defeating that dedupe and duplicating every replay of such an event; a
+timestamp-less envelope is now malformed by contract. Pinned in
+`AuditConsumerFailureTests` (2: store failure propagates out of all three
+consumers; malformed envelopes stay terminal).
+
+### H-7P5 — the webhook rate limiter keyed on the client-supplied X-Forwarded-For hop
+
+`WebhookRateLimitFilter.clientOf` took XFF's *first* element — chosen by the client,
+with no trusted proxy in the deployed topology (the gateway is the edge). Rotating
+the header minted a fresh Redis key per request (the 60/min cap on the platform's
+only anonymous route never bound — unlimited HMAC brute-force surface), pinning a
+victim's address keyed *their* traffic into 429s, and CRLF in the header forged
+multiline log entries. The key is now the socket peer, with the proxy-allowlist
+path documented for whenever a trusted proxy actually exists. Pinned in
+`WebhookRateLimitFilterTest.xffIsNotTrusted`.
+
+### H-7P6 — a builder could roll prod back; and promote-an-old-version dodged the rollback gate
+
+Two asymmetries in `LifecycleService`: (a) `promote`'s prod hop required the
+platform admin, `rollback`'s did not — a tenant builder rolled a green,
+storage-compatible prod pin anywhere with no admin, no reason, no acknowledgment;
+(b) `promote` never compared the requested version to the current pin, so
+promoting an *older* version deployed it through the plain suite gate — bypassing
+the rollback door's storage-compatibility check and `dataMigrationAcknowledged`
+requirement (dropping projection columns' queryable data without the mandated ack;
+an admin could route the same move through staging-parity). Rollback now enforces
+the admin hop symmetrically, and an older-version promote rejects
+`CONFLICT_VERSION` naming the rollback door. Pinned in
+`LifecycleTests.prodRollbackIsTheAdminHop` and `.promotingAnOlderVersionIsARollback`.
+
+### H-7P7 — suite-run retention evicted promotion-gate evidence, permanently
+
+`recordSuiteRun` trimmed to the newest 25 rows per suite *regardless of content
+hash* — the gate needs the latest run matching a **published version's** hash, and
+the draft (whose hash new runs record) can essentially never be brought back to an
+old version's content. Twenty-six newer-hash runs evicted a published version's
+green run forever; the only path forward was an audited admin override — the
+override channel filling with noise that isn't an override decision. Retention is
+now hash-exempt: a run whose hash appears in `md_versions` never leaves (per-suite
+newest-25 still bounds draft churn). Pinned in
+`LifecycleTests.retentionKeepsPublishedVersionGateEvidence` (30 newer-hash runs,
+then promoting v1 still admits).
+
+### M-7P1 — deleting an app leaked every state machine, SLA, job, and workflow row
+
+Every child table carried `REFERENCES md_apps(id) ON DELETE CASCADE` except
+`md_definitions` — no FK at all — so app deletes cascaded entities/pages/versions/
+environments but leaked the kind-discriminated branch documents forever (outbound
+webhook URLs and credential ids included), while the cascade simultaneously
+destroyed the `md_environments` rows that named the still-running sandbox tenants.
+V10 adds the FK (with an orphan sweep first, so the constraint lands on databases
+that already hold pre-FK orphans). Pinned in `deleteAppCascades` (asserts the
+branch row exists before, and is gone after, the delete).
+
+### M-7P2 — page optimistic locking was bypassable (null revision) and racy (check-then-act)
+
+`putPage` skipped the revision check entirely when the incoming save omitted it,
+and even with a token the check was a SELECT followed by a blind upsert — two
+builders holding revision N both passed and the second silently won (V8's trigger
+maintained the counter but nothing made it a guard). An update now *requires* the
+token, and the upsert is conditional (`DO UPDATE … WHERE md_pages.revision = ?`)
+with a zero-row write surfacing as the 409 — never a silent no-op, even for two
+racing first-saves. Pinned in `pageDefinitionLifecycle` (null-revision 409; two
+same-token saves → exactly `{200, 409}`).
+
+### M-7P3 — the file service's verdicts were TOCTOU: a replayed PUT swapped the bytes behind a clean scan
+
+The presigned PUT (15-minute validity) and the download path addressed the *same*
+object key, and `presignDownload`/`content` authorized purely off the DB row: after
+`complete` recorded `clean` + checksum, re-PUTting EICAR (or any substitution) at
+the still-valid upload URL changed what downloads served — AV and checksum
+integrity both bypassed, silently. Completion now finalizes the verified bytes
+under a content-addressed key (`<tenant>/<id>/v/<checksum>`, server-side `copy`)
+that the upload URL can never address, and downloads serve only that key; rows
+completed before the finalization existed are healed lazily — the staging bytes are
+re-hashed, drift means tampering (denied audibly, `file.tampered` outboxed), a match
+re-finalizes. Pinned in `FileServiceTests.replayedPutCannotSwapVerifiedBytes` and
+`.tamperedStagingObjectRejects`.
+
+### M-7P4 — the size cap was advisory; `complete()` buffered the object before checking
+
+`beginUpload` trusted the declared size, the presigned PUT signed no
+`Content-Length`, and the real check ran after `readAllBytes()` had materialized
+the whole object — a single 3 GB PUT was an OOM vector against a 768 Mi pod, and
+unlimited PUTs had no quota at all. `StoragePort` grew `size()` (statObject);
+completion stats before it gets. Pinned in
+`FileServiceTests.sizeCapRejectsOversizeObjects` (declared 10, stored 2048 →
+rejected without a verdict).
+
+### M-7P5 — attachments were completable/rebindable by any same-tenant user
+
+`complete` checked only tenancy: anyone holding an id could complete another
+user's upload — with a bogus checksum *deleting the victim's bytes* — and the
+controller then bound the attachment to any entity/record the caller named,
+rewriting a confidential record's binding onto a record the attacker can read (the
+read gate then hands over the presigned URL). Completion is uploader-only, and
+bindings are write-once (`entity IS NULL AND record_id IS NULL` guard). The
+`GET /{id}` metadata read also skipped the §9 read gate the download enforced —
+any same-tenant user learned which record carries which file — and now applies it
+uniformly (bound → owning record's authorization; unbound → uploader only). The
+internal `content()` leg now refuses quarantined rows like the user path. Pinned in
+`FileServiceTests.completionIsUploadersOnly` and `.bindingsAreWriteOnce`.
+
+### L-7P1 — the SMTP boundary carried no line discipline (CRLF header injection)
+
+`SmtpEmailPort` performed no sanitization of header-bound values; the resolved
+mail stack (jakarta.mail-api 2.1.5 + angus-mail 2.0.5) serializes CR/LF in a
+subject or attachment filename into a real standalone `Bcc:` header line. Today's
+callers feed validated values, but the documented `${record.*}` template growth
+path puts user free text one template edit from the subject — the boundary is now
+safe regardless (CR/LF/NUL folded to spaces on `from`/`to`/`subject`/filename).
+Pinned in `SmtpEmailPortHeaderTest` (wire-serialized message contains no injected
+header line).
+
+### Recorded open (mechanisms verified, not fixed this pass)
+
+- **Metadata lifecycle**: promote/rollback apply across provisioner + env-tenant
+  stores + pins non-atomically — a failure between legs orphans a provisioned
+  sandbox tenant or leaves the env serving a version the control plane can't see
+  (needs an intent row + idempotent provision); `metadata.published` is sent
+  synchronously inside the publish transaction (broker outage holds the DB
+  connection 10 s per publish; send-succeeds-commit-fails emits a phantom event —
+  wants the outbox pattern the other services already use);
+  `deleteEntity`/`deletePage` skip the save-validation pass, so deleting a
+  referenced entity wedges the draft's next publish (validation should run on the
+  post-delete candidate, naming the referencing definitions); a non-empty list
+  branch can never be emptied via PATCH (absent-or-empty keeps current — the last
+  dashboard/state machine/etc. is unremovable); concurrent publishes race on the
+  version number and the loser surfaces as a raw 500 (unique constraint holds —
+  shape it as CONFLICT_VERSION).
+- **Data runtime**: unique-field parity — the pre-check compares text while the
+  index compares numerics (`10` vs `10.00`), constraint violations are shaped
+  friendly only on the parent-create leg (updates/inline children 500), and the
+  shared-projection unique index has no `entity_id` (two same-named entities in
+  one tenant collide); the event payload carries no before/after and roll-up
+  recomputes rewrite parents with no `record.updated` (subscribers never fire for
+  them); roll-up change detection is scale-sensitive `Objects.equals` (AVG churns
+  the parent version) and roll-up values bypass the field's authored scale; the
+  webhook upsert is check-then-act (document that upsert keys must be unique).
+- **File service**: stored Content-Type is client-controlled and presigned GETs
+  pin no `response-content-disposition` (inline HTML/SVG on the storage origin —
+  sign `response-content-disposition: attachment` + `response-content-type`);
+  no deployment path enables ClamAV (chart env lacks `NOVAFORGE_CLAMAV_ENABLED`
+  and the MinIO/Postgres endpoints — every deployed profile records
+  `virusScan: skipped`); abandoned uploads are never reaped and `fl_grants` is
+  write-only (a scheduled reaper keyed on the grant expiry).
+- **Gateway/audit/notification**: `X-Tenant-Id`/`X-Actor-Id` pass through
+  unstripped on anonymous traffic (no consumer today — strip at the edge before
+  one exists); `/actuator/prometheus` is anonymous on the internet-facing
+  component (gate it or move it to the scrape network); internal sends use a
+  random `event_id` (no idempotency key — caller retries duplicate inbox rows and
+  emails); the audit trail's monthly partition rotation is unimplemented (the
+  DEFAULT partition grows forever).
+
+### Verification (this pass)
+
+Module suites green on the podman socket: data-runtime engine (21, incl. the new
+`SequenceServiceTests` 4) and api (81, incl. the two new RecordApiTests pins and
+the re-pinned cached-sequence draw), audit-service (6, incl.
+`AuditConsumerFailureTests` 2), gateway (14, incl. the XFF pin), metadata-service
+(49, incl. the three new lifecycle pins and the two extended definition-lifecycle
+pins), file-service (10, incl. the five new pins), notification-service (11, incl.
+`SmtpEmailPortHeaderTest`). Full serial `./mvnw verify` + frontend workspace runs
+recorded in IMPLEMENTATION.md's closeout. The audit-service reactor flake that
+motivated H-7P4 reproduced once under `-T 1C` parallel container load and never
+again after the fix (and in isolation before it).

@@ -60,6 +60,9 @@ class DefinitionLifecycleTests extends PostgresTestBase {
     @Autowired
     MockMvc mockMvc;
 
+    @Autowired
+    org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     @DynamicPropertySource
     static void infrastructure(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", PostgresTestBase::jdbcUrl);
@@ -236,6 +239,22 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                 .jwt(token -> token.claim("azp", "novaforge-runtime")
                         .claim("client_id", "novaforge-runtime"))
                 .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
+    }
+
+    /** One page save carrying a revision token; the HTTP status for race assertions. */
+    private int savePageStatus(String appId, int revision) {
+        try {
+            return mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/orderForm")
+                            .with(builderJwt()).contentType("application/json")
+                            .content("""
+                                    { "apiName": "orderForm", "type": "form", "entity": "Order",
+                                      "layout": { "base": "auto", "kind": "form", "deltas": [] },
+                                      "revision": %d }
+                                    """.formatted(revision)))
+                    .andReturn().getResponse().getStatus();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     @Test
@@ -1026,15 +1045,31 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                         .content("""
                                 { "apiName": "Throwaway", "entities": [
                                   { "apiName": "Thing",
-                                    "fields": [ { "apiName": "name", "type": "text" } ] } ] }
+                                    "fields": [ { "apiName": "status", "type": "enum",
+                                                  "values": [ "NEW", "DONE" ] } ] } ],
+                                  "stateMachines": [ { "id": "sm_thing", "entity": "Thing",
+                                    "stateField": "status", "initial": "NEW",
+                                    "states": [ { "name": "NEW" }, { "name": "DONE", "terminal": true } ],
+                                    "transitions": [ { "from": "NEW", "to": "DONE" } ] } ] }
                                 """))
                 .andExpect(status().isOk()).andReturn();
         String appId = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+        String appUuid = java.util.UUID.fromString(appId).toString();
+        // the kind-discriminated branch landed in md_definitions before the delete
+        Integer definitions = jdbc.queryForObject(
+                "SELECT count(*) FROM md_definitions WHERE app_id = ?::uuid", Integer.class, appUuid);
+        assertThat(definitions).isEqualTo(1);
         mockMvc.perform(delete("/api/v1/metadata/apps/" + appId).with(builderJwt()))
                 .andExpect(status().isNoContent());
         mockMvc.perform(get("/api/v1/metadata/apps/" + appId).with(builderJwt()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("4004"));
+        // Anti-regression (2026-08-31): md_definitions never carried the app FK —
+        // the delete cascaded every sibling table but leaked state machines, SLAs,
+        // jobs, and workflows (credential references included) forever.
+        Integer leaked = jdbc.queryForObject(
+                "SELECT count(*) FROM md_definitions WHERE app_id = ?::uuid", Integer.class, appUuid);
+        assertThat(leaked).isZero();
     }
 
     @Test
@@ -1151,6 +1186,31 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                                 """.formatted(revision)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.pages[0].revision").value(revision + 1));
+
+        // Anti-regression (2026-08-31): a save omitting the revision used to clobber
+        // an existing page unconditionally — the token is now required to update it.
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/orderForm")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "orderForm", "type": "form", "entity": "Order",
+                                  "layout": { "base": "auto", "kind": "form", "deltas": [] } }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("4090"));
+
+        // Anti-regression (2026-08-31): the check was SELECT-then-blind-write — two
+        // editors holding the same revision both passed and the second silently won.
+        // The conditional update now guarantees exactly one winner even when both
+        // pre-checks race past.
+        int raced = revision + 1;
+        java.util.List<Integer> outcomes = new java.util.concurrent.CopyOnWriteArrayList<>();
+        Thread editorA = new Thread(() -> outcomes.add(savePageStatus(appId, raced)));
+        Thread editorB = new Thread(() -> outcomes.add(savePageStatus(appId, raced)));
+        editorA.start();
+        editorB.start();
+        editorA.join();
+        editorB.join();
+        assertThat(outcomes).containsExactlyInAnyOrder(200, 409);
 
         // the page rides the published bundle (versioned metadata like everything else)
         mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/publish").with(builderJwt()))

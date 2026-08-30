@@ -497,11 +497,19 @@ class RecordApiTests extends PostgresTestBase {
     @Test
     @DisplayName("cached-mode sequence also draws from its Redis block")
     void cachedSequenceDraws() throws Exception {
-        mockMvc.perform(post("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
+        // Draws stay at-or-above the authored start (500) and formatted per the
+        // definition; the exact first draw (CN-00500) is pinned in
+        // SequenceServiceTests — other tests in this class share the Redis counter,
+        // so this suite must not depend on draw order (the duplicate-draw bug used
+        // to make every ticket CN-00500 and hid exactly that dependence).
+        MvcResult ticket = mockMvc.perform(post("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
                         .contentType("application/json")
                         .content("{\"title\":\"first ticket\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.number").value("CN-00500"));
+                .andExpect(status().isOk()).andReturn();
+        String number = MAPPER.readTree(ticket.getResponse().getContentAsString())
+                .get("number").asString();
+        assertThat(number).startsWith("CN-");
+        assertThat(Long.parseLong(number.substring(3))).isGreaterThanOrEqualTo(500);
     }
 
     @Test
@@ -681,6 +689,75 @@ class RecordApiTests extends PostgresTestBase {
                 .andExpect(jsonPath("$.outcomes[0].status").value("ok"))
                 .andExpect(jsonPath("$.outcomes[1].status").value("error"))
                 .andExpect(jsonPath("$.outcomes[2].status").value("error"));
+    }
+
+    @Test
+    @DisplayName("batch: malformed item shapes are per-item verdicts, never a mid-batch 500")
+    void batchMalformedItemsArePerItemOutcomes() throws Exception {
+        // Anti-regression (2026-08-31): a non-uuid id or a missing version threw
+        // IllegalArgumentException/NPE past the PlatformException-only catch — a 500
+        // after earlier items had already committed, their verdicts lost.
+        MvcResult created = mockMvc.perform(post("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
+                        .contentType("application/json").content("{\"title\":\"batch-shape\"}"))
+                .andExpect(status().isOk()).andReturn();
+        String id = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+        mockMvc.perform(post("/api/v1/runtime/batch").with(jwtFor(TENANT))
+                        .contentType("application/json").content("""
+                                { "items": [
+                                  { "op": "create", "entity": "Ticket",
+                                    "record": { "title": "shape-1" } },
+                                  { "op": "update", "entity": "Ticket",
+                                    "id": "not-a-uuid", "version": 1, "record": {} },
+                                  { "op": "update", "entity": "Ticket",
+                                    "id": "%s", "record": {} },
+                                  { "op": "create", "record": { "title": "shape-2" } },
+                                  { "op": "create", "entity": "Ticket",
+                                    "record": { "title": "shape-3" } } ] }
+                                """.formatted(id)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcomes.length()").value(5))
+                .andExpect(jsonPath("$.outcomes[0].status").value("ok"))
+                .andExpect(jsonPath("$.outcomes[1].status").value("error"))
+                .andExpect(jsonPath("$.outcomes[2].status").value("error"))
+                .andExpect(jsonPath("$.outcomes[3].status").value("error"))
+                .andExpect(jsonPath("$.outcomes[4].status").value("ok"));
+    }
+
+    @Test
+    @DisplayName("hook update: an unbound ${…} binding rejects on the typed field, never poisons JSONB")
+    void hookTemplateNullBindingDoesNotPoisonTypedField() throws Exception {
+        // Anti-regression (2026-08-31): the principal update path merged template values
+        // raw — ${qty} on a line with no qty rendered the literal string "null", which
+        // rode into the decimal field and broke ((data->>'reserved')::numeric) for every
+        // later aggregate. The path now canonicalizes like every writer.
+        String sku = createInventory("POISON-PIN", 10);
+        // Positive control: a bound ${qty} renders the string "3" — coerced to the
+        // field's decimal type, the write lands as a number.
+        mockMvc.perform(post("/api/v1/runtime/Order").with(jwtFor(TENANT))
+                        .contentType("application/json").content("""
+                                { "label": "bound order", "items": [ { "itemId": "%s", "qty": 3 } ] }
+                                """.formatted(sku)))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/runtime/InventoryItem/" + sku).with(jwtFor(TENANT)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reserved").value(3));
+        // The poison case: qty absent — the hook step must fail validation (spine-retried)
+        // and leave the stored value untouched, not write "null" into the field.
+        mockMvc.perform(post("/api/v1/runtime/Order").with(jwtFor(TENANT))
+                        .contentType("application/json").content("""
+                                { "label": "unbound order", "items": [ { "itemId": "%s" } ] }
+                                """.formatted(sku)))
+                .andExpect(status().isOk());
+        MvcResult after = mockMvc.perform(get("/api/v1/runtime/InventoryItem/" + sku)
+                        .with(jwtFor(TENANT)))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(after.getResponse().getContentAsString()).doesNotContain("\"reserved\":\"null\"");
+        mockMvc.perform(post("/api/v1/runtime/InventoryItem/query").with(jwtFor(TENANT))
+                        .contentType("application/json").content("""
+                                { "aggregates": [ { "op": "sum", "field": "reserved", "alias": "r" } ] }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows[0].r").isNumber());
     }
 
     @Test

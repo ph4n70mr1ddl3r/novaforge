@@ -6,6 +6,7 @@ import com.novaforge.security.TracePropagation;
 import io.micrometer.tracing.Tracer;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.Map;
 import java.util.UUID;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -45,8 +46,19 @@ public class RecordEventConsumer {
     }
 
     void consume(String payload) {
+        Map<String, Object> event;
         try {
-            Map<String, Object> event = MAPPER.readValue(payload, Map.class);
+            event = MAPPER.readValue(payload, Map.class);
+        } catch (Exception e) {
+            LOG.error("invalid record event ignored: {}", payload, e);
+            return;   // unparseable — no redelivery can fix it
+        }
+        // Processing failures propagate: the store's insert failing (pool exhaustion,
+        // failover, a serialization error) must redeliver — committing the offset over
+        // a dropped append would leave a permanent, silent hole in the trail. Only
+        // envelope-shape errors are terminal; the append's (event_id, occurred_at)
+        // dedupe collapses the replay.
+        try {
             store.append(
                     UUID.fromString(String.valueOf(event.get("eventId"))),
                     UUID.fromString(String.valueOf(event.get("tenantId"))),
@@ -56,8 +68,8 @@ public class RecordEventConsumer {
                     UUID.fromString(String.valueOf(event.get("actorId"))),
                     Instant.parse(String.valueOf(event.get("occurredAt"))),
                     payload);
-        } catch (Exception e) {
-            LOG.error("invalid record event ignored: {}", payload, e);
+        } catch (IllegalArgumentException | DateTimeParseException e) {
+            LOG.error("malformed record event ignored: {}", payload, e);
         }
     }
 }

@@ -52,7 +52,7 @@ public class FileController {
     @PostMapping("/{id}/complete")
     public Map<String, Object> complete(@PathVariable UUID id,
                                         @RequestBody(required = false) CompleteRequest request) {
-        var completion = attachments.complete(RecordReadGate.tenant(), id,
+        var completion = attachments.complete(RecordReadGate.tenant(), actor(), id,
                 request == null ? null : request.checksum());
         if (request != null && request.entity() != null && request.recordId() != null) {
             attachments.bind(RecordReadGate.tenant(), id, request.entity(), request.recordId());
@@ -66,33 +66,48 @@ public class FileController {
 
     @GetMapping("/{id}")
     public Map<String, Object> metadata(@PathVariable UUID id) {
-        return attachments.metadata(RecordReadGate.tenant(), id)
-                .orElseThrow(() -> new com.novaforge.common.error.PlatformException(
-                        com.novaforge.common.error.PlatformErrorCode.NOT_FOUND,
-                        "attachment " + id));
+        return requireAccess(id);
     }
 
     /** Presigned GET — owning-record authorization decides for bound attachments (§9). */
     @PostMapping("/{id}/download")
     public Map<String, Object> download(@PathVariable UUID id) {
-        var metadata = attachments.metadata(RecordReadGate.tenant(), id).orElseThrow(() ->
-                new com.novaforge.common.error.PlatformException(
-                        com.novaforge.common.error.PlatformErrorCode.NOT_FOUND,
-                        "attachment " + id));
-        String entity = (String) metadata.get("entity");
-        Object recordId = metadata.get("recordId");
-        if (!recordGate.canRead(entity, recordId == null ? null : UUID.fromString(
-                String.valueOf(recordId)))) {
-            throw new com.novaforge.common.error.PlatformException(
-                    com.novaforge.common.error.PlatformErrorCode.FORBIDDEN,
-                    "attachment access rides the owning record's authorization (§9)");
-        }
+        requireAccess(id);
         var grant = attachments.presignDownload(RecordReadGate.tenant(), id);
         return Map.of(
                 "id", grant.id(),
                 "downloadUrl", grant.uploadUrl(),
                 "expiresAt", grant.expiresAt().toString(),
                 "method", "GET");
+    }
+
+    /**
+     * The §9 access rule, uniform across the metadata read and the download: a bound
+     * attachment rides the owning record's authorization; an unbound one is the
+     * uploader's (or the service client's) alone. The metadata read used to skip this
+     * — any same-tenant user holding an id learned which record carries which file.
+     */
+    private Map<String, Object> requireAccess(UUID id) {
+        var metadata = attachments.metadata(RecordReadGate.tenant(), id).orElseThrow(() ->
+                new com.novaforge.common.error.PlatformException(
+                        com.novaforge.common.error.PlatformErrorCode.NOT_FOUND,
+                        "attachment " + id));
+        String entity = (String) metadata.get("entity");
+        Object recordId = metadata.get("recordId");
+        if (entity != null && recordId != null) {
+            if (!recordGate.canRead(entity, UUID.fromString(String.valueOf(recordId)))) {
+                throw new com.novaforge.common.error.PlatformException(
+                        com.novaforge.common.error.PlatformErrorCode.FORBIDDEN,
+                        "attachment access rides the owning record's authorization (§9)");
+            }
+            return metadata;
+        }
+        if (!actor().equals(metadata.get("uploadedBy"))) {
+            throw new com.novaforge.common.error.PlatformException(
+                    com.novaforge.common.error.PlatformErrorCode.FORBIDDEN,
+                    "an unbound attachment is its uploader's alone until it is bound (§9)");
+        }
+        return metadata;
     }
 
     private static UUID actor() {

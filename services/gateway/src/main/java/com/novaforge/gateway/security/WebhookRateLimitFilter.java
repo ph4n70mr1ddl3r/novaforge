@@ -63,7 +63,7 @@ public class WebhookRateLimitFilter extends OncePerRequestFilter {
             count = null;
         }
         if (count != null && count > requestsPerMinute) {
-            LOG.warn("rate limit exceeded for {} ({} > {}/min)", clientOf(request), count,
+            LOG.warn("rate limit exceeded for {} ({} > {}/min)", request.getRemoteAddr(), count,
                     requestsPerMinute);
             response.setStatus(429);
             response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
@@ -75,12 +75,15 @@ public class WebhookRateLimitFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    /** The remote address (proxy-aware: X-Forwarded-For's first hop when present). */
+    /**
+     * The remote address — the socket peer, never a client-supplied hop. The gateway is
+     * the exposed edge (no trusted proxy rewrites {@code X-Forwarded-For} in the
+     * deployed topology), so honoring XFF here would let a caller mint a fresh limit
+     * key per request (bypass), pin a victim's address into the key (cross-victim
+     * denial), and forge multiline log entries (CRLF). If a trusted proxy is ever
+     * introduced, derive the key from the last untrusted hop behind a proxy allowlist.
+     */
     private static String clientOf(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
         return request.getRemoteAddr();
     }
 

@@ -196,6 +196,17 @@ public class Notifier {
     public record Attachment(String filename, String contentType, byte[] content) {
     }
 
+    /**
+     * RFC 5322 line discipline for every header-bound value: CR/LF/NUL never ride a
+     * header (the mail stack serializes them into real standalone header lines — a
+     * {@code subject} or attachment {@code filename} carrying CRLF injects a
+     * {@code Bcc:} past every caller-side constraint; today's callers feed validated
+     * values, the ${record.*} template growth path will not).
+     */
+    private static String headerSafe(String value) {
+        return value == null ? null : value.replaceAll("[\\r\\n\\u0000]", " ");
+    }
+
     /** The JavaMail binding — Mailpit locally (§2), SES-shaped adapters later. */
     @org.springframework.stereotype.Component
     static class SmtpEmailPort implements EmailPort {
@@ -213,9 +224,9 @@ public class Notifier {
         @Override
         public void send(String to, String subject, String body) {
             SimpleMailMessage message = new SimpleMailMessage();
-            message.setFrom(from);
-            message.setTo(to);
-            message.setSubject(subject);
+            message.setFrom(headerSafe(from));
+            message.setTo(headerSafe(to));
+            message.setSubject(headerSafe(subject));
             message.setText(body);
             sender.send(message);
         }
@@ -226,16 +237,16 @@ public class Notifier {
                 jakarta.mail.internet.MimeMessage mime = sender.createMimeMessage();
                 org.springframework.mail.javamail.MimeMessageHelper helper =
                         new org.springframework.mail.javamail.MimeMessageHelper(mime, true);
-                helper.setFrom(from);
-                helper.setTo(to);
-                helper.setSubject(subject);
+                helper.setFrom(headerSafe(from));
+                helper.setTo(headerSafe(to));
+                helper.setSubject(headerSafe(subject));
                 helper.setText(body);
-                helper.addAttachment(attachment.filename(),
+                helper.addAttachment(headerSafe(attachment.filename()),
                         new org.springframework.core.io.ByteArrayResource(
                                 attachment.content()) {
                             @Override
                             public String getFilename() {
-                                return attachment.filename();
+                                return headerSafe(attachment.filename());
                             }
                         }, attachment.contentType());
                 sender.send(mime);

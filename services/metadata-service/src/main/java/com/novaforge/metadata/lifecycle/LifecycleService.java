@@ -93,6 +93,17 @@ public class LifecycleService {
             throw new PlatformException(PlatformErrorCode.FORBIDDEN,
                     "the prod hop is the explicit platform-admin approval (PHASE-8 §4 item 2)");
         }
+        Integer previousPin = store.environment(tenantId, appId, env)
+                .map(MetadataStore.EnvironmentRow::pinnedVersion).orElse(null);
+        if (previousPin != null && version < previousPin) {
+            // An older version is a rollback: deploying it through promote would bypass
+            // the rollback gate's storage-compatibility check and the data-migration
+            // acknowledgment an incompatible redeployment owes (§4 item 4).
+            throw new PlatformException(PlatformErrorCode.CONFLICT_VERSION,
+                    "version " + version + " predates the pinned " + previousPin
+                            + " — redeploying an older version is a rollback (§4 item 4), with its "
+                            + "compatibility gate and data-migration acknowledgment");
+        }
         if ("prod".equals(env)) {
             var staging = store.environment(tenantId, appId, "staging")
                     .orElseThrow(() -> new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
@@ -107,8 +118,6 @@ public class LifecycleService {
         }
         Map<String, Object> evidence = gateEvidence(tenantId, appId, bundle, version);
         boolean suitesGreen = Boolean.TRUE.equals(evidence.get("green"));
-        Integer previousPin = store.environment(tenantId, appId, env)
-                .map(MetadataStore.EnvironmentRow::pinnedVersion).orElse(null);
         if (!suitesGreen) {
             if (!override) {
                 throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
@@ -135,11 +144,20 @@ public class LifecycleService {
      * changes block one-click rollback; incompatible rollbacks require admin override
      * with an explicit data-migration acknowledgment. The materializer handles the
      * compatible downgrade (columns drop lazily; nothing is destroyed at publish).
+     * Moving the prod pin — like promoting to prod — is the explicit platform-admin
+     * hop, whether the gate is green or not.
      */
     public Map<String, Object> rollback(UUID tenantId, UUID actorId, UUID appId, String env,
                                         int toVersion, boolean override, String reason,
                                         boolean dataMigrationAcknowledged, boolean isAdmin) {
         requireEnvironment(env);
+        if ("prod".equals(env) && !isAdmin) {
+            // The same hop promote enforces: moving prod's pin is the explicit
+            // platform-admin approval — a builder rolling prod back to a green,
+            // storage-compatible version otherwise skips the control entirely.
+            throw new PlatformException(PlatformErrorCode.FORBIDDEN,
+                    "a prod rollback is the explicit platform-admin approval (PHASE-8 §4 item 2)");
+        }
         var current = store.environment(tenantId, appId, env)
                 .orElseThrow(() -> new PlatformException(PlatformErrorCode.NOT_FOUND,
                         "environment " + env + " is not provisioned — nothing to roll back"));

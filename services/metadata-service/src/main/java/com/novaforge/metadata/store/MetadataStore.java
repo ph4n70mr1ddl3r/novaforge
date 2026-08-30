@@ -237,8 +237,10 @@ public class MetadataStore {
     /**
      * Upsert with optimistic locking (PHASE-2 §8): an incoming {@code revision}
      * must match the stored row's — the builder's 409 → rebase prompt. First
-     * saves (no revision) insert freely. The stored document carries the new
-     * revision so reads round-trip the token.
+     * saves (no revision, no existing row) insert freely; an update of an existing
+     * row requires the token and the write itself is conditional on it, so two
+     * editors holding the same revision cannot both win. The stored document
+     * carries the new revision so reads round-trip the token.
      */
     @Transactional
     public AppDefinition putPage(UUID tenantId, UUID actorId, UUID appId,
@@ -247,7 +249,12 @@ public class MetadataStore {
         Integer current = jdbc.query("""
                 SELECT revision FROM md_pages WHERE tenant_id = ? AND app_id = ? AND api_name = ?""",
                 (rs, i) -> rs.getInt(1), tenantId, appId, page.apiName()).stream().findFirst().orElse(null);
-        if (current != null && page.revision() != null && !current.equals(page.revision())) {
+        if (current != null && page.revision() == null) {
+            throw new PlatformException(PlatformErrorCode.CONFLICT_VERSION,
+                    "page " + page.apiName() + " already exists at revision " + current
+                            + " — carry the page's revision to update it");
+        }
+        if (current != null && !current.equals(page.revision())) {
             throw new PlatformException(PlatformErrorCode.CONFLICT_VERSION,
                     "page " + page.apiName() + " was modified by another editor (revision "
                             + current + ", yours " + page.revision() + ") — rebase and retry");
@@ -257,13 +264,22 @@ public class MetadataStore {
         AppDefinition.PageDefinition stamped = new AppDefinition.PageDefinition(page.id(),
                 page.apiName(), page.label(), page.labelI18n(), page.type(), page.entity(),
                 page.layout(), revision);
-        jdbc.update("""
+        int written = jdbc.update("""
                 INSERT INTO md_pages (id, tenant_id, app_id, api_name, document, created_by, updated_by)
                 VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)
                 ON CONFLICT (tenant_id, app_id, api_name) DO UPDATE
-                   SET document = EXCLUDED.document, updated_by = EXCLUDED.updated_by""",
+                   SET document = EXCLUDED.document, updated_by = EXCLUDED.updated_by
+                 WHERE md_pages.revision = ?""",
                 pageId, tenantId, appId, page.apiName(),
-                DefinitionParser.write(stamped), actorId, actorId);
+                DefinitionParser.write(stamped), actorId, actorId,
+                page.revision() == null ? 1 : page.revision());
+        if (written == 0) {
+            // The pre-check raced another editor's commit (or two first-saves collided):
+            // the conditional update matched nothing — never a silent no-op.
+            throw new PlatformException(PlatformErrorCode.CONFLICT_VERSION,
+                    "page " + page.apiName() + " was modified by another editor (concurrent "
+                            + "save) — rebase and retry");
+        }
         return requireApp(tenantId, appId);
     }
 
@@ -335,8 +351,9 @@ public class MetadataStore {
     // --- suite runs (PHASE-8 §4/§5): version-bound by content hash ---
 
     /** The run-artifact retention window (PHASE-3 §7: "retained last N per definition") —
-     *  every record trims to the newest N runs per suite; the promotion gate reads the
-     *  latest only, so nothing observable changes. */
+     *  every record trims to the newest N runs per suite, except a run whose hash is a
+     *  published version's: that one is promotion-gate evidence (§4 item 1) and never
+     *  leaves — the draft has typically moved on, so it can never be re-recorded. */
     private static final int SUITE_RUN_RETENTION = 25;
 
     /** Records one suite-run artifact; the hash binds it to the exact candidate (§4 item 1). */
@@ -347,13 +364,18 @@ public class MetadataStore {
                 VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?)""",
                 UUID.randomUUID(), tenantId, appId, suite, contentHash, green,
                 DefinitionParser.write(artifact), runBy);
-        // retained last N per suite (§7): trim beyond the newest SUITE_RUN_RETENTION rows
+        // retained last N per suite (§7); published versions' hashes are exempt —
+        // hash-blind trimming let 25 newer-hash runs permanently evict a published
+        // version's green run and brick its promotion gate.
         jdbc.update("""
-                DELETE FROM md_suite_runs
-                 WHERE tenant_id = ? AND app_id = ? AND suite = ?
-                   AND id NOT IN (SELECT id FROM md_suite_runs
-                                    WHERE tenant_id = ? AND app_id = ? AND suite = ?
-                                   ORDER BY run_at DESC LIMIT %d)"""
+                DELETE FROM md_suite_runs r
+                 WHERE r.tenant_id = ? AND r.app_id = ? AND r.suite = ?
+                   AND r.id NOT IN (SELECT id FROM md_suite_runs
+                                     WHERE tenant_id = ? AND app_id = ? AND suite = ?
+                                    ORDER BY run_at DESC LIMIT %d)
+                   AND NOT EXISTS (SELECT 1 FROM md_versions v
+                                    WHERE v.tenant_id = r.tenant_id AND v.app_id = r.app_id
+                                      AND v.content_hash = r.content_hash)"""
                 .formatted(SUITE_RUN_RETENTION),
                 tenantId, appId, suite, tenantId, appId, suite);
     }

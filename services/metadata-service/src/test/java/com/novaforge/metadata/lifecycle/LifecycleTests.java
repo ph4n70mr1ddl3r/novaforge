@@ -349,6 +349,120 @@ class LifecycleTests extends PostgresTestBase {
                 .andExpect(jsonPath("$.promotions[0].overridden").value(true));
     }
 
+    @Test
+    @DisplayName("§4 item 2 symmetry: a prod rollback is the admin hop — a builder cannot move prod's pin back")
+    void prodRollbackIsTheAdminHop() throws Exception {
+        String appId = createGatedApp();
+        GREEN.set(true);
+        publish(appId);
+        int version = latestVersion(appId);
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/suite-runs").with(builderJwt())
+                        .contentType("application/json").content("{}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/environments/staging/promote")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("{\"version\":" + version + "}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/environments/prod/promote")
+                        .with(adminJwt()).contentType("application/json")
+                        .content("{\"version\":" + version + "}"))
+                .andExpect(status().isOk());
+
+        // v2 so prod has somewhere to roll back to
+        mockMvc.perform(patch("/api/v1/metadata/apps/" + appId).with(builderJwt())
+                        .contentType("application/json").content("{\"label\":\"renamed\"}"))
+                .andExpect(status().isOk());
+        publish(appId);
+        int v2 = latestVersion(appId);
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/suite-runs").with(builderJwt())
+                        .contentType("application/json").content("{}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/environments/staging/promote")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("{\"version\":" + v2 + "}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/environments/prod/promote")
+                        .with(adminJwt()).contentType("application/json")
+                        .content("{\"version\":" + v2 + "}"))
+                .andExpect(status().isOk());
+
+        // Anti-regression (2026-08-31): a compatible, green rollback of prod used to
+        // skip every admin control — promote's prod hop, applied asymmetrically.
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/environments/prod/rollback")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("{\"toVersion\":" + version + "}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/environments/prod/rollback")
+                        .with(adminJwt()).contentType("application/json")
+                        .content("{\"toVersion\":" + version + "}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("§4 item 4 bypass: promoting an older version must not dodge the rollback gate")
+    void promotingAnOlderVersionIsARollback() throws Exception {
+        String appId = createGatedApp();
+        GREEN.set(true);
+        publish(appId);   // v1
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/suite-runs").with(builderJwt())
+                        .contentType("application/json").content("{}"))
+                .andExpect(status().isOk());
+        // v2 removes nothing (compatible) but is the newer artifact; pin staging to it
+        mockMvc.perform(patch("/api/v1/metadata/apps/" + appId).with(builderJwt())
+                        .contentType("application/json").content("{\"label\":\"renamed\"}"))
+                .andExpect(status().isOk());
+        publish(appId);
+        int v2 = latestVersion(appId);
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/suite-runs").with(builderJwt())
+                        .contentType("application/json").content("{}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/environments/staging/promote")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("{\"version\":" + v2 + "}"))
+                .andExpect(status().isOk());
+
+        // Anti-regression (2026-08-31): promote {"version":1} deployed the older
+        // artifact through the plain gate — no compatibility check, no
+        // dataMigrationAcknowledgment — exactly what the rollback door enforces.
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/environments/staging/promote")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("{\"version\":1}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("is a rollback")));
+    }
+
+    @Test
+    @DisplayName("§4 item 1 evidence: suite-run retention never evicts a published version's green run")
+    void retentionKeepsPublishedVersionGateEvidence() throws Exception {
+        String appId = createGatedApp();
+        GREEN.set(true);
+        publish(appId);   // v1, its hash recorded in md_versions
+        int v1 = latestVersion(appId);
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/suite-runs").with(builderJwt())
+                        .contentType("application/json").content("{}"))
+                .andExpect(status().isOk());
+
+        // Move the draft (a new content hash), then bury v1's run under 30 newer-hash
+        // runs — anti-regression (2026-08-31): hash-blind trimming to the newest 25
+        // evicted v1's green run permanently (the draft can never re-record it).
+        mockMvc.perform(patch("/api/v1/metadata/apps/" + appId).with(builderJwt())
+                        .contentType("application/json").content("{\"label\":\"iterated\"}"))
+                .andExpect(status().isOk());
+        for (int i = 0; i < 30; i++) {
+            mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/suite-runs")
+                            .with(builderJwt())
+                            .contentType("application/json").content("{}"))
+                    .andExpect(status().isOk());
+        }
+
+        // v1's gate evidence survived the churn — promoting v1 stays admissible
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/environments/staging/promote")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("{\"version\":" + v1 + "}"))
+                .andExpect(status().isOk());
+    }
+
     // --- §2: the promotion artifact + §6: templates ---
 
     @Test

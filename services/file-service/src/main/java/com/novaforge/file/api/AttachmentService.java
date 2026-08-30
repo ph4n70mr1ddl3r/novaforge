@@ -97,11 +97,26 @@ public class AttachmentService {
     /**
      * Upload completion (§8): the checksum is verified server-side over the stored
      * bytes — a client-supplied checksum that disagrees rejects and deletes; then
-     * the config-gated ClamAV hook runs, quarantining detections.
+     * the config-gated ClamAV hook runs, quarantining detections. The verified bytes
+     * are finalized under a checksum-derived key the upload URL can never address:
+     * the presigned PUT outlives this call, and a replayed PUT against the staging
+     * key must not be able to swap the content behind a recorded clean verdict.
      */
     @Transactional
-    public Completion complete(UUID tenantId, UUID id, String clientChecksum) {
+    public Completion complete(UUID tenantId, UUID actor, UUID id, String clientChecksum) {
         Attachment attachment = require(tenantId, id);
+        if (!attachment.uploadedBy().equals(actor)) {
+            throw new PlatformException(PlatformErrorCode.FORBIDDEN,
+                    "only the uploader may complete an attachment");
+        }
+        // Stat before get: the presigned PUT carries no length constraint, so the cap
+        // must reject on the stored size before the object is ever materialized.
+        long storedSize = storage.size(attachment.objectKey());
+        if (storedSize > maxSizeBytes) {
+            storage.remove(attachment.objectKey());
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "uploaded object exceeds the size cap (" + storedSize + " bytes)");
+        }
         byte[] content = storage.get(attachment.objectKey());
         if (content.length > maxSizeBytes) {
             storage.remove(attachment.objectKey());
@@ -132,6 +147,11 @@ public class AttachmentService {
                                          updated_at = now()
                  WHERE tenant_id = ? AND id = ?""",
                 checksum, content.length, scan, tenantId, id);
+        // Finalize behind the verdict: the checksum key is content-addressed, so a
+        // replayed PUT to the still-valid staging URL cannot alter what downloads serve.
+        if (!"infected".equals(scan)) {
+            storage.copy(attachment.objectKey(), finalizedKey(attachment.objectKey(), checksum));
+        }
         if ("infected".equals(scan)) {
             // quarantine: download blocked + the audit event (§8)
             outbox(tenantId, "file.quarantined", Map.of(
@@ -155,9 +175,19 @@ public class AttachmentService {
     /** Binds an attachment to its owning record (the file field's save path). */
     @Transactional
     public void bind(UUID tenantId, UUID id, String entity, UUID recordId) {
+        Attachment existing = require(tenantId, id);
+        if (existing.entity() != null || existing.recordId() != null) {
+            // A rebind would move a confidential record's attachment onto one the
+            // rebinder can read — the binding is write-once; correct a mistake by
+            // uploading again.
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "attachment " + id + " is already bound to a record — bindings do not "
+                            + "move (upload a new attachment instead)");
+        }
         int updated = jdbc.update("""
                 UPDATE fl_attachments SET entity = ?, record_id = ?, updated_at = now()
-                 WHERE tenant_id = ? AND id = ?""", entity, recordId, tenantId, id);
+                 WHERE tenant_id = ? AND id = ? AND entity IS NULL AND record_id IS NULL""",
+                entity, recordId, tenantId, id);
         if (updated == 0) {
             throw new PlatformException(PlatformErrorCode.NOT_FOUND, "attachment " + id);
         }
@@ -175,9 +205,9 @@ public class AttachmentService {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "attachment " + id + " has not completed (checksum/scanning pending)");
         }
+        String key = verifiedKey(tenantId, attachment);
         grant(tenantId, id, "download");
-        String url = storage.presign(attachment.objectKey(), StoragePort.Mode.DOWNLOAD,
-                presignExpirySeconds);
+        String url = storage.presign(key, StoragePort.Mode.DOWNLOAD, presignExpirySeconds);
         return new UploadGrant(id, url, Instant.now(clock).plusSeconds(presignExpirySeconds));
     }
 
@@ -205,7 +235,16 @@ public class AttachmentService {
     /** The internal download leg (import sources, job outputs verified elsewhere). */
     public byte[] content(UUID tenantId, UUID id) {
         Attachment attachment = require(tenantId, id);
-        return storage.get(attachment.objectKey());
+        if ("infected".equals(attachment.virusScan())) {
+            // quarantined bytes never reach the import pipeline's parsers either
+            throw new PlatformException(PlatformErrorCode.FORBIDDEN,
+                    "attachment " + id + " is quarantined — download is blocked (§8)");
+        }
+        if (attachment.checksum() == null) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "attachment " + id + " has not completed (checksum/scanning pending)");
+        }
+        return storage.get(verifiedKey(tenantId, attachment));
     }
 
     /**
@@ -220,24 +259,70 @@ public class AttachmentService {
                 (long) content.length, null, null);
         storage.put(tenantId + "/" + grant.id(), content,
                 contentType == null ? "application/octet-stream" : contentType);
-        return complete(tenantId, grant.id(), null);
+        return complete(tenantId, actor, grant.id(), null);
     }
 
     // --- helpers ---
 
     record Attachment(UUID id, String objectKey, String fileName, String virusScan,
-                      UUID uploadedBy) {
+                      UUID uploadedBy, String checksum, String entity, UUID recordId) {
     }
 
     private Attachment require(UUID tenantId, UUID id) {
         return jdbc.query("""
-                        SELECT id, object_key, file_name, virus_scan, uploaded_by
+                        SELECT id, object_key, file_name, virus_scan, uploaded_by, checksum,
+                               entity, record_id
                           FROM fl_attachments WHERE tenant_id = ? AND id = ?""",
                 (rs, i) -> new Attachment(rs.getObject("id", UUID.class),
                         rs.getString("object_key"), rs.getString("file_name"),
-                        rs.getString("virus_scan"), rs.getObject("uploaded_by", UUID.class)),
+                        rs.getString("virus_scan"), rs.getObject("uploaded_by", UUID.class),
+                        rs.getString("checksum"), rs.getString("entity"),
+                        rs.getObject("record_id", UUID.class)),
                 tenantId, id).stream().findFirst().orElseThrow(() ->
                 new PlatformException(PlatformErrorCode.NOT_FOUND, "attachment " + id));
+    }
+
+    /**
+     * The content-addressed finalization key: under the recorded checksum, so the
+     * still-valid upload URL (which addresses the staging key) can never swap what a
+     * completed verdict vouches for.
+     */
+    private static String finalizedKey(String objectKey, String checksum) {
+        return objectKey + "/v/" + checksum;
+    }
+
+    /**
+     * The key downloads serve, with lazy healing: a completed row finalizes its bytes
+     * at completion, but rows completed before that existed (or whose finalized copy
+     * was reclaimed) are healed from the staging object — but only if the staging
+     * bytes still hash to the recorded checksum. Drift means the staging object was
+     * tampered with after the verdict; it is rejected audibly, never served.
+     */
+    private String verifiedKey(UUID tenantId, Attachment attachment) {
+        String finalized = finalizedKey(attachment.objectKey(), attachment.checksum());
+        try {
+            storage.size(finalized);
+            return finalized;
+        } catch (PlatformException notFinalized) {
+            byte[] content = storage.get(attachment.objectKey());
+            String actual = sha256(content);
+            if (!actual.equalsIgnoreCase(attachment.checksum())) {
+                outbox(tenantId, "file.tampered", Map.of(
+                        "attachmentId", attachment.id().toString(),
+                        "fileName", attachment.fileName(),
+                        "recordedChecksum", String.valueOf(attachment.checksum()),
+                        "actualChecksum", actual,
+                        "uploadedBy", attachment.uploadedBy().toString()));
+                LOG.error("attachment {} fails its recorded checksum — staging object "
+                        + "tampered after completion; download denied", attachment.id());
+                throw new PlatformException(PlatformErrorCode.INTERNAL,
+                        "attachment " + attachment.id() + " no longer hashes to its "
+                                + "recorded checksum — the object may have been tampered "
+                                + "with; download denied");
+            }
+            storage.copy(attachment.objectKey(), finalized);
+            return finalized;
+        }
     }
 
     private void grant(UUID tenantId, UUID attachmentId, String mode) {

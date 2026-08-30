@@ -39,6 +39,7 @@ import tools.jackson.databind.json.JsonMapper;
         "novaforge.storage.binding=none",
         "novaforge.file.clamav.enabled=true",
         "novaforge.file.presign-expiry-seconds=900",
+        "novaforge.file.max-size-bytes=1024",
 })
 class FileServiceTests extends PostgresTestBase {
 
@@ -117,7 +118,7 @@ class FileServiceTests extends PostgresTestBase {
     @DisplayName("upload completion verifies the checksum server-side over the stored bytes")
     void checksumVerified() {
         UUID id = upload("hello novaforge", "text/plain");
-        var completion = attachments.complete(TENANT, id, null);
+        var completion = attachments.complete(TENANT, ACTOR, id, null);
         assertThat(completion.virusScan()).isEqualTo("clean");
         assertThat(completion.size()).isEqualTo(15L);
         assertThat(completion.checksum()).isEqualTo(AttachmentService.sha256(
@@ -128,7 +129,7 @@ class FileServiceTests extends PostgresTestBase {
     @DisplayName("checksum mismatch rejects and deletes the object (§11 item 5)")
     void checksumMismatchRejects() {
         UUID id = upload("hello novaforge", "text/plain");
-        assertThatThrownBy(() -> attachments.complete(TENANT, id, "bm90LXRoZS1oYXNo"))
+        assertThatThrownBy(() -> attachments.complete(TENANT, ACTOR, id, "bm90LXRoZS1oYXNo"))
                 .isInstanceOf(PlatformException.class)
                 .hasMessageContaining("checksum mismatch");
         // the stored object is gone — a rejected upload leaves no bytes behind
@@ -151,7 +152,7 @@ class FileServiceTests extends PostgresTestBase {
         // the clock moves past expiry: a download presign for the same attachment
         // is a fresh grant — 15 minutes from the new now
         UUID id = upload("fresh", "text/plain");
-        attachments.complete(TENANT, id, null);
+        attachments.complete(TENANT, ACTOR, id, null);
         CLOCK.set(Clock.fixed(Instant.parse("2026-08-24T01:00:00Z"), ZoneOffset.UTC));
         var download = attachments.presignDownload(TENANT, id);
         assertThat(download.expiresAt()).isEqualTo(Instant.parse("2026-08-24T01:15:00Z"));
@@ -161,7 +162,7 @@ class FileServiceTests extends PostgresTestBase {
     @DisplayName("ClamAV gate (config-on): EICAR quarantines — download blocked, event outboxed")
     void clamavQuarantinesEicar() {
         UUID id = upload(EICAR, "application/octet-stream");
-        var completion = attachments.complete(TENANT, id, null);
+        var completion = attachments.complete(TENANT, ACTOR, id, null);
         assertThat(completion.virusScan()).isEqualTo("infected");
         // download is blocked for quarantined files (§8)
         assertThatThrownBy(() -> attachments.presignDownload(TENANT, id))
@@ -182,5 +183,78 @@ class FileServiceTests extends PostgresTestBase {
         assertThat(completion.virusScan()).isEqualTo("clean");
         assertThat(completion.size()).isEqualTo("a,b\n1,2\n".length());
         assertThat(attachments.content(TENANT, completion.id())).isNotNull();
+    }
+
+    @Test
+    @DisplayName("a replayed PUT against the still-valid staging URL cannot swap completed bytes")
+    void replayedPutCannotSwapVerifiedBytes() {
+        // Anti-regression (2026-08-31): the presigned PUT outlives completion, and
+        // downloads used to address the same key — re-uploading EICAR (or any
+        // substitution) after a clean verdict silently replaced the served content.
+        UUID id = upload("verified payload", "text/plain");
+        var completion = attachments.complete(TENANT, ACTOR, id, null);
+        storage.put(TENANT + "/" + id, EICAR.getBytes(StandardCharsets.UTF_8),
+                "application/octet-stream");
+        // the served bytes are the finalized, content-addressed copy of what was verified
+        assertThat(new String(attachments.content(TENANT, id), StandardCharsets.UTF_8))
+                .isEqualTo("verified payload");
+        assertThat(attachments.presignDownload(TENANT, id).uploadUrl())
+                .contains(completion.checksum());
+    }
+
+    @Test
+    @DisplayName("a tampered staging object with no finalized copy fails its checksum audibly")
+    void tamperedStagingObjectRejects() {
+        UUID id = upload("original bytes", "text/plain");
+        attachments.complete(TENANT, ACTOR, id, null);
+        // simulate a pre-finalization row (or a reclaimed copy): drop the finalized object
+        String checksum = String.valueOf(attachments.metadata(TENANT, id).orElseThrow()
+                .get("checksum"));
+        storage.remove(TENANT + "/" + id + "/v/" + checksum);
+        storage.put(TENANT + "/" + id, "swapped bytes".getBytes(StandardCharsets.UTF_8),
+                "text/plain");
+        // the heal path re-hashes: drift from the recorded checksum denies and outboxes
+        assertThatThrownBy(() -> attachments.content(TENANT, id))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("no longer hashes");
+        var events = jdbc.queryForList(
+                "SELECT payload FROM fl_event_outbox WHERE event_type = 'file.tampered'");
+        assertThat(events).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("only the uploader may complete — a stranger's complete cannot delete their bytes")
+    void completionIsUploadersOnly() {
+        UUID id = upload("owners upload", "text/plain");
+        UUID stranger = UUID.fromString("44444444-4444-4444-8444-444444444444");
+        assertThatThrownBy(() -> attachments.complete(TENANT, stranger, id, "AAAA"))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("only the uploader");
+        // the bytes survived the stranger's mismatch attempt (the old path deleted them)
+        var completion = attachments.complete(TENANT, ACTOR, id, null);
+        assertThat(completion.size()).isEqualTo(13L);
+    }
+
+    @Test
+    @DisplayName("bindings are write-once — a bound attachment never moves to another record")
+    void bindingsAreWriteOnce() {
+        UUID id = upload("bound once", "text/plain");
+        attachments.complete(TENANT, ACTOR, id, null);
+        attachments.bind(TENANT, id, "Order", UUID.randomUUID());
+        assertThatThrownBy(() -> attachments.bind(TENANT, id, "TheirEntity", UUID.randomUUID()))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("already bound");
+    }
+
+    @Test
+    @DisplayName("the size cap binds the stored object, not the declared size (stat before get)")
+    void sizeCapRejectsOversizeObjects() {
+        var grant = attachments.beginUpload(TENANT, ACTOR, "big.bin",
+                "application/octet-stream", 10L, null, null);   // declared 10 bytes
+        byte[] oversize = new byte[2048];                        // the PUT carries no cap
+        storage.put(TENANT + "/" + grant.id(), oversize, "application/octet-stream");
+        assertThatThrownBy(() -> attachments.complete(TENANT, ACTOR, grant.id(), null))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("size cap");
     }
 }
