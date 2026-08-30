@@ -161,10 +161,12 @@ public class RecordEngine {
 
         int newVersion = updateShaped(tenantId, actorId, handle, id, merged,
                 expectedVersion, "update");
+        Map<String, Object> before = existing.data();
         replaceChildren(tenantId, actorId, app, handle, id, children);
         newVersion = recomputeRollupsIfChanged(tenantId, actorId, app, handle, id, merged,
                 newVersion, false);
-        events.publish(event("record.updated", tenantId, handle.entityKey(), id, actorId));
+        events.publish(event("record.updated", tenantId, handle.entityKey(), id, actorId),
+                changeMetadata(before, merged));
         recomputeParentRollups(tenantId, actorId, app, handle, merged, existing.data());
         runHooks(app, handle, tenantId, id, merged, "afterSave", appSystemPrincipal(handle), actorId, transition);
 
@@ -193,7 +195,8 @@ public class RecordEngine {
                 appSystemPrincipal(handle), actorId, null);
         records.softDelete(tenantId, handle.entityKey(), id, expectedVersion, actorId);
         cascadeChildren(tenantId, actorId, app, handle, id);
-        events.publish(event("record.deleted", tenantId, handle.entityKey(), id, actorId));
+        events.publish(event("record.deleted", tenantId, handle.entityKey(), id, actorId),
+                deletedMetadata(existingData));
         recomputeParentRollups(tenantId, actorId, app, handle, existingData, existingData);
         runHooks(app, handle, tenantId, id, existingData, "afterDelete",
                 appSystemPrincipal(handle), actorId, null);
@@ -639,10 +642,12 @@ public class RecordEngine {
 
         int newVersion = updateShaped(tenantId, principal, handle, id, merged,
                 expectedVersion, "integration update");
+        Map<String, Object> before = existing.data();
         replaceChildren(tenantId, principal, app, handle, id, children);
         newVersion = recomputeRollupsIfChanged(tenantId, principal, app, handle, id, merged,
                 newVersion, false);
-        events.publish(event("record.updated", tenantId, handle.entityKey(), id, principal));
+        events.publish(event("record.updated", tenantId, handle.entityKey(), id, principal),
+                changeMetadata(before, merged));
         runHooks(app, handle, tenantId, id, merged, "afterSave", appSystemPrincipal(handle),
                 principal, transition);
         Map<String, Object> shaped = shape(handle.entity(),
@@ -1244,7 +1249,8 @@ public class RecordEngine {
         updateShaped(tenantId, systemPrincipal, handle, UUID.fromString(recordId), merged,
                 version, "hook update");
         events.publish(event("record.updated", tenantId, handle.entityKey(),
-                UUID.fromString(recordId), systemPrincipal));
+                UUID.fromString(recordId), systemPrincipal),
+                changeMetadata(existing.data(), merged));
         return merged;
     }
 
@@ -1277,6 +1283,7 @@ public class RecordEngine {
                                           Map<String, Object> parentData, int currentVersion,
                                           boolean publishEvent) {
         boolean changed = false;
+        Map<String, Object> before = new LinkedHashMap<>();
         for (FieldDefinition field : parent.entity().fields()) {
             if (field.rollup() == null) {
                 continue;
@@ -1287,6 +1294,7 @@ public class RecordEngine {
             Object aggregate = normalizeRollupScale(field, rollup.aggregate(records, tenantId,
                     childHandle, bindingField, parentId, rollup.field()));
             if (rollupMoved(aggregate, parentData.get(field.apiName()))) {
+                before.put(field.apiName(), parentData.get(field.apiName()));
                 parentData.put(field.apiName(), aggregate);
                 changed = true;
             }
@@ -1301,11 +1309,37 @@ public class RecordEngine {
                 // own update path publishes its record.updated after this call, so it
                 // passes false and the parent is not double-published.
                 events.publish(event("record.updated", tenantId, parent.entityKey(),
-                        parentId, actorId));
+                        parentId, actorId), changeMetadata(before, parentData));
             }
             return newVersion;
         }
         return currentVersion;
+    }
+
+    /**
+     * The event payload's change legs (2026-08-31): an update carries each changed
+     * field's prior and next value (a consumer or the audit trail can reconstruct
+     * what moved without re-fetching), a delete carries the deleted record's data —
+     * a {@code record.deleted} consumer otherwise cannot know what left.
+     */
+    private static Map<String, Object> changeMetadata(Map<String, Object> before,
+                                                      Map<String, Object> after) {
+        Map<String, Object> changed = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : after.entrySet()) {
+            if (!java.util.Objects.equals(entry.getValue(), before.get(entry.getKey()))) {
+                // Arrays.asList, not List.of: a field may change from (or to) null —
+                // the value pair is content, and List.of rejects null elements
+                changed.put(entry.getKey(),
+                        java.util.Arrays.asList(before.get(entry.getKey()), entry.getValue()));
+            }
+        }
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("changed", changed);
+        return metadata;
+    }
+
+    private static Map<String, Object> deletedMetadata(Map<String, Object> data) {
+        return Map.of("before", data);
     }
 
     /**
@@ -1754,7 +1788,7 @@ public class RecordEngine {
                 records.softDelete(tenantId, childHandle.entityKey(), existing.id(),
                         existing.version(), actorId);
                 events.publish(event("record.deleted", tenantId, childHandle.entityKey(),
-                        existing.id(), actorId));
+                        existing.id(), actorId), deletedMetadata(existing.data()));
             }
             List<ProblemErrors.FieldError> errors = new ArrayList<>();
             for (Map<String, Object> childBody : entry.getValue()) {
@@ -1821,7 +1855,7 @@ public class RecordEngine {
                 records.softDelete(tenantId, childHandle.entityKey(), child.id(),
                         child.version(), actorId);
                 events.publish(event("record.deleted", tenantId, childHandle.entityKey(),
-                        child.id(), actorId));
+                        child.id(), actorId), deletedMetadata(child.data()));
             }
         }
     }

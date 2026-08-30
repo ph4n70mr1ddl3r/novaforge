@@ -37,6 +37,26 @@ class GatewayApplicationTests {
     }
 
     @Test
+    @DisplayName("prometheus is authenticated at the edge — anonymous scrape 401s, scoped token passes")
+    void prometheusIsNotAnonymous() throws Exception {
+        // Anti-regression (2026-08-31): /actuator/** was permitAll — the L-TP7
+        // behind-the-cluster posture never held for the gateway itself, the one
+        // internet-facing component; per-route volumes and infra detail were
+        // anonymously scrapeable. Health/info stay anonymous; the exposition
+        // surface now carries the platform's own token.
+        mockMvc.perform(get("/actuator/prometheus"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"));
+        mockMvc.perform(get("/actuator/prometheus")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"))))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("jvm_")));
+        // health stays anonymous for probes and humans
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("SPA hosting (PHASE-2 §13 Q5): shells + deep links serve anonymously from the bundle tree")
     void spaShellsServeAnonymously() throws Exception {
         // the test classpath ships a marker bundle so the fallback path is observable

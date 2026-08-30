@@ -837,6 +837,43 @@ class RecordApiTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("record events carry what changed: updates their diff, deletes their data")
+    void recordEventsCarryChangeMetadata() throws Exception {
+        // Anti-regression (2026-08-31): the payload carried only ids — a
+        // record.updated consumer could not know what changed and a record.deleted
+        // consumer could not know what left.
+        MvcResult created = mockMvc.perform(post("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"title\":\"before-value\"}"))
+                .andExpect(status().isOk()).andReturn();
+        String id = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+        mockMvc.perform(patch("/api/v1/runtime/Ticket/" + id).with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"version\":1,\"title\":\"after-value\"}"))
+                .andExpect(status().isOk());
+        String updatedPayload = jdbc.queryForObject("""
+                SELECT payload::text FROM event_outbox
+                 WHERE entity_id = 'Erp.Ticket' AND event_type = 'record.updated'
+                   AND payload->>'recordId' = ?
+                 ORDER BY created_at DESC LIMIT 1""", String.class, id);
+        assertThat(updatedPayload).contains("\"changed\"");
+        assertThat(updatedPayload).contains("\"title\"");
+        assertThat(updatedPayload).contains("before-value");
+        assertThat(updatedPayload).contains("after-value");
+
+        mockMvc.perform(delete("/api/v1/runtime/Ticket/" + id).with(jwtFor(TENANT))
+                        .param("version", "2"))
+                .andExpect(status().isNoContent());
+        String deletedPayload = jdbc.queryForObject("""
+                SELECT payload::text FROM event_outbox
+                 WHERE entity_id = 'Erp.Ticket' AND event_type = 'record.deleted'
+                   AND payload->>'recordId' = ?
+                 ORDER BY created_at DESC LIMIT 1""", String.class, id);
+        assertThat(deletedPayload).contains("\"before\"");
+        assertThat(deletedPayload).contains("after-value");   // the deleted row's data rides
+    }
+
+    @Test
     @DisplayName("a standalone child write publishes the parent's roll-up mutation (§3)")
     void standaloneChildWritePublishesParentRollupEvent() throws Exception {
         // Anti-regression (2026-08-31): roll-up recomputes rewrote the parent's data,

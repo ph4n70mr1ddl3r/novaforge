@@ -28,7 +28,15 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/actuator/**").permitAll()
+                        // health/info stay anonymous (probes, humans); prometheus
+                        // carries per-route volumes, upstream latencies, and infra
+                        // detail — the gateway is the one internet-facing component,
+                        // so the exposition surface is authenticated (any valid token:
+                        // the scraper rides the platform's own client). The
+                        // behind-the-cluster posture the L-TP7 note recorded only ever
+                        // held for the backend services, not for the edge.
+                        .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
+                        .requestMatchers("/actuator/**").hasAuthority("SCOPE_novaforge.api")
                         // the one anonymous API route (PHASE-6 §2/§6): the gateway's
                         // default JWT requirement lifts for exactly this prefix — the
                         // Integration Service authenticates by HMAC, and the prefix is

@@ -1030,3 +1030,86 @@ shape — an API design decision), the webhook upsert fence, event payloads'
 before/after depth, abandoned-upload reaping + MinIO lifecycle, the deployed
 ClamAV/MinIO/Postgres env in the helm chart, edge prometheus gating, and audit
 partition rotation.
+
+## Tenth Pass — 2026-08-31 (the recorded-open set, take two: five more close)
+
+### H-10P1 — no deployed profile enabled ClamAV, and the file service booted against localhost defaults
+
+The helm chart carried only the two auth variables — no `NOVAFORGE_CLAMAV_*`, no
+`NOVAFORGE_MINIO_*`, no `NOVAFORGE_POSTGRES_*`, and the datasource credentials were
+not env-bound at all — so every deployed profile ran with scanning off (every upload
+recorded `virusScan: skipped`, which the download door happily serves) against
+unreachable localhost infra. The chart now wires the in-cluster endpoints (Postgres,
+MinIO, clamd at `novaforge-clamav`), scanning **on** for deployed profiles
+(fail-closed: an unreachable clamd fails uploads, never waves them through), and the
+DB/MinIO credentials ride the fail-closed secret posture (documented create-secret
+steps, mirroring the auth pair). `application.yaml` binds the datasource to
+`NOVAFORGE_FILE_DB_USER/PASSWORD` with the compose defaults intact.
+
+### H-10P2 — the audit trail's monthly partition rotation: promised by the schema, implemented by nobody
+
+V1 declared "month partitions rotate forward" and a DEFAULT partition "before the
+next month's partition is added" — nothing ever added one; every row landed in
+`audit_events_default` forever. `AuditPartitionRotation` (twice daily, idempotent)
+creates the current and next month's partitions — and for months whose range already
+holds default-partition rows (always true for the live current month on a stack that
+ran pre-rotation, since Postgres rejects `CREATE … PARTITION OF` over a default
+partition whose contents violate the new bounds) it runs the standard move-and-attach
+path in one owner transaction: standalone twin with the parent's key and indexes,
+in-range rows moved across, the default emptied, ATTACH. It runs as the database
+owner (`spring.flyway.user` — V2's design: the runtime role is INSERT/SELECT and
+cannot DDL); new partitions inherit V2's default-privilege grants. Failures log and
+retry; inserts stay total through the default either way. Pinned in
+`AuditTrailTests.partitionRotationCreatesMonthsAhead` (both months exist, the
+runtime role still writes the current month's partition, live traffic flows — the
+pin found the default-partition-row conflict live, which is what forced the
+move-and-attach path into the implementation).
+
+### M-10P1 — `/actuator/prometheus` was anonymous on the internet-facing component
+
+The L-TP7 note's mitigation ("these service ports NEVER leave the cluster") held for
+the backend services but not for the gateway itself — the edge is by definition
+exposed, and `/actuator/**` was permitAll: per-route volumes, upstream latencies,
+and infra detail were anonymously scrapeable. Health/info stay anonymous (probes,
+humans); the exposition surface now requires the platform's own token. Pinned in
+`GatewayApplicationTests.prometheusIsNotAnonymous` (anonymous 401 problem+json,
+scoped token 200, health still anonymous).
+
+### M-10P2 — abandoned uploads were never reaped, and the grant ledger was write-only
+
+A client walking away between the upload grant and completion left a `pending` row
+plus an orphaned object forever (`remove` ran only on checksum mismatch/oversize) —
+unbounded table and bucket growth on busy tenants. `AttachmentReaper` (hourly)
+removes pending attachments past their grant window (creation + presign window +
+slack — every grant on them is dead by then), drops their rows and grant-ledger
+entries, and outboxes `file.upload.expired` so the cleanup is auditable; the grant
+ledger prunes past the retention window. Completed rows and in-window uploads never
+touch it. Pinned in `FileServiceTests.abandonedUploadsReap`.
+
+### M-10P3 — record events carried no notion of what changed
+
+The payload held only ids: a `record.updated` consumer could not know what changed,
+a `record.deleted` consumer could not know what left — the trail recorded the
+movement of a black box. Every update leg (user, integration, hook/principal,
+roll-up recompute) now carries `changed` — each changed field's `[before, after]`
+pair, null-tolerant (a field moving from null is content, not an NPE — the pin run
+caught `List.of` rejecting it) — and every delete leg (user, replace-children,
+cascade) carries `before`, the deleted record's data. Pinned in
+`RecordApiTests.recordEventsCarryChangeMetadata`.
+
+### Verification (this pass)
+
+audit-service 7 (5+2, incl. the rotation pin), gateway 19 (incl. the prometheus
+pin), file-service 12 (incl. the reaper pin), data-runtime api 26 (incl. the
+change-metadata pin), engine 21; the chart values parse with all twelve env
+entries (no cluster deploy available here — the chart's posture is
+documented-for-operator, like the existing fail-closed secret steps). Full serial
+`./mvnw verify` recorded in IMPLEMENTATION.md's closeout.
+
+### Recorded open after this pass
+
+The promotion chain's multi-system atomicity (intent row + idempotent provision +
+reconcile), per-app scoping of shared-projection unique indexes, the
+unremovable-last-list-branch PATCH semantics (needs a presence-preserving patch
+shape — an API design decision), and the webhook upsert fence (document that upsert
+keys must be `unique` fields, or add an engine keyed primitive).

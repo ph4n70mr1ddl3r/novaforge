@@ -52,6 +52,9 @@ class FileServiceTests extends PostgresTestBase {
     AttachmentService attachments;
 
     @Autowired
+    com.novaforge.file.api.AttachmentReaper reaper;
+
+    @Autowired
     JdbcTemplate jdbc;
 
     @Autowired
@@ -281,5 +284,43 @@ class FileServiceTests extends PostgresTestBase {
                 "text/csv;charset=UTF-8", 1L, null, null);
         assertThat(attachments.metadata(TENANT, grant.id()).orElseThrow()
                 .get("contentType")).isEqualTo("text/csv");
+    }
+
+    @Test
+    @DisplayName("abandoned uploads reap past their window; completed rows and live windows survive")
+    void abandonedUploadsReap() {
+        // Anti-regression (2026-08-31): a client walking away between grant and
+        // completion left a pending row plus an orphaned object forever — nothing
+        // else ever removed them, and the grant ledger was write-only.
+        var abandoned = attachments.beginUpload(TENANT, ACTOR, "walked-away.bin",
+                "application/octet-stream", 10L, null, null);
+        storage.put(TENANT + "/" + abandoned.id(),
+                "never completed".getBytes(StandardCharsets.UTF_8), "application/octet-stream");
+        UUID completed = upload("kept.bin", "application/octet-stream");
+        attachments.complete(TENANT, ACTOR, completed, null);
+        var live = attachments.beginUpload(TENANT, ACTOR, "still-trying.bin",
+                "application/octet-stream", 10L, null, null);
+
+        // age only the two dead ones past the reap window (the live one stays young)
+        jdbc.update("UPDATE fl_attachments SET created_at = now() - interval '3 hours' "
+                + "WHERE id IN (?, ?)", abandoned.id(), completed);
+        reaper.reap();
+
+        // the abandoned upload: row gone, object gone, the cleanup audited
+        assertThat(attachments.metadata(TENANT, abandoned.id())).isEmpty();
+        assertThatThrownBy(() -> ((StoragePort.InMemory) storage).get(TENANT + "/" + abandoned.id()))
+                .isInstanceOf(PlatformException.class);
+        var events = jdbc.queryForList(
+                "SELECT payload FROM fl_event_outbox WHERE event_type = 'file.upload.expired'");
+        assertThat(events).anySatisfy(row -> assertThat(String.valueOf(row.get("payload")))
+                .contains(abandoned.id().toString()));
+        // the completed row (aged identically) and the in-window upload survive
+        assertThat(attachments.metadata(TENANT, completed)).isPresent();
+        assertThat(attachments.metadata(TENANT, live.id())).isPresent();
+        // the grant ledger no longer grows forever
+        Integer staleGrants = jdbc.queryForObject(
+                "SELECT count(*) FROM fl_grants WHERE attachment = ?", Integer.class,
+                abandoned.id());
+        assertThat(staleGrants).isZero();
     }
 }

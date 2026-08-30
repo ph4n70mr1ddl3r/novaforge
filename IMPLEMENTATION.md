@@ -2245,3 +2245,32 @@ version → relayed → the spine subscriber sees the envelope).
 
 Verified: full serial `./mvnw verify` green end to end (23 reactor modules, container
 suites on the podman socket); metadata-service 52 with the new pin.
+
+**Spec-review closeout (2026-08-31, tenth pass) — the recorded-open set, take two:
+five more close, each pinned.**
+
+- **The file service actually deploys now** (H-10P1): the helm chart carried only the
+  auth pair — every deployed profile booted against localhost MinIO/Postgres with
+  ClamAV off (all uploads `virusScan: skipped`). The chart wires the in-cluster
+  endpoints, turns scanning **on** fail-closed (an unreachable clamd fails uploads),
+  and rides the fail-closed secret posture for DB/MinIO credentials; the datasource
+  is now env-bound (`NOVAFORGE_FILE_DB_USER/PASSWORD`, compose defaults intact).
+- **The audit trail rotates** (H-10P2): the monthly partitions V1 promised now
+  exist — `AuditPartitionRotation` runs twice-daily as the DB owner (V2's design)
+  and, for months whose rows already sit in the DEFAULT partition (the live current
+  month on any pre-rotation stack), moves them out and ATTACHes in one owner
+  transaction. Pinned; the pin itself surfaced the default-partition conflict that
+  forced the move-and-attach path.
+- **The edge's exposition surface is authenticated** (M-10P1): `/actuator/prometheus`
+  on the gateway answers 401 anonymously (health/info stay open for probes).
+- **Abandoned uploads reap** (M-10P2): pending attachments past their grant window
+  leave with their objects, audited as `file.upload.expired`; the grant ledger
+  prunes with the same pass.
+- **Record events say what changed** (M-10P3): updates carry a per-field
+  `[before, after]` diff, deletes carry the deleted record's data — every leg
+  (user/integration/hook/roll-up, replace-children/cascade), null-tolerant.
+
+Verified: full serial `./mvnw verify` green end to end (23 reactor modules, container
+suites on the podman socket). Remaining recorded open (CODE_REVIEW.md, tenth pass):
+promotion multi-system atomicity, per-app unique-index scoping, the last-list-branch
+PATCH semantics, the webhook upsert fence.

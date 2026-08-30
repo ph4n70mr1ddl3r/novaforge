@@ -52,6 +52,12 @@ class AuditTrailTests extends PostgresTestBase {
     @Autowired
     KafkaTemplate<String, String> kafka;
 
+    @Autowired
+    com.novaforge.audit.store.AuditPartitionRotation rotation;
+
+    @Autowired
+    org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     @DynamicPropertySource
     static void infrastructure(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", PostgresTestBase::jdbcUrl);
@@ -225,6 +231,44 @@ class AuditTrailTests extends PostgresTestBase {
     private void send(Map<String, Object> payload, String topic) throws Exception {
         kafka.send(new ProducerRecord<>(topic,
                 TENANT + ":" + payload.get("eventId"), MAPPER.writeValueAsString(payload))).get();
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("the monthly partition rotation creates current+next month partitions (V1's promise)")
+    void partitionRotationCreatesMonthsAhead() throws Exception {
+        // Anti-regression (2026-08-31): the schema promised rotating month partitions
+        // but nothing created them — every row landed in audit_events_default forever.
+        // The rotation runs as the owner role (V2's design: the runtime role cannot DDL).
+        rotation.rotate();
+        Integer months = jdbc.queryForObject(
+                "SELECT count(*) FROM pg_tables WHERE tablename LIKE 'audit_events_y20%'",
+                Integer.class);
+        assertThat(months).isGreaterThanOrEqualTo(2);   // current + next
+        java.time.YearMonth next = java.time.YearMonth.now().plusMonths(1);
+        String nextName = "audit_events_y" + next.getYear() + "m"
+                + String.format("%02d", next.getMonthValue());
+        Integer present = jdbc.queryForObject(
+                "SELECT count(*) FROM pg_tables WHERE tablename = ?", Integer.class, nextName);
+        assertThat(present).isEqualTo(1);
+        // and inserts still flow into the current month's partition — V2's
+        // default-privilege grant rides the owner's creations
+        UUID recordId = UUID.randomUUID();
+        kafka.send(new ProducerRecord<>("novaforge.record", TENANT + ":" + recordId,
+                MAPPER.writeValueAsString(Map.of(
+                        "event", "record.updated",
+                        "eventId", UUID.randomUUID().toString(),
+                        "tenantId", TENANT.toString(),
+                        "entityId", "Erp.JournalEntry",
+                        "recordId", recordId.toString(),
+                        "actorId", ACTOR.toString(),
+                        "occurredAt", java.time.Instant.now().toString())))).get();
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(mockMvcPerform(recordId)).contains("record.updated"));
+        Integer inMonthPartition = jdbc.queryForObject(
+                "SELECT count(*) FROM audit_events WHERE event_type = 'record.updated' "
+                        + "AND occurred_at >= date_trunc('month', now())",
+                Integer.class);
+        assertThat(inMonthPartition).isGreaterThanOrEqualTo(1);
     }
 
     private String mockMvcPerform(UUID recordId) throws Exception {
