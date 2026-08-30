@@ -987,3 +987,46 @@ entities in one tenant), the unremovable-last-list-branch PATCH semantics
 fence, event payloads' before/after depth, abandoned-upload reaping + MinIO
 lifecycle, the deployed ClamAV/MinIO/Postgres env in the helm chart, edge
 prometheus gating, and audit partition rotation.
+
+## Ninth Pass — 2026-08-31 (the metadata outbox: the recorded-open set's highest-value item)
+
+### H-9P1 — `metadata.published` rode inside the publish transaction
+
+`DefinitionService.publish` is `@Transactional`, and the Kafka send happened before
+commit (`kafka.send(record).get(10, TimeUnit.SECONDS)`): (a) a broker outage held
+every publish's DB connection — and the `md_apps` row lock — for the full 10-second
+timeout before rolling back, so a burst of publishes under a broker blip exhausted
+the pool and took the metadata service's reads down with it; (b) a send that
+succeeded just before a rollback (deadlock, connection drop) emitted
+`metadata.published` vN for a version row that never existed — the Data Runtime
+materializer, scheduler registry, and reporting caches consuming a phantom version,
+with no outbox and no compensation. The publisher now enqueues the envelope on a
+transactional outbox (`md_event_outbox`, V11) that commits atomically with the
+version; `MetadataOutboxRelay` (the PHASE-4 §2 pattern every other eventing service
+already rides) delivers at-least-once to `novaforge.metadata`, keyed
+`tenantId:appId`, and retries until the broker returns — unpublished rows never
+leave, so a broker outage now *delays* the announcement instead of taking the
+service down or emitting phantoms. Retention matches the other outboxes (published
+rows drop after `retention-days`). The delivery semantic change is deliberate and
+recorded: the old "a broker outage fails the publish audibly" posture cost pool
+stability for no durability gain. Pinned in
+`DefinitionLifecycleTests.publishEventsRideTheOutbox` (row enqueued with the
+version → relay marks it published → the spine subscriber sees the same envelope);
+the suite's existing spine assertions now transitively exercise the relay.
+
+### Verification (this pass)
+
+metadata-service 52 green (the new outbox pin; the hermetic smoke slice stubs the
+outbox's JdbcTemplate — it excludes the DataSource autoconfiguration); full serial
+`./mvnw verify` green end to end (all 23 reactor modules, container suites on the
+podman socket).
+
+### Recorded open after this pass
+
+The promotion chain's multi-system atomicity (intent row + idempotent provision +
+reconcile), per-app scoping of shared-projection unique indexes, the
+unremovable-last-list-branch PATCH semantics (needs a presence-preserving patch
+shape — an API design decision), the webhook upsert fence, event payloads'
+before/after depth, abandoned-upload reaping + MinIO lifecycle, the deployed
+ClamAV/MinIO/Postgres env in the helm chart, edge prometheus gating, and audit
+partition rotation.

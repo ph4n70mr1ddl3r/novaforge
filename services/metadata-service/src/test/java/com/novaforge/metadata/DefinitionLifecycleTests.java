@@ -1269,6 +1269,47 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                 .andExpect(jsonPath("$.pages.length()").value(0));
     }
 
+    @Test
+    @DisplayName("publish events ride the transactional outbox: enqueued with the version, relayed")
+    void publishEventsRideTheOutbox() throws Exception {
+        // Anti-regression (2026-08-31): metadata.published was sent inside the publish
+        // transaction — a broker outage held the connection for the send timeout and a
+        // send-then-rollback emitted a phantom event. The outbox row commits with the
+        // version; the relay delivers at-least-once.
+        MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps")
+                        .with(builderJwt())
+                        .contentType("application/json")
+                        .content("{ \"apiName\": \"OutboxApp\", \"entities\": [ "
+                                + "{ \"apiName\": \"Thing\", "
+                                + "\"fields\": [ { \"apiName\": \"name\", \"type\": \"text\" } ] } ] }"))
+                .andExpect(status().isOk()).andReturn();
+        String appId = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/publish").with(builderJwt()))
+                .andExpect(status().isOk());
+        String appUuid = java.util.UUID.fromString(appId).toString();
+        // the row committed atomically with the version
+        await().atMost(Duration.ofSeconds(10)).until(() -> {
+            Integer enqueued = jdbc.queryForObject(
+                    "SELECT count(*) FROM md_event_outbox WHERE app_id = ?::uuid "
+                            + "AND event_type = 'metadata.published'", Integer.class, appUuid);
+            return enqueued != null && enqueued >= 1;
+        });
+        // the relay delivered it to the spine and marked it published
+        await().atMost(Duration.ofSeconds(10)).until(() -> {
+            Integer relayed = jdbc.queryForObject(
+                    "SELECT count(*) FROM md_event_outbox WHERE app_id = ?::uuid "
+                            + "AND published_at IS NOT NULL", Integer.class, appUuid);
+            return relayed != null && relayed >= 1;
+        });
+        // the spine subscriber saw the same envelope
+        await().atMost(Duration.ofSeconds(10)).until(() -> {
+            java.util.List<String> mine = new java.util.ArrayList<>();
+            PUBLISHED_EVENTS.drainTo(mine);
+            return mine.stream().anyMatch(envelope -> envelope.contains(appId)
+                    && envelope.contains("metadata.published"));
+        });
+    }
+
     // Small fixtures kept local to this suite.
     static final class JournalAppFixtures {
         static final String JSON = """

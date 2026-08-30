@@ -2226,3 +2226,22 @@ container suites on the podman socket); frontend workspace untouched this pass.
 The structural remainder (promotion atomicity, the metadata outbox, per-app unique
 index scoping, the last-list-item PATCH semantics, and the ops postures) stays
 recorded open in CODE_REVIEW.md (eighth pass).
+
+**Spec-review closeout (2026-08-31, ninth pass) — the metadata publish outbox lands.**
+The recorded-open set's highest-value item: `metadata.published` was sent inside the
+publish transaction — a broker outage held every publish's DB connection (and the app
+row lock) for the full 10-second send timeout (pool exhaustion took the whole
+service's reads down under a burst), and a send that succeeded just before a
+rollback emitted a phantom event for a version that never existed (the materializer
+and every consuming cache chase it). V11 adds `md_event_outbox`; the publisher
+enqueues atomically with the version; `MetadataOutboxRelay` (the PHASE-4 §2 pattern
+every other eventing service already rides) delivers at-least-once to
+`novaforge.metadata` keyed `tenantId:appId` and retries until the broker returns —
+unpublished rows never leave; retention matches the other outboxes. Delivery
+semantics deliberately shift from "fail the publish audibly on broker outage" to
+"delay the announcement" — durability and pool stability over the old posture,
+recorded in CODE_REVIEW.md. Pinned (`publishEventsRideTheOutbox`: enqueued with the
+version → relayed → the spine subscriber sees the envelope).
+
+Verified: full serial `./mvnw verify` green end to end (23 reactor modules, container
+suites on the podman socket); metadata-service 52 with the new pin.

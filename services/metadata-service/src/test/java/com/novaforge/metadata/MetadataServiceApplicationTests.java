@@ -18,7 +18,8 @@ import org.springframework.test.web.servlet.MockMvc;
 @SpringBootTest(properties = {
         "novaforge.metadata.publish-transport=noop",
         // The kafka starter's template builds lazily — no broker needed for a hermetic
-        // context (publish emission is disabled above).
+        // context (publish emission is disabled above). The publish outbox still wires a
+        // JdbcTemplate — stubbed here, never called under the noop transport.
         "spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
                 + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration"
 })
@@ -27,6 +28,14 @@ class MetadataServiceApplicationTests {
 
     @MockitoBean
     MetadataStore metadataStore;
+
+    @org.springframework.boot.test.context.TestConfiguration
+    static class OutboxStub {
+        @org.springframework.context.annotation.Bean
+        org.springframework.jdbc.core.JdbcTemplate jdbc() {
+            return org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        }
+    }
 
     @Autowired
     MockMvc mockMvc;
