@@ -2244,3 +2244,85 @@ pre-existing tests deleted. The eleven charts lint + render under helm 3.16.4
 (the same check the new CI charts job runs). Every fix carries its pin; the
 engine guard legs were bite-proven by reverting the fix and watching the new
 pins fail.
+
+## Twentieth Pass — 2026-08-31 (the closeout re-audit: the nineteenth's own landings + its recorded verification gaps)
+
+The nineteenth pass closed thirty-two defects and recorded two verification
+gaps of its own; this pass re-audited the newest landings first (the richest
+vein, nineteen passes running) and closed both gaps. The re-audit found three
+real defects — all in the nineteenth pass's own chart work.
+
+### The re-audit of 1ddecae — what held and what didn't
+
+- **Held**: the RecordEngine guard legs (committed exactly as pinned; the
+  doubled FOR-SHARE parent check is re-entrant per transaction and locks in a
+  stable field order — no self-deadlock, no new lock-order inversion; the
+  cascade/inline-child paths insert without hooks, so they have no post-hook
+  leg to miss); the two ConsumerErrorConfig wirings (no listener names a
+  custom factory, so every listener resolves the overridden default bean, and
+  neither service sets `spring.kafka.listener.*` props the Boot configurer
+  would have applied); the cross-tenant recipient gate (the roles-of surface
+  answers membership, 404-on-unknown fails closed through the catch, and a
+  role-less "member" is dropped by the documented definition — the platform
+  DB's tenant binding IS the role row).
+- **Didn't hold — the chart env rewrite had three gaps of its own**, found by
+  a two-way consistency check (every chart env name must be consumed by a yaml
+  placeholder, every non-knob placeholder must be chart-fed):
+  1. the integration chart never received its DB wiring at all — its yaml
+     wants `NOVAFORGE_INTEGRATION_DB_USER/_PASSWORD` (and the Postgres
+     host/port pair) and the chart set none of them;
+  2. the integration yaml also binds `NOVAFORGE_NOTIFICATION_URL`, unfeed;
+  3. the audit chart bound the Flyway owner PASSWORD but not the owner
+     USERNAME (`NOVAFORGE_AUDIT_DB_OWNER`). All three repaired on the same
+     secret posture; both touched charts re-verified under helm 3.16.4
+     (lint + template); the checker now reports zero real gaps (the remainder
+     is documented tuning knobs with sane defaults — scan intervals, relay
+     cadences, log dir — each individually env-tunable).
+
+### The two recorded verification gaps close
+
+- **The BuilderShell harness exists** (frontend/builder-ui/test/shell.test.tsx):
+  the nineteenth pass's pages-screen reload fix shipped unpinned because no
+  test mounted the shell. The harness stubs the metadata fetches behind the
+  real PlatformClient (v1 serves the mount load, every later getApp serves
+  the post-save app), drives mount → pages screen → dirty a customization →
+  save → PUT, and pins that a FRESH getApp lands after the putPage (exactly
+  one call served the mount; the second is the reload). Bite-proven: with the
+  `await reload()` removed the pin times out waiting for the second fetch.
+- **The DLT publish leg is observed end to end** — the real production
+  factory bean, a real broker, a real dead letter. The retry budget became
+  property-tunable in all three ConsumerErrorConfigs
+  (`novaforge.kafka.consumer-retry.{initial-ms,max-interval-ms,max-attempts}`,
+  defaults bit-identical to the hardcoded 1000/60000/10 they replaced —
+  unified across audit/notification/workflow in this pass). The new
+  AuditDeadLetterTests and NotificationDeadLetterTests shrink the budget to
+  10ms/10ms/3 in the test context, run an always-failing listener through the
+  autowired `kafkaListenerContainerFactory`, assert exactly three deliveries
+  (the budget exhausted, not skipped), then subscribe a plain KafkaConsumer
+  to `<topic>.DLT.<group>` and assert the dead-lettered payload, key,
+  original partition, and the recoverer-only `kafka_dlt-original-topic`
+  header. Both bite-proven: with the recoverer removed from the handler both
+  tests fail at exactly the dead-letter assertion. What stays honestly
+  unobserved: the production budget's own ~5-minute exhaustion — the DLT leg
+  is observed at the shrunk budget through the identical wiring (same factory
+  bean, same recoverer, same destination expression).
+
+### Verification (this pass)
+
+Full serial `./mvnw verify` **BUILD SUCCESS, honest exit 0** — 498 backend
+tests (audit 9 and notification 18 with the new dead-letter observations;
+workflow 39 re-run green on the unified tunable config; the whole of the
+prior passes' suites underneath), zero failures, zero errors, zero skipped.
+Frontend: `pnpm check` exit 0 and 183 vitest green across 26 files (the
+BuilderShell harness is the twenty-sixth). Both touched charts re-verified
+under helm 3.16.4 (lint + template). Both new pins bite-proven; the shell
+pin bite-proven against the reload's removal, the dead-letter pins against
+the recoverer's removal.
+
+### Recorded open after this pass
+
+Unchanged from the nineteenth (deliberate decisions, not defects): the
+in-cluster infra chart set, the NetworkPolicy/SA/PDB/immutable-tag posture
+alongside L-TP7, and the prior set. Plus this pass's own honest limit: the
+production retry budget's five-minute exhaustion is verified at the shrunk
+budget through identical wiring, not at full duration.

@@ -2,6 +2,7 @@ package com.novaforge.audit.api;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.annotation.EnableKafka;
@@ -30,6 +31,14 @@ import org.springframework.util.backoff.ExponentialBackOff;
  * (IllegalArgumentException/DateTimeParseException) are caught in-listener and never
  * reach the handler; the not-retryable registration keeps that contract if one ever
  * escapes.</p>
+ *
+ * <p>The budget itself is property-tunable ({@code novaforge.kafka.consumer-retry.*},
+ * unified across audit/notification/workflow in the twentieth pass): the defaults below
+ * ARE the production budget — 1 s initial doubling to a 60 s ceiling, ten attempts — and
+ * only the test context shrinks them (10 ms/10 ms/three attempts), because exhausting
+ * the production budget takes ~5 minutes of cumulative backoff and no honest test waits
+ * that out. Runtime behavior with the properties unset is bit-identical to the hardcoded
+ * values this replaced.</p>
  */
 @Configuration
 @EnableKafka
@@ -43,14 +52,17 @@ public class ConsumerErrorConfig {
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory(
             ConsumerFactory<String, String> consumerFactory,
-            KafkaTemplate<String, String> kafkaTemplate) {
+            KafkaTemplate<String, String> kafkaTemplate,
+            @Value("${novaforge.kafka.consumer-retry.initial-ms:1000}") long retryInitialMs,
+            @Value("${novaforge.kafka.consumer-retry.max-interval-ms:60000}") long retryMaxIntervalMs,
+            @Value("${novaforge.kafka.consumer-retry.max-attempts:10}") long retryMaxAttempts) {
         ConcurrentKafkaListenerContainerFactory<String, String> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory);
 
-        ExponentialBackOff backoff = new ExponentialBackOff(1_000L, 2.0);
-        backoff.setMaxInterval(60_000L);
-        backoff.setMaxAttempts(10L);
+        ExponentialBackOff backoff = new ExponentialBackOff(retryInitialMs, 2.0);
+        backoff.setMaxInterval(retryMaxIntervalMs);
+        backoff.setMaxAttempts(retryMaxAttempts);
 
         DeadLetterPublishingRecoverer deadLetters = new DeadLetterPublishingRecoverer(
                 kafkaTemplate,

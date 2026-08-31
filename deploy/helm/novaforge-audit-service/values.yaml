@@ -46,6 +46,11 @@ env:
       secretKeyRef:
         name: novaforge-db
         key: password
+  - name: NOVAFORGE_AUDIT_DB_OWNER
+    valueFrom:
+      secretKeyRef:
+        name: novaforge-db
+        key: owner-user
   - name: NOVAFORGE_AUDIT_DB_OWNER_PASSWORD
     valueFrom:
       secretKeyRef:

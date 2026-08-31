@@ -66,3 +66,24 @@ env:
     value: "http://novaforge-keycloak:8080/realms/novaforge"
   - name: NOVAFORGE_TEMPO_ENDPOINT
     value: "http://novaforge-tempo:4318/v1/traces"
+
+  # The DB wiring the nineteenth pass missed for this service (twentieth-pass
+  # cross-check: every chart env name must be consumed by a yaml placeholder and
+  # every non-knob placeholder must be chart-fed): the integration store is a
+  # Postgres database like its six siblings.
+  - name: NOVAFORGE_POSTGRES_HOST
+    value: "novaforge-postgres"
+  - name: NOVAFORGE_POSTGRES_PORT
+    value: "5432"
+  - name: NOVAFORGE_INTEGRATION_DB_USER
+    valueFrom:
+      secretKeyRef:
+        name: novaforge-db
+        key: user
+  - name: NOVAFORGE_INTEGRATION_DB_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: novaforge-db
+        key: password
+  - name: NOVAFORGE_NOTIFICATION_URL
+    value: "http://novaforge-notification-service:8088"

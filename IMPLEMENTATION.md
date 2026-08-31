@@ -2624,3 +2624,24 @@ Verified: full serial `./mvnw verify` BUILD SUCCESS (honest exit 0; 496
 tests); frontend `pnpm check` + 182 vitest; eleven charts lint and render
 under helm 3.16.4. Recorded open: in-cluster infra charts, NetworkPolicy/SA/
 PDB/immutable-tag posture (deliberate alongside L-TP7), and the prior set.
+
+**The twentieth pass (2026-08-31) — the closeout re-audit: the nineteenth's
+own landings re-reviewed, its recorded gaps closed.**
+
+- The chart env rewrite's own three gaps (the integration chart's missing DB
+  wiring, its unfeed notification URL, the audit Flyway owner username) close
+  on the same secret posture; a two-way consistency check now guards the
+  whole surface (every chart env name consumed by a placeholder, every
+  non-knob placeholder chart-fed) — zero real gaps remain.
+- The BuilderShell test harness exists: the pages-screen reload fix is pinned
+  end to end (mount → dirty → save → the fresh getApp after the PUT), and the
+  pin bites without the reload.
+- The dead-letter leg is observed end to end: the retry budget is
+  property-tunable across audit/notification/workflow (defaults bit-identical),
+  and real-broker tests drive the production factory bean to exhaustion and
+  consume the dead letter itself — payload, key, partition, and the
+  recoverer's original-topic header.
+
+Verified: full serial `./mvnw verify` BUILD SUCCESS (honest exit 0; 498
+tests); frontend `pnpm check` + 183 vitest; the two touched charts lint and
+render under helm 3.16.4. Recorded open unchanged.
