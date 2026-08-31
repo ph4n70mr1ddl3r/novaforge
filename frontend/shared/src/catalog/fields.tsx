@@ -234,7 +234,11 @@ export function FieldLookup(props: FieldWidgetProps): ReactNode {
                 readOnly={readonly}
                 onChange={(event) => void search(event.target.value)}
                 onBlur={() => {
-                    renderer.setValue(props.field, term || null);
+                    // blur only closes — the old handler also wrote the raw search
+                    // text as the field's value (a typed "Acme" became the FK), and
+                    // closing here unmounted the listbox before an option's click
+                    // could land (blur fires between mousedown and click in
+                    // Chrome/Firefox/Edge)
                     setOpen(false);
                 }}
             />
@@ -244,6 +248,14 @@ export function FieldLookup(props: FieldWidgetProps): ReactNode {
                         <li key={String(row.id)} role="option" aria-selected={false}>
                             <button
                                 type="button"
+                                // select on MOUSEDOWN (prevented): it fires before the
+                                // input's blur can unmount the listbox — and only ids
+                                // are ever written, never the typed term
+                                onMouseDown={(event) => {
+                                    event.preventDefault();
+                                    renderer.setValue(props.field, row.id ?? null);
+                                    setOpen(false);
+                                }}
                                 onClick={() => {
                                     renderer.setValue(props.field, row.id ?? null);
                                     setOpen(false);

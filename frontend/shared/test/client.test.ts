@@ -39,6 +39,47 @@ describe("PlatformClient", () => {
         expect(JSON.parse(params.get("page")!)).toEqual({ size: 50, offset: 100 });
     });
 
+    it("recovers a 401 with one refresh and one retry — and surfaces when refresh fails", async () => {
+        // Anti-regression (2026-08-31, thirteenth pass): the client had no notion of
+        // token expiry — an SPA in use past the access token's lifetime 401'd every
+        // call until a manual reload. The refresh hook retries exactly once.
+        let calls = 0;
+        const fetchImpl = vi.fn(async (input: string | URL, init?: RequestInit) => {
+            calls += 1;
+            const bearer = (init?.headers as Record<string, string>)["Authorization"];
+            const ok = bearer === "Bearer fresh";
+            return new Response(JSON.stringify(ok ? { rows: [], total: 0 } : { title: "Unauthorized", status: 401 }), {
+                status: ok ? 200 : 401,
+                headers: { "Content-Type": "application/json" },
+            });
+        });
+        const refresh = vi.fn(async () => "fresh");
+        const client = new PlatformClient(
+            "http://gateway",
+            () => "stale",
+            fetchImpl as unknown as typeof fetch,
+            refresh,
+        );
+        const result = await client.list({ entity: "Order", size: 10, offset: 0 });
+        expect(result.total).toBe(0);
+        expect(calls).toBe(2);           // 401 then the retried request
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        // refresh gives up → the 401 surfaces to the caller
+        const giveUp = new PlatformClient(
+            "http://gateway",
+            () => "stale",
+            (async () => new Response(JSON.stringify({ title: "Unauthorized", status: 401 }), {
+                status: 401,
+                headers: { "Content-Type": "application/json" },
+            })) as unknown as typeof fetch,
+            async () => null,
+        );
+        await expect(giveUp.list({ entity: "Order", size: 10, offset: 0 })).rejects.toMatchObject({
+            status: 401,
+        });
+    });
+
     it("surfaces problem+json errors with field detail", async () => {
         const { client } = stubClient({
             "POST /runtime/JournalEntry": {

@@ -1,5 +1,7 @@
 import { Suspense, createElement, type ReactNode } from "react";
 import { Expression } from "../expression/expression.ts";
+import { Decimal } from "../expression/decimal.ts";
+import { parseDate, parseInstant } from "../expression/values.ts";
 import type { EntityDefinition } from "../metadata.ts";
 import { CATALOG } from "../catalog/schemas.ts";
 import { resolveComponent } from "../registry.ts";
@@ -27,11 +29,47 @@ function EmptyFallback({ reason }: { reason: string }) {
     );
 }
 
+/**
+ * Binds a record for the expression engine: raw JSON values are tagged the way the
+ * engine compares them — numbers as exact Decimals, ISO date/datetime strings on
+ * date-typed fields as tagged values. Untagged, every numeric and date slot rule
+ * threw in the evaluator and fell back (visibility stayed visible, but readonly
+ * and required wrongly evaluated TRUE on the fallback — frozen and forced fields
+ * the server would accept).
+ */
+function bindRecord(
+    record: Record<string, unknown> | null | undefined,
+    fields: Record<string, { type?: string }> | undefined,
+): Record<string, unknown> {
+    if (!record) return {};
+    const dateFields = new Set<string>();
+    for (const [apiName, field] of Object.entries(fields ?? {})) {
+        if (field?.type === "date" || field?.type === "datetime") {
+            dateFields.add(apiName);
+        }
+    }
+    const bound: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(record)) {
+        if (typeof value === "number") {
+            bound[key] = Decimal.fromNumber(value);
+        } else if (typeof value === "string" && dateFields.has(key) && value !== "") {
+            try {
+                bound[key] = value.includes("T") ? parseInstant(value) : parseDate(value);
+            } catch {
+                bound[key] = value;   // not a parseable date — ride verbatim
+            }
+        } else {
+            bound[key] = value;
+        }
+    }
+    return bound;
+}
+
 function evaluateSlot(expression: string | undefined, context: RendererContextValue): boolean | undefined {
     if (expression === undefined) return undefined;
     try {
         const result = Expression.parse(expression).evaluate(
-            { ...(context.record ?? {}), role: context.role },
+            { ...bindRecord(context.record, context.fields), role: context.role },
             context.clock,
         );
         return result === true;

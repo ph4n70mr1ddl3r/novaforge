@@ -36,8 +36,11 @@ const app: AppDefinition = {
     translations: [],
 };
 
-function builder(savePage: (page: Record<string, unknown>) => Promise<unknown>) {
-    return createElement(PageBuilder, { app, savePage });
+function builder(
+    savePage: (page: Record<string, unknown>) => Promise<unknown>,
+    pages: AppDefinition["pages"] = [],
+) {
+    return createElement(PageBuilder, { app: { ...app, pages }, savePage });
 }
 
 describe("PageBuilder (T8)", () => {
@@ -74,6 +77,45 @@ describe("PageBuilder (T8)", () => {
         expect(slot?.value).toBe("status != 'POSTED'");
     });
 
+    it("opens a saved page's customizations and carries its server revision (no silent wipe)", async () => {
+        // Anti-regression (2026-08-31, thirteenth pass): the editor seeded from the
+        // L1 default and never read app.pages — a second edit session showed no
+        // customizations, its revision counter was local fiction, and the first save
+        // overwrote the saved page with deltas-vs-default (a silent wipe of the
+        // prior session's work).
+        const savePage = vi.fn<(page: Record<string, unknown>) => Promise<unknown>>(async () => {});
+        // the first session's saved work: hide status, pinned by the server at revision 3
+        const savedPages: AppDefinition["pages"] = [{
+            apiName: "orderForm",
+            label: "Order form",
+            type: "form",
+            entity: "Order",
+            revision: 3,
+            layout: {
+                base: "auto",
+                kind: "form",
+                deltas: [
+                    { op: "setSlot", key: "field:status", slot: "visibility", value: "status != 'POSTED'" },
+                ],
+            },
+        }];
+        render(builder(savePage, savedPages));
+
+        // the saved customization is visible: selecting the status field shows its
+        // visibility slot carrying the saved expression (the default page has none)
+        fireEvent.click(await screen.findByRole("treeitem", { name: /status/ }));
+        const visibility = screen.getByLabelText(/visibility/) as HTMLInputElement;
+        expect(visibility.value).toBe("status != 'POSTED'");
+
+        // a fresh edit + save carries the server's revision — the optimistic-lock
+        // token, not a local fiction
+        fireEvent.change(visibility, { target: { value: "status == 'DRAFT'" } });
+        screen.getByTestId("save-page").click();
+        await waitFor(() => expect(savePage).toHaveBeenCalledTimes(1));
+        const page = savePage.mock.calls[0]![0] as { revision?: number };
+        expect(page.revision).toBe(3);
+    });
+
     it("a concurrent-edit 409 prompts the rebase (T8's acceptance)", async () => {
         let calls = 0;
         const savePage = vi.fn<(page: Record<string, unknown>) => Promise<unknown>>(async () => {
@@ -94,7 +136,7 @@ describe("PageBuilder (T8)", () => {
         expect(prompt.textContent).toContain("another editor");
         // rebase resets onto the current draft (fresh revision) — visible in flash
         prompt.querySelector("button")!.click();
-        expect(await screen.findByText(/Rebased onto the current draft/)).toBeTruthy();
+        expect(await screen.findByText(/Rebased onto the server's page/)).toBeTruthy();
     });
 
     it("rejects saves failing publish validation (unpinned or invalid)", async () => {

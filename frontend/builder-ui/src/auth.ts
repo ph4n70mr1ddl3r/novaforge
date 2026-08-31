@@ -179,3 +179,66 @@ export async function login(config: OidcConfig): Promise<void> {
 export function logout(config: OidcSession extends never ? never : OidcConfig): void {
     clearSession();
 }
+
+/**
+ * The live session manager (2026-08-31, thirteenth pass): refreshes were wired only
+ * into restoreSession — one refresh per page load — so an SPA in use for longer
+ * than the access token's lifetime (5 minutes against the realm defaults) failed
+ * every API call with a 401 until a manual reload discarded unsaved state. The
+ * manager owns the current session: `token()` proactively refreshes inside the
+ * expiry margin, `refreshOnUnauthorized()` is the client's 401 recovery hook, and
+ * concurrent callers share one in-flight refresh (single-flight — N parallel 401s
+ * must not fire N refresh grants against a rotating refresh token).
+ */
+export interface SessionManager {
+    /** A usable access token, refreshing inside the margin; "" when unrecoverable. */
+    token(): Promise<string>;
+    /** The 401 hook: single-flight refresh, the fresh token or null when signed out. */
+    refreshOnUnauthorized(): Promise<string | null>;
+    /** The manager's current session view (null after an unrecoverable refresh). */
+    current(): OidcSession | null;
+}
+
+export function sessionManager(config: OidcConfig, initial: OidcSession | null): SessionManager {
+    let session: OidcSession | null = initial;
+    let inFlight: Promise<OidcSession | null> | null = null;
+
+    const doRefresh = (): Promise<OidcSession | null> => {
+        if (!inFlight) {
+            inFlight = (async () => {
+                const prior = session;
+                if (!prior?.refreshToken) {
+                    return null;
+                }
+                const next = await refreshSession(config, prior.refreshToken);
+                if (next) {
+                    session = next;
+                    return next;
+                }
+                // unrecoverable — the session dies with the tab's storage
+                clearSession();
+                session = null;
+                return null;
+            })().finally(() => {
+                inFlight = null;
+            });
+        }
+        return inFlight;
+    };
+
+    return {
+        async token(): Promise<string> {
+            if (session && Date.now() < session.expiresAt - EXPIRY_MARGIN_MS) {
+                return session.accessToken;
+            }
+            const refreshed = await doRefresh();
+            // a stale token still goes out when refresh is impossible — the request
+            // 401s, the client's hook refreshes once, and failure then surfaces
+            return refreshed?.accessToken ?? session?.accessToken ?? "";
+        },
+        async refreshOnUnauthorized(): Promise<string | null> {
+            return (await doRefresh())?.accessToken ?? null;
+        },
+        current: () => session,
+    };
+}

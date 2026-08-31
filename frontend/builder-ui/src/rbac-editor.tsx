@@ -26,6 +26,7 @@ const CRU = ["create", "read", "update", "delete", "reportExecute"] as const;
 export function RbacEditor({ app, onSave }: RbacEditorProps): ReactNode {
     const [draft, setDraft] = useState(app.permissionSet);
     const [flash, setFlash] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const entities = app.entities;
 
@@ -202,6 +203,10 @@ export function RbacEditor({ app, onSave }: RbacEditorProps): ReactNode {
                     try {
                         await onSave(draft);
                         setFlash("Permissions saved");
+                                        } catch (caught) {
+                        // a failed save must never look like a success — the draft
+                        // stays local and the user sees why
+                        setError(caught instanceof Error ? caught.message : String(caught));
                     } finally {
                         setBusy(false);
                     }
@@ -210,6 +215,7 @@ export function RbacEditor({ app, onSave }: RbacEditorProps): ReactNode {
                 Save permissions
             </button>
             {flash ? <p role="status" aria-live="polite">{flash}</p> : null}
+            {error ? <p role="alert">{error}</p> : null}
         </section>
     );
 }

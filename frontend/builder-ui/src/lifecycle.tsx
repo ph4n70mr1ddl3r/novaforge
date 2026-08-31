@@ -359,12 +359,16 @@ export function SuiteRuns({ client, appId }: { client: PlatformClient; appId: st
     const [runs, setRuns] = useState<Record<string, unknown> | null>(null);
     const [busy, setBusy] = useState(false);
     const [flash, setFlash] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+
     const run = async (): Promise<void> => {
         setBusy(true);
         try {
             const result = (await client.runSuites(appId)) as Record<string, unknown>;
             setRuns(result);
             setFlash(result.green === true ? "All suites green" : "Suites red — see results");
+        } catch (caught) {
+            setError(caught instanceof Error ? caught.message : String(caught));
         } finally {
             setBusy(false);
         }
@@ -372,6 +376,7 @@ export function SuiteRuns({ client, appId }: { client: PlatformClient; appId: st
     return (
         <section aria-label="Suite runs">
             <h2>Suites</h2>
+            {error ? <p role="alert">{error}</p> : null}
             <button type="button" className="nf-action-primary" disabled={busy} onClick={() => void run()}>
                 Run all suites
             </button>

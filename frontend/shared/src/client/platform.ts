@@ -43,11 +43,21 @@ export interface TokenProvider {
     (): string | Promise<string>;
 }
 
+/**
+ * The 401 recovery hook: called once per failed request with the platform's own
+ * refresh machinery (single-flight on the caller's side); a returned token retries
+ * the request exactly once, null gives up and surfaces the 401. Without it, an SPA's
+ * every call fails once the access token ages out — the client had no notion of
+ * expiry at all.
+ */
+export type UnauthorizedRefresh = () => Promise<string | null>;
+
 export class PlatformClient {
     constructor(
         private readonly base: string,
         private readonly token: TokenProvider,
         private readonly fetchImpl: typeof fetch = fetch.bind(globalThis),
+        private readonly onUnauthorized?: UnauthorizedRefresh,
     ) {}
 
     private async request(
@@ -56,16 +66,26 @@ export class PlatformClient {
         body?: unknown,
         headers: Record<string, string> = {},
     ): Promise<unknown> {
-        const token = await this.token();
-        const response = await this.fetchImpl(this.base + path, {
+        const payload = body !== undefined ? JSON.stringify(body) : undefined;
+        const send = async (bearer: string): Promise<Response> => this.fetchImpl(this.base + path, {
             method,
             headers: {
-                ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                ...(payload !== undefined ? { "Content-Type": "application/json" } : {}),
+                ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
                 ...headers,
             },
-            body: body !== undefined ? JSON.stringify(body) : undefined,
+            body: payload,
         });
+        let token = await this.token();
+        let response = await send(token);
+        if (response.status === 401 && this.onUnauthorized) {
+            // one refresh, one retry — a second 401 surfaces to the caller
+            const refreshed = await this.onUnauthorized();
+            if (refreshed) {
+                token = refreshed;
+                response = await send(token);
+            }
+        }
         if (response.status === 204) return null;
         const text = await response.text();
         const parsed = text ? (JSON.parse(text) as unknown) : null;

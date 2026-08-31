@@ -1369,3 +1369,75 @@ re-pinned for the create-door guard; ManualHook's fixture corrected to a legal
 vitest + typecheck green with the boundary/key/failure-surface changes; all 12
 charts render via containerized helm. Full serial `./mvnw verify` recorded in
 IMPLEMENTATION.md's closeout.
+
+## Thirteenth Pass — 2026-08-31 (the frontend HIGHs close: tokens that live, pages that survive)
+
+### H-13P1 — no token refresh past page load: every SPA call 401'd after five minutes
+
+Refreshes ran only inside `restoreSession` — one per page load — while the realm
+defaults issue five-minute access tokens: an SPA in normal use failed every list,
+save, and report run with a 401 until a manual reload (discarding unsaved state).
+Three legs: `PlatformClient` grew an optional `onUnauthorized` hook (one refresh,
+one retry per request — a second 401 surfaces); `auth.ts` (both SPA twins) grew a
+`sessionManager` — `token()` proactively refreshes inside the expiry margin,
+`refreshOnUnauthorized()` is the client's hook, and all refreshes are single-flight
+(N concurrent expired callers share one grant — a rotating refresh token replayed
+N times would invalidate the session itself); both `main.tsx` mount sites wire the
+manager as the token provider. Pinned in `client.test.ts` (401 → refresh → retried
+request with the fresh token, two calls total; refresh-gives-up surfaces the 401)
+and the new `runtime-ui/test/auth.test.ts` (single-flight across concurrent
+callers, live tokens never touch the grant, unrecoverable refresh clears the
+session and reports null).
+
+### H-13P2 — a second page-builder session silently wiped saved customizations
+
+The editor seeded from the L1 default and never read `app.pages`: reopening showed
+no customizations, the revision counter was local fiction (first save always
+revision 1), and one small edit + save persisted deltas-vs-default over the saved
+page — destroying the prior session's work. The seed now resolves the SAVED page
+(deltas or authored layout) through `resolvePage` with the server's revision
+(`PageDefinition.revision` typed); editing state is keyed by page identity (an
+entity/kind switch can no longer edit the old tree under a new name); dirty diffs
+against the loaded baseline rather than the default (a customized page no longer
+opens as "unsaved"); and the 409 rebase offers the server's actual saved page
+(the shell refetches into props) instead of resetting to the default — rebasing no
+longer discards the other editor's work. Pinned in `page-builder.test.tsx` (a
+saved visibility overlay opens visible in the property panel; an edit saves
+carrying the server's revision 3).
+
+### M-13P1 — the frontend long tail
+
+- **Four builder saves ran `try/finally` without a catch** (RBAC, dashboards,
+  suite runs, i18n): a failed save un-busied the button and rendered nothing —
+  indistinguishable from success. All four catch and render `role="alert"` errors.
+- **FieldLookup's blur wrote the raw typed text as the field's value** ("Acme"
+  became the foreign key) and closed the listbox before an option's click could
+  land (blur fires between mousedown and click). Blur only closes now; options
+  select on prevented mousedown; only ids are ever written.
+- **KpiTile pushed money through binary floats** (`toLocaleString` over `Number`)
+  against the file's own exact-decimal rule — values now render the exact text,
+  grouping integers only.
+- **The renderer fed raw JSON to the expression twin**: numeric and date slot
+  rules always threw in the evaluator and fell back — visibility stayed visible,
+  but readonly and required wrongly evaluated TRUE (fields frozen or forced that
+  the server would accept). Record values are tagged before evaluation (numbers →
+  exact Decimals, ISO strings on date-typed fields → tagged date/instants), the
+  same decode the conformance corpus applies to its bindings.
+
+### Recorded open after this pass
+
+Frontend: DashboardComposer still PATCHes the whole branch per keystroke over a
+stale `app` snapshot (failures now surface via the new catch; the local-draft +
+explicit-save redesign remains); FileUpload still has no renderer wiring (no token
+reaches it through `renderNode`, and its uploaded attachment id never binds back
+to the record). Backend (from the twelfth pass): keyed-notification replays still
+re-email inbox-opted-out recipients; sharing criteria using `now()` disagree
+between the Java doors (live instant) and the SQL lowering (start-of-day);
+period-lock and parent-freeze checks are check-then-write without row locks.
+M11/M12 remain deferred by decision.
+
+### Verification (this pass)
+
+Frontend 154 vitest green (+5: the client retry pin, the three manager pins, the
+saved-page pin) with typecheck clean; backend untouched this pass — full serial
+`./mvnw verify` re-run green end to end as the turn's gate.

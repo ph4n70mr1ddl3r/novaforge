@@ -445,6 +445,8 @@ export interface PageDefinition {
     type: PageType;
     entity?: string;
     layout?: unknown;
+    /** The server's optimistic-locking token (PHASE-2 §8) — carried on saves. */
+    revision?: number;
 }
 
 export interface AppDefinition {

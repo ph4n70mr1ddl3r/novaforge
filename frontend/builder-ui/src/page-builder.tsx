@@ -9,6 +9,7 @@ import {
     diffPages,
     pageApiName,
     resolveDefaultPage,
+    resolvePage,
     toPersistedLayout,
     type ActionDef,
     type AppDefinition,
@@ -34,8 +35,13 @@ export interface PageBuilderProps {
 }
 
 type BuilderState = {
+    /** Which page this state edits — state from another entity/kind never bleeds in. */
+    key: string;
     page: ResolvedPage;
+    /** The L1 default — the persisted layout's delta baseline (the server contract). */
     base: ResolvedPage;
+    /** The page as loaded/saved — dirty diffs against this, not the default. */
+    loaded: ResolvedPage;
     revision: number | null;
 };
 
@@ -58,8 +64,27 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
     const [conflict, setConflict] = useState<{ message: string; serverPage: ResolvedPage } | null>(null);
     const [flash, setFlash] = useState<string | null>(null);
 
-    const current = state ?? (entity ? { page: base, base, revision: null } : null);
-    const dirty = current ? JSON.stringify(diffPages(current.base, current.page)) !== "[]" : false;
+    // Anti-regression (2026-08-31, thirteenth pass): the editor seeded from the L1
+    // default and never read app.pages — a second edit session showed no
+    // customizations and its first save overwrote them (a silent wipe), and its
+    // revision counter was local fiction. The seed resolves the SAVED page (deltas
+    // or authored layout) and carries the server's revision; state belongs to one
+    // page key, so switching entity/kind never edits the old tree under a new name.
+    const seed = useMemo<BuilderState | null>(() => {
+        if (!entity) return null;
+        const key = pageApiName(entity.apiName, kind);
+        const saved = app.pages.find((candidate) => candidate.apiName === key);
+        const { page } = resolvePage(saved, entity, {
+            role,
+            permissions: app.permissionSet,
+            kind,
+        });
+        return { key, page, base, loaded: page, revision: saved?.revision ?? null };
+    }, [entity, kind, app.pages, app.permissionSet, role, base]);
+    const current = state?.key === seed?.key ? state : seed;
+    const dirty = current
+        ? JSON.stringify(diffPages(current.loaded, current.page)) !== "[]"
+        : false;
 
     const edit = (updater: (page: ResolvedPage) => ResolvedPage): void => {
         if (!current) return;
@@ -122,16 +147,25 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
             setConflict(null);
             setFlash("Page saved");
             const nextRevision = current.revision === null ? 1 : current.revision + 1;
-            setState({ ...current, revision: nextRevision });
+            setState({ ...current, page: pinned, loaded: pinned, revision: nextRevision });
             setUndoStack([]);
             setRedoStack([]);
         } catch (caught) {
             if (caught instanceof ApiError && caught.status === 409) {
-                // Rebase prompt (§8): the server won the race; re-resolve the L1
-                // default + fresh revision, keep the editor's deltas visible.
+                // Rebase prompt (§8): the server won the race — offer the server's
+                // actual saved page (the shell refetches the app into props), not
+                // just the default, so rebasing never discards the other editor's
+                // customizations.
+                const saved = entity
+                    ? app.pages.find((candidate) =>
+                        candidate.apiName === pageApiName(entity.apiName, kind))
+                    : undefined;
+                const serverPage = entity
+                    ? resolvePage(saved, entity, { role, permissions: app.permissionSet, kind }).page
+                    : base;
                 setConflict({
                     message: caught.message,
-                    serverPage: base,
+                    serverPage,
                 });
             } else {
                 setError(caught instanceof Error ? caught.message : String(caught));
@@ -191,8 +225,20 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
                         type="button"
                         onClick={() => {
                             setConflict(null);
-                            setState({ page: base, base, revision: null });
-                            setFlash("Rebased onto the current draft — reapply your edits and save");
+                            // rebase onto the SERVER's page (customizations included)
+                            // with its next revision — the old reset-to-default
+                            // discarded the other editor's work and the next save
+                            // would have wiped it server-side too
+                            setState({
+                                key: current!.key,
+                                page: conflict.serverPage,
+                                base,
+                                loaded: conflict.serverPage,
+                                revision: (current!.revision ?? 0) + 1,
+                            });
+                            setUndoStack([]);
+                            setRedoStack([]);
+                            setFlash("Rebased onto the server's page — reapply your edits and save");
                         }}
                     >
                         Rebase

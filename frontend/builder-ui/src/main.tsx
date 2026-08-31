@@ -2,7 +2,7 @@ import { createElement, useState, useEffect, type ReactNode } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { PlatformClient } from "@novaforge/shared";
 import { BuilderShell } from "./shell.tsx";
-import { login, restoreSession, type OidcConfig, type OidcSession } from "./auth.ts";
+import { login, restoreSession, sessionManager, type OidcConfig, type OidcSession } from "./auth.ts";
 import { ErrorBoundary } from "@novaforge/shared";
 /** The builder entry point — same OIDC flow as the runtime shell, builder-gated APIs. */
 declare global {
@@ -30,7 +30,15 @@ function Root(): ReactNode {
             createElement("button", { type: "button", onClick: () => void login(config) }, "Sign in"),
         );
     }
-    const client = new PlatformClient(window.novaforge?.base ?? "", () => session.accessToken);
+    // the manager keeps tokens alive past the access token's lifetime (refresh on
+    // the margin, single-flight, one 401 retry per request)
+    const manager = sessionManager(config, session);
+    const client = new PlatformClient(
+        window.novaforge?.base ?? "",
+        () => manager.token(),
+        fetch.bind(globalThis),
+        () => manager.refreshOnUnauthorized(),
+    );
     const roles = Array.isArray(session.claims.platform_roles) ? (session.claims.platform_roles as string[]) : [];
     return createElement(BuilderShell, { client, role: roles[0] });
 }

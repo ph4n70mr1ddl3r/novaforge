@@ -4,7 +4,7 @@ import { createElement as h, useState, useEffect, type ReactNode } from "react";
 const { createElement } = { createElement: h };
 import { PlatformClient } from "@novaforge/shared";
 import { RuntimeShell } from "./shell.tsx";
-import { login, restoreSession, type OidcConfig, type OidcSession } from "./auth.ts";
+import { login, restoreSession, sessionManager, type OidcConfig, type OidcSession } from "./auth.ts";
 
 /**
  * The runtime entry point: same-origin static bundle behind the gateway (§13 Q5).
@@ -42,9 +42,15 @@ function Root(): ReactNode {
             h("button", { type: "button", onClick: () => void login(config) }, "Sign in"),
         );
     }
+    // the manager keeps tokens alive past the access token's lifetime (refresh on
+    // the margin, single-flight, one 401 retry per request) — the shell's session
+    // view still carries the claims/roles from restore
+    const manager = sessionManager(config, session);
     const client = new PlatformClient(
         window.novaforge?.base ?? "",
-        () => session.accessToken,
+        () => manager.token(),
+        fetch.bind(globalThis),
+        () => manager.refreshOnUnauthorized(),
     );
     return h(RuntimeBridge, { client, session });
 }

@@ -54,6 +54,8 @@ export {
   isInstant,
   dateValue,
   instantValue,
+  parseDate,
+  parseInstant,
 } from "./expression/values.ts";
 
 // --- metadata wire types + permission resolution ---

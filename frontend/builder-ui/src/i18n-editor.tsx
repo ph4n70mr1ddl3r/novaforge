@@ -106,6 +106,7 @@ export function I18nEditor({
     const [locale, setLocale] = useState(locales[0] ?? "de");
     const [entries, setEntries] = useState<Record<string, string>>({});
     const [flash, setFlash] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const universe = useMemo(() => translatableUniverse(app), [app]);
     const missing = universe.filter((key) => !entries[key.key]);
@@ -172,6 +173,8 @@ export function I18nEditor({
                         try {
                             await saveWorkspace(locale, entries);
                             setFlash(`Saved ${locale} workspace`);
+                                                } catch (caught) {
+                            setError(caught instanceof Error ? caught.message : String(caught));
                         } finally {
                             setBusy(false);
                         }
@@ -194,6 +197,7 @@ export function I18nEditor({
                 </button>
             </div>
             {flash ? <p role="status">{flash}</p> : null}
+            {error ? <p role="alert">{error}</p> : null}
             <details>
                 <summary>Missing translations</summary>
                 <ul>

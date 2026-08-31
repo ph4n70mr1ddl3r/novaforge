@@ -2367,3 +2367,33 @@ own new code), M11/M12 recorded as an explicit decision.**
 Verified: full serial `./mvnw verify` green end to end (23 reactor modules,
 container suites on the podman socket); frontend workspace green (149 vitest +
 typecheck); all 12 charts render via containerized helm.
+
+**Spec-review closeout (2026-08-31, thirteenth pass) — the frontend HIGHs close:
+tokens that live past five minutes, pages that survive a second edit session.**
+
+- **Token refresh, end to end** (H-13P1): the client had no notion of expiry and
+  refreshes ran only at page load — an SPA in normal use 401'd every call once the
+  five-minute access token aged out. `PlatformClient` gained a one-refresh/one-
+  retry hook for 401s; a single-flight `sessionManager` (both SPA auth twins)
+  refreshes on the margin and shares one grant across concurrent callers (a
+  rotating refresh token replayed N times would kill the session); both mounts
+  wire it. Pinned ×4 (client retry, single-flight, live-token no-op,
+  unrecoverable-clear).
+- **PageBuilder loads what it saved** (H-13P2): the editor seeded from the L1
+  default and never read `app.pages` — a second session showed no customizations
+  and its first save wiped them, with a fictional revision counter. The seed
+  resolves the saved page with the server's revision; state is keyed by page
+  identity; dirty diffs against the loaded baseline; the 409 rebase offers the
+  server's page. Pinned.
+- **The long tail** (M-13P1): four builder saves caught + rendered (a failed save
+  no longer looks like success); FieldLookup's blur no longer writes the typed
+  term as the FK nor eats option clicks (prevented-mousedown selection); KpiTile
+  renders money exactly; the renderer tags record values for the expression twin
+  (numeric/date slot rules evaluate instead of always falling back — readonly/
+  required no longer wrongly true).
+
+Verified: frontend 154 vitest (+5) + typecheck clean; full serial `./mvnw verify`
+green (the turn's gate). Remaining recorded open (CODE_REVIEW.md, thirteenth
+pass): the composer's local-draft redesign, FileUpload's renderer wiring, and the
+three backend mediums (keyed email replay for inbox-off recipients, sharing
+`now()` parity, period/freeze row locks).

@@ -15,13 +15,12 @@ export function KpiTile(props: {
   label?: string;
   currency?: string;
 }): ReactNode {
-  const value = props.totals[props.metric];
-  const has = typeof value === "number" && Number.isFinite(value);
-  const text = has
-    ? props.currency
-      ? `${props.currency} ${formatNumber(value)}`
-      : formatNumber(value)
-    : "—";
+  // Money never rides a binary float: the backend answers exact decimals (as
+  // strings or numbers within double range) — render the exact text, grouping
+  // integers only, decimals verbatim (the file's own rule; the old path pushed
+  // every value through Number and toLocaleString, re-rounding money in the UI)
+  const raw = props.totals[props.metric];
+  const text = renderMetric(raw, props.currency);
   return (
     <div className="nf-kpi-tile" role="group" aria-label={props.label ?? props.metric}>
       <span className="nf-kpi-label">{props.label ?? props.metric}</span>
@@ -31,9 +30,13 @@ export function KpiTile(props: {
 }
 
 /** Locale-grouped integer rendering; decimals ride verbatim to the tenth of a cent. */
-function formatNumber(value: number): string {
-  return Number.isInteger(value) ? value.toLocaleString() : value.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 4,
-  });
+function renderMetric(raw: unknown, currency?: string): string {
+  if (typeof raw === "number" && Number.isInteger(raw)) {
+    return currency ? `${currency} ${raw.toLocaleString()}` : raw.toLocaleString();
+  }
+  const text = typeof raw === "number" ? String(raw) : typeof raw === "string" ? raw : null;
+  if (text === null || text === "") {
+    return "—";
+  }
+  return currency ? `${currency} ${text}` : text;
 }

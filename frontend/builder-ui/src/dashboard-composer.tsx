@@ -19,6 +19,7 @@ export function DashboardComposer({
     const [selectedId, setSelectedId] = useState<string | null>(app.dashboards[0]?.id ?? null);
     const draft = app.dashboards.find((dashboard) => dashboard.id === selectedId) ?? null;
     const [flash, setFlash] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
     const update = (patch: Partial<DashboardDefinition>): void => {
@@ -34,6 +35,8 @@ export function DashboardComposer({
         try {
             await saveDashboards(dashboards);
             setFlash("Dashboard saved");
+                } catch (caught) {
+            setError(caught instanceof Error ? caught.message : String(caught));
         } finally {
             setBusy(false);
         }
@@ -64,6 +67,7 @@ export function DashboardComposer({
                 </button>
             </div>
             {flash ? <p role="status" aria-live="polite">{flash}</p> : null}
+            {error ? <p role="alert">{error}</p> : null}
             {draft ? (
                 <>
                     <table className="nf-table">
