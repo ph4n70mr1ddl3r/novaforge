@@ -53,6 +53,10 @@ policies = {}
 budgets = {}
 pods = []
 env_hosts = set()
+# initialized BEFORE the walk: a later reset would wipe every collection-phase
+# failure (the Job-restartPolicy and service-links checks printed their FAILs
+# and still exited 0 — found by bite-proofing, twenty-fifth pass)
+ok = True
 # A bare value is a HOST only when its env NAME says so — anything else
 # (KC_DB: postgres, KC_DB_USERNAME: keycloak) is a vendor string or credential,
 # and treating it as a host is how false positives drown the signal.
@@ -112,8 +116,6 @@ for path in glob.glob(render_dir + "/*.yaml"):
                 env_hosts.add(m.group(1))
             elif HOST_ENV.match(env_name):
                 env_hosts.add(value.strip().split(":")[0])
-
-ok = True
 
 # DNS consistency: every env-referenced host resolves to a rendered Service
 missing = sorted(h for h in env_hosts if h and h not in services)

@@ -2729,3 +2729,19 @@ false), each bite-proven by the defect that motivated it.
 
 Verified live and offline: every pod Ready, the smoke evidence above, chart
 gate CLEAN across 12 charts, and the full `./mvnw verify` green end to end.
+
+**The twenty-fifth pass (2026-08-31) — the closeout re-audit: the landings
+hold; the gate's own teeth did not, and do now.**
+
+The live-cluster pass's fixes held everywhere the re-audit probed (placement,
+policy peers, values structure, the hermetic slice — gateway was the only
+ambient-redis case in the tree). But bite-proofing the gate's Job-restartPolicy
+contract exposed that both of the pass's new gate checks printed their
+failures and still exited 0 — an `ok = True` initialized after the render-walk
+wiped every walk-phase failure. Fixed, and both contracts re-bite-proven
+against deliberate violations. Recorded lesson: a gate check without a
+bite-proof is a print statement — every contract in check-charts.sh is now
+bite-proven at least once.
+
+Verified: chart gate CLEAN with all contracts armed; full serial
+`./mvnw verify` BUILD SUCCESS (honest exit 0).

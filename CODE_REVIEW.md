@@ -2650,3 +2650,52 @@ limiter's own behavior stays pinned in `WebhookRateLimitFilterTest` (mocked
 template, the atomic Lua window included), and the live leg itself proved the
 real redis path in-cluster. Gateway 24/24 standalone; the full verify re-ran
 green with the fix.
+
+## Twenty-Fifth Pass — 2026-08-31 (the closeout re-audit: the landings hold, the gate's own teeth did not)
+
+### The 9fef138 re-audit, area by area
+
+- **enableServiceLinks placement** (render-audited, not template-audited — raw
+  helm templates are not YAML and parsing them unrendered is noise): zero
+  misplaced (the flag sits only on pod specs), zero missing across every
+  rendered workload. The restartPolicy mis-landing class did not recur.
+- **The NetworkPolicy peer-selector rewrite**: no instance-label matching
+  survived in any peer; the deliberate exceptions are intact (the gateway's
+  0.0.0.0/0:8080 dev ingress; clamav's ipBlock 0.0.0.0/0 on 443 ONLY — the
+  freshclam rule, verified port-scoped on the render); every ingress rule
+  carries from+ports and every egress peer a selector or namespaceSelector.
+- **The values restructure**: all eleven service charts carry the plain-data
+  `auth.allowDefaultSecret: false` block, all eleven deployment templates
+  consume it, and no values env list retains the stale entry — the literal
+  `{{ ... }}` class is gone.
+- **The hermetic gateway slice**: gateway was the ONLY ambient-redis slice —
+  data-runtime's fifteen context suites each start their own containers, and
+  reporting's thirty are unit-level. No sibling defect.
+
+### The finding — the gate's two newest contracts were toothless
+
+Bite-proofing the Job-restartPolicy check (motivated by the live install
+failure but never explicitly proven at the GATE level) exposed it: the check
+printed `CHART-GATE FAIL: … Job lacks a valid restartPolicy` and **still
+exited 0**. `ok = True` was initialized AFTER the render-walk, wiping every
+failure the walk-phase checks recorded — both new contracts (Job
+restartPolicy, enableServiceLinks) printed their FAILs without ever failing
+the gate. The initialization moved before the walk (with the mechanism in a
+comment), and both checks were re-bite-proven: removing the Job's
+restartPolicy fails the gate (exit 1), removing a deployment's
+enableServiceLinks fails it (exit 1), and the restored tree is CLEAN. The
+older contracts (pods/SA/PDB/DNS/drift, which validate in the post-loop
+phase) were never affected — the twenty-third pass's PDB bite-proof ran
+against the validation phase and was genuine; this is also why the live
+cluster caught the restartPolicy defect the gate should have: the gate's
+check did not yet bite.
+
+The pass's own lesson, recorded: a gate check without a bite-proof is a
+print statement. Every contract in check-charts.sh has now been bite-proven
+at least once against a deliberate violation.
+
+### Verification (this pass)
+
+Chart gate CLEAN across all 12 charts with all contracts genuinely armed;
+full serial `./mvnw verify` (below) as the honest current-tree check. The
+landings from the live-cluster pass hold everywhere the re-audit probed.
