@@ -119,6 +119,23 @@ class ScriptSandboxTests {
     }
 
     @Test
+    @DisplayName("a single-statement allocation bomb maps to the budget verdict (the -Xmx boundary)")
+    void allocationBombIsBounded() {
+        // Anti-regression (2026-08-31, seventeenth pass): the heap cap is a sampled
+        // process-wide tripwire — one builtin call allocating hundreds of MB completes
+        // before two consecutive samples, so the watchdog never fires. The pod's -Xmx
+        // is pinned in the chart (512m against the 768Mi limit, ExitOnOutOfMemoryError)
+        // so the blast radius is exactly this pod; the guest OOM that reaches the host
+        // maps to the budget verdict — the caller sees "too big," never a 500. This
+        // test documents the boundary: a modest bomb maps cleanly in-process.
+        assertThatThrownBy(() -> sandbox(60_000, 60_000, 8, UNLIMITED).execute(
+                "const bomb = 'x'.repeat(268435456); bomb.length",
+                Map.of(), CALLER))
+                .isInstanceOf(ScriptBudgetExceededException.class)
+                .hasMessageContaining("heap");
+    }
+
+    @Test
     @DisplayName("$log capture is bounded")
     void boundedLogs() {
         ScriptSandbox.ScriptResult result = sandbox(10_000, 30_000, 64, UNLIMITED).execute(

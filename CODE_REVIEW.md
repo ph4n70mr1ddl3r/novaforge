@@ -1738,3 +1738,61 @@ notify-only-breach pins now coexisting), data-runtime api 27 (+1: the resume
 idempotency pin) with the layering rule green (the claim reached storage through
 the engine facade), notification/script/model/engine/storage suites green. Full
 serial `./mvnw verify` green end to end.
+
+## Seventeenth Pass — 2026-08-31 (the two remaining recorded defect items close)
+
+### H-17P1 — the BPMN bridge's per-task resolution variable
+
+Every bridged task of an instance wrote ONE process-level `resolution` variable —
+a parallel gateway's second completion overwrote the first, so the join's routing
+saw only the last writer and one approver's outcome silently vanished (worse under
+multi-instance: N completions left only the last). `wf_process_tasks` carries the
+engine task's definition key (V6); each completion now also writes
+`resolution_<definitionKey>` while the bare `resolution` stays for single-task
+instances — authored gateway conditions keep working, and per-task conditions have
+a stable name to address. Pinned with a real parallel-gateway journey: fork →
+legal + finance → one approved, one rejected → both variables survive in the
+process history with their own values (legal=APPROVED, finance=REJECTED) while the
+instance completes.
+
+### H-17P2 — the sandbox single-statement allocation bomb is bounded
+
+The heap cap is a sampled, process-wide tripwire (two consecutive 25 ms samples) —
+`'x'.repeat(2**28)` completes inside one statement before any sample, and 8
+concurrent lanes out-allocate the shared heap before the watchdog fires
+(empirically demonstrated in the fifteenth-pass audit). Two legs, per ADR-003's
+containment direction: the script-engine chart pins `-Xmx512m
+-XX:+ExitOnOutOfMemoryError` (against the 768Mi pod limit) and halves
+`max-concurrent` to 4 — a guest OOM kills exactly this pod, never a
+tenant-facing service, and the process-isolation pools remain the recorded growth
+path for full per-execution isolation. And the guest OOM that reaches the host
+now maps to the budget verdict (`ScriptBudgetExceededException`) instead of a
+generic 500 — the caller sees "too big." Pinned with a real single-statement bomb
+(256 MB in one builtin call) asserting the budget verdict.
+
+### Also this pass: the registry render pin hardened
+
+The every-catalog-id loop pin (fifteenth pass) was passing while its unmounted
+widgets threw unhandled errors after their tests completed — jsdom's missing
+canvas, a KpiTile without totals, a ReportTable without a run. The pin now gives
+each data widget a minimal survivable props shape, KpiTile treats a missing
+`totals` as "—" (a defensive fix in the component itself), and a suite-wide
+canvas stub silences jsdom's noise (guarded for the node-env suites). The loop pin
+is now genuinely asserting what it exists to assert: every catalog id renders
+through the real registry with zero unhandled errors.
+
+### Recorded open after this pass
+
+Delegation replacements keep the original role for visibility while
+`requireAccess` accepts any holder of it — the claim CAS closed the steal; whether
+delegation should narrow the read scope is a product decision (the sixth pass's
+delegation design deliberately kept the role for inbox visibility). M11/M12 remain
+deferred by decision. The process-isolation pools for per-execution sandbox
+isolation remain the recorded growth path beyond the -Xmx containment.
+
+### Verification (this pass)
+
+workflow 28 (+1: the parallel-gateway pin), script-engine 26 (+1: the allocation
+bomb), shared 99 with the hardened loop pin, full frontend workspace green
+(157 vitest + typecheck). Full serial `./mvnw verify` green end to end (23
+modules).

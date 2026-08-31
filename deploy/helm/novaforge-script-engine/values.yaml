@@ -20,4 +20,14 @@ resources:
   limits:
     memory: 768Mi
 
-env: []
+env:
+  # Containment (2026-08-31, seventeenth pass): the sandbox's heap cap is a sampled,
+  # process-wide tripwire — a single-statement allocation bomb completes before any
+  # sample, and 8 concurrent lanes can out-allocate the shared heap. Pinning -Xmx
+  # bounds the blast radius to exactly this pod (an OOM kill restarts the script
+  # engine alone; every other tenant-facing service keeps serving), which is the
+  # community-edition containment ADR-003 #4 anticipates process pools for.
+  - name: JAVA_TOOL_OPTIONS
+    value: "-Xmx512m -XX:+ExitOnOutOfMemoryError"
+  - name: NOVAFORGE_SCRIPT_MAX_CONCURRENT
+    value: "4"

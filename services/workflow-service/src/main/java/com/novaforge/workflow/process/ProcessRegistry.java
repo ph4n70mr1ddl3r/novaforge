@@ -164,24 +164,26 @@ public class ProcessRegistry {
     // --- the §5-inbox bridge rows ---
 
     public void linkTask(UUID taskId, String engineTaskId, String processInstanceId,
-                         String workflowId) {
+                         String workflowId, String taskDefinitionKey) {
         jdbc.update("""
                 INSERT INTO wf_process_tasks (task_id, engine_task_id,
-                                              process_instance_id, workflow_id)
-                VALUES (?, ?, ?, ?)""", taskId, engineTaskId, processInstanceId, workflowId);
+                                              process_instance_id, workflow_id,
+                                              task_definition_key)
+                VALUES (?, ?, ?, ?, ?)""",
+                taskId, engineTaskId, processInstanceId, workflowId, taskDefinitionKey);
     }
 
     public record TaskLink(UUID taskId, String engineTaskId, String processInstanceId,
-                           String workflowId) {
+                           String workflowId, String taskDefinitionKey) {
     }
 
     public Optional<TaskLink> linkByTask(UUID taskId) {
-        return link("SELECT task_id, engine_task_id, process_instance_id, workflow_id"
+        return link("SELECT task_id, engine_task_id, process_instance_id, workflow_id, task_definition_key"
                 + " FROM wf_process_tasks WHERE task_id = ?", taskId);
     }
 
     public Optional<TaskLink> linkByEngineTask(String engineTaskId) {
-        return link("SELECT task_id, engine_task_id, process_instance_id, workflow_id"
+        return link("SELECT task_id, engine_task_id, process_instance_id, workflow_id, task_definition_key"
                 + " FROM wf_process_tasks WHERE engine_task_id = ?", engineTaskId);
     }
 
@@ -198,7 +200,8 @@ public class ProcessRegistry {
     private Optional<TaskLink> link(String sql, Object key) {
         return jdbc.query(sql, (rs, i) -> new TaskLink(rs.getObject("task_id", UUID.class),
                 rs.getString("engine_task_id"), rs.getString("process_instance_id"),
-                rs.getString("workflow_id")), key).stream().findFirst();
+                rs.getString("workflow_id"), rs.getString("task_definition_key")),
+                key).stream().findFirst();
     }
 
     static Timestamp timestamp(java.time.Instant instant) {

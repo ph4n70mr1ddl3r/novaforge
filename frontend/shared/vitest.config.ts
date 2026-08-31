@@ -6,6 +6,7 @@ export default defineConfig({
     // globals on: @testing-library/react registers its automatic afterEach cleanup
     // against the global hook — without it, renders leak across assertions
     globals: true,
+    setupFiles: ["./test/canvas-stub.ts"],
     include: ["test/**/*.test.tsx", "test/**/*.test.ts"],
   },
 });

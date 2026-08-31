@@ -191,6 +191,33 @@ class BpmnProcessTests extends PostgresTestBase {
                 """.formatted(processId);
     }
 
+    /** A parallel review: start → fork → two user tasks → join → end. Each
+     *  completion writes resolution_<its own key>; the shared `resolution` would
+     *  overwrite, losing one approver's outcome. */
+    private static String parallelBpmn(String processId) {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                             xmlns:flowable="http://flowable.org/bpmn"
+                             targetNamespace="novaforge">
+                  <process id="%s" isExecutable="true">
+                    <startEvent id="start"/>
+                    <sequenceFlow id="f1" sourceRef="start" targetRef="fork"/>
+                    <parallelGateway id="fork"/>
+                    <sequenceFlow id="f2" sourceRef="fork" targetRef="legal"/>
+                    <sequenceFlow id="f3" sourceRef="fork" targetRef="finance"/>
+                    <userTask id="legal" name="Legal" flowable:candidateGroups="manager"/>
+                    <userTask id="finance" name="Finance" flowable:candidateGroups="manager"/>
+                    <sequenceFlow id="f4" sourceRef="legal" targetRef="join"/>
+                    <sequenceFlow id="f5" sourceRef="finance" targetRef="join"/>
+                    <parallelGateway id="join"/>
+                    <sequenceFlow id="f6" sourceRef="join" targetRef="end"/>
+                    <endEvent id="end"/>
+                  </process>
+                </definitions>
+                """.formatted(processId);
+    }
+
     private static void publishApp(String workflowId, String bpmn,
                                    WorkflowDefinition.EventStart... eventStarts) {
         PUBLISHED.add(new PublishedWorkflowSource.AppWorkflows(TENANT, APP,
@@ -304,6 +331,51 @@ class BpmnProcessTests extends PostgresTestBase {
         await().atMost(Duration.ofSeconds(20)).untilAsserted(() ->
                 assertThat(runtime.createProcessInstanceQuery()
                         .processDefinitionKey("po_review").count()).isEqualTo(2));
+    }
+
+    @Test
+    @DisplayName("parallel completions: each approver's outcome survives its own variable")
+    void parallelOutcomesDoNotCrossContaminate() throws Exception {
+        // Anti-regression (2026-08-31, seventeenth pass): every bridged task wrote
+        // ONE process-level `resolution` — the fork's second completion overwrote
+        // the first, so the join's routing saw only the last writer and one
+        // approver's outcome silently vanished.
+        UUID record = UUID.randomUUID();
+        RECORDS.put(record.toString(), Map.of("status", "SUBMITTED"));
+        publishApp("par_review", parallelBpmn("par_review"),
+                new WorkflowDefinition.EventStart("record.updated", ENTITY,
+                        "status == 'SUBMITTED'"));
+        deployer.syncOnce();
+        sendRecordEvent(UUID.randomUUID().toString(), "record.updated", record);
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() ->
+                assertThat(jdbc.queryForObject("""
+                        SELECT count(*) FROM wf_process_tasks
+                         WHERE workflow_id = 'par_review'""", Integer.class))
+                        .isEqualTo(2));
+
+        // two linked tasks, distinct definition keys
+        var links = jdbc.queryForList("""
+                SELECT t.id AS task_id, p.task_definition_key
+                  FROM wf_process_tasks p JOIN wf_tasks t ON t.id = p.task_id
+                 WHERE p.workflow_id = 'par_review'""");
+        assertThat(links).hasSize(2);
+
+        // approve one, reject the other: both completions write their OWN variable
+        for (Map<String, Object> link : links) {
+            boolean approve = "legal".equals(link.get("task_definition_key"));
+            tasks.resolve(TENANT, MANAGER, (UUID) link.get("task_id"), approve, null);
+        }
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() ->
+                assertThat(history.createHistoricProcessInstanceQuery()
+                        .processDefinitionKey("par_review").finished().count()).isEqualTo(1));
+        String instanceId = history.createHistoricProcessInstanceQuery()
+                .processDefinitionKey("par_review").finished().singleResult().getId();
+        var variables = history.createHistoricVariableInstanceQuery()
+                .processInstanceId(instanceId).list();
+        var byName = new java.util.HashMap<String, Object>();
+        variables.forEach(v -> byName.put(v.getVariableName(), v.getValue()));
+        assertThat(byName.get("resolution_legal")).isEqualTo("APPROVED");
+        assertThat(byName.get("resolution_finance")).isEqualTo("REJECTED");
     }
 
     @Test

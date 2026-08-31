@@ -2484,3 +2484,25 @@ Verified: full serial `./mvnw verify` green end to end (23 modules); gateway 20,
 workflow 27, data-runtime api 27 — each with its new pin. Remaining
 recorded-open: the sandbox process-isolation pools, the BPMN per-task resolution
 contract, the delegation read-scope decision, M11/M12 by decision.
+
+**Spec-review closeout (2026-08-31, seventeenth pass) — the two remaining recorded
+defect items close with pins.**
+
+- **Per-task resolution variables** (H-17P1): `wf_process_tasks` carries the engine
+  task's definition key (V6); each completion writes `resolution_<key>` alongside
+  the bare `resolution` — a parallel gateway's second completion no longer
+  overwrites the first approver's outcome. Pinned with a fork/join journey asserting
+  both outcomes survive in the process history.
+- **The allocation bomb is bounded** (H-17P2): the script chart pins `-Xmx512m
+  -XX:+ExitOnOutOfMemoryError` and halves max-concurrent to 4 — a guest OOM kills
+  exactly the script pod, never a tenant-facing service; the guest OOM reaching the
+  host maps to the budget verdict (the caller sees "too big," not a 500). Pinned
+  with a real single-statement bomb. The process-isolation pools remain the
+  recorded growth path for full per-execution isolation.
+- **The registry render pin hardened**: survivable props for the data widgets,
+  KpiTile total-optional (a defensive component fix), and a guarded suite-wide
+  canvas stub — the every-catalog-id loop now runs with zero unhandled errors.
+
+Verified: full serial `./mvnw verify` green end to end (23 modules); frontend
+workspace green (157 vitest + typecheck). Remaining recorded-open: the delegation
+read-scope decision and M11/M12 by decision — no known-open defect items.

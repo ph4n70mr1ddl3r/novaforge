@@ -319,6 +319,18 @@ public class ScriptSandbox {
                 if (host instanceof PlatformException platform) {
                     throw platform;   // the caller's authorization verdict, unchanged
                 }
+                if (host instanceof OutOfMemoryError
+                        || host instanceof java.io.IOException io
+                                && io.getMessage() != null
+                                && io.getMessage().contains("heap")) {
+                    // A single-statement allocation bomb completes before the sampled
+                    // watchdog can fire; with the pod's -Xmx pinned the guest OOM
+                    // surfaces here and maps to the same budget verdict — the caller
+                    // sees "too big," not a 500, and the blast radius stayed this pod.
+                    throw new ScriptBudgetExceededException(
+                            "script exceeded its heap budget and was terminated "
+                                    + "(single-statement allocation; the pod's -Xmx bounded it)");
+                }
                 throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                         "script failed: " + host.getMessage(), null, host);
             }

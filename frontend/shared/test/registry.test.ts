@@ -82,6 +82,16 @@ describe("every catalog id renders through the real registry (2026-08-31, fiftee
             indexes: [],
         };
         for (const entry of CATALOG) {
+            // the chart widget reads its projection before rendering: give every id
+            // a props shape the widget can at least read (an empty projection renders
+            // empty axes; the loader/registry contract is what this pin guards)
+            const props: Record<string, unknown> = entry.id === "novaforge.chart-widget"
+                ? { chart: { xAxis: { data: [] }, series: [] } }
+                : entry.id === "novaforge.kpi-tile"
+                    ? { totals: {}, metric: "m" }
+                    : entry.id === "novaforge.report-table"
+                        ? { run: { columns: [], rows: [], totals: {} }, labels: {} }
+                        : {};
             const page = {
                 apiName: "p",
                 type: "form" as const,
@@ -89,7 +99,7 @@ describe("every catalog id renders through the real registry (2026-08-31, fiftee
                 model: {
                     base: "auto" as const,
                     kind: "form" as const,
-                    root: { type: entry.id, key: "k", version: entry.version, props: {} },
+                    root: { type: entry.id, key: "k", version: entry.version, props },
                     actions: [],
                 },
             };

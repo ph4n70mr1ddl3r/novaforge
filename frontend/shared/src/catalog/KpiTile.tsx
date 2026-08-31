@@ -19,7 +19,7 @@ export function KpiTile(props: {
   // strings or numbers within double range) — render the exact text, grouping
   // integers only, decimals verbatim (the file's own rule; the old path pushed
   // every value through Number and toLocaleString, re-rounding money in the UI)
-  const raw = props.totals[props.metric];
+  const raw = props.totals?.[props.metric];
   const text = renderMetric(raw, props.currency);
   return (
     <div className="nf-kpi-tile" role="group" aria-label={props.label ?? props.metric}>

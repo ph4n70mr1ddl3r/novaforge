@@ -180,7 +180,7 @@ public class ProcessTaskBridge implements FlowableEventListener {
                 recordId, assignee, role, timers.dueAt(), timers.warnAt(), createdBy,
                 null, null, escalateTo, notifyOn);
         registry.linkTask(inboxTask.id(), task.getId(), task.getProcessInstanceId(),
-                deployment.get().workflowId());
+                deployment.get().workflowId(), task.getTaskDefinitionKey());
         LOG.debug("bridged engine task {} to inbox task {} (workflow {})", task.getId(),
                 inboxTask.id(), deployment.get().workflowId());
     }
@@ -205,6 +205,15 @@ public class ProcessTaskBridge implements FlowableEventListener {
         }
         Map<String, Object> variables = new java.util.LinkedHashMap<>();
         variables.put(RESOLUTION_VARIABLE, approved ? "APPROVED" : "REJECTED");
+        // the per-task twin (V6): every bridged task of an instance shared ONE
+        // process-level variable — a parallel gateway's second completion overwrote
+        // the first, and the join's routing saw only the last writer. Each task now
+        // also writes its own resolution_<definitionKey>, so authored conditions can
+        // address each outcome; the bare variable stays for single-task instances.
+        if (link.get().taskDefinitionKey() != null) {
+            variables.put(RESOLUTION_VARIABLE + "_" + link.get().taskDefinitionKey(),
+                    approved ? "APPROVED" : "REJECTED");
+        }
         variables.put("comment", comment == null ? "" : comment);
         engineTasks.getObject().complete(link.get().engineTaskId(), variables);
     }
