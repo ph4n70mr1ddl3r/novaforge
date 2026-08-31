@@ -5,6 +5,8 @@ import com.novaforge.common.error.PlatformException;
 import com.novaforge.security.ServiceTokenClient;
 import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
@@ -23,6 +25,8 @@ import tools.jackson.databind.json.JsonMapper;
  */
 @Component
 public class AsyncExportClient {
+
+    private static final Logger LOG = LoggerFactory.getLogger(AsyncExportClient.class);
 
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
@@ -65,9 +69,14 @@ public class AsyncExportClient {
             return new AsyncJob(UUID.fromString(String.valueOf(response.get("jobId"))),
                     String.valueOf(response.get("jobLink")));
         } catch (org.springframework.web.client.RestClientResponseException e) {
+            // The upstream rejection body stays server-side: it is the Integration
+            // Service's to disclose (connector configs, internal ids, stack detail
+            // ride problem payloads), and this detail answers the requesting USER.
+            // The status/code semantics ride on; operators read the full body here.
+            LOG.warn("async export job rejected by the integration service: HTTP {} body={}",
+                    e.getStatusCode(), e.getResponseBodyAsString());
             throw new PlatformException(PlatformErrorCode.INTERNAL,
-                    "async export job rejected: HTTP " + e.getStatusCode() + " "
-                            + e.getResponseBodyAsString());
+                    "async export job rejected: HTTP " + e.getStatusCode());
         } catch (PlatformException e) {
             throw e;
         } catch (Exception e) {

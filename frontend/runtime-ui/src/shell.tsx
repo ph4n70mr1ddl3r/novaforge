@@ -4,6 +4,7 @@ import {
     PlatformClient,
     type PageDefinition,
     type QueryFilter,
+    randomKey,
     type RendererDataService,
     resolvePage,
     resolveNav,
@@ -237,6 +238,8 @@ function EntityPage(props: EntityPageProps): ReactNode {
     // idempotency key so even a raced double POST cannot mint two records.
     const savingRef = useRef(false);
     const createKeyRef = useRef<string | null>(null);
+    // the state-machine transition buttons' own re-entry fence (see save's rule)
+    const transitioningRef = useRef(false);
 
     const context: RendererContextValue = {
         mode: "runtime",
@@ -385,8 +388,42 @@ function EntityPage(props: EntityPageProps): ReactNode {
                             disabled={busy}
                             title={transition.guard ? `guard: ${transition.guard}` : undefined}
                             onClick={() => {
+                                // The transition is a REAL versioned PATCH (the form
+                                // save's own update leg), not a local flip: the old
+                                // setRecord-only click showed a state change that
+                                // silently reverted on the next reload. The ref fences
+                                // the double-click the async `busy` state can't.
                                 const machine = app.stateMachines.find((m) => m.entity === entity.apiName)!;
-                                setRecord((current) => ({ ...(current ?? {}), [machine.stateField]: transition.to }));
+                                if (!record?.id || transitioningRef.current) return;
+                                transitioningRef.current = true;
+                                setBusy(true);
+                                void client
+                                    .updateRecord(
+                                        entity.apiName,
+                                        String(record.id),
+                                        Number(record.version ?? 1),
+                                        { [machine.stateField]: transition.to },
+                                    )
+                                    .then((fresh) => {
+                                        // the SERVER's record — its state, its version —
+                                        // never a locally guessed shape
+                                        setRecord(fresh);
+                                        setFlash(`Moved to ${transition.to}`);
+                                    })
+                                    .catch((error: unknown) => {
+                                        if (error instanceof ApiError) {
+                                            setErrors(error.fieldErrors());
+                                            setFlash(error.message);
+                                        } else {
+                                            setFlash(
+                                                error instanceof Error ? error.message : `Moving to ${transition.to} failed`,
+                                            );
+                                        }
+                                    })
+                                    .finally(() => {
+                                        transitioningRef.current = false;
+                                        setBusy(false);
+                                    });
                             }}
                         >
                             {transition.label ?? transition.to}
@@ -396,17 +433,4 @@ function EntityPage(props: EntityPageProps): ReactNode {
             ) : null}
         </>
     );
-}
-
-/**
- * An idempotency key for one unsaved draft: crypto.randomUUID exists only in
- * secure contexts (HTTPS or localhost) — on a plain-HTTP origin (a LAN demo, a
- * non-TLS ingress) it throws, and the create path it was added to would brick.
- * The Math.random twin is only an idempotency key — no security rides on it.
- */
-function randomKey(): string {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-        return crypto.randomUUID();
-    }
-    return "idem-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
 }

@@ -123,6 +123,12 @@ public class RecordEngine {
         enforcePeriodLock(tenantId, app, handle, canonical);
         runHooks(app, handle, tenantId, id, canonical, "beforeSave", appSystemPrincipal(handle), actorId, null);
         reCanonicalizeHookWrites(tenantId, app, handle, canonical, id);
+        // …and again after them (the update door's rule): a hook re-dating the NEW
+        // record into a CLOSED period, or re-pointing its lookup at a frozen parent,
+        // must meet the rejection it would have met on arrival — the create leg the
+        // eighteenth pass fixed on update only
+        requireParentsNotFrozen(tenantId, app, handle, canonical);
+        enforcePeriodLock(tenantId, app, handle, canonical);
         // the initial-state guard validates the state the record LANDS in — hook
         // writes included (a transitionState hook cannot smuggle a non-initial state)
         enforceCreateState(app, handle, canonical);
@@ -627,6 +633,11 @@ public class RecordEngine {
         runHooks(app, handle, tenantId, id, canonical, "beforeSave", appSystemPrincipal(handle),
                 principal, null);
         reCanonicalizeHookWrites(tenantId, app, handle, canonical, id);
+        // the post-hook leg, mirroring the user doors: a hook re-dating the record
+        // into a CLOSED period (or re-pointing a frozen parent) rejects here, not
+        // after the webhook's side effects have fired
+        requireParentsNotFrozen(tenantId, app, handle, canonical);
+        enforcePeriodLock(tenantId, app, handle, canonical);
         // the initial-state guard validates the landing state, hook writes included
         enforceCreateState(app, handle, canonical);
         evaluateRollupsFromChildren(app, handle, children, canonical);
@@ -681,6 +692,10 @@ public class RecordEngine {
         runHooks(app, handle, tenantId, id, merged, "beforeSave", appSystemPrincipal(handle),
                 principal, transition);
         reCanonicalizeHookWrites(tenantId, app, handle, merged, id);
+        // the parent-freeze guard re-runs after the hooks like the period lock below
+        // it — a hook re-pointing the lookup at a frozen parent must reject, the
+        // same landing-state rule the user update door enforces
+        requireParentsNotFrozen(tenantId, app, handle, merged);
         enforceTransition(app, handle, existing.data(), merged);
         enforcePeriodLock(tenantId, app, handle, merged);
 

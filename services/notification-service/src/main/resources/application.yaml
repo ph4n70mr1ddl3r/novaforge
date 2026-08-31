@@ -18,8 +18,8 @@ spring:
           issuer-uri: ${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}
   datasource:
     url: jdbc:postgresql://${NOVAFORGE_POSTGRES_HOST:localhost}:${NOVAFORGE_POSTGRES_PORT:5432}/novaforge_notification
-    username: novaforge
-    password: novaforge
+    username: ${NOVAFORGE_NOTIFICATION_DB_USER:novaforge}
+    password: ${NOVAFORGE_NOTIFICATION_DB_PASSWORD:novaforge}
   flyway:
     locations: classpath:db/migration
   kafka:

@@ -158,4 +158,26 @@ describe("DashboardComposer (PHASE-5 T6)", () => {
         const saved = captured[0] as DashboardDefinition;
         expect(saved.roles).toEqual(["controller"]);
     });
+
+    it("New-dashboard mints the first free dashN — no collision with gap ids (re-audit)", async () => {
+        // Anti-regression: dash${length+1} collided with a surviving dashN after
+        // out-of-band deletions left gaps — [dash1, dash3] minted a duplicate dash3
+        const gapped: AppDefinition = {
+            ...app,
+            dashboards: [
+                { id: "dash1", label: "One", widgets: [], roles: [] },
+                { id: "dash3", label: "Three", widgets: [], roles: [] },
+            ],
+        };
+        let captured: DashboardDefinition[] = [];
+        const saveDashboards = vi.fn<
+            (mutate: (current: DashboardDefinition[]) => DashboardDefinition[]) => Promise<void>
+        >(async (mutate) => {
+            captured = mutate(gapped.dashboards.map((dashboard) => ({ ...dashboard })));
+        });
+        render(createElement(DashboardComposer, { app: gapped, saveDashboards }));
+        fireEvent.click(screen.getByRole("button", { name: "New dashboard" }));
+        await waitFor(() => expect(saveDashboards).toHaveBeenCalledTimes(1));
+        expect(captured.map((dashboard) => dashboard.id)).toEqual(["dash1", "dash3", "dash2"]);
+    });
 });

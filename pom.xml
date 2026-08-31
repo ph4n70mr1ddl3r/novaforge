@@ -19,6 +19,10 @@
   <description>Metadata-driven no-code application platform — root parent + aggregator</description>
 
   <properties>
+    <!-- XLSX export (reporting §6) — the one third-party lib outside the BOM imports;
+         centralized here like every other version (PHASE-0 §4.1). -->
+    <poi.version>5.4.1</poi.version>
+    <jib.version>3.5.2</jib.version>
     <java.version>21</java.version>
     <spring-cloud.version>2025.1.2</spring-cloud.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -52,6 +56,11 @@
         <version>${spring-cloud.version}</version>
         <type>pom</type>
         <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.poi</groupId>
+        <artifactId>poi-ooxml</artifactId>
+        <version>${poi.version}</version>
       </dependency>
       <!-- Internal libs: service POMs never carry versions (PHASE-0 §4.1). -->
       <dependency>
@@ -138,4 +147,17 @@
       </dependency>
     </dependencies>
   </dependencyManagement>
+  <build>
+    <pluginManagement>
+      <plugins>
+        <!-- Jib for every service image (PHASE-0 §5) — the version pinned once here;
+             service POMs keep only their per-image <to> configuration. -->
+        <plugin>
+          <groupId>com.google.cloud.tools</groupId>
+          <artifactId>jib-maven-plugin</artifactId>
+          <version>${jib.version}</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
 </project>

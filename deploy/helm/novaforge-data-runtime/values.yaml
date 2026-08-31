@@ -26,6 +26,17 @@ resources:
 # referenced Kubernetes Secrets before deploying:
 #   kubectl create secret generic novaforge-service-client --from-literal=secret=<real-secret>
 #   kubectl create secret generic novaforge-secrets --from-literal=data-key=<base64-32B-key>
+# Infra wiring (nineteenth pass, closing the H-10P1 class for every chart): the
+# chart used to carry only the auth pair (or nothing), so a deployed service
+# booted against the yaml defaults — every endpoint localhost, i.e. the pod
+# itself: Flyway failed to CrashLoopBackOff on the DB services and the gateway
+# 502'd on every route. Endpoints point at the in-cluster service names; DB
+# credentials ride the fail-closed secret posture like the auth pair (create the
+# referenced Secrets before deploying):
+#   kubectl create secret generic novaforge-db --from-literal=user=<real> \
+#                                               --from-literal=password=<real>
+# The issuer, Kafka, and Tempo names assume the novaforge-* infra services
+# (the compose stack's naming); override per environment in values overlays.
 env:
   - name: NOVAFORGE_AUTH_ALLOW_DEFAULT_SECRET
     value: "false"
@@ -34,6 +45,29 @@ env:
       secretKeyRef:
         name: novaforge-service-client
         key: secret
-
-  # - name: NOVAFORGE_POSTGRES_HOST
-  #   value: novaforge-postgres
+  - name: NOVAFORGE_POSTGRES_HOST
+    value: "novaforge-postgres"
+  - name: NOVAFORGE_POSTGRES_PORT
+    value: "5432"
+  - name: NOVAFORGE_DATA_DB_USER
+    valueFrom:
+      secretKeyRef:
+        name: novaforge-db
+        key: user
+  - name: NOVAFORGE_DATA_DB_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: novaforge-db
+        key: password
+  - name: NOVAFORGE_KAFKA
+    value: "novaforge-kafka:9092"
+  - name: NOVAFORGE_REDIS_HOST
+    value: "novaforge-redis"
+  - name: NOVAFORGE_METADATA_URL
+    value: "http://novaforge-metadata-service:8081"
+  - name: NOVAFORGE_WORKFLOW_URL
+    value: "http://novaforge-workflow-service:8086"
+  - name: NOVAFORGE_AUTH_ISSUER
+    value: "http://novaforge-keycloak:8080/realms/novaforge"
+  - name: NOVAFORGE_TEMPO_ENDPOINT
+    value: "http://novaforge-tempo:4318/v1/traces"

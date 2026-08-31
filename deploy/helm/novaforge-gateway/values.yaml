@@ -20,6 +20,39 @@ resources:
   limits:
     memory: 768Mi
 
-env: []
-  # - name: NOVAFORGE_POSTGRES_HOST
-  #   value: novaforge-postgres
+# Infra wiring (nineteenth pass, closing the H-10P1 class for every chart): the
+# chart used to carry only the auth pair (or nothing), so a deployed service
+# booted against the yaml defaults — every endpoint localhost, i.e. the pod
+# itself: Flyway failed to CrashLoopBackOff on the DB services and the gateway
+# 502'd on every route. Endpoints point at the in-cluster service names; DB
+# credentials ride the fail-closed secret posture like the auth pair (create the
+# referenced Secrets before deploying):
+#   kubectl create secret generic novaforge-db --from-literal=user=<real> \
+#                                               --from-literal=password=<real>
+# The issuer, Kafka, and Tempo names assume the novaforge-* infra services
+# (the compose stack's naming); override per environment in values overlays.
+env:
+  - name: NOVAFORGE_AUTH_ISSUER
+    value: "http://novaforge-keycloak:8080/realms/novaforge"
+  - name: NOVAFORGE_REDIS_HOST
+    value: "novaforge-redis"
+  - name: NOVAFORGE_METADATA_URL
+    value: "http://novaforge-metadata-service:8081"
+  - name: NOVAFORGE_DATA_RUNTIME_URL
+    value: "http://novaforge-data-runtime:8083"
+  - name: NOVAFORGE_AUDIT_URL
+    value: "http://novaforge-audit-service:8085"
+  - name: NOVAFORGE_WORKFLOW_URL
+    value: "http://novaforge-workflow-service:8086"
+  - name: NOVAFORGE_NOTIFICATION_URL
+    value: "http://novaforge-notification-service:8088"
+  - name: NOVAFORGE_REPORTING_URL
+    value: "http://novaforge-reporting-service:8089"
+  - name: NOVAFORGE_SCHEDULER_URL
+    value: "http://novaforge-scheduler-service:8087"
+  - name: NOVAFORGE_INTEGRATION_URL
+    value: "http://novaforge-integration-service:8090"
+  - name: NOVAFORGE_FILE_URL
+    value: "http://novaforge-file-service:8091"
+  - name: NOVAFORGE_TEMPO_ENDPOINT
+    value: "http://novaforge-tempo:4318/v1/traces"

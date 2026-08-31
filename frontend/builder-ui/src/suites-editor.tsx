@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import {
     SUITE_OPS,
     type SuiteCase,
@@ -6,6 +6,7 @@ import {
     type SuiteStep,
     type TestSuiteDefinition,
 } from "@novaforge/shared";
+import { JsonTextField } from "./json-field.tsx";
 
 /**
  * The suite authoring + runner surface (PHASE-3 §7/§8, ADR-010): fixture/step/
@@ -30,6 +31,11 @@ export function SuitesEditor({ app, busy, onSaveSuite, onRunSuite }: SuitesEdito
     const [error, setError] = useState<string | null>(null);
     const [flash, setFlash] = useState<string | null>(null);
     const [runResult, setRunResult] = useState<RunView | null>(null);
+    // double-submit fences (the runtime form's rule): the shell's busy prop only
+    // arrives after the async re-render — a fast second click re-entered here
+    // and double-fired the versioned putSuite / the scratch-tenant runSuite
+    const savingRef = useRef(false);
+    const runningRef = useRef(false);
 
     interface RunView {
         green?: boolean;
@@ -44,7 +50,8 @@ export function SuitesEditor({ app, busy, onSaveSuite, onRunSuite }: SuitesEdito
     };
 
     const save = async (): Promise<void> => {
-        if (!draft) return;
+        if (!draft || savingRef.current) return;
+        savingRef.current = true;
         setError(null);
         try {
             await onSaveSuite(draft);
@@ -53,11 +60,14 @@ export function SuitesEditor({ app, busy, onSaveSuite, onRunSuite }: SuitesEdito
             // Save validation rejects unknown ops, malformed expectations, ghost
             // entity refs — surface the compiler's guidance verbatim (§7).
             setError(caught instanceof Error ? caught.message : String(caught));
+        } finally {
+            savingRef.current = false;
         }
     };
 
     const run = async (): Promise<void> => {
-        if (!draft) return;
+        if (!draft || runningRef.current) return;
+        runningRef.current = true;
         setError(null);
         setRunResult(null);
         try {
@@ -65,6 +75,8 @@ export function SuitesEditor({ app, busy, onSaveSuite, onRunSuite }: SuitesEdito
             setRunResult(result);
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : String(caught));
+        } finally {
+            runningRef.current = false;
         }
     };
 
@@ -217,19 +229,19 @@ function CaseEditor({
                                     i === index ? { ...f, asRole: e.target.value || undefined } : f),
                             })
                         } />
-                    <input aria-label={`Fixture template ${index}`} placeholder='{"name": "Acme"}'
-                        value={JSON.stringify(fixture.template)}
-                        onChange={(e) => {
-                            let parsed: Record<string, unknown>;
-                            try {
-                                parsed = JSON.parse(e.target.value) as Record<string, unknown>;
-                            } catch {
-                                return; // keep typing — invalid JSON simply doesn't commit yet
-                            }
-                            const fixtures = suiteCase.fixtures.map((f, i) =>
-                                i === index ? ({ ...f, template: parsed }) : f);
-                            patch({ fixtures });
-                        }} />
+                    {/* JsonTextField: a raw controlled input re-serialized the model
+                        on every keystroke, so an incomplete literal snapped back to
+                        the last committed template — `{` could never be typed */}
+                    <JsonTextField
+                        aria-label={`Fixture template ${index}`}
+                        placeholder='{"name": "Acme"}'
+                        value={fixture.template}
+                        onParsed={(template) =>
+                            patch({
+                                fixtures: suiteCase.fixtures.map((f, i) =>
+                                    i === index ? { ...f, template: template ?? {} } : f),
+                            })
+                        } />
                     <button type="button" aria-label={`Remove fixture ${index}`}
                         onClick={() => patch({ fixtures: suiteCase.fixtures.filter((_, i) => i !== index) })}>×</button>
                 </div>
@@ -276,17 +288,13 @@ function CaseEditor({
                                     onChange={(e) => updateStep(index, { recordId: e.target.value || undefined })} />
                             </td>
                             <td>
-                                <input aria-label={`Step template row ${index}`}
-                                    value={JSON.stringify(step.template ?? {})}
-                                    onChange={(e) => {
-                                        try {
-                                            updateStep(index, {
-                                                template: JSON.parse(e.target.value) as Record<string, unknown>,
-                                            });
-                                        } catch {
-                                            /* keep typing */
-                                        }
-                                    }} />
+                                {/* JsonTextField (same keep-typing fence as the fixture template above) */}
+                                <JsonTextField
+                                    aria-label={`Step template row ${index}`}
+                                    placeholder='{"field": "value"}'
+                                    value={step.template}
+                                    onParsed={(template) => updateStep(index, { template })}
+                                />
                             </td>
                             <td>
                                 <input aria-label={`Step expect row ${index}`} placeholder="ok | error(CODE)"

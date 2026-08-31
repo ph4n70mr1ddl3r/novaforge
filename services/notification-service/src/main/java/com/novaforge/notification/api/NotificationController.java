@@ -23,6 +23,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/notifications")
 public class NotificationController {
 
+    /**
+     * The page ceiling (the Phase 1 convention's OFFSET twin): page size is 1..200,
+     * so a page beyond 1,000,000 asks for an OFFSET past 200 million rows — no
+     * inbox has one. The bound exists because {@code page * size} is caller
+     * arithmetic: 2,000,000,000 × 200 overflows int to a NEGATIVE OFFSET, which
+     * Postgres rejects as a 500. Over-limit requests reject, never silently clamp.
+     */
+    private static final int MAX_PAGE = 1_000_000;
+
     private final JdbcTemplate jdbc;
 
     public NotificationController(JdbcTemplate jdbc) {
@@ -35,21 +44,26 @@ public class NotificationController {
         var ctx = requireContext();
         // The Phase 1 paging convention (PHASE-4 §5 binds the inboxes to it): page size
         // is 1..200 and over-limit requests reject, never silently clamp.
-        if (size < 1 || size > 200 || page < 0) {
+        if (size < 1 || size > 200 || page < 0 || page > MAX_PAGE) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     size < 1 || size > 200 ? "page size must be 1..200 (reject, never clamp)"
-                            : "page offset must be >= 0");
+                            : page < 0 ? "page offset must be >= 0"
+                                    : "page must be 0.." + MAX_PAGE
+                                            + " (reject, never clamp)");
         }
         UUID tenant = UUID.fromString(ctx.tenantId());
         UUID user = UUID.fromString(ctx.actorId());
         Long total = jdbc.queryForObject(
                 "SELECT count(*) FROM nf_notifications WHERE tenant_id = ? AND user_id = ?",
                 Long.class, tenant, user);
+        // long math: the bound keeps page*size well inside int, but the arithmetic
+        // stays widening so an OFFSET can never wrap negative again
+        long offset = (long) page * size;
         List<Map<String, Object>> rows = jdbc.queryForList("""
                 SELECT id, category, title, body, read_at, created_at
                   FROM nf_notifications WHERE tenant_id = ? AND user_id = ?
                  ORDER BY created_at DESC LIMIT ? OFFSET ?""",
-                tenant, user, size, page * size);
+                tenant, user, size, offset);
         return Map.of("rows", rows, "total", total == null ? 0 : total);
     }
 

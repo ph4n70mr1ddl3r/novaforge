@@ -151,6 +151,60 @@ describe("LogicEditor (PHASE-3 §8)", () => {
             "22222222-2222-4222-8222-222222222222",
         ]);
     });
+
+    it("keeps typing through an incomplete params literal — the text stays, the model lags (re-audit)", async () => {
+        // The step rows are re-derived from the flow graph on every keystroke; the
+        // old controlled input re-serialized the FAILED parse as {} and the box
+        // snapped back to empty — `{"x": 1` could never be typed character by character
+        const onSaveEntity = vi.fn(async (_entity: EntityDefinition) => {});
+        render(createElement(LogicEditor, { app, onSaveEntity }));
+
+        const input = screen.getByLabelText("Step params 0") as HTMLInputElement;
+        expect(input.value).toBe(`{"field":"reference","expression":"'JE'"}`);
+        fireEvent.change(input, { target: { value: '{"x": 1' } });
+        // the keystroke SURVIVES; nothing commits
+        expect(input.value).toBe('{"x": 1');
+        fireEvent.click(screen.getByText("Save logic"));
+        await waitFor(() => expect(onSaveEntity).toHaveBeenCalledTimes(1));
+        expect(onSaveEntity.mock.calls[0]![0].hooks[0]!.flow!.params)
+            .toEqual({ field: "reference", expression: "'JE'" });
+
+        // completing the literal commits it
+        fireEvent.change(input, { target: { value: '{"x": 1}' } });
+        fireEvent.click(screen.getByText("Save logic"));
+        await waitFor(() => expect(onSaveEntity).toHaveBeenCalledTimes(2));
+        expect(onSaveEntity.mock.calls[1]![0].hooks[0]!.flow!.params).toEqual({ x: 1 });
+    });
+
+    it("a double-clicked Save fires exactly one putEntity (re-entry fence, re-audit)", async () => {
+        // Anti-regression: the shell never threaded busy here and save had no
+        // in-flight ref — a fast double-click double-fired the versioned PUT
+        let release!: (value: unknown) => void;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const onSaveEntity = vi.fn(async (_entity: EntityDefinition): Promise<void> => {
+            await gate;
+        });
+        const first = render(createElement(LogicEditor, { app, onSaveEntity }));
+
+        const button = first.getByText("Save logic") as HTMLButtonElement;
+        button.click();
+        button.click(); // the double-click — must not re-enter
+        expect(onSaveEntity).toHaveBeenCalledTimes(1);
+        release({});
+        await waitFor(() => expect(onSaveEntity).toHaveBeenCalledTimes(1));
+        first.unmount();
+
+        // and the shell-threaded busy disables the buttons once a save is flighted
+        const busyRender = render(createElement(LogicEditor, {
+            app,
+            busy: true,
+            onSaveEntity: async () => {},
+        }));
+        expect((busyRender.getByText("Save logic") as HTMLButtonElement).disabled).toBe(true);
+        busyRender.unmount();
+    });
 });
 
 describe("SuitesEditor (PHASE-3 §7/§8)", () => {
@@ -222,5 +276,68 @@ describe("SuitesEditor (PHASE-3 §7/§8)", () => {
         await waitFor(() =>
             expect(screen.getByRole("alert").textContent).toContain("unknown op"),
         );
+    });
+
+    it("keeps typing through an incomplete fixture/step template — the text stays, the model lags (re-audit)", async () => {
+        // The old controlled inputs bound JSON.stringify(template) and silently
+        // dropped unparseable edits — the re-render snapped the box back to the
+        // last committed template, so `{` could never be typed character by character
+        const onSaveSuite = vi.fn(async (suite: TestSuiteDefinition) => {});
+        render(createElement(SuitesEditor, {
+            app: suiteApp,
+            onSaveSuite,
+            onRunSuite: async () => ({}),
+        }));
+        fireEvent.click(screen.getByRole("button", { name: "order totals roll up" }));
+
+        const fixtureBox = screen.getByLabelText("Fixture template 0") as HTMLInputElement;
+        expect(fixtureBox.value).toBe('{"name":"Acme"}');
+        fireEvent.change(fixtureBox, { target: { value: '{"name": "A' } });
+        expect(fixtureBox.value).toBe('{"name": "A'); // the keystroke SURVIVES
+
+        const stepBox = screen.getByLabelText("Step template row 0") as HTMLInputElement;
+        expect(stepBox.value).toBe(""); // the step authors no template yet
+        fireEvent.change(stepBox, { target: { value: "{" } });
+        expect(stepBox.value).toBe("{");
+
+        // saving mid-lag commits the LAST parseable templates — never {} and never a wipe
+        fireEvent.click(screen.getByText("Save suite"));
+        await waitFor(() => expect(onSaveSuite).toHaveBeenCalledTimes(1));
+        const saved = onSaveSuite.mock.calls[0]![0];
+        expect(saved.cases[0]!.fixtures[0]!.template).toEqual({ name: "Acme" });
+        expect(saved.cases[0]!.steps[0]!.template).toBeUndefined();
+
+        // completing each literal commits it
+        fireEvent.change(fixtureBox, { target: { value: '{"name":"Acme Corp"}' } });
+        fireEvent.change(stepBox, { target: { value: '{"total": 60}' } });
+        fireEvent.click(screen.getByText("Save suite"));
+        await waitFor(() => expect(onSaveSuite).toHaveBeenCalledTimes(2));
+        const committed = onSaveSuite.mock.calls[1]![0];
+        expect(committed.cases[0]!.fixtures[0]!.template).toEqual({ name: "Acme Corp" });
+        expect(committed.cases[0]!.steps[0]!.template).toEqual({ total: 60 });
+    });
+
+    it("double-clicked Save/Run fire exactly one putSuite and one runSuite (re-entry fences, re-audit)", async () => {
+        // Anti-regression: the shell never threaded busy here and save/run had no
+        // in-flight refs — fast double-clicks double-fired both legs
+        const onSaveSuite = vi.fn(async (_suite: TestSuiteDefinition) => {});
+        const onRunSuite = vi.fn(async (_apiName: string) => ({ green: true, results: [] }));
+        render(createElement(SuitesEditor, {
+            app: suiteApp,
+            onSaveSuite,
+            onRunSuite,
+        }));
+        fireEvent.click(screen.getByRole("button", { name: "order totals roll up" }));
+
+        const save = screen.getByText("Save suite") as HTMLButtonElement;
+        save.click();
+        save.click(); // the double-click — must not re-enter
+        await waitFor(() => expect(onSaveSuite).toHaveBeenCalledTimes(1));
+
+        const run = screen.getByText("Run suite") as HTMLButtonElement;
+        run.click();
+        run.click(); // the double-click — must not re-enter
+        await waitFor(() => expect(onRunSuite).toHaveBeenCalledTimes(1));
+        expect(onRunSuite).toHaveBeenCalledWith("order_total");
     });
 });

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import {
     ApiError,
     CATALOG,
@@ -8,6 +8,7 @@ import {
     checkPage,
     diffPages,
     pageApiName,
+    randomKey,
     resolveDefaultPage,
     resolvePage,
     toPersistedLayout,
@@ -130,72 +131,85 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
         });
     };
 
+    // The save's double-submit fence (the runtime form's rule): `saving` state is
+    // async — a fast double-click re-entered before the re-render, and two
+    // versioned PUTs raced (the loser 409ing against the user's own save).
+    const [saving, setSaving] = useState(false);
+    const savingRef = useRef(false);
+
     const save = async (): Promise<void> => {
-        if (!current || !entity) return;
-        // The builder writes version pins explicitly on save (§4); publish-mode
-        // validation rejects unpinned pages.
-        const pinned = structuredClone(current.page);
-        const stamp = (node: PageNode): void => {
-            if (!node.version) {
-                node.version = catalogEntry(node.type).version;
-            }
-            node.children?.forEach(stamp);
-        };
-        stamp(pinned.model.root);
-        const verdict = checkPage(pinned.model, { entity, mode: "publish" });
-        if (verdict.issues.length > 0) {
-            setError(`Save rejected (${verdict.issues.length} issue(s)): ${verdict.issues[0]!.message}`);
-            return;
-        }
-        setWarnings(verdict.warnings.map((warning) => `${warning.path}: ${warning.message}`));
-        const layout = toPersistedLayout(pinned, current.base);
+        if (!current || !entity || savingRef.current) return;
+        savingRef.current = true;
+        setSaving(true);
         try {
-            const savedApp = (await savePage({
-                apiName: pageApiName(entity.apiName, kind),
-                label: `${entity.label ?? entity.apiName} ${kind}`,
-                type: kind,
-                entity: entity.apiName,
-                layout,
-                ...(current.revision !== null ? { revision: current.revision } : {}),
-            })) as { pages?: { apiName: string; revision?: number | null }[] } | null;
-            setError(null);
-            setConflict(null);
-            setFlash("Page saved");
-            // the server's own revision from its response — a locally computed
-            // current+1 was fiction that drifted from the CAS base on any
-            // intermediate save
-            const savedRevision = savedApp?.pages?.find(
-                (candidate) => candidate.apiName === pageApiName(entity.apiName, kind))?.revision;
-            const nextRevision = savedRevision ?? (current.revision === null ? 1 : current.revision + 1);
-            setState({ ...current, page: pinned, loaded: pinned, revision: nextRevision });
-            setUndoStack([]);
-            setRedoStack([]);
-        } catch (caught) {
-            if (caught instanceof ApiError && caught.status === 409) {
-                // Rebase prompt (§8): the server won the race. The shell's savePage
-                // refetched the app and pinned the FRESH saved page onto the thrown
-                // error — the `app` prop captured at click time is stale (setApp had
-                // only scheduled a re-render), so reading it here resolved the
-                // "server page" to the same tree the editor already had, and
-                // rebasing silently discarded the winning editor's work.
-                const fresh = (caught as ApiError & { freshSavedPage?: unknown }).freshSavedPage as
-                    | { apiName: string; revision?: number | null }
-                    | undefined;
-                const saved = fresh ?? (entity
-                    ? app.pages.find((candidate) =>
-                        candidate.apiName === pageApiName(entity.apiName, kind))
-                    : undefined);
-                const serverPage = entity
-                    ? resolvePage(saved as AppDefinition["pages"][number] | undefined, entity, { role, permissions: app.permissionSet, kind }).page
-                    : base;
-                setConflict({
-                    message: caught.message,
-                    serverPage,
-                    serverRevision: saved?.revision ?? null,
-                });
-            } else {
-                setError(caught instanceof Error ? caught.message : String(caught));
+            // The builder writes version pins explicitly on save (§4); publish-mode
+            // validation rejects unpinned pages.
+            const pinned = structuredClone(current.page);
+            const stamp = (node: PageNode): void => {
+                if (!node.version) {
+                    node.version = catalogEntry(node.type).version;
+                }
+                node.children?.forEach(stamp);
+            };
+            stamp(pinned.model.root);
+            const verdict = checkPage(pinned.model, { entity, mode: "publish" });
+            if (verdict.issues.length > 0) {
+                setError(`Save rejected (${verdict.issues.length} issue(s)): ${verdict.issues[0]!.message}`);
+                return;
             }
+            setWarnings(verdict.warnings.map((warning) => `${warning.path}: ${warning.message}`));
+            const layout = toPersistedLayout(pinned, current.base);
+            try {
+                const savedApp = (await savePage({
+                    apiName: pageApiName(entity.apiName, kind),
+                    label: `${entity.label ?? entity.apiName} ${kind}`,
+                    type: kind,
+                    entity: entity.apiName,
+                    layout,
+                    ...(current.revision !== null ? { revision: current.revision } : {}),
+                })) as { pages?: { apiName: string; revision?: number | null }[] } | null;
+                setError(null);
+                setConflict(null);
+                setFlash("Page saved");
+                // the server's own revision from its response — a locally computed
+                // current+1 was fiction that drifted from the CAS base on any
+                // intermediate save
+                const savedRevision = savedApp?.pages?.find(
+                    (candidate) => candidate.apiName === pageApiName(entity.apiName, kind))?.revision;
+                const nextRevision = savedRevision ?? (current.revision === null ? 1 : current.revision + 1);
+                setState({ ...current, page: pinned, loaded: pinned, revision: nextRevision });
+                setUndoStack([]);
+                setRedoStack([]);
+            } catch (caught) {
+                if (caught instanceof ApiError && caught.status === 409) {
+                    // Rebase prompt (§8): the server won the race. The shell's savePage
+                    // refetched the app and pinned the FRESH saved page onto the thrown
+                    // error — the `app` prop captured at click time is stale (setApp had
+                    // only scheduled a re-render), so reading it here resolved the
+                    // "server page" to the same tree the editor already had, and
+                    // rebasing silently discarded the winning editor's work.
+                    const fresh = (caught as ApiError & { freshSavedPage?: unknown }).freshSavedPage as
+                        | { apiName: string; revision?: number | null }
+                        | undefined;
+                    const saved = fresh ?? (entity
+                        ? app.pages.find((candidate) =>
+                            candidate.apiName === pageApiName(entity.apiName, kind))
+                        : undefined);
+                    const serverPage = entity
+                        ? resolvePage(saved as AppDefinition["pages"][number] | undefined, entity, { role, permissions: app.permissionSet, kind }).page
+                        : base;
+                    setConflict({
+                        message: caught.message,
+                        serverPage,
+                        serverRevision: saved?.revision ?? null,
+                    });
+                } else {
+                    setError(caught instanceof Error ? caught.message : String(caught));
+                }
+            }
+        } finally {
+            savingRef.current = false;
+            setSaving(false);
         }
     };
 
@@ -231,7 +245,7 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
                 </label>
                 <button type="button" onClick={undo} disabled={undoStack.length === 0}>Undo</button>
                 <button type="button" onClick={redo} disabled={redoStack.length === 0}>Redo</button>
-                <button type="button" onClick={() => void save()} className="nf-action-primary" data-testid="save-page">
+                <button type="button" onClick={() => void save()} className="nf-action-primary" data-testid="save-page" disabled={saving}>
                     Save page{dirty ? " •" : ""}
                 </button>
             </div>
@@ -460,7 +474,9 @@ function newNode(componentId: string): PageNode {
     return {
         type: componentId,
         version: entry.version, // the builder writes the pin explicitly on save (§4)
-        key: `n:${crypto.randomUUID()}`,
+        // randomKey, NOT crypto.randomUUID: the raw call throws on plain-HTTP
+        // origins (secure contexts only) — every palette insert would brick there
+        key: `n:${randomKey()}`,
         props,
     };
 }

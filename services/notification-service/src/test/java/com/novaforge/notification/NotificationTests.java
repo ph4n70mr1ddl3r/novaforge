@@ -50,6 +50,9 @@ class NotificationTests extends PostgresTestBase {
     static final UUID MANAGER = UUID.fromString("77777777-7777-4777-8777-777777777777");
     static final UUID SCRATCH_ACTOR = UUID.fromString("55555555-5555-4555-8555-555555555555");
 
+    /** A user of ANOTHER tenant — a platform-valid id with no membership in TENANT. */
+    static final UUID FOREIGN_USER = UUID.fromString("99999999-9999-4999-8999-999999999999");
+
     static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     /** Emails the stub observed (Mailpit's stand-in). */
@@ -82,6 +85,10 @@ class NotificationTests extends PostgresTestBase {
     @Autowired
     com.novaforge.notification.events.NotificationOutboxRelay outboxRelay;
 
+    @Autowired
+    org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory<String, String>
+            listenerFactory;
+
     @TestConfiguration
     static class Stubs {
 
@@ -103,6 +110,14 @@ class NotificationTests extends PostgresTestBase {
                         return "manager";
                     }
                     return "actor-manager-1234";   // the synthetic shape (ADR-010 #3)
+                }
+
+                @Override
+                public List<String> rolesOfUser(UUID tenantId, UUID user) {
+                    // the platform DB's tenant binding: role rows in the tenant or none
+                    return TENANT.equals(tenantId)
+                            && (user.equals(CLERK) || user.equals(MANAGER))
+                                    ? List.of("user") : List.of();
                 }
             };
         }
@@ -205,6 +220,24 @@ class NotificationTests extends PostgresTestBase {
         mockMvc.perform(get("/api/v1/notifications").queryParam("size", "200")
                         .with(jwtFor(MANAGER)))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("an overflowing page rejects 400 — int page*size never wraps to a negative OFFSET 500")
+    void inboxRejectsOverflowingPage() throws Exception {
+        // Anti-regression (2026-08-31): page was unbounded, and 2,000,000,000 × 200
+        // overflowed the int OFFSET to negative — a Postgres error surfaced as 500.
+        mockMvc.perform(get("/api/v1/notifications")
+                        .queryParam("page", "2000000000").queryParam("size", "200")
+                        .with(jwtFor(MANAGER)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("4000"));
+        // the bound's boundary itself serves (empty page past the data, not an error)
+        mockMvc.perform(get("/api/v1/notifications")
+                        .queryParam("page", "1000000").queryParam("size", "200")
+                        .with(jwtFor(MANAGER)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows.length()").value(0));
     }
 
     @Test
@@ -512,7 +545,101 @@ class NotificationTests extends PostgresTestBase {
                 .andExpect(status().isBadRequest());
     }
 
+    @Test
+    @DisplayName("internal/send: a cross-tenant recipient id never delivers — no inbox row, no email")
+    void crossTenantRecipientNeverDelivers() throws Exception {
+        // Anti-regression (2026-08-31): explicit recipients.users ids rode verbatim
+        // through a GLOBAL user lookup — a recipient list naming another tenant's
+        // user delivered the sending tenant's data (inbox row + emailed export) to
+        // a foreign user. Membership in the sending tenant is now the gate.
+        String sentinel = "Cross tenant-" + UUID.randomUUID();
+        String body = MAPPER.writeValueAsString(Map.of(
+                "tenantId", TENANT.toString(), "category", "report-delivery",
+                "title", sentinel, "body", "the sending tenant's data",
+                "recipients", Map.of("users",
+                        List.of(FOREIGN_USER.toString(), CLERK.toString()))));
+        mockMvc.perform(post("/api/v1/notifications/internal/send")
+                        .with(serviceJwt()).contentType("application/json").content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recipients").value(1));   // only the member
+
+        // the member got exactly one inbox row; the foreign user got NOTHING —
+        // no row, no email, no delivered event under any tenant
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
+                "SELECT user_id FROM nf_notifications WHERE title = '" + sentinel + "'",
+                UUID.class)).containsExactly(CLERK);
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
+                "SELECT user_id FROM nf_notifications WHERE user_id = '"
+                        + FOREIGN_USER + "'", UUID.class)).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(EMAILS.stream()
+                .filter(e -> e.contains(sentinel)).count()).isEqualTo(1);
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
+                "SELECT payload->>'userId' FROM nf_event_outbox", String.class))
+                .doesNotContain(FOREIGN_USER.toString());
+
+        // and when EVERY named recipient is foreign, the send fails closed — an
+        // audible rejection beats a silent empty delivery
+        String allForeign = MAPPER.writeValueAsString(Map.of(
+                "tenantId", TENANT.toString(), "category", "report-delivery",
+                "title", sentinel + "-x", "body", "b",
+                "recipients", Map.of("users", List.of(FOREIGN_USER.toString()))));
+        mockMvc.perform(post("/api/v1/notifications/internal/send")
+                        .with(serviceJwt()).contentType("application/json").content(allForeign))
+                .andExpect(status().isBadRequest());
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
+                "SELECT count(*) FROM nf_notifications WHERE title = '" + sentinel + "-x'",
+                Integer.class)).containsExactly(0);
+    }
+
     // --- helpers ---
+
+    @Test
+    @DisplayName("a failed send redelivers with real backoff — never the default 9x zero-backoff log-and-skip")
+    void failedSendRedeliversWithBackoff() throws Exception {
+        // Anti-regression (2026-08-31): TaskEventConsumer deliberately propagates
+        // non-envelope failures so Notifier's @Transactional inbox rows roll back
+        // with a failed send — but with no container error handler Boot's default
+        // burned nine ZERO-backoff retries in under a second, then logged and
+        // skipped: an SMTP outage silently lost every task.assigned/sla.warn/
+        // sla.breach in flight (no inbox row, no email, offset committed).
+        // ConsumerErrorConfig mirrors the Workflow Service's mechanism.
+        var probe = listenerFactory.createContainer("novaforge-notification-wiring-probe");
+        var handler = probe.getCommonErrorHandler();
+        org.assertj.core.api.Assertions.assertThat(handler).isInstanceOf(
+                org.springframework.kafka.listener.DefaultErrorHandler.class);
+        org.assertj.core.api.Assertions.assertThat(handler.seeksAfterHandling()).isTrue();
+
+        // Behavior against the real broker: an always-failing listener on a private
+        // topic/group riding the very factory the task/sla listener resolves. The
+        // default handler's nine zero-backoff retries land as a sub-second burst of
+        // ten deliveries then silence; ours spreads real retries (1 s doubling).
+        String topic = "novaforge.task.pin-" + UUID.randomUUID();
+        List<Long> deliveries = new CopyOnWriteArrayList<>();
+        var container = listenerFactory.createContainer(topic);
+        container.getContainerProperties().setGroupId("novaforge-notification-pin-"
+                + UUID.randomUUID());
+        java.util.Properties consumerProps = new java.util.Properties();
+        consumerProps.setProperty("auto.offset.reset", "earliest");
+        container.getContainerProperties().setKafkaConsumerProperties(consumerProps);
+        container.getContainerProperties().setMessageListener(
+                (org.springframework.kafka.listener.MessageListener<String, String>) record -> {
+                    deliveries.add(System.currentTimeMillis());
+                    throw new org.springframework.mail.MailSendException("smtp down");
+                });
+        try {
+            container.start();
+            kafka.send(topic, "pin", "{}").get();
+            org.awaitility.Awaitility.await()
+                    .atMost(java.time.Duration.ofSeconds(20))
+                    .until(() -> deliveries.size() >= 3);
+            org.assertj.core.api.Assertions
+                    .assertThat(deliveries.get(2) - deliveries.get(0))
+                    .isGreaterThanOrEqualTo(1_500L);   // backoff, not a burst
+            org.assertj.core.api.Assertions.assertThat(deliveries.size()).isLessThan(10);
+        } finally {
+            container.stop();
+        }
+    }
 
     static final String RECORD = UUID.randomUUID().toString();
 

@@ -57,13 +57,15 @@ public class FileController {
     @PostMapping("/{id}/complete")
     public Map<String, Object> complete(@PathVariable UUID id,
                                         @RequestBody(required = false) CompleteRequest request) {
+        // the bind gate runs BEFORE completion — a doomed bind fires no external
+        // side effects (the ClamAV scan is one), and paying it first strands a
+        // completed attachment that can never accept its bind
+        if (request != null && request.entity() != null && request.recordId() != null) {
+            requireRecordReadable(request.entity(), request.recordId());
+        }
         var completion = attachments.complete(RecordReadGate.tenant(), actor(), id,
                 request == null ? null : request.checksum());
         if (request != null && request.entity() != null && request.recordId() != null) {
-            // the bind consults the same §9 record gate as every read: binding to a
-            // record the caller cannot read planted attachment metadata on it and
-            // stripped the uploader's own access in the same stroke
-            requireRecordReadable(request.entity(), request.recordId());
             attachments.bind(RecordReadGate.tenant(), id, request.entity(), request.recordId());
         }
         return Map.of(
@@ -91,12 +93,6 @@ public class FileController {
     }
 
     /**
-     * The §9 access rule, uniform across the metadata read and the download: a bound
-     * attachment rides the owning record's authorization; an unbound one is the
-     * uploader's (or the service client's) alone. The metadata read used to skip this
-     * — any same-tenant user holding an id learned which record carries which file.
-     */
-    /**
      * The §9 record gate for the BINDING doors: a target record this caller cannot
      * read never accepts their attachment. Fail-closed on an unreachable runtime
      * (canRead throws) — an outage must not open the planting window.
@@ -113,6 +109,12 @@ public class FileController {
         }
     }
 
+    /**
+     * The §9 access rule, uniform across the metadata read and the download: a bound
+     * attachment rides the owning record's authorization; an unbound one is the
+     * uploader's (or the service client's) alone. The metadata read used to skip this
+     * — any same-tenant user holding an id learned which record carries which file.
+     */
     private Map<String, Object> requireAccess(UUID id) {
         var metadata = attachments.metadata(RecordReadGate.tenant(), id).orElseThrow(() ->
                 new com.novaforge.common.error.PlatformException(

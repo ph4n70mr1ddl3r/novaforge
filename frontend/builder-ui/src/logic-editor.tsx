@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import {
     FLOW_OPS,
     HOOK_TRIGGERS,
@@ -8,6 +8,7 @@ import {
     type HookRule,
     type ValidationRule,
 } from "@novaforge/shared";
+import { JsonTextField } from "./json-field.tsx";
 
 /**
  * The business-logic authoring surface (PHASE-3 §8, T8): validation rules and
@@ -39,14 +40,22 @@ export function LogicEditor({ app, busy, onSaveEntity }: LogicEditorProps): Reac
     });
     const [error, setError] = useState<string | null>(null);
     const [flash, setFlash] = useState<string | null>(null);
+    // double-submit fence (the runtime form's rule): the shell's busy prop only
+    // arrives after the async re-render — a fast second submit re-entered here
+    // and double-fired the versioned putEntity
+    const savingRef = useRef(false);
 
     const save = async (entity: EntityDefinition): Promise<void> => {
+        if (savingRef.current) return;
+        savingRef.current = true;
         setError(null);
         try {
             await onSaveEntity(entity);
             setFlash(`Saved logic for ${entity.apiName}`);
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : String(caught));
+        } finally {
+            savingRef.current = false;
         }
     };
 
@@ -194,7 +203,8 @@ function HooksEditor({
 interface StepRow {
     id: string;
     op: string;
-    paramsText: string;
+    /** The PARSED params object — authored through JsonTextField, whose keep-typing fence lives in the field, not here. */
+    params?: Record<string, unknown>;
     next: string;
 }
 
@@ -220,9 +230,7 @@ function flattenChain(flow: FlowStep): StepRow[] {
         rows.push({
             id: current.id,
             op: current.op,
-            paramsText: current.params && Object.keys(current.params).length > 0
-                ? JSON.stringify(current.params)
-                : "",
+            params: current.params,
             next: current.next ?? "",
         });
         current = current.next ? byId.get(current.next) : undefined;
@@ -236,23 +244,12 @@ function flattenChain(flow: FlowStep): StepRow[] {
  */
 function chain(rows: StepRow[]): FlowStep | undefined {
     if (rows.length === 0) return undefined;
-    const parseParams = (text: string): Record<string, unknown> => {
-        if (!text.trim()) return {};
-        // keep-typing: an incomplete literal (`{`, to-be-closed brackets) parses to
-        // EMPTY params — throwing here rejected the keystroke, so valid JSON could
-        // never be typed character by character (suites-editor's own convention)
-        try {
-            return JSON.parse(text) as Record<string, unknown>;
-        } catch {
-            return {};
-        }
-    };
     const nodes = new Map<string, FlowStep>();
     for (const row of rows) {
         nodes.set(row.id, {
             id: row.id,
             op: row.op,
-            params: parseParams(row.paramsText),
+            params: row.params,
             next: undefined,
         });
     }
@@ -304,13 +301,20 @@ function StepListEditor({
                             {step.op === "requestApproval" ? (
                                 <RequestApprovalParams
                                     index={index}
-                                    paramsText={step.paramsText}
-                                    onChange={(paramsText) => update(index, { paramsText })}
+                                    params={step.params}
+                                    onChange={(params) => update(index, { params })}
                                 />
                             ) : (
-                                <input aria-label={`Step params ${index}`} value={step.paramsText}
-                                    onChange={(e) => update(index, { paramsText: e.target.value })}
-                                    placeholder='{"field": "status", "expression": "..."}' />
+                                // JsonTextField: the rows are re-derived from the flow
+                                // graph on every keystroke, so a raw controlled input
+                                // re-serialized the FAILED parse as {} and snapped the
+                                // box back to empty — `{` could never be typed
+                                <JsonTextField
+                                    aria-label={`Step params ${index}`}
+                                    placeholder='{"field": "status", "expression": "..."}'
+                                    value={step.params}
+                                    onParsed={(params) => update(index, { params })}
+                                />
                             )}
                         </td>
                         <td>
@@ -339,21 +343,19 @@ function StepListEditor({
  */
 function RequestApprovalParams({
     index,
-    paramsText,
+    params,
     onChange,
 }: {
     index: number;
-    paramsText: string;
-    onChange: (paramsText: string) => void;
+    params: Record<string, unknown> | undefined;
+    onChange: (params: Record<string, unknown> | undefined) => void;
 }): ReactNode {
-    let params: Record<string, unknown> = {};
-    try {
-        params = paramsText.trim() ? (JSON.parse(paramsText) as Record<string, unknown>) : {};
-    } catch {
-        params = {};
-    }
+    const current: Record<string, unknown> = params ?? {};
+    const emit = (merged: Record<string, unknown>): void => {
+        onChange(Object.keys(merged).length > 0 ? merged : undefined);
+    };
     const patch = (changes: Record<string, unknown>): void => {
-        const merged = { ...params, ...changes };
+        const merged = { ...current, ...changes };
         for (const key of Object.keys(merged)) {
             const value = merged[key];
             if (value === "" || value === undefined
@@ -361,11 +363,11 @@ function RequestApprovalParams({
                 delete merged[key];
             }
         }
-        onChange(Object.keys(merged).length > 0 ? JSON.stringify(merged) : "");
+        emit(merged);
     };
-    const users = Array.isArray(params.approvers) ? (params.approvers as string[]).join(", ")
+    const users = Array.isArray(current.approvers) ? (current.approvers as string[]).join(", ")
             : "";
-    const role = typeof params.approvers === "string" ? params.approvers : "";
+    const role = typeof current.approvers === "string" ? current.approvers : "";
     const patchApprovers = (roleText: string, usersText: string): void => {
         if (usersText.trim().length > 0) {
             patch({ approvers: usersText.split(",").map((part) => part.trim())
@@ -386,20 +388,20 @@ function RequestApprovalParams({
                 defaultValue={users}
                 onBlur={(e) => patchApprovers(role, e.target.value)} />
             <select aria-label={`Approval mode ${index}`}
-                defaultValue={typeof params.mode === "string" ? params.mode : ""}
+                defaultValue={typeof current.mode === "string" ? current.mode : ""}
                 onChange={(e) => patch({ mode: e.target.value })}>
                 <option value="">mode…</option>
                 <option value="any">any (first resolution wins)</option>
                 <option value="all">all (parallel unanimity)</option>
             </select>
             <input aria-label={`Approval timeout ${index}`} placeholder="timeout, e.g. PT24H"
-                defaultValue={typeof params.timeout === "string" ? params.timeout : ""}
+                defaultValue={typeof current.timeout === "string" ? current.timeout : ""}
                 onBlur={(e) => patch({ timeout: e.target.value })} />
             <input aria-label={`Approval escalateTo ${index}`} placeholder="escalateTo, e.g. role:Purch.seniorManager"
-                defaultValue={typeof params.escalateTo === "string" ? params.escalateTo : ""}
+                defaultValue={typeof current.escalateTo === "string" ? current.escalateTo : ""}
                 onBlur={(e) => patch({ escalateTo: e.target.value })} />
             <input aria-label={`Step other params ${index}`} placeholder='other params JSON (onReject subgraph)'
-                defaultValue={otherParams(params)}
+                defaultValue={otherParams(current)}
                 onBlur={(e) => {
                     const text = e.target.value.trim();
                     let rest: Record<string, unknown> = {};
@@ -410,10 +412,9 @@ function RequestApprovalParams({
                     }
                     const guided: Record<string, unknown> = {};
                     for (const key of ["approvers", "mode", "timeout", "escalateTo"]) {
-                        if (params[key] !== undefined) guided[key] = params[key];
+                        if (current[key] !== undefined) guided[key] = current[key];
                     }
-                    const merged = { ...guided, ...rest };
-                    onChange(Object.keys(merged).length > 0 ? JSON.stringify(merged) : "");
+                    emit({ ...guided, ...rest });
                 }} />
         </div>
     );

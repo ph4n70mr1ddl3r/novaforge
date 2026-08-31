@@ -68,6 +68,11 @@ novaforge:
     # §4: the cache is a latency tool, never an authorization boundary — row
     # filters re-evaluate per actor on every miss.
     cache-ttl-seconds: ${NOVAFORGE_REPORT_CACHE_TTL:60}
+    # The published-bundle cache's self-heal window (the resolver's H-18P2 pattern):
+    # a lost metadata.published delivery — Redis down at bump time, a dropped
+    # at-least-once leg — costs one TTL window of staleness, never a tenant wedged
+    # on a stale bundle until restart.
+    bundle-cache-ttl-ms: ${NOVAFORGE_REPORT_BUNDLE_TTL_MS:30000}
     # §6: the sync export cap — larger exports point at the Phase 6 async job.
     export-max-rows: ${NOVAFORGE_REPORT_EXPORT_MAX:10000}
     # §6 money formatting: v1's single-currency-per-app symbol; multi-currency

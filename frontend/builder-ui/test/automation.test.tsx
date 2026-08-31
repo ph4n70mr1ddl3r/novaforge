@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
-import type { AppDefinition, PlatformClient } from "@novaforge/shared";
+import type { AppDefinition, PlatformClient, StateMachineDefinition } from "@novaforge/shared";
 import { Automation } from "../src/automation.tsx";
 
 /**
@@ -38,7 +38,12 @@ const stubClient = (jobs: Record<string, unknown>[]): PlatformClient =>
 
 describe("Automation (PHASE-4 §11)", () => {
     it("designs a state machine over the §3 schema and saves the branch", async () => {
-        const onSave = vi.fn(async (_patch: Record<string, unknown>) => {});
+        // the save mutates a FRESH fetch (the dashboards rule) — apply the captured
+        // patch builder to the unchanged app to observe what would be saved
+        let saved: Record<string, unknown> | undefined;
+        const onSave = vi.fn(async (patch: (fresh: AppDefinition) => Record<string, unknown>) => {
+            saved = patch(app);
+        });
         render(createElement(Automation, { app, client: stubClient([]), onSave }));
 
         // the entity (it has an enum field) joins the machine candidates
@@ -64,7 +69,7 @@ describe("Automation (PHASE-4 §11)", () => {
 
         fireEvent.click(screen.getByText("Save state machines"));
         await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
-        expect(onSave.mock.calls[0]![0]).toEqual({
+        expect(saved).toEqual({
             stateMachines: [{
                 id: "sm_purchaseorder",
                 entity: "PurchaseOrder",
@@ -76,8 +81,33 @@ describe("Automation (PHASE-4 §11)", () => {
         });
     });
 
+    it("keeps a machine another tab added after mount — the dashboards rule (re-audit)", async () => {
+        // Anti-regression: the branch saved the editor's mount-time snapshot
+        // verbatim, silently deleting a concurrent tab's machine on save
+        const foreign: StateMachineDefinition = {
+            id: "sm_invoice", entity: "Invoice", stateField: "status", initial: "DRAFT",
+            states: [{ name: "DRAFT" }], transitions: [],
+        };
+        const saved: Record<string, unknown>[] = [];
+        const onSave = vi.fn(async (patch: (fresh: AppDefinition) => Record<string, unknown>) => {
+            // the SHELL's fresh fetch lands with the concurrent addition aboard
+            saved.push(patch({ ...app, stateMachines: [foreign] }));
+        });
+        render(createElement(Automation, { app, client: stubClient([]), onSave }));
+
+        fireEvent.submit(screen.getByLabelText("Add machine for entity").closest("form")!);
+        fireEvent.click(screen.getByText("Save state machines"));
+        await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+        const machines = saved[0]!.stateMachines as StateMachineDefinition[];
+        // the authored machine AND the foreign one — no silent delete
+        expect(machines.map((machine) => machine.id)).toEqual(["sm_purchaseorder", "sm_invoice"]);
+    });
+
     it("authors an SLA definition — the governed overlay of §6", async () => {
-        const onSave = vi.fn(async (_patch: Record<string, unknown>) => {});
+        let saved: Record<string, unknown> | undefined;
+        const onSave = vi.fn(async (patch: (fresh: AppDefinition) => Record<string, unknown>) => {
+            saved = patch(app);
+        });
         render(createElement(Automation, { app, client: stubClient([]), onSave }));
 
         fireEvent.click(screen.getByText("Add SLA"));
@@ -94,7 +124,7 @@ describe("Automation (PHASE-4 §11)", () => {
 
         fireEvent.click(screen.getByText("Save SLAs"));
         await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
-        expect(onSave.mock.calls[0]![0]).toEqual({
+        expect(saved).toEqual({
             slas: [{
                 id: "sla_po_approval",
                 scope: { taskType: "approval", match: "entity == 'Purch.PurchaseOrder'" },
@@ -106,7 +136,10 @@ describe("Automation (PHASE-4 §11)", () => {
     });
 
     it("authors a scheduled job — definitions are metadata, the registry is not (§7)", async () => {
-        const onSave = vi.fn(async (_patch: Record<string, unknown>) => {});
+        let saved: Record<string, unknown> | undefined;
+        const onSave = vi.fn(async (patch: (fresh: AppDefinition) => Record<string, unknown>) => {
+            saved = patch(app);
+        });
         render(createElement(Automation, { app, client: stubClient([]), onSave }));
 
         fireEvent.click(screen.getByText("Add job"));
@@ -119,7 +152,7 @@ describe("Automation (PHASE-4 §11)", () => {
 
         fireEvent.click(screen.getByText("Save scheduled jobs"));
         await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
-        expect(onSave.mock.calls[0]![0]).toEqual({
+        expect(saved).toEqual({
             jobs: [{ name: "nightlySweep", cron: "0 2 * * *", target: "flow", params: { hook: "sweep" } }],
         });
     });

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { JsonTextField } from "./json-field.tsx";
+import { mergeBranch } from "./branch-merge.ts";
 import {
     type AppDefinition,
     type EntityDefinition,
@@ -24,8 +25,13 @@ import type { PlatformClient } from "@novaforge/shared";
 export interface AutomationProps {
     app: AppDefinition;
     client: PlatformClient;
-    /** Saves a metadata branch patch ({stateMachines} / {slas} / {jobs}). */
-    onSave: (patch: Record<string, unknown>) => Promise<void>;
+    /**
+     * Saves a metadata branch patch ({stateMachines} / {slas} / {jobs}) built from
+     * a FRESH app fetch: the patch callback receives the just-fetched app so the
+     * saved branch can merge around concurrent additions (the dashboards rule) —
+     * a mount-time snapshot saved verbatim deleted another tab's work.
+     */
+    onSave: (patch: (fresh: AppDefinition) => Record<string, unknown>) => Promise<void>;
 }
 
 const JOB_TARGETS: ScheduledJobTarget[] = ["flow", "script", "processStart", "report"];
@@ -54,7 +60,10 @@ export function Automation({ app, client, onSave }: AutomationProps): ReactNode 
         };
     }, [client]);
 
-    const save = async (patch: Record<string, unknown>, what: string): Promise<void> => {
+    const save = async (
+        patch: (fresh: AppDefinition) => Record<string, unknown>,
+        what: string,
+    ): Promise<void> => {
         setError(null);
         setBusy(true);
         try {
@@ -72,11 +81,19 @@ export function Automation({ app, client, onSave }: AutomationProps): ReactNode 
             {error ? <p role="alert">{error}</p> : null}
             {flash ? <p role="status" aria-live="polite">{flash}</p> : null}
             <MachineDesigner entities={app.entities} machines={machines} onChange={setMachines}
-                busy={busy} onSave={() => save({ stateMachines: machines }, "state machines")} />
+                busy={busy} onSave={() => save((fresh) => ({
+                    // the dashboards rule: this editor's intent stands for what its
+                    // mount knew; a machine another tab added after mount survives
+                    stateMachines: mergeBranch(machines, app.stateMachines, fresh.stateMachines, (m) => m.id),
+                }), "state machines")} />
             <SlaEditor slas={slas} onChange={setSlas} busy={busy}
-                onSave={() => save({ slas }, "SLAs")} />
+                onSave={() => save((fresh) => ({
+                    slas: mergeBranch(slas, app.slas, fresh.slas, (s) => s.id),
+                }), "SLAs")} />
             <JobsEditor jobs={jobs} onChange={setJobs} busy={busy}
-                onSave={() => save({ jobs }, "scheduled jobs")} />
+                onSave={() => save((fresh) => ({
+                    jobs: mergeBranch(jobs, app.jobs, fresh.jobs, (j) => j.name),
+                }), "scheduled jobs")} />
             <SchedulerStatus rows={registry} />
         </section>
     );

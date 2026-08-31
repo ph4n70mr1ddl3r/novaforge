@@ -56,4 +56,22 @@ public class RestRuntimeAdminPort implements RuntimeAdminPort {
                 .body(Map.class);
         return body == null ? null : String.valueOf(body.get("username"));
     }
+
+    /**
+     * The user's roles in a tenant — the explicit-recipient membership gate. The
+     * global {@code /admin/users/{id}} lookup carries no tenant attribute, but the
+     * platform DB's own tenant binding is the role-assignment row: the tenant-scoped
+     * roles surface (the same one the reporting service's grant check reads) answers
+     * membership, empty for a foreign tenant's user.
+     */
+    @Override
+    public List<String> rolesOfUser(UUID tenantId, UUID user) {
+        List<String> roles = runtime.method(HttpMethod.GET)
+                .uri("/api/v1/admin/tenants/" + tenantId + "/users/" + user + "/roles")
+                .headers(headers -> headers.setBearerAuth(serviceToken.token()))
+                .retrieve()
+                .body(new ParameterizedTypeReference<List<String>>() {
+                });
+        return roles == null ? List.of() : roles;
+    }
 }

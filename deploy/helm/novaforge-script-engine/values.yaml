@@ -20,14 +20,25 @@ resources:
   limits:
     memory: 768Mi
 
+# Infra wiring (nineteenth pass, closing the H-10P1 class for every chart): the
+# chart used to carry only the auth pair (or nothing), so a deployed service
+# booted against the yaml defaults — every endpoint localhost, i.e. the pod
+# itself: Flyway failed to CrashLoopBackOff on the DB services and the gateway
+# 502'd on every route. Endpoints point at the in-cluster service names; DB
+# credentials ride the fail-closed secret posture like the auth pair (create the
+# referenced Secrets before deploying):
+#   kubectl create secret generic novaforge-db --from-literal=user=<real> \
+#                                               --from-literal=password=<real>
+# The issuer, Kafka, and Tempo names assume the novaforge-* infra services
+# (the compose stack's naming); override per environment in values overlays.
 env:
-  # Containment (2026-08-31, seventeenth pass): the sandbox's heap cap is a sampled,
-  # process-wide tripwire — a single-statement allocation bomb completes before any
-  # sample, and 8 concurrent lanes can out-allocate the shared heap. Pinning -Xmx
-  # bounds the blast radius to exactly this pod (an OOM kill restarts the script
-  # engine alone; every other tenant-facing service keeps serving), which is the
-  # community-edition containment ADR-003 #4 anticipates process pools for.
   - name: JAVA_TOOL_OPTIONS
     value: "-Xmx512m -XX:+ExitOnOutOfMemoryError"
   - name: NOVAFORGE_SCRIPT_MAX_CONCURRENT
     value: "4"
+  - name: NOVAFORGE_DATA_RUNTIME_URL
+    value: "http://novaforge-data-runtime:8083"
+  - name: NOVAFORGE_AUTH_ISSUER
+    value: "http://novaforge-keycloak:8080/realms/novaforge"
+  - name: NOVAFORGE_TEMPO_ENDPOINT
+    value: "http://novaforge-tempo:4318/v1/traces"

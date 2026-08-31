@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { mergeBranch } from "./branch-merge.ts";
 import type { AppDefinition, GapLogEntry, PlatformClient } from "@novaforge/shared";
 
 /**
@@ -301,7 +302,8 @@ export function GapLogEditor({
     onSave,
 }: {
     app: AppDefinition;
-    onSave: (patch: Record<string, unknown>) => Promise<void>;
+    /** The gapLog patch builds from a FRESH app fetch (the dashboards rule) — a mount-time snapshot saved verbatim deleted another tab's concurrent entries. */
+    onSave: (patch: (fresh: AppDefinition) => Record<string, unknown>) => Promise<void>;
 }): ReactNode {
     const [entries, setEntries] = useState<GapLogEntry[]>(app.gapLog ?? []);
     const [busy, setBusy] = useState(false);
@@ -315,7 +317,11 @@ export function GapLogEditor({
         setBusy(true);
         setError(null);
         try {
-            await onSave({ gapLog: entries });
+            await onSave((fresh) => ({
+                // the dashboards rule: this editor's triage stands for what its
+                // mount knew; an entry another tab logged after mount survives
+                gapLog: mergeBranch(entries, app.gapLog, fresh.gapLog, (entry) => entry.id),
+            }));
             setFlash("Saved gap log");
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : String(caught));
@@ -380,16 +386,24 @@ export function GapLogEditor({
                     type="button"
                     disabled={busy}
                     onClick={() =>
-                        setEntries((current) => [
-                            ...current,
-                            {
-                                id: `G-${current.length + 1}`,
-                                area: "",
-                                blocker: "",
-                                priority: "medium",
-                                disposition: "open",
-                            },
-                        ])
+                        setEntries((current) => {
+                            // first G-N not already present (re-audit): length+1
+                            // collided with a surviving G-N after out-of-band
+                            // deletions left gaps in the id sequence
+                            const taken = new Set(current.map((entry) => entry.id));
+                            let n = 1;
+                            while (taken.has(`G-${n}`)) n += 1;
+                            return [
+                                ...current,
+                                {
+                                    id: `G-${n}`,
+                                    area: "",
+                                    blocker: "",
+                                    priority: "medium",
+                                    disposition: "open",
+                                },
+                            ];
+                        })
                     }
                 >
                     Add gap

@@ -92,7 +92,13 @@ export function DashboardComposer({
                     type="button"
                     disabled={dirty || busy}
                     onClick={() => {
-                        const id = `dash${app.dashboards.length + 1}`;
+                        // first dashN not already present (re-audit): length+1
+                        // collided with a surviving dashN after out-of-band
+                        // deletions left gaps in the id sequence
+                        const taken = new Set(app.dashboards.map((dashboard) => dashboard.id));
+                        let n = 1;
+                        while (taken.has(`dash${n}`)) n += 1;
+                        const id = `dash${n}`;
                         void persist(
                             (current) => [...current, { id, label: id, widgets: [], roles: [] }],
                             id,

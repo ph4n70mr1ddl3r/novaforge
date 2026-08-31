@@ -37,23 +37,52 @@ export function Integrations({ app, client, onSave }: IntegrationsProps): ReactN
     const [deliveries, setDeliveries] = useState<Record<string, unknown>[] | null>(null);
     const [dlq, setDlq] = useState<Record<string, unknown>[] | null>(null);
     const [jobs, setJobs] = useState<Record<string, unknown>[] | null>(null);
+    /** Per-surface load failures — the rows themselves stay at their last good value. */
+    const [opsError, setOpsError] = useState<{ deliveries?: string; dlq?: string; jobs?: string }>({});
     const [error, setError] = useState<string | null>(null);
     const [flash, setFlash] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
     const reloadOps = (): void => {
+        // a failed fetch NEVER fakes an empty ops surface (re-audit): the last
+        // good rows stay, and a first-load failure surfaces as an explicit load
+        // error — "No deliveries yet" on a dead route was active misinformation
         client
             .integrationDeliveries()
-            .then(setDeliveries)
-            .catch(() => setDeliveries([]));
+            .then((rows) => {
+                setDeliveries(rows);
+                setOpsError((current) => ({ ...current, deliveries: undefined }));
+            })
+            .catch((caught: unknown) => {
+                setOpsError((current) => ({
+                    ...current,
+                    deliveries: caught instanceof Error ? caught.message : String(caught),
+                }));
+            });
         client
             .integrationDlq()
-            .then(setDlq)
-            .catch(() => setDlq([]));
+            .then((rows) => {
+                setDlq(rows);
+                setOpsError((current) => ({ ...current, dlq: undefined }));
+            })
+            .catch((caught: unknown) => {
+                setOpsError((current) => ({
+                    ...current,
+                    dlq: caught instanceof Error ? caught.message : String(caught),
+                }));
+            });
         client
             .integrationJobs()
-            .then(setJobs)
-            .catch(() => setJobs([]));
+            .then((rows) => {
+                setJobs(rows);
+                setOpsError((current) => ({ ...current, jobs: undefined }));
+            })
+            .catch((caught: unknown) => {
+                setOpsError((current) => ({
+                    ...current,
+                    jobs: caught instanceof Error ? caught.message : String(caught),
+                }));
+            });
     };
 
     useEffect(reloadOps, [client]);
@@ -94,9 +123,9 @@ export function Integrations({ app, client, onSave }: IntegrationsProps): ReactN
             <ImportEditor entities={app.entities.map((entity) => entity.apiName)}
                 imports={imports} onChange={setImports} busy={busy}
                 onSave={() => save("import mappings")} />
-            <DeliveryLog rows={deliveries} />
-            <DlqPanel rows={dlq} client={client} onReplayed={reloadOps} />
-            <JobsPanel rows={jobs} client={client} onChanged={reloadOps} />
+            <DeliveryLog rows={deliveries} error={opsError.deliveries ?? null} />
+            <DlqPanel rows={dlq} error={opsError.dlq ?? null} client={client} onReplayed={reloadOps} />
+            <JobsPanel rows={jobs} error={opsError.jobs ?? null} client={client} onChanged={reloadOps} />
         </section>
     );
 }
@@ -227,19 +256,25 @@ function CredentialEditor({
 }): ReactNode {
     const [material, setMaterial] = useState<Record<string, string>>({});
     const [provisioned, setProvisioned] = useState<string | null>(null);
+    const [provisionError, setProvisionError] = useState<string | null>(null);
     const update = (index: number, changes: Partial<CredentialDefinition>): void =>
         onChange(credentials.map((credential, i) => i === index ? { ...credential, ...changes } : credential));
     const provision = async (id: string): Promise<void> => {
+        setProvisionError(null);
         try {
             await client.putSecret(id, material[id] ?? "");
             setProvisioned(id);
-        } catch {
+        } catch (caught) {
+            // the PUT can fail (a dead secret store, a rejected rotation) — the
+            // old swallow left the row looking provisioned-with-nothing-stored
+            setProvisionError(caught instanceof Error ? caught.message : String(caught));
             setProvisioned(null);
         }
     };
     return (
         <fieldset>
             <legend>Credentials</legend>
+            {provisionError ? <p role="alert">{provisionError}</p> : null}
             <p className="nf-b-meta">
                 A credential is the reference (kind + binding slots); the secret value
                 provisions straight into the encrypted store and never touches the app
@@ -322,19 +357,24 @@ function WebhookEditor({
 }): ReactNode {
     const [secret, setSecret] = useState<Record<string, string>>({});
     const [provisioned, setProvisioned] = useState<string | null>(null);
+    const [provisionError, setProvisionError] = useState<string | null>(null);
     const update = (index: number, changes: Partial<WebhookDefinition>): void =>
         onChange(webhooks.map((webhook, i) => i === index ? { ...webhook, ...changes } : webhook));
     const provision = async (ref: string): Promise<void> => {
+        setProvisionError(null);
         try {
             await client.putSecret(ref, secret[ref] ?? "");
             setProvisioned(ref);
-        } catch {
+        } catch (caught) {
+            // same rule as the credential leg: a failed PUT surfaces, never swallows
+            setProvisionError(caught instanceof Error ? caught.message : String(caught));
             setProvisioned(null);
         }
     };
     return (
         <fieldset>
             <legend>Webhooks</legend>
+            {provisionError ? <p role="alert">{provisionError}</p> : null}
             <p className="nf-b-meta">
                 Inbound hooks map provider payloads onto the write path (HMAC-SHA256,
                 timestamp + body); outbound hooks filter spine events onto a signed
@@ -499,12 +539,23 @@ function ImportEditor({
 
 // --- the delivery log (§3): every dispatch, beside the editors ---
 
-function DeliveryLog({ rows }: { rows: Record<string, unknown>[] | null }): ReactNode {
+function DeliveryLog({
+    rows,
+    error,
+}: {
+    rows: Record<string, unknown>[] | null;
+    /** Set only while no rows ever landed — later failures keep the last good rows. */
+    error: string | null;
+}): ReactNode {
     return (
         <fieldset>
             <legend>Delivery log</legend>
             {rows === null ? (
-                <p role="status">Loading deliveries…</p>
+                error ? (
+                    <p role="alert">Could not load deliveries: {error}</p>
+                ) : (
+                    <p role="status">Loading deliveries…</p>
+                )
             ) : rows.length === 0 ? (
                 <p>No deliveries yet — publish connectors/webhooks and let them fire.</p>
             ) : (
@@ -542,10 +593,13 @@ function DeliveryLog({ rows }: { rows: Record<string, unknown>[] | null }): Reac
 // --- the DLQ (§5/§6): terminal failures with the payload preserved, replayable ---
 function DlqPanel({
     rows,
+    error,
     client,
     onReplayed,
 }: {
     rows: Record<string, unknown>[] | null;
+    /** Set only while no rows ever landed — later failures keep the last good rows. */
+    error: string | null;
     client: PlatformClient;
     onReplayed: () => void;
 }): ReactNode {
@@ -567,7 +621,11 @@ function DlqPanel({
         <fieldset>
             <legend>Dead-letter queue</legend>
             {rows === null ? (
-                <p role="status">Loading DLQ…</p>
+                error ? (
+                    <p role="alert">Could not load the DLQ: {error}</p>
+                ) : (
+                    <p role="status">Loading DLQ…</p>
+                )
             ) : rows.length === 0 ? (
                 <p>DLQ empty — terminal failures land here with their payloads preserved.</p>
             ) : (
@@ -615,10 +673,13 @@ function DlqPanel({
 
 function JobsPanel({
     rows,
+    error,
     client,
     onChanged,
 }: {
     rows: Record<string, unknown>[] | null;
+    /** Set only while no rows ever landed — later failures keep the last good rows. */
+    error: string | null;
     client: PlatformClient;
     onChanged: () => void;
 }): ReactNode {
@@ -659,7 +720,11 @@ function JobsPanel({
                 once); progress rides import.progress, completion notifies the initiator.
             </p>
             {rows === null ? (
-                <p role="status">Loading jobs…</p>
+                error ? (
+                    <p role="alert">Could not load jobs: {error}</p>
+                ) : (
+                    <p role="status">Loading jobs…</p>
+                )
             ) : rows.length === 0 ? (
                 <p>No job runs yet — imports and over-cap exports land here.</p>
             ) : (

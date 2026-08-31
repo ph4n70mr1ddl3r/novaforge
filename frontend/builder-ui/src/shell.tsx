@@ -50,6 +50,9 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
     const [screen, setScreen] = useState<BuilderScreen>("entities");
     const [app, setApp] = useState<AppDefinition | null>(null);
     const [error, setError] = useState<string | null>(null);
+    // the logic/suites editors take their busy state from the shell (their save
+    // legs live here) — the ref-less version left their buttons live mid-flight
+    const [busy, setBusy] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -122,7 +125,14 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                                 role={role}
                                 savePage={async (page) => {
                                     try {
-                                        return await client.putPage(app.id ?? "", page);
+                                        const saved = await client.putPage(app.id ?? "", page);
+                                        // every other screen-saver reloads; the pages leg
+                                        // skipping it left the shell's app (and the
+                                        // builder's seed, revision included) at the
+                                        // pre-save snapshot — the NEXT save 409'd
+                                        // against the user's own revision
+                                        await reload();
+                                        return saved;
                                     } catch (caught) {
                                         if (caught instanceof ApiError && caught.status === 409) {
                                             // refresh the revision base, then surface the rebase prompt.
@@ -145,20 +155,39 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                         {screen === "logic" ? (
                             <LogicEditor
                                 app={app}
+                                busy={busy}
                                 onSaveEntity={async (entity: EntityDefinition) => {
-                                    await client.putEntity(app.id ?? "", entity as unknown as Record<string, unknown>);
-                                    await reload();
+                                    setBusy(true);
+                                    try {
+                                        await client.putEntity(app.id ?? "", entity as unknown as Record<string, unknown>);
+                                        await reload();
+                                    } finally {
+                                        setBusy(false);
+                                    }
                                 }}
                             />
                         ) : null}
                         {screen === "suites" ? (
                             <SuitesEditor
                                 app={app}
+                                busy={busy}
                                 onSaveSuite={async (suite) => {
-                                    await client.putSuite(app.id ?? "", suite.apiName, suite as unknown as Record<string, unknown>);
-                                    await reload();
+                                    setBusy(true);
+                                    try {
+                                        await client.putSuite(app.id ?? "", suite.apiName, suite as unknown as Record<string, unknown>);
+                                        await reload();
+                                    } finally {
+                                        setBusy(false);
+                                    }
                                 }}
-                                onRunSuite={async (apiName) => await client.runSuite(app.id ?? "", apiName)}
+                                onRunSuite={async (apiName) => {
+                                    setBusy(true);
+                                    try {
+                                        return await client.runSuite(app.id ?? "", apiName);
+                                    } finally {
+                                        setBusy(false);
+                                    }
+                                }}
                             />
                         ) : null}
                         {screen === "automation" ? (
@@ -167,8 +196,11 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                                 client={client}
                                 onSave={async (patch) => {
                                     // state machines, SLAs, and jobs ride the app document
-                                    // (versioned, promoted — §3/§6/§7)
-                                    await client.patchApp(app.id ?? "", patch);
+                                    // (versioned, promoted — §3/§6/§7); the branch patch
+                                    // applies to a FRESH fetch so another tab's concurrent
+                                    // additions survive (the dashboards rule)
+                                    const fresh = (await client.getApp(app.id ?? "")) as AppDefinition;
+                                    await client.patchApp(app.id ?? "", patch(fresh));
                                     await reload();
                                 }}
                             />
@@ -253,7 +285,11 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                                 <GapLogEditor
                                     app={app}
                                     onSave={async (patch) => {
-                                        await client.patchApp(app.id ?? "", patch);
+                                        // the gapLog patch applies to a FRESH fetch (the
+                                        // dashboards rule): a mount-time snapshot saved
+                                        // verbatim deleted another tab's concurrent entries
+                                        const fresh = (await client.getApp(app.id ?? "")) as AppDefinition;
+                                        await client.patchApp(app.id ?? "", patch(fresh));
                                         await reload();
                                     }}
                                 />

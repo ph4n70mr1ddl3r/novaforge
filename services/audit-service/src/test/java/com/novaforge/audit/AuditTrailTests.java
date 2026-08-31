@@ -53,6 +53,10 @@ class AuditTrailTests extends PostgresTestBase {
     KafkaTemplate<String, String> kafka;
 
     @Autowired
+    org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory<String, String>
+            listenerFactory;
+
+    @Autowired
     com.novaforge.audit.store.AuditPartitionRotation rotation;
 
     @Autowired
@@ -231,6 +235,56 @@ class AuditTrailTests extends PostgresTestBase {
     private void send(Map<String, Object> payload, String topic) throws Exception {
         kafka.send(new ProducerRecord<>(topic,
                 TENANT + ":" + payload.get("eventId"), MAPPER.writeValueAsString(payload))).get();
+    }
+
+    @Test
+    @DisplayName("a failing append redelivers with real backoff — never the default 9x zero-backoff log-and-skip")
+    void failingAppendRedeliversWithBackoff() throws Exception {
+        // Anti-regression (2026-08-31): the consumers deliberately propagate a failed
+        // store.append, but with no container error handler Boot's default answered
+        // that propagation with nine ZERO-backoff retries and a log-and-skip — a
+        // database outage burned its budget in under a second, committed the offset,
+        // and left permanent silent holes in the trail. ConsumerErrorConfig mirrors
+        // the Workflow Service's mechanism: exponential backoff + a dead-letter
+        // publisher, never a silent skip.
+        // wiring: the custom handler rides the factory every listener resolves by
+        // default — asserted through a container the factory itself builds
+        var probe = listenerFactory.createContainer("novaforge-audit-wiring-probe");
+        var handler = probe.getCommonErrorHandler();
+        assertThat(handler).isInstanceOf(
+                org.springframework.kafka.listener.DefaultErrorHandler.class);
+        assertThat(handler.seeksAfterHandling()).isTrue();   // seek back = redeliver
+
+        // Behavior against the real broker: one always-failing listener on a private
+        // topic/group riding the very factory every audit listener resolves. The
+        // default handler's nine zero-backoff retries land as a sub-second burst of
+        // ten deliveries then silence; ours spreads real retries (1 s doubling).
+        String topic = "novaforge.record.pin-" + UUID.randomUUID();
+        java.util.List<Long> deliveries = new java.util.concurrent.CopyOnWriteArrayList<>();
+        var container = listenerFactory.createContainer(topic);
+        container.getContainerProperties().setGroupId("novaforge-audit-pin-" + UUID.randomUUID());
+        java.util.Properties consumerProps = new java.util.Properties();
+        consumerProps.setProperty("auto.offset.reset", "earliest");
+        container.getContainerProperties().setKafkaConsumerProperties(consumerProps);
+        container.getContainerProperties().setMessageListener(
+                (org.springframework.kafka.listener.MessageListener<String, String>) record -> {
+                    deliveries.add(System.currentTimeMillis());
+                    throw new org.springframework.dao.DataAccessResourceFailureException(
+                            "postgres restarting");
+                });
+        try {
+            container.start();
+            kafka.send(new ProducerRecord<>(topic, "pin", "{}")).get();
+            org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(20))
+                    .until(() -> deliveries.size() >= 3);
+            // the first three deliveries span seconds (backoff), not a burst; and the
+            // ten-attempt budget is nowhere near spent — the record is being
+            // redelivered, not skipped toward the drop
+            assertThat(deliveries.get(2) - deliveries.get(0)).isGreaterThanOrEqualTo(1_500L);
+            assertThat(deliveries.size()).isLessThan(10);
+        } finally {
+            container.stop();
+        }
     }
 
     @org.junit.jupiter.api.Test

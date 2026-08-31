@@ -70,13 +70,20 @@ public class InternalSendController {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "deliveryId must be a short word-shaped key: " + request.deliveryId());
         }
-        // platform role names resolve to holders; explicit users ride verbatim —
-        // one deduped recipient list, order-stable for deterministic delivery
+        // platform role names resolve to holders (the runtime's tenant-scoped read);
+        // explicit user ids are CALLER-NAMED, so each one must prove membership in
+        // the sending tenant before it may receive its data — a foreign tenant's id
+        // drops with a warn (the cross-tenant leak case, 2026-08-31), never delivers.
+        // One deduped recipient list, order-stable for deterministic delivery.
         Set<UUID> users = new LinkedHashSet<>();
         for (String role : rolesOf(request.recipients())) {
             users.addAll(recipients.holdersOf(tenantId, role));
         }
-        users.addAll(usersOf(request.recipients()));
+        for (UUID named : usersOf(request.recipients())) {
+            if (recipients.belongsTo(tenantId, named)) {
+                users.add(named);
+            }
+        }
         if (users.isEmpty()) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "internal sends require at least one resolved recipient "

@@ -189,4 +189,29 @@ describe("PageBuilder (T8)", () => {
         expect(added.at(-1)!.action).toEqual({ type: "runFlow", props: { hook: "stampCredit" } });
         expect(added.length).toBeGreaterThan(1);
     });
+
+    it("a double-clicked Save issues exactly one PUT (in-flight fence, re-audit)", async () => {
+        // the runtime form's rule: `saving` state is async — a fast second click
+        // re-entered before the re-render, and two versioned PUTs raced (the loser
+        // 409ing against the user's own save)
+        let release!: (value: unknown) => void;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const savePage = vi.fn<(page: Record<string, unknown>) => Promise<unknown>>(async () => gate);
+        render(builder(savePage));
+        fireEvent.click(await screen.findByRole("treeitem", { name: /status/ }));
+        fireEvent.change(screen.getByLabelText(/visibility/), { target: { value: "status != 'POSTED'" } });
+
+        const button = screen.getByTestId("save-page") as HTMLButtonElement;
+        fireEvent.click(button);
+        fireEvent.click(button); // the double-click — must not re-enter
+        expect(savePage).toHaveBeenCalledTimes(1);
+        // the button disables while the PUT is in flight, re-enabling after
+        await waitFor(() =>
+            expect((screen.getByTestId("save-page") as HTMLButtonElement).disabled).toBe(true));
+        release({});
+        await waitFor(() =>
+            expect((screen.getByTestId("save-page") as HTMLButtonElement).disabled).toBe(false));
+    });
 });

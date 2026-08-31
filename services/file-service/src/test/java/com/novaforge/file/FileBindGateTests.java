@@ -114,6 +114,11 @@ class FileBindGateTests extends PostgresTestBase {
                 .isEqualTo("Confidential/" + target);
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
                 "SELECT entity FROM fl_attachments WHERE id = ?", String.class, id)).isNull();
+        // the gate ran BEFORE completion: a doomed bind fires no external side
+        // effects — the checksum/scan the completion writes never landed, so the
+        // attachment is still completable once the caller binds a readable target
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT checksum FROM fl_attachments WHERE id = ?", String.class, id)).isNull();
     }
 
     @Test

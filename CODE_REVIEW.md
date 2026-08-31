@@ -2053,3 +2053,194 @@ bounded clamd connect, pools, and caps). Frontend: typecheck clean + 162 vitest
 runtime-ui 15 incl. the double-submit pin). The eleven chart templates
 parse-validated with the securityContext and /tmp volume; the eleven poms
 well-formed with UID 1000.
+
+## Nineteenth Pass — 2026-08-31 (the ledger-empty audit: four concurrent sweeps, the newest code first)
+
+The eighteenth pass emptied the ledger, so this pass ran the established
+pattern at full width: a hand audit of the newest code (the closeout commit's
+own landings), three parallel adversarial sweeps (backend services, frontend,
+deploy/CI), then every confirmed defect fixed with an anti-regression pin.
+Thirty-two confirmed defects closed: 4 engine/file, 8 backend, 12 frontend, 8
+deploy/posture.
+
+### The newest code, re-audited — the closeout's own fixes were the richest vein again
+
+- **H-19P1 — the double-guard landed on ONE door of four.** The eighteenth
+  pass's post-hook doom-guard re-check (a beforeSave hook re-dating a record
+  into a CLOSED period, or re-pointing a frozen parent, must meet the same
+  rejection on landing as on arrival) was added to the user UPDATE path only.
+  The user CREATE door and the integration CREATE door had no post-hook leg at
+  all — a hook-dated create into a closed period committed (the caller dates a
+  period-free September; the hook re-dates to the closed August inside); the
+  integration UPDATE door re-ran the period lock but never the parent-freeze
+  guard, so a hook re-pointing a lookup at a terminal parent committed there.
+  All three doors run the guards pre- AND post-hook now. Pinned ×3 — the user
+  create leg inside HookDatedPeriodLockTests (folded into the method that owns
+  the period row: period lookup is by date range, so a sibling method closing
+  its own August period couples the two through every August date), and a new
+  IntegrationGuardLegTests carrying the integration create (4014, nothing
+  landed) and the integration update (4013, the line still points at the open
+  doc). Bite-proven: with the engine reverted, the create leg commits 200 and
+  the pin fails.
+- **L-19P1 — the bind gate paid the scan for a doomed write.** The closeout's
+  §9 gate on the completion door ran AFTER `complete()` — the ClamAV scan is an
+  external side effect, and a rejected bind left a completed attachment that
+  could never accept its target. The gate runs BEFORE completion now (the
+  doom-first invariant the engine doors obey); the pin strengthened to assert
+  the checksum stays NULL (completion never fired for the doomed bind). The
+  orphaned requireAccess javadoc the insertion left dangling is back on its
+  own method.
+
+### The backend sweep — three HIGHs, all in the at-least-once contract
+
+- **H-19P2 — the one unbounded RestClient left in the audited set**:
+  reporting's `RestPublishedApps` (the published-bundle source behind every
+  run/export/delivery) built its metadata client with no requestFactory —
+  infinite connect/read. Every sibling is bounded 2s/60s with a stated
+  rationale; a hung metadata TCP hold pinned a Tomcat thread per fire until
+  the pool exhausted. Bounded like its siblings; the factory's actual
+  2000/60000ms pinned.
+- **H-19P3 / H-19P4 — the "must redeliver" contract was a comment, not a
+  mechanism, in audit and notification.** Both services' listeners propagate
+  append/send failures deliberately — but with no container error handler,
+  Boot's default retries nine times at ZERO backoff then log-and-skips,
+  committing the offset: a DB outage longer than nothing punched permanent
+  silent holes in the append-only trail, and an SMTP outage silently dropped
+  every task/sla fan-out (no inbox row, no email). The sixteenth pass built
+  the answer for workflow (`ConsumerErrorConfig`: exponential backoff, DLT,
+  never log-and-skip) but wired it into one service. Audit and notification
+  carry the same config now; pinned with real-broker behavioral
+  discriminators (the failing delivery redelivers with observable spread, not
+  the sub-second zero-backoff burst) plus wiring assertions. The existing
+  listener-throws pins held untouched.
+- **M-19P1 — a Redis outage hard-failed every report run.** The epoch read
+  rode the resolve path unguarded — one connection failure 500'd interactive
+  runs, exports, and scheduled deliveries even for bundles already cached
+  in-process, contradicting the service's own documented degrade posture.
+  Guarded: warm cache serves, cold miss fetches fresh; the invalidate bump is
+  guarded too. Pinned ×2 (cold-miss-through-outage, warm-serve-does-no-fetch).
+- **M-19P2 — the published-bundle cache served stale forever on one lost
+  Kafka delivery** (H-18P2's mechanism, alive in reporting's own cache): no
+  version check, no TTL — a missed `metadata.published` bump wedged a tenant
+  on a stale bundle until restart. The cache carries a TTL self-heal window
+  now (30s default, env-tunable) exactly like the resolver's H-18P2 close;
+  pinned: version moves with no observed bump and the next TTL-expired read
+  serves v2.
+- **M-19P3 — cross-tenant explicit recipients.** `recipients.users` ids are
+  caller-named untrusted input, but the admin user lookup is global
+  (tenant-unscoped, no tenant attribute — membership lives in role rows), so
+  a recipient list naming a foreign user delivered the sending tenant's data
+  to them: inbox row plus the emailed export. Every explicit id must now
+  prove membership through the tenant-scoped roles read (empty = not a
+  member), dropping non-members with a warn and failing CLOSED on lookup
+  errors — a lost send to one id beats a cross-tenant leak. Pinned: a foreign
+  id named alongside a member delivers exactly the member's row/email and
+  nothing for the foreign user; an all-foreign list rejects.
+- **L-19P2 — `page * size` overflow**: the inbox pager left `page` unbounded;
+  `page=2000000000&size=200` overflowed int to a negative OFFSET and rendered
+  a 500 from a raw Postgres error. Bounded (reject, never clamp) with long
+  math; pinned 400.
+- **L-19P3 — upstream response bodies leaked to end users**: the async-export
+  handoff embedded the integration service's rejection body verbatim in the
+  user-facing problem detail. Server-side WARN carries the body; the user
+  sees the status only. Pinned.
+
+### The frontend sweep — twelve confirmed, twelve closed (163 → 182 vitest)
+
+- **HIGH: the JSON authoring inputs wiped typed text** — the logic editor's
+  step-params and the suites editor's fixture/step-template inputs were
+  controlled components re-derived from the parsed model every keystroke,
+  committing `{}` on failed parse: React snapped the DOM back, so JSON could
+  only be entered by pasting a complete literal in one action (typing
+  `{"x": 1` left the box empty), and a partial silently saved empty params.
+  All three author through the `JsonTextField` fence the eighteenth pass
+  built (objects only, keep-typing). Pinned ×2.
+- **MEDs**: the palette's raw `crypto.randomUUID` bricked every palette click
+  on plain-HTTP origins (the guarded `randomKey` moved to shared and both
+  callers use it — pinned by hiding the API like a non-secure context does);
+  the pages screen never reloaded after save (the one screen-saver without
+  it — stale-revision 409s against the user's own save); the page builder's
+  save had no double-submit fence (savingRef + disabled, pinned one-PUT);
+  the runtime's state-machine transition buttons were local-only theater
+  (a real versioned PATCH now, server response applied, pinned one-PATCH
+  with `{version, stateField}`); the approval inbox's reload lacked the
+  stale-response sequence fence the notifications inbox got (reloadSeq +
+  pager-fence, pinned out-of-order refusal); automation and gap-log saved
+  mount-time branch snapshots verbatim (the dashboards' fresh-fetch +
+  mergeBranch rule applied — a concurrent tab's machine/SLA/job/gap rows
+  survive, pinned).
+- **LOWs**: the integrations ops panels faked empty on failure (error alerts,
+  last-good rows kept — pinned); secret provisioning swallowed every error
+  (surfaced, pinned); `length + 1` id schemes collided after out-of-band
+  deletions (first-free loop, pinned); closed lookup inputs displayed the raw
+  FK uuid (resolved to the target's display field through a sequenced by-id
+  read, raw-id fallback — pinned ×2); Logic/Suites editors never received the
+  shell's busy state (threaded + re-entry fences, pinned single-fire).
+
+### The deploy/posture leg — the H-10P1 class closes for every chart
+
+- **H-19P4 — ten of eleven charts deployed services wired to localhost, and
+  six application yamls still hardcoded DB credentials.** The ninth pass
+  (H-10P1) recorded and fixed exactly this for file-service only; the ten
+  siblings shipped `env: []` or the auth pair alone — inside a pod every
+  default endpoint is the pod itself: Flyway CrashLooped the seven DB
+  services and the gateway 502'd on every route, and the literal
+  `username: novaforge` blocks had no env binding at all. All eleven charts
+  now carry the full infra wiring (in-cluster service DNS for Postgres,
+  Kafka, Redis, Keycloak issuer, Tempo, and every inter-service URL; DB
+  credentials ride the fail-closed `novaforge-db` secret posture like the
+  auth pair), the six yamls env-bind their credentials (compose/dev defaults
+  unchanged), and the gateway's dashed upstream properties gained explicit
+  env-fallback twins (`${novaforge.upstreams.x:${NOVAFORGE_X_URL:…}}` —
+  dashed names have no clean relaxed-binding form). All eleven charts lint
+  AND render under helm 3.16.4.
+- **M-19P4 — no startupProbe anywhere**: the liveness probe's default budget
+  kills a booting JVM (~30s) that shares a kind node with ten siblings — the
+  classic kill-before-ready loop. Every deployment carries a startup probe
+  now (5s × 60 = five minutes of grace); helm-render verified.
+- **M-19P5 — the CI bearer token rode GITHUB_ENV unmasked**: a runtime-derived
+  token is not auto-masked by GitHub (only `secrets.*` inputs are) — any
+  later env-printing step leaked a full-scope platform token into logs.
+  `::add-mask::` precedes the export.
+- **L-19P4 — no job timeouts** (GitHub's 360-minute default vs this repo's
+  own surefire-hang history): every job in both workflows is bounded.
+- **L-19P5 — the chart-render gate**: H-12P1 found 22 never-rendered invalid
+  templates, fixed by hand with nothing stopping the class from returning. A
+  `charts` CI job lints and renders every chart on every PR (and this pass
+  ran the same helm 3.16.4 check locally — clean).
+- **L-19P6 — version drift**: `poi-ooxml` was the one third-party version in
+  a module pom, and jib's version was repeated verbatim in eleven poms. Both
+  centralized in the root pom (`poi.version`, `jib.version` +
+  pluginManagement); module poms keep only per-image configuration.
+
+### Recorded open after this pass (decisions, not defects)
+
+- **In-cluster infra has no chart**: the eleven service charts point at
+  `novaforge-postgres/kafka/redis/keycloak/tempo/minio/clamav`, which no chart
+  or manifest in this repo creates — local dev rides the compose stack,
+  staged environments bring their own infra (the values comments state the
+  assumption; a stateful infra chart is a scoped project, not a fix).
+- **Cluster hardening beyond the v1 posture**, all deliberate alongside the
+  recorded L-TP7 ClusterIP-only stance: no NetworkPolicy/dedicated
+  ServiceAccount (the pods ride the namespace default SA), no PDB/HPA (v1
+  ships replicaCount 1), mutable `0.1.0-SNAPSHOT` image tags with no CI image
+  publish (skaffold's gitCommit override is the working path), and actions
+  pinned to major-version tags rather than SHAs.
+- The prior deliberate set stands: delegation read-scope, M11/M12,
+  sandbox process-isolation pools, the stuck-`running` job row.
+
+### Verification (this pass)
+
+Full serial `./mvnw verify` **BUILD SUCCESS, honest exit 0** — 23 modules,
+496 backend tests, zero failures, zero errors, zero skipped (data-runtime api
+91 with the create-leg and IntegrationGuardLegTests pins; reporting 30 with
+the bounded-client/degrade/TTL pins; notification 17 with the backoff,
+cross-tenant, and page-overflow pins; audit 8 with the redelivery-backoff
+pin; file 14 with the strengthened bind-gate pin; gateway 24 under the nested
+upstream placeholders; the whole of the prior passes' suites re-run
+underneath). Frontend: `pnpm check` exit 0 and 182 vitest green across 25
+files (shared 104, builder-ui 60, runtime-ui 18) — 19 new pins, zero
+pre-existing tests deleted. The eleven charts lint + render under helm 3.16.4
+(the same check the new CI charts job runs). Every fix carries its pin; the
+engine guard legs were bite-proven by reverting the fix and watching the new
+pins fail.

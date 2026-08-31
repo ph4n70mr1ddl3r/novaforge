@@ -3,7 +3,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { PageRenderer } from "../src/renderer/renderer.ts";
 import { resolveDefaultPage } from "../src/resolver.ts";
-import { dispatchAction, interpolate, resolvePath } from "../src/renderer/context.ts";
+import { RendererContext, dispatchAction, interpolate, resolvePath, type ListRequest } from "../src/renderer/context.ts";
+import { FieldLookup } from "../src/catalog/fields.tsx";
 import type { EntityDefinition } from "../src/metadata.ts";
 
 /**
@@ -159,5 +160,65 @@ describe("actions and templates (§4)", () => {
         });
         await expect(dispatchAction(bare, { type: "runFlow", props: { hook: "x" } }))
             .rejects.toThrow("runFlow is not available");
+    });
+});
+
+describe("FieldLookup's closed state (re-audit)", () => {
+    const fields = {
+        customer: { apiName: "customer", label: "Customer", type: "lookup" as const, target: "Customer" },
+    };
+
+    function lookupMount(record: Record<string, unknown>, rows: Record<string, unknown>[]) {
+        const requests: ListRequest[] = [];
+        const value = {
+            mode: "runtime" as const,
+            clock: "2026-08-24T10:00:00Z",
+            user: { name: "Demo", roles: ["user"], locale: "en" },
+            fields,
+            record,
+            errors: {},
+            getValue: (path: string) => record[path.split(".")[0]!],
+            setValue: () => {},
+            actions: {
+                save: async () => {},
+                cancel: async () => {},
+                deleteRecord: async () => {},
+                openPage: async () => {},
+            },
+            navigate: () => {},
+            data: {
+                list: async (request: ListRequest) => {
+                    requests.push(request);
+                    return { rows, total: rows.length };
+                },
+                search: async () => [],
+                displayFieldOf: () => "name",
+            },
+        };
+        const mounted = render(createElement(
+            RendererContext.Provider,
+            { value },
+            createElement(FieldLookup, { field: "customer", label: "Customer", target: "Customer" }),
+        ));
+        return { mounted, requests };
+    }
+
+    it("shows the target's display label, not the opaque FK id", async () => {
+        // Anti-regression: the closed input rendered the stored uuid verbatim —
+        // the dropdown labeled options by displayFieldOf, the closed box didn't
+        const { requests } = lookupMount({ customer: "cu-7" }, [{ id: "cu-7", name: "Acme Corp" }]);
+        await waitFor(() =>
+            expect((screen.getByLabelText(/Customer/i) as HTMLInputElement).value).toBe("Acme Corp"));
+        // resolved through the data service's by-id query leg, sequenced like the search
+        expect(requests).toEqual([
+            { entity: "Customer", filter: { op: "eq", field: "id", value: "cu-7" }, size: 1, offset: 0 },
+        ]);
+    });
+
+    it("falls back to the raw id when the target row cannot be resolved", async () => {
+        const { mounted } = lookupMount({ customer: "cu-404" }, []);
+        await waitFor(() =>
+            expect((screen.getByLabelText(/Customer/i) as HTMLInputElement).value).toBe("cu-404"));
+        mounted.unmount();
     });
 });

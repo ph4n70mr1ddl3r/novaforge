@@ -23,6 +23,16 @@ spec:
               name: http
           env:
           {{- toYaml .Values.env | nindent 12 }}
+          # Startup grace (nineteenth pass): a Boot fat jar — Flyway, the JWKS fetch,
+          # Kafka listeners — sharing a kind node with ten sibling JVMs can exceed
+          # the liveness budget's first ~30s; without this probe the kubelet kills
+          # the container mid-boot (the classic kill-before-ready CrashLoop).
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness

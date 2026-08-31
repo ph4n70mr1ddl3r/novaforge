@@ -2579,3 +2579,48 @@ re-audit of the pass's own code.**
 Verified: full serial `./mvnw verify` BUILD SUCCESS (honest exit 0; 23 modules,
 486 tests); frontend typecheck + 163 vitest. The defect ledger is empty — what
 remains recorded is decisions, not defects.
+
+**The nineteenth pass (2026-08-31) — the ledger-empty audit: thirty-two more
+close, every door guarded, every chart wired.**
+
+- **The write path's doom-guards now run pre- AND post-hook on every door**:
+  the eighteenth pass's fix landed on the user update door only — the create
+  doors (user and integration) had no post-hook leg, and the integration
+  update door never re-ran the parent-freeze guard. A beforeSave hook
+  re-dating a record into a CLOSED period, or re-pointing a lookup at a
+  terminal-frozen parent, now rejects identically on every write path.
+  Pinned ×3 and bite-proven (the fix reverted → the pins fail).
+- **The §9 bind gate runs before completion**: a doomed bind no longer pays
+  the ClamAV scan or strands a completed-unbindable attachment (the checksum
+  stays NULL on rejection — pinned).
+- **The at-least-once contract became a mechanism in audit and notification**
+  (the sixteenth pass built it for workflow only): listener failures seek and
+  redeliver with exponential backoff to a DLT — never Boot's nine
+  zero-backoff retries and a log-and-skip that committed the offset over a
+  dropped append or a lost task/sla fan-out.
+- **Reporting's published-bundle source**: the one unbounded RestClient in the
+  audited set is bounded (2s/60s); a Redis outage degrades to the cache
+  instead of 500ing every run; a lost `metadata.published` delivery
+  self-heals through a 30s TTL window (the resolver's H-18P2 pattern applied
+  to reporting's own cache).
+- **Internal sends gate explicit recipients on tenant membership** —
+  caller-named user ids must prove membership through the tenant-scoped roles
+  read, failing closed; a foreign id never receives the sending tenant's
+  inbox row or emailed export.
+- **The frontend authoring surfaces**: JSON params/templates author through
+  the JsonTextField fence (typing no longer wipes); the state-machine
+  transition buttons issue a real versioned PATCH; the approval inbox rides
+  the stale-response fence; automation/gap-log branches merge fresh instead
+  of overwriting with mount-time snapshots; plus the palette's plain-HTTP key
+  fix, the page save/reload fences, honest error states, collision-free ids,
+  resolved lookup labels, and threaded busy states.
+- **Every chart deploys wired**: the H-10P1 class (localhost defaults,
+  hardcoded credentials) closes for all eleven services — in-cluster DNS for
+  every dependency, credentials env-bound and secret-fed, a startup probe on
+  every deployment, a CI chart-render gate, masked CI tokens, job timeouts,
+  and centralized dependency/plugin versions.
+
+Verified: full serial `./mvnw verify` BUILD SUCCESS (honest exit 0; 496
+tests); frontend `pnpm check` + 182 vitest; eleven charts lint and render
+under helm 3.16.4. Recorded open: in-cluster infra charts, NetworkPolicy/SA/
+PDB/immutable-tag posture (deliberate alongside L-TP7), and the prior set.

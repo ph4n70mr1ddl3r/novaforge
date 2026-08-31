@@ -249,4 +249,79 @@ describe("Integrations (PHASE-6 §3/§9)", () => {
         await waitFor(() => expect(calls.rowsFetched).toEqual(["job-1"]));
         await waitFor(() => expect(screen.getByText("required: number")).toBeTruthy());
     });
+
+    it("a failed ops load never fakes an empty surface (re-audit)", async () => {
+        // Anti-regression: the ops catches wiped the rows to [], rendering
+        // "No deliveries yet" / "DLQ empty" lies over a dead route
+        const failing = {
+            integrationDeliveries: async () => {
+                throw new Error("integration service unreachable");
+            },
+            integrationDlq: async () => {
+                throw new Error("integration service unreachable");
+            },
+            integrationJobs: async () => {
+                throw new Error("integration service unreachable");
+            },
+        } as unknown as PlatformClient;
+        render(createElement(Integrations, { app, client: failing, onSave: async () => {} }));
+
+        await waitFor(() => expect(screen.getByText(/Could not load deliveries: integration service unreachable/)).toBeTruthy());
+        expect(screen.getByText(/Could not load the DLQ/)).toBeTruthy();
+        expect(screen.getByText(/Could not load jobs/)).toBeTruthy();
+        // never the empty-state lie
+        expect(screen.queryByText(/No deliveries yet/)).toBeNull();
+        expect(screen.queryByText(/DLQ empty/)).toBeNull();
+        expect(screen.queryByText(/No job runs yet/)).toBeNull();
+    });
+
+    it("a failed ops RELOAD keeps the last good rows (re-audit)", async () => {
+        // the first load lands; the reload after a replay dies — the rows must
+        // stay (the old catch wiped them to [] mid-session)
+        let deliveryCalls = 0;
+        const calls = { replays: [] as string[] };
+        const client = {
+            integrationDeliveries: async () => {
+                deliveryCalls += 1;
+                if (deliveryCalls > 1) throw new Error("integration service unreachable");
+                return [{ kind: "connector", target: "bankFeed", status: "delivered", createdAt: "2026-08-24T10:00:00Z" }];
+            },
+            integrationDlq: async () => [
+                { id: "dlq-1", kind: "webhook", target: "notifyErp", dedupeKey: "evt-9", error: "connect timeout", createdAt: "2026-08-24T11:00:00Z" },
+            ],
+            integrationJobs: async () => [],
+            replayDlqEntry: async (id: string) => {
+                calls.replays.push(id);
+                return { status: "replayed" };
+            },
+        } as unknown as PlatformClient;
+        render(createElement(Integrations, { app, client, onSave: async () => {} }));
+
+        expect(await screen.findByText("delivered")).toBeTruthy();
+        // the replay's onReplayed fires the reload that fails
+        fireEvent.click(screen.getByLabelText("Replay DLQ entry dlq-1"));
+        await waitFor(() => expect(calls.replays).toEqual(["dlq-1"]));
+        await waitFor(() => expect(deliveryCalls).toBe(2));
+        // the last good row survives the failed reload — no empty-state lie
+        expect(screen.getByText("delivered")).toBeTruthy();
+        expect(screen.queryByText(/No deliveries yet/)).toBeNull();
+    });
+
+    it("a failed secret provisioning surfaces its error instead of swallowing (re-audit)", async () => {
+        const { client } = stubClient({
+            putSecret: async () => {
+                throw new Error("secret store rejected the rotation");
+            },
+        });
+        render(createElement(Integrations, { app, client, onSave: async () => {} }));
+
+        fireEvent.change(screen.getByLabelText("Secret material bankFeedKey"), {
+            target: { value: "sk-live-123" },
+        });
+        fireEvent.click(screen.getByLabelText("Provision secret bankFeedKey"));
+        await waitFor(() =>
+            expect(screen.getByText(/secret store rejected the rotation/)).toBeTruthy());
+        // and never the "stored" status for the failed PUT
+        expect(screen.queryByText(/rotation window/)).toBeNull();
+    });
 });

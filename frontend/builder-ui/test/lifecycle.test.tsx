@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
-import type { AppDefinition, PlatformClient } from "@novaforge/shared";
+import type { AppDefinition, GapLogEntry, PlatformClient } from "@novaforge/shared";
 import { GapLogEditor, Lifecycle } from "../src/lifecycle.tsx";
 
 /**
@@ -111,7 +111,12 @@ describe("Lifecycle change-set review (PHASE-8 §3)", () => {
 
 describe("GapLogEditor (PHASE-7 §1 rule 2)", () => {
     it("triages a logged gap and saves the gapLog branch patch", async () => {
-        const onSave = vi.fn(async (_patch: Record<string, unknown>) => {});
+        // the save mutates a FRESH fetch (the dashboards rule) — apply the captured
+        // patch builder to the unchanged app to observe what would be saved
+        let saved: Record<string, unknown> | undefined;
+        const onSave = vi.fn(async (patch: (fresh: AppDefinition) => Record<string, unknown>) => {
+            saved = patch(app);
+        });
         render(createElement(GapLogEditor, { app, onSave }));
 
         fireEvent.change(screen.getByLabelText("Disposition of G-1"), {
@@ -123,9 +128,57 @@ describe("GapLogEditor (PHASE-7 §1 rule 2)", () => {
         fireEvent.click(screen.getByText("Save gap log"));
 
         await waitFor(() => expect(onSave).toHaveBeenCalled());
-        const patch = onSave.mock.calls[0]![0] as { gapLog: { id: string; disposition: string; resolvedIn?: string }[] };
-        expect(patch.gapLog[0]!.id).toBe("G-1");
-        expect(patch.gapLog[0]!.disposition).toBe("accept-as-platform-feature");
-        expect(patch.gapLog[0]!.resolvedIn).toBe("next platform increment");
+        const gapLog = (saved as { gapLog: { id: string; disposition: string; resolvedIn?: string }[] }).gapLog;
+        expect(gapLog[0]!.id).toBe("G-1");
+        expect(gapLog[0]!.disposition).toBe("accept-as-platform-feature");
+        expect(gapLog[0]!.resolvedIn).toBe("next platform increment");
+    });
+
+    it("keeps an entry another tab logged after mount — the dashboards rule (re-audit)", async () => {
+        // Anti-regression: the editor saved its mount-time gapLog verbatim, so a
+        // concurrent tab's entry was silently deleted by this tab's triage save
+        const foreign = {
+            id: "G-2", area: "P4 Reporting", blocker: "no CSV export",
+            priority: "low" as const, disposition: "open" as const,
+        };
+        const saved: Record<string, unknown>[] = [];
+        const onSave = vi.fn(async (patch: (fresh: AppDefinition) => Record<string, unknown>) => {
+            // the SHELL's fresh fetch lands with the concurrent entry aboard
+            saved.push(patch({ ...app, gapLog: [...app.gapLog!, foreign] }));
+        });
+        render(createElement(GapLogEditor, { app, onSave }));
+
+        fireEvent.change(screen.getByLabelText("Disposition of G-1"), {
+            target: { value: "backlog" },
+        });
+        fireEvent.click(screen.getByText("Save gap log"));
+        await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+        const gapLog = saved[0]!.gapLog as GapLogEntry[];
+        // the triaged G-1 AND the foreign G-2 — no silent delete
+        expect(gapLog.map((entry) => entry.id)).toEqual(["G-1", "G-2"]);
+        expect(gapLog[0]!.disposition).toBe("backlog");
+    });
+
+    it("Add gap mints the first free G-N — no collision with gap ids (re-audit)", async () => {
+        // Anti-regression: G-${length+1} collided with a surviving G-N after
+        // out-of-band deletions left gaps — [G-1, G-3] minted a duplicate G-3
+        const gapped: AppDefinition = {
+            ...app,
+            gapLog: [
+                ...(app.gapLog ?? []),
+                { id: "G-3", area: "P5 Platform", blocker: "no audit export", priority: "low", disposition: "open" },
+            ],
+        };
+        let saved: Record<string, unknown> | undefined;
+        const onSave = vi.fn(async (patch: (fresh: AppDefinition) => Record<string, unknown>) => {
+            saved = patch(gapped);
+        });
+        render(createElement(GapLogEditor, { app: gapped, onSave }));
+
+        fireEvent.click(screen.getByText("Add gap"));
+        fireEvent.click(screen.getByText("Save gap log"));
+        await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+        const gapLog = (saved as { gapLog: GapLogEntry[] }).gapLog;
+        expect(gapLog.map((entry) => entry.id)).toEqual(["G-1", "G-3", "G-2"]);
     });
 });

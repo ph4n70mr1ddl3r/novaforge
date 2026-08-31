@@ -171,3 +171,6 @@ export {
 
 // --- gateway client (§2: browser apps reach APIs via the gateway) ---
 export { ApiError, PlatformClient, type Problem, type TokenProvider } from "./client/platform.ts";
+
+// --- context-safe id minting (randomUUID is secure-context only) ---
+export { randomKey } from "./ids.ts";

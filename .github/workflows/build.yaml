@@ -14,6 +14,9 @@ jobs:
     # Full verify incl. the Testcontainers suites (GitHub runners ship Docker;
     # Postgres/Redis containers start per JVM via test-support).
     runs-on: ubuntu-latest
+    # a hung Testcontainers run must fail the job, not burn GitHub's 360-minute
+    # default (this repo's own history includes surefire hangs — they happen)
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -44,6 +47,7 @@ jobs:
     # resolver, renderer) + runtime-ui + builder-ui — strict tsc + the vitest suites
     # incl. the shared conformance corpus and the catalog gallery's axe checks.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -65,12 +69,45 @@ jobs:
           pnpm check
           pnpm test
 
+  charts:
+    # The chart-render gate (nineteenth pass): H-12P1 found 22 invalid templates
+    # that had never rendered — fixed by hand then, but nothing in CI stopped the
+    # identical regression class from returning. Every chart lints and renders
+    # on every PR now.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "3.16.4"
+
+      - name: Lint and render every chart
+        run: |
+          set -eu
+          status=0
+          for chart in deploy/helm/novaforge-*/Chart.yaml; do
+            dir=$(dirname "$chart")
+            echo "::group::helm lint $dir"
+            helm lint "$dir" || status=1
+            echo "::endgroup::"
+            echo "::group::helm template $dir"
+            helm template test "$dir" > /dev/null || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
+
   clamav-on:
     # PHASE-6 §13 Q2 (resolved): one config-on job so the ClamAV scanning path stays
     # tested — the file-service suite runs with the gate on (the in-JVM clamd stand-in
     # speaks the INSTREAM contract; the EICAR sample quarantines exactly like a live
     # detection, §11 item 5).
     runs-on: ubuntu-latest
+    # a hung Testcontainers run must fail the job, not burn GitHub's 360-minute
+    # default (this repo's own history includes surefire hangs — they happen)
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -98,6 +135,9 @@ jobs:
     # suites against rootless Podman — TESTCONTAINERS_* wiring documented in the README.
     runs-on: [self-hosted, podman]
     needs: [build, frontend, clamav-on]
+    # a self-hosted runner that loses its socket must fail fast, not hang for
+    # GitHub's 360-minute default on runner-hours
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 

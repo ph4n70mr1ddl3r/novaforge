@@ -169,6 +169,19 @@ class HookDatedPeriodLockTests extends PostgresTestBase {
                         .content("{\"label\":\"m2\",\"entryDate\":\"2026-08-20\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("4014"));
+
+        // the CREATE leg (nineteenth pass — the eighteenth fixed the update door
+        // only): the caller dates September, no period covers it, the pre-hook
+        // guard passes — the HOOK re-dates to the 15th of the CLOSED August period,
+        // and the landing state must meet the same gate. (This pin lives inside
+        // this method on purpose: period lookup is by date range, so a second
+        // method closing its own August period would couple the two through every
+        // August date either one writes.)
+        mockMvc.perform(post("/api/v1/runtime/Memo").with(jwtFor())
+                        .contentType("application/json")
+                        .content("{\"label\":\"m-create\",\"entryDate\":\"2026-09-10\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("4014"));
     }
 
     private static org.springframework.security.test.web.servlet.request

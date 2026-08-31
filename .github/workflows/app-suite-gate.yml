@@ -51,6 +51,9 @@ on:
 jobs:
   suite-gate:
     runs-on: ubuntu-latest
+    # a hung token/suite call must fail the job, not burn GitHub's 360-minute
+    # default (the repo's own history includes surefire hangs — they happen)
+    timeout-minutes: 20
     steps:
       - name: Authenticate the pipeline client (client credentials → builder)
         env:
@@ -61,6 +64,11 @@ jobs:
           TOKEN=$(curl -sf -X POST "$TOKEN_URL" \
             -d "grant_type=client_credentials&client_id=$CLIENT_ID&client_secret=$CLIENT_SECRET" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+          # a runtime-derived token is NOT auto-masked by GitHub (only secrets.*
+          # inputs are) — mask it before it rides GITHUB_ENV, or any later step
+          # that prints environment (a debug env dump, curl -v, an error report)
+          # leaks a full-scope platform bearer into public logs
+          echo "::add-mask::$TOKEN"
           echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
       - name: Headless suite run (green against exactly the candidate)

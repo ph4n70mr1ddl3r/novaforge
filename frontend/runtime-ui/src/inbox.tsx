@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { PlatformClient } from "@novaforge/shared";
 
 /**
@@ -14,46 +14,52 @@ export function Inbox({ client }: { client: PlatformClient }): ReactNode {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const size = 25;
+    const reloadSeq = useRef(0);
 
-    useEffect(() => {
-        let cancelled = false;
+    const reload = (target: number): void => {
+        // only the LATEST load commits (notifications' own fence): a page change
+        // racing a resolve-triggered reload used to let the older request's rows
+        // land last and clobber the newer page
+        const seq = ++reloadSeq.current;
         setBusy(true);
+        setError(null);
         client
-            .myTasks(undefined, page, size)
+            .myTasks(undefined, target, size)
             .then((result) => {
-                if (!cancelled) {
-                    setTasks(result.rows);
-                    setTotal(result.total);
-                }
+                if (seq !== reloadSeq.current) return;
+                setTasks(result.rows);
+                setTotal(result.total);
             })
             .catch((caught: unknown) => {
-                if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught));
+                if (seq !== reloadSeq.current) return;
+                setError(caught instanceof Error ? caught.message : String(caught));
             })
             .finally(() => {
-                if (!cancelled) setBusy(false);
+                if (seq === reloadSeq.current) {
+                    setBusy(false);
+                }
             });
-        return () => {
-            cancelled = true;
-        };
-    }, [client, page]);
-
-    const reload = async (): Promise<void> => {
-        const result = await client.myTasks(undefined, page, size);
-        setTasks(result.rows);
-        setTotal(result.total);
     };
+
+    useEffect(() => {
+        reload(page);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [client, page]);
 
     const run = async (op: () => Promise<unknown>): Promise<void> => {
         setBusy(true);
         setError(null);
         try {
             await op();
-            await reload();
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : String(caught));
-        } finally {
             setBusy(false);
+            return;
         }
+        // the fenced reload owns busy AND the stale-response guard from here —
+        // the inline fetch this replaced committed unconditionally, so a resolve
+        // response could clobber a newer page's rows
+        reload(page);
     };
 
     const resolve = (taskId: string, approve: boolean): Promise<void> =>
@@ -122,9 +128,11 @@ export function Inbox({ client }: { client: PlatformClient }): ReactNode {
             </table>
             {tasks.length === 0 && !busy ? <p role="status">No pending approvals.</p> : null}
             <div className="nf-pager">
-                <button type="button" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>
+                {/* busy owns the pager too: a click mid-resolve raced the reload's
+                    older response against the new page's load (see reload's fence) */}
+                <button type="button" disabled={page === 0 || busy} onClick={() => setPage(page - 1)}>Previous</button>
                 <span>{page * size + 1}–{Math.min((page + 1) * size, total)} / {total}</span>
-                <button type="button" disabled={(page + 1) * size >= total} onClick={() => setPage(page + 1)}>Next</button>
+                <button type="button" disabled={(page + 1) * size >= total || busy} onClick={() => setPage(page + 1)}>Next</button>
             </div>
         </section>
     );

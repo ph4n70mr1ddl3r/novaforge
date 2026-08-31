@@ -1,3 +1,7 @@
+# Upstream URIs resolve in order: the novaforge.upstreams.* property (compose/dev
+# overrides), then the NOVAFORGE_*_URL env twin (the helm charts feed in-cluster
+# service DNS through it), then localhost (the bring-up default). Dashed property
+# names have no clean relaxed-binding env form, hence the explicit inner fallback.
 spring:
   application:
     name: novaforge-gateway
@@ -7,34 +11,34 @@ spring:
         webmvc:
           routes:
             - id: metadata-service
-              uri: ${novaforge.upstreams.metadata-service:http://localhost:8081}
+              uri: ${novaforge.upstreams.metadata-service:${NOVAFORGE_METADATA_URL:http://localhost:8081}}
               predicates:
                 - Path=/api/v1/metadata/**
             - id: data-runtime
-              uri: ${novaforge.upstreams.data-runtime:http://localhost:8083}
+              uri: ${novaforge.upstreams.data-runtime:${NOVAFORGE_DATA_RUNTIME_URL:http://localhost:8083}}
               predicates:
                 - Path=/api/v1/runtime/**,/api/v1/admin/**
             - id: audit-service
-              uri: ${novaforge.upstreams.audit-service:http://localhost:8085}
+              uri: ${novaforge.upstreams.audit-service:${NOVAFORGE_AUDIT_URL:http://localhost:8085}}
               predicates:
                 - Path=/api/v1/audit/**
             - id: workflow
-              uri: ${novaforge.upstreams.workflow-service:http://localhost:8086}
+              uri: ${novaforge.upstreams.workflow-service:${NOVAFORGE_WORKFLOW_URL:http://localhost:8086}}
               predicates:
                 - Path=/api/v1/workflow/**
             - id: notifications
-              uri: ${novaforge.upstreams.notification-service:http://localhost:8088}
+              uri: ${novaforge.upstreams.notification-service:${NOVAFORGE_NOTIFICATION_URL:http://localhost:8088}}
               predicates:
                 - Path=/api/v1/notifications/**
             - id: reporting
               # PHASE-5 §2/§8: the report run/export surface (user+ at the service;
               # object-level report:execute decides per run). The /api/v1/dashboards
               # prefix stays reserved but unrouted in v1 (§2).
-              uri: ${novaforge.upstreams.reporting-service:http://localhost:8089}
+              uri: ${novaforge.upstreams.reporting-service:${NOVAFORGE_REPORTING_URL:http://localhost:8089}}
               predicates:
                 - Path=/api/v1/reports/**
             - id: scheduler
-              uri: ${novaforge.upstreams.scheduler-service:http://localhost:8087}
+              uri: ${novaforge.upstreams.scheduler-service:${NOVAFORGE_SCHEDULER_URL:http://localhost:8087}}
               predicates:
                 - Path=/api/v1/scheduler/jobs
             - id: integrations
@@ -42,13 +46,13 @@ spring:
               # at the service) and — the one deliberately anonymous route —
               # /api/v1/webhooks/inbound/** (HMAC at the service, §6; rate-limited at
               # the gateway from its first day).
-              uri: ${novaforge.upstreams.integration-service:http://localhost:8090}
+              uri: ${novaforge.upstreams.integration-service:${NOVAFORGE_INTEGRATION_URL:http://localhost:8090}}
               predicates:
                 - Path=/api/v1/integrations/**,/api/v1/webhooks/inbound/**
             - id: files
               # PHASE-6 §2/§9: presigned upload/download + attachment metadata (user+;
               # attachment access governed by the owning record's authorization).
-              uri: ${novaforge.upstreams.file-service:http://localhost:8091}
+              uri: ${novaforge.upstreams.file-service:${NOVAFORGE_FILE_URL:http://localhost:8091}}
               predicates:
                 - Path=/api/v1/files/**
   data:

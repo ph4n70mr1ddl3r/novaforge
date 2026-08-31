@@ -15,8 +15,8 @@ spring:
           issuer-uri: ${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}
   datasource:
     url: jdbc:postgresql://${NOVAFORGE_POSTGRES_HOST:localhost}:${NOVAFORGE_POSTGRES_PORT:5432}/novaforge_data
-    username: novaforge
-    password: novaforge
+    username: ${NOVAFORGE_DATA_DB_USER:novaforge}
+    password: ${NOVAFORGE_DATA_DB_PASSWORD:novaforge}
   flyway:
     locations: classpath:db/migration
   data:

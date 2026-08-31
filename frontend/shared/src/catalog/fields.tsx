@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Decimal } from "../expression/decimal.ts";
 import { useBoundValue, useRenderer } from "../renderer/context.ts";
 import { resolveLabel } from "../metadata.ts";
@@ -233,6 +233,40 @@ export function FieldLookup(props: FieldWidgetProps): ReactNode {
             }
         }
     };
+    // The closed box shows the TARGET's display label, never the opaque FK id —
+    // resolve the stored id through the same data service the open search rides
+    // (a query-DSL eq on id), sequenced like the search so an out-of-order
+    // response can't clobber a newer value's label. Unresolvable (or no data
+    // service) falls back to the raw id.
+    const [closedLabel, setClosedLabel] = useState<string | null>(null);
+    const resolveSeqRef = useRef(0);
+    const closedValue = value == null || value === "" ? "" : String(value);
+    useEffect(() => {
+        if (open || closedValue === "" || !renderer.data || !target) {
+            setClosedLabel(null);
+            return;
+        }
+        let cancelled = false;
+        const seq = ++resolveSeqRef.current;
+        void renderer.data
+            .list({ entity: target, filter: { op: "eq", field: "id", value: closedValue }, size: 1, offset: 0 })
+            .then((result) => {
+                if (cancelled || seq !== resolveSeqRef.current) return;
+                const row = result.rows[0];
+                setClosedLabel(
+                    row ? String((displayField && row[displayField] != null ? row[displayField] : row.id) ?? "") : null,
+                );
+            })
+            .catch(() => {
+                if (cancelled || seq !== resolveSeqRef.current) return;
+                setClosedLabel(null);
+            });
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- the data service identity only changes with the host shell
+    }, [closedValue, open, target, renderer.data, displayField]);
+    const closedDisplay = closedLabel ?? closedValue;
     return (
         <div className="nf-field nf-field-lookup">
             <label htmlFor={id}>
@@ -247,7 +281,7 @@ export function FieldLookup(props: FieldWidgetProps): ReactNode {
                 aria-expanded={open}
                 aria-controls={`${id}-listbox`}
                 autoComplete="off"
-                value={open ? term : value == null ? "" : String(value)}
+                value={open ? term : closedDisplay}
                 readOnly={readonly}
                 onChange={(event) => void search(event.target.value)}
                 onBlur={() => {
