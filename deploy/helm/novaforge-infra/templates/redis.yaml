@@ -1,0 +1,56 @@
+# Redis (the shared cache/rate-limit host — the compose redis's twin): plain
+# single instance, no persistence (the caches it holds are latency tools).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: novaforge-redis
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "redis") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+      {{- include "novaforge-infra.selector" (dict "root" . "component" "redis") | nindent 8 }}
+    spec:
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image }}
+          ports:
+            - containerPort: 6379
+              name: redis
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+          {{- include "novaforge-infra.securityContext" (dict "uid" 999 "ro" true) | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: novaforge-redis   # flat: the eleven charts reference this DNS name verbatim
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6379
+      targetPort: redis
+      name: redis
+  selector:
+  {{- include "novaforge-infra.selector" (dict "root" . "component" "redis") | nindent 4 }}

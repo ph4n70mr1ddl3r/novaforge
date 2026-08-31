@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}-novaforge-reporting-service
+  name: novaforge-reporting-service   # flat: env wiring references these DNS names verbatim (values are data — no release templating)
   labels:
   {{- include "novaforge-reporting-service.labels" . | nindent 4 }}
 spec:

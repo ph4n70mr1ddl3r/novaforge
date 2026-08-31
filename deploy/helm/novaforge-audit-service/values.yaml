@@ -29,8 +29,9 @@ resources:
 # referenced Secrets before deploying):
 #   kubectl create secret generic novaforge-db --from-literal=user=<real> \
 #                                               --from-literal=password=<real>
-# The issuer, Kafka, and Tempo names assume the novaforge-* infra services
-# (the compose stack's naming); override per environment in values overlays.
+# The issuer, Kafka, Tempo, and sibling names assume the novaforge-infra chart's
+# services (deploy/helm/novaforge-infra — the compose stack's in-cluster twin);
+# override per environment in values overlays.
 env:
   - name: NOVAFORGE_POSTGRES_HOST
     value: "novaforge-postgres"

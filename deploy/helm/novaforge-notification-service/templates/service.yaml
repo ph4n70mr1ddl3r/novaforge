@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}-novaforge-notification-service
+  name: novaforge-notification-service   # flat: env wiring references these DNS names verbatim (values are data — no release templating)
   labels:
   {{- include "novaforge-notification-service.labels" . | nindent 4 }}
 spec:

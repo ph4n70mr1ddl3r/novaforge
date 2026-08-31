@@ -1,0 +1,208 @@
+{
+  "realm": "novaforge",
+  "enabled": true,
+  "displayName": "NovaForge",
+  "registrationAllowed": false,
+  "clients": [
+    {
+      "clientId": "novaforge-api",
+      "name": "NovaForge API",
+      "description": "Public API client for local development (direct access grants enabled)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "bearerOnly": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:8080/*",
+        "http://127.0.0.1:8080/*",
+        "http://localhost:5173/*",
+        "http://localhost:5174/*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "defaultClientScopes": [
+        "novaforge.api"
+      ],
+      "optionalClientScopes": [
+        "offline_access"
+      ]
+    },
+    {
+      "clientId": "novaforge-runtime",
+      "name": "NovaForge Data Runtime (service)",
+      "description": "Service account for runtime\u2192metadata calls (client credentials)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "novaforge-runtime-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "novaforge.api"
+      ]
+    },
+    {
+      "clientId": "novaforge-pipeline",
+      "name": "NovaForge CI pipeline (service)",
+      "description": "Headless suite runs + promotion for CI pipelines (PHASE-8 \u00a75): client-credentials caller granted the builder platform role; its service account carries the tenant attribute of the dev workspace it serves",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "novaforge-pipeline-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "novaforge.api"
+      ]
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "novaforge.api",
+      "description": "NovaForge platform API scope; carries the single-realm tenant claim (PHASE-0 Q1)",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "Access NovaForge APIs"
+      },
+      "protocolMappers": [
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true",
+            "multivalued": "false"
+          }
+        },
+        {
+          "name": "platform_roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "platform_roles",
+            "claim.name": "platform_roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "actor_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "id",
+            "claim.name": "actor_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "demo",
+      "enabled": true,
+      "email": "demo@novaforge.local",
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "User",
+      "attributes": {
+        "tenant_id": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "platform_roles": [
+          "admin",
+          "builder",
+          "user"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo",
+          "temporary": false
+        }
+      ],
+      "id": "33333333-3333-4333-8333-333333333333",
+      "realmRoles": [
+        "admin",
+        "builder",
+        "user"
+      ]
+    },
+    {
+      "username": "service-account-novaforge-runtime",
+      "enabled": true,
+      "serviceAccountClientId": "novaforge-runtime",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users",
+          "manage-realm",
+          "view-realm"
+        ]
+      }
+    },
+    {
+      "username": "service-account-novaforge-pipeline",
+      "enabled": true,
+      "serviceAccountClientId": "novaforge-pipeline",
+      "attributes": {
+        "tenant_id": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "platform_roles": [
+          "builder"
+        ]
+      },
+      "realmRoles": [
+        "builder"
+      ]
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "NovaForge platform admin"
+      },
+      {
+        "name": "builder",
+        "description": "NovaForge design-time builder"
+      },
+      {
+        "name": "user",
+        "description": "NovaForge runtime user"
+      }
+    ]
+  },
+  "eventsListeners": [
+    "jboss-logging",
+    "novaforge-auth"
+  ],
+  "eventsEnabled": true,
+  "eventsExpiration": 86400
+}

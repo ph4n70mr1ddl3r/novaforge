@@ -1,0 +1,126 @@
+# MinIO (the attachment object store, PHASE-6 §8) + the bucket-init Job: the
+# versioned novaforge-attachments bucket exists before the file service asks
+# for it (the compose stack's minio-init twin).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: novaforge-minio
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: minio
+spec:
+  serviceName: novaforge-minio
+  replicas: 1
+  selector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "minio") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+      {{- include "novaforge-infra.selector" (dict "root" . "component" "minio") | nindent 8 }}
+    spec:
+      containers:
+        - name: minio
+          image: {{ .Values.minio.image }}
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: novaforge-minio
+                  key: access-key
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: novaforge-minio
+                  key: secret-key
+          ports:
+            - containerPort: 9000
+              name: api
+            - containerPort: 9001
+              name: console
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: api
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+          {{- include "novaforge-infra.securityContext" (dict "uid" 1000 "fsGroup" 1000) | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.minio.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: novaforge-minio   # flat: the file chart's NOVAFORGE_MINIO_ENDPOINT names it verbatim
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9000
+      targetPort: api
+      name: api
+    - port: 9001
+      targetPort: console
+      name: console
+  selector:
+  {{- include "novaforge-infra.selector" (dict "root" . "component" "minio") | nindent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: novaforge-minio-init
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: minio-init
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+      {{- include "novaforge-infra.selector" (dict "root" . "component" "minio-init") | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: {{ .Values.minio.mcImage }}
+          command:
+            - sh
+            - -c
+            - >-
+              mc alias set drprep http://novaforge-minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+              && (mc version enable "drprep/$$NOVAFORGE_MINIO_BUCKET"
+              || (mc mb "drprep/$$NOVAFORGE_MINIO_BUCKET" && mc version enable "drprep/$$NOVAFORGE_MINIO_BUCKET"))
+              && mc version info "drprep/$$NOVAFORGE_MINIO_BUCKET""
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: novaforge-minio
+                  key: access-key
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: novaforge-minio
+                  key: secret-key
+            - name: NOVAFORGE_MINIO_BUCKET
+              value: {{ .Values.minio.bucket | quote }}
+          resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+          {{- include "novaforge-infra.securityContext" (dict "uid" 1000) | nindent 12 }}

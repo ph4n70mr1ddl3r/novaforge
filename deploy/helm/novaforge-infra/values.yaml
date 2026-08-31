@@ -1,0 +1,59 @@
+# The compose-equivalent infra stack (Chart.yaml's posture note applies to every
+# value here): dev-cluster defaults, single replica per component, flat service
+# names (novaforge-postgres, novaforge-kafka, …) — the exact DNS names the eleven
+# service charts' env wiring references verbatim. Files under files/ are
+# byte-mirrors of the compose stack's sources; deploy/helm/check-charts.sh fails
+# CI if either side drifts.
+
+# Dev-instance secrets the eleven charts reference (fail-closed posture in staged
+# environments: set create=false there and bring your own — the values below are
+# the committed development set, exactly the compose stack's, and the services
+# warn loudly on them).
+secrets:
+  create: true
+  # novaforge-db: the app databases' owner + the audit runtime role (the initdb
+  # script under files/ creates these users; keep the two sides in lockstep)
+  db:
+    user: novaforge
+    password: novaforge
+    ownerUser: novaforge
+    ownerPassword: novaforge
+  # the Keycloak confidential service client (ServiceClientGate's committed dev
+  # secret — local bring-up only; staged environments must set their own)
+  serviceClientSecret: novaforge-runtime-secret
+  # the integration secrets store's dev data key (all zeros, published) — only
+  # honored where NOVAFORGE_SECRETS_ALLOW_DEV_KEY is unset (the integration chart
+  # sets it false and feeds a real key from this secret)
+  secretsDataKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+  # MinIO root credentials (the attachment store's admin pair)
+  minio:
+    accessKey: novaforge
+    secretKey: novaforge-secret
+
+postgres:
+  image: docker.io/library/postgres:16.15
+  storage: 8Gi
+kafka:
+  image: docker.io/apache/kafka:4.3.1
+  storage: 8Gi
+redis:
+  image: docker.io/library/redis:7.4.11
+keycloak:
+  image: quay.io/keycloak/keycloak:26.7.2
+tempo:
+  image: docker.io/grafana/tempo:2.10.0
+  storage: 8Gi
+minio:
+  image: docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+  mcImage: docker.io/minio/mc:RELEASE.2025-04-08T15-39-49Z
+  storage: 10Gi
+  bucket: novaforge-attachments
+clamav:
+  image: docker.io/clamav/clamav:1.4.3
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi

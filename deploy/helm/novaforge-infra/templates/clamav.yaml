@@ -1,0 +1,83 @@
+# ClamAV (the §8 virus-scan gate's clamd): the file chart points
+# NOVAFORGE_CLAMAV_HOST at this name with scanning ON (fail-closed — an
+# unreachable clamd fails uploads, it never waves them through), so the dev
+# cluster needs it running. Signatures live on a PVC: freshclam's ~300 MB
+# database must not re-download on every pod restart.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: novaforge-clamav
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: clamav
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "clamav") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+      {{- include "novaforge-infra.selector" (dict "root" . "component" "clamav") | nindent 8 }}
+    spec:
+      containers:
+        - name: clamav
+          image: {{ .Values.clamav.image }}
+          ports:
+            - containerPort: 3310
+              name: clamd
+          startupProbe:
+            # first boot downloads the signature database — many minutes on a cold link
+            tcpSocket:
+              port: clamd
+            periodSeconds: 10
+            failureThreshold: 90
+          readinessProbe:
+            tcpSocket:
+              port: clamd
+          livenessProbe:
+            tcpSocket:
+              port: clamd
+          volumeMounts:
+            - name: signatures
+              mountPath: /var/lib/clamav
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            # signature scans are memory-hungry; the 1Gi default limit is the dev floor
+          {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+          {{- include "novaforge-infra.securityContext" (dict "uid" 100 "fsGroup" 101) | nindent 12 }}
+      volumes:
+        - name: signatures
+          persistentVolumeClaim:
+            claimName: novaforge-clamav-signatures
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: novaforge-clamav-signatures
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: novaforge-clamav   # flat: the file chart's NOVAFORGE_CLAMAV_HOST names it verbatim
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3310
+      targetPort: clamd
+      name: clamd
+  selector:
+  {{- include "novaforge-infra.selector" (dict "root" . "component" "clamav") | nindent 4 }}

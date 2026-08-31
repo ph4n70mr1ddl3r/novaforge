@@ -1,0 +1,109 @@
+# Keycloak (the OIDC issuer): the realm export under files/ is the byte-mirror
+# of the compose stack's deploy/compose/keycloak/novaforge-realm.json (drift
+# checked). The auth-listener provider jar (PHASE-3 §5) is NOT carried here —
+# build deploy/keycloak/auth-listener and mount it yourself if you want the
+# auth.* spine events in-cluster; the realm opts in per-realm either way.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: novaforge-keycloak-realm
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+data:
+  novaforge-realm.json: |-
+{{ .Files.Get "files/novaforge-realm.json" | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: novaforge-keycloak
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "keycloak") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+      {{- include "novaforge-infra.selector" (dict "root" . "component" "keycloak") | nindent 8 }}
+    spec:
+      containers:
+        - name: keycloak
+          image: {{ .Values.keycloak.image }}
+          args: ["start-dev", "--import-realm"]
+          env:
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: admin
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: novaforge-db
+                  key: owner-password
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              value: jdbc:postgresql://novaforge-postgres:5432/keycloak
+            - name: KC_DB_USERNAME
+              value: keycloak
+            - name: KC_DB_PASSWORD
+              value: keycloak
+            - name: KC_HOSTNAME_STRICT
+              value: "false"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+          ports:
+            - containerPort: 8080
+              name: http
+          startupProbe:
+            # first boot imports the realm + migrates the schema — minutes, not seconds
+            httpGet:
+              path: /realms/novaforge
+              port: http
+            periodSeconds: 5
+            failureThreshold: 90
+          readinessProbe:
+            httpGet:
+              path: /realms/novaforge
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /realms/novaforge
+              port: http
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+            - name: data
+              mountPath: /opt/keycloak/data/h2
+            - name: tmp
+              mountPath: /tmp
+          resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+          {{- include "novaforge-infra.securityContext" (dict "uid" 1000 "fsGroup" 1000) | nindent 12 }}
+      volumes:
+        - name: realm
+          configMap:
+            name: novaforge-keycloak-realm
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: novaforge-keycloak   # flat: every chart's NOVAFORGE_AUTH_ISSUER names it verbatim
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: http
+      name: http
+  selector:
+  {{- include "novaforge-infra.selector" (dict "root" . "component" "keycloak") | nindent 4 }}

@@ -1,0 +1,105 @@
+# The shared Postgres (the compose postgres's in-cluster twin): every service
+# database and role comes from files/postgres-init.sh — the byte-mirror of
+# deploy/postgres-init/01-databases.sh the drift check keeps honest.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: novaforge-postgres-initdb
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+data:
+  01-databases.sh: |-
+{{ .Files.Get "files/postgres-init.sh" | indent 4 }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: novaforge-postgres
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: postgres
+spec:
+  serviceName: novaforge-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+      {{- include "novaforge-infra.selector" (dict "root" . "component" "postgres") | nindent 8 }}
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: novaforge-db
+                  key: owner-user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: novaforge-db
+                  key: owner-password
+            # PGDATA under the PVC's mount subdir: the volume root is lost+found
+            # chowned to the postgres gid, which the image refuses to init into
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pg
+          ports:
+            - containerPort: 5432
+              name: postgres
+          startupProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -h 127.0.0.1"]
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -h 127.0.0.1"]
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -h 127.0.0.1"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+          {{- include "novaforge-infra.securityContext" (dict "uid" 999 "fsGroup" 999) | nindent 12 }}
+      volumes:
+        - name: initdb
+          configMap:
+            name: novaforge-postgres-initdb
+            defaultMode: 0500
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.postgres.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: novaforge-postgres   # flat: the eleven charts reference this DNS name verbatim
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: postgres
+      name: postgres
+  selector:
+  {{- include "novaforge-infra.selector" (dict "root" . "component" "postgres") | nindent 4 }}

@@ -2326,3 +2326,88 @@ in-cluster infra chart set, the NetworkPolicy/SA/PDB/immutable-tag posture
 alongside L-TP7, and the prior set. Plus this pass's own honest limit: the
 production retry budget's five-minute exhaustion is verified at the shrunk
 budget through identical wiring, not at full duration.
+
+## Twenty-First Pass — 2026-08-31 (the largest deferral closes: in-cluster infra, plus the DNS defect the task itself surfaced)
+
+The twentieth pass's closeout named the infra chart set as "the most natural next
+candidate" toward literal production readiness; this pass built it — and the
+build itself surfaced a real defect the twentieth pass's checker could not see.
+
+### H-21P1 — every inter-service URL was DNS-unresolvable under any real release
+
+Designing the infra chart forced the question the twentieth pass's
+name↔placeholder consistency check never asked: DOES the referenced DNS name
+exist? The eleven charts created Services as `{{ .Release.Name }}-novaforge-x`
+— release-prefixed — while every env value (the ninth pass's and the
+nineteenth's alike) references FLAT `novaforge-metadata-service`-style hosts.
+Under skaffold's `novaforge` release every URL pointed at
+`novaforge-novaforge-metadata-service`-shaped names nothing owned… no — the
+reverse: the services existed only under prefixed names, so every flat
+reference was unresolvable. The eleven Service templates create flat names now
+(deployments keep release-prefixed names — nothing uses them as DNS), and the
+new chart gate (below) makes the whole class unrepeatable.
+
+### The novaforge-infra chart — the compose stack's in-cluster twin
+
+Postgres 16.15 (the initdb script creating every service database/role,
+byte-mirrored from `deploy/postgres-init/01-databases.sh`), single-node KRaft
+Kafka 4.3.1 (advertised as the flat service name), Redis 7.4.11, Keycloak
+26.7.2 (the realm export byte-mirrored from the compose stack; the
+auth-listener provider jar documented as bring-your-own), Tempo 2.10.0 (config
+byte-mirrored; distroless uid 10001 — verified empirically, not guessed), MinIO
+(+ the versioned-bucket init Job, a real mc release tag — the invented one
+did not exist), and ClamAV 1.4.3 (signature PVC so freshclam's ~300 MB
+database survives restarts; uid/gid 100/101 verified from the image). The
+dev-instance secret set the eleven charts reference (`novaforge-db` with all
+four keys including the owner pair, `novaforge-service-client`,
+`novaforge-secrets`, `novaforge-minio`) is created from the compose stack's
+own committed values, loudly scoped: `secrets.create: false` for staged
+environments, which bring their own. Every component carries the eighteenth
+pass's locked-down container posture with per-image uids, a startupProbe
+sized to its real first-boot cost (keycloak's realm import, clamav's signature
+download, kafka's storage format), and PVCs where state must survive.
+
+### deploy/helm/check-charts.sh — the chart gate, wired into CI
+
+Three checks, each bite-proven: (1) every chart lints and renders (12 charts);
+(2) the infra chart's three embedded files stay byte-identical to their
+compose-stack sources — a one-byte drift fails (proven); (3) DNS consistency
+across the rendered output — every URL host and every `*_HOST`-named env value
+must be a Service the same render owns (16 hosts, all resolving; a ghost host
+fails the gate — proven). The CI charts job calls the script; the same run
+this pass recorded executed it green end to end.
+
+### Dead-letter coverage completes — workflow's own e2e pin
+
+The original ConsumerErrorConfig (the sixteenth-pass original the two
+nineteenth-pass mirrors copy) was the only spine service without an observed
+DLT publish. `WorkflowDeadLetterTests` mirrors the audit/notification pins
+exactly: the production factory bean, a real broker, the budget shrunk to
+10ms×3, an always-failing listener (DataAccessResourceFailureException —
+RecordEventConsumer's own transient mode), exactly three deliveries, then the
+dead letter itself consumed and verified (payload, key, original partition,
+`kafka_dlt-original-topic`). Bite-proven against the recoverer's removal.
+All three spine services now observe their dead letters end to end.
+
+### Re-audit of f95491c (this pass's first act)
+
+The tunable retry budgets (property names and defaults bit-identical across
+the three configs), the two dead-letter tests (production-factory-driven, not
+hand-built twins), and the repaired integration/audit chart blocks all held.
+The fresh-eyes sweep of the chart surface is what found H-21P1.
+
+### Verification (this pass)
+
+Full serial `./mvnw verify` **BUILD SUCCESS, honest exit 0** — 499 backend
+tests (workflow 40 with the new dead-letter pin), zero failures. The chart
+gate green across all 12 charts (lint, render, drift, DNS consistency), with
+both failure modes bite-proven and the gate restored-green afterwards.
+
+### Recorded open after this pass
+
+Shrunk, and now purely posture: no NetworkPolicy/dedicated ServiceAccount, no
+PDB/HPA (v1 ships replicaCount 1), mutable `0.1.0-SNAPSHOT` image tags with no
+CI image publish (skaffold's gitCommit override is the working path), and
+actions on major-version tags rather than SHAs. The prior deliberate set
+stands (delegation read-scope, M11/M12, sandbox pools, stuck-running job row,
+the production-budget-duration observation limit).

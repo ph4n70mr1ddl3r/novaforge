@@ -2645,3 +2645,27 @@ own landings re-reviewed, its recorded gaps closed.**
 Verified: full serial `./mvnw verify` BUILD SUCCESS (honest exit 0; 498
 tests); frontend `pnpm check` + 183 vitest; the two touched charts lint and
 render under helm 3.16.4. Recorded open unchanged.
+
+**The twenty-first pass (2026-08-31) — the infra deferral closes, and the
+wiring bug it surfaced closes with it.**
+
+- **novaforge-infra** (deploy/helm/novaforge-infra): the compose stack's
+  in-cluster twin — Postgres (every service database and role from the mirrored
+  initdb script), single-node KRaft Kafka, Redis, Keycloak (realm imported),
+  Tempo, MinIO with its versioned-bucket init Job, and ClamAV on a signature
+  PVC — under the flat DNS names the eleven service charts have referenced all
+  along, with the dev-instance secret set they expect and the eighteenth
+  pass's container posture throughout.
+- **The defect the build surfaced**: the eleven charts' Services were
+  release-prefixed while every env URL referenced flat names — under any real
+  release, no inter-service URL resolved. Services are flat now, and the new
+  chart gate (lint + render + embedded-file drift + rendered-DNS consistency,
+  wired into CI and bite-proven both ways) makes the class unrepeatable.
+- **Workflow's dead-letter leg joins audit and notification**: the original
+  ConsumerErrorConfig now has its own end-to-end pin — production factory
+  bean, real broker, shrunk budget, the dead letter consumed and verified.
+
+Verified: full serial `./mvnw verify` BUILD SUCCESS (honest exit 0; 499
+tests); the chart gate green across 12 charts with both failure modes
+bite-proven. Recorded open shrinks to pure posture: NetworkPolicy/SA, PDB/HPA,
+image tags/CI publish, SHA-pinned actions.

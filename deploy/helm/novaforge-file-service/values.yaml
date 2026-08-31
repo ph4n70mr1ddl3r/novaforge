@@ -39,7 +39,8 @@ resources:
 # Scanning is ON in deployed profiles (fail-closed: with clamav.enabled=true a
 # reachable clamd is required — an unreachable scanner fails uploads, it never
 # silently waves them through). Point NOVAFORGE_CLAMAV_HOST at a clamd deployment;
-# locally the compose stack has no clamav service, which is why the default is off.
+# locally the compose stack has no clamav service (the novaforge-infra chart
+# carries one for the kind cluster), which is why the default is off.
 # Infra wiring (nineteenth pass, closing the H-10P1 class for every chart): the
 # chart used to carry only the auth pair (or nothing), so a deployed service
 # booted against the yaml defaults — every endpoint localhost, i.e. the pod
@@ -49,8 +50,9 @@ resources:
 # referenced Secrets before deploying):
 #   kubectl create secret generic novaforge-db --from-literal=user=<real> \
 #                                               --from-literal=password=<real>
-# The issuer, Kafka, and Tempo names assume the novaforge-* infra services
-# (the compose stack's naming); override per environment in values overlays.
+# The issuer, Kafka, Tempo, and sibling names assume the novaforge-infra chart's
+# services (deploy/helm/novaforge-infra — the compose stack's in-cluster twin);
+# override per environment in values overlays.
 env:
   - name: NOVAFORGE_AUTH_ALLOW_DEFAULT_SECRET
     value: "false"

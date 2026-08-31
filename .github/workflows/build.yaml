@@ -84,20 +84,13 @@ jobs:
         with:
           version: "3.16.4"
 
-      - name: Lint and render every chart
-        run: |
-          set -eu
-          status=0
-          for chart in deploy/helm/novaforge-*/Chart.yaml; do
-            dir=$(dirname "$chart")
-            echo "::group::helm lint $dir"
-            helm lint "$dir" || status=1
-            echo "::endgroup::"
-            echo "::group::helm template $dir"
-            helm template test "$dir" > /dev/null || status=1
-            echo "::endgroup::"
-          done
-          exit "$status"
+      # The full chart gate (twenty-first pass): lint + render every chart, keep
+      # the infra chart's embedded files byte-honest against their compose-stack
+      # sources, and verify DNS consistency across the render — every
+      # env-referenced host must be a Service the same render creates (the check
+      # that would have caught the release-prefixed-service-name defect).
+      - name: Chart gate (lint, render, drift, DNS consistency)
+        run: deploy/helm/check-charts.sh
 
   clamav-on:
     # PHASE-6 §13 Q2 (resolved): one config-on job so the ClamAV scanning path stays

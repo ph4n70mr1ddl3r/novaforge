@@ -1,0 +1,98 @@
+# Tempo (the trace backend, PHASE-3 §9): every service's OTLP exporter ships
+# spans direct-to here. files/tempo.yml is the byte-mirror of the compose
+# stack's config; the drift check fails CI if either side moves alone.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: novaforge-tempo-config
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+data:
+  tempo.yml: |-
+{{ .Files.Get "files/tempo.yml" | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: novaforge-tempo
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: tempo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "tempo") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+      {{- include "novaforge-infra.selector" (dict "root" . "component" "tempo") | nindent 8 }}
+    spec:
+      containers:
+        - name: tempo
+          image: {{ .Values.tempo.image }}
+          args: ["-config.file=/etc/tempo/tempo.yml"]
+          ports:
+            - containerPort: 3200
+              name: tempo
+            - containerPort: 4318
+              name: otlp-http
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: tempo
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: tempo
+          volumeMounts:
+            - name: config
+              mountPath: /etc/tempo
+              readOnly: true
+            - name: data
+              mountPath: /var/tempo
+            - name: tmp
+              mountPath: /tmp
+          resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+          {{- include "novaforge-infra.securityContext" (dict "uid" 10001 "fsGroup" 10001) | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: novaforge-tempo-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: novaforge-tempo-data
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: novaforge-tempo-data
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.tempo.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: novaforge-tempo   # flat: the eleven charts reference this DNS name verbatim
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3200
+      targetPort: tempo
+      name: tempo
+    - port: 4318
+      targetPort: otlp-http
+      name: otlp-http
+  selector:
+  {{- include "novaforge-infra.selector" (dict "root" . "component" "tempo") | nindent 4 }}

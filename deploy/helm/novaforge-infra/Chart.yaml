@@ -1,0 +1,15 @@
+apiVersion: v2
+name: novaforge-infra
+description: |
+  The in-cluster infra the eleven NovaForge service charts point at (twenty-first
+  pass, closing the largest recorded production-readiness deferral): Postgres,
+  Kafka (single-node KRaft), Redis, Keycloak (realm imported), Tempo, MinIO
+  (+ bucket-init), and ClamAV — the compose stack's equivalents, in-cluster, by
+  the compose stack's own naming and credentials contract.
+
+  POSTURE: this is the kind-on-podman dev-cluster stack, NOT production
+  operators — single replicas, no TLS, dev-default secrets the values carry
+  loudly. Staged/production environments bring their own infra (operators,
+  managed services) and install only the eleven service charts against it.
+version: 0.1.0
+appVersion: "0.1.0-SNAPSHOT"
