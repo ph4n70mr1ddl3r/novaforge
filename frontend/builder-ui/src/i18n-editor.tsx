@@ -108,16 +108,36 @@ export function I18nEditor({
     const [flash, setFlash] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
+    const [loading, setLoading] = useState(true);
     const universe = useMemo(() => translatableUniverse(app), [app]);
     const missing = universe.filter((key) => !entries[key.key]);
 
     useEffect(() => {
         let cancelled = false;
-        void loadWorkspace(locale).then((workspace) => {
-            if (!cancelled) {
-                setEntries(workspace?.entries ?? {});
-            }
-        });
+        // the load races the UI: until THIS locale's workspace lands, the previous
+        // locale's entries must be neither editable nor savable — a Save in that
+        // window wrote German strings into the French workspace
+        setLoading(true);
+        void loadWorkspace(locale)
+            .then((workspace) => {
+                if (!cancelled) {
+                    setEntries(workspace?.entries ?? {});
+                    setError(null);
+                }
+            })
+            .catch((caught: unknown) => {
+                if (!cancelled) {
+                    // failed load: empty the table rather than leave the previous
+                    // locale's strings sitting under the new locale's header
+                    setEntries({});
+                    setError(caught instanceof Error ? caught.message : String(caught));
+                }
+            })
+            .finally(() => {
+                if (!cancelled) {
+                    setLoading(false);
+                }
+            });
         return () => {
             cancelled = true;
         };
@@ -153,6 +173,7 @@ export function I18nEditor({
                             <td>
                                 <input
                                     aria-label={`${key.key} translation`}
+                                    disabled={loading}
                                     value={entries[key.key] ?? ""}
                                     onChange={(event) =>
                                         setEntries((current) => ({ ...current, [key.key]: event.target.value }))
@@ -167,7 +188,7 @@ export function I18nEditor({
                 <button
                     type="button"
                     className="nf-action-primary"
-                    disabled={busy}
+                    disabled={busy || loading}
                     onClick={async () => {
                         setBusy(true);
                         try {
@@ -197,6 +218,7 @@ export function I18nEditor({
                 </button>
             </div>
             {flash ? <p role="status">{flash}</p> : null}
+            {loading ? <p role="status">Loading {locale} workspace…</p> : null}
             {error ? <p role="alert">{error}</p> : null}
             <details>
                 <summary>Missing translations</summary>

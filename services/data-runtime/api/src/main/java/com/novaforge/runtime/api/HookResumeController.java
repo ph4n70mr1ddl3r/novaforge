@@ -44,22 +44,21 @@ public class HookResumeController {
         UUID recordId = UUID.fromString(request.recordId());
         FlowStep onReject = request.onReject() == null || request.onReject().isBlank()
                 ? null : MAPPER.readValue(request.onReject(), FlowStep.class);
-        // The instanceId-keyed claim: the workflow side's remote-succeeds-local-
-        // commit-fails retry re-entered the engine and re-ran the approval subgraph.
-        // The claim rides the resume's own transaction — the first execution inserts
-        // it, a retried delivery of the same key observes it and skips (the engine
-        // already ran; the workflow side simply re-commits its side).
+        // The instanceId-keyed claim rides the resume's own transaction: the first
+        // execution inserts it, a retried delivery of the same key observes it and
+        // skips (the engine already ran; the workflow side simply re-commits its
+        // side) — and a FAILED resume rolls the claim back with everything else, so
+        // the retry re-enters instead of wedging behind a claim for work that never
+        // ran.
         UUID instanceId = request.instanceId() == null || request.instanceId().isBlank()
                 ? null : UUID.fromString(request.instanceId());
-        if (instanceId != null && !engine.claimResume(instanceId, tenantId, recordId,
-                request.approved())) {
-            return Map.of("status", "already-resumed");
-        }
+        boolean[] resumed = { true };
         TenantContext.with(new TenantContext.Context(request.tenantId(),
                 UUID.nameUUIDFromBytes(("system:" + request.app()).getBytes()).toString()),
-                () -> engine.resumeApproval(tenantId, request.entityApiName(), recordId,
-                        request.hook(), request.afterStep(), onReject, request.approved()));
-        return Map.of("status", "resumed");
+                () -> resumed[0] = engine.resumeApprovalOnce(tenantId,
+                        request.entityApiName(), recordId, request.hook(),
+                        request.afterStep(), onReject, request.approved(), instanceId));
+        return Map.of("status", resumed[0] ? "resumed" : "already-resumed");
     }
 
 }

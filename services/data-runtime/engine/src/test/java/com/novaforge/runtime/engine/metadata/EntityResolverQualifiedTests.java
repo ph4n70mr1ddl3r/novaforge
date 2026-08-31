@@ -110,6 +110,62 @@ class EntityResolverQualifiedTests {
         assertThat(handle.entityKey()).isEqualTo("Erp.StockLedger");
     }
 
+    @Test
+    @DisplayName("a missed eviction self-heals: the version bump reloads the cached bundle on the next TTL refresh")
+    void missedEvictionSelfHeals() throws Exception {
+        // Anti-regression (eighteenth pass): the cache was a plain computeIfAbsent —
+        // nothing version-checked a present entry, and the ONLY eviction was the
+        // Kafka subscriber. A dropped metadata.published delivery (outbox crash,
+        // consumer rebalance gap) left the stale bundle serving forever: writes
+        // validated against superseded metadata, and the bare-name path — whose
+        // search skips version-mismatched entries — 404ed the entity outright,
+        // permanently. The TTL refresh must reload, not just re-cache.
+        String v1 = """
+                { "apiName": "Erp",
+                  "entities": [ { "apiName": "Invoice", "displayField": "number",
+                    "fields": [ { "apiName": "number", "type": "text" } ] } ] }
+                """;
+        String v2 = """
+                { "apiName": "Erp",
+                  "entities": [ { "apiName": "Invoice", "displayField": "number",
+                    "fields": [ { "apiName": "number", "type": "text" },
+                                { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 } ] },
+                                { "apiName": "Voucher", "displayField": "ref",
+                    "fields": [ { "apiName": "ref", "type": "text" } ] } ] }
+                """;
+        AppDefinition first = DefinitionParser.parseApp(v1);
+        AppDefinition second = DefinitionParser.parseApp(v2);
+        int[] version = { 1 };
+        MetadataClient client = new MetadataClient() {
+            @Override
+            public List<PublishedApp> publishedApps() {
+                return List.of(new PublishedApp(TENANT, ERP_ID, "Erp", version[0]));
+            }
+
+            @Override
+            public PublishedBundle publishedBundle(UUID appId) {
+                return new PublishedBundle(version[0],
+                        version[0] == 1 ? first : second);
+            }
+        };
+        EntityResolver resolver = new EntityResolver(client, 50);
+
+        // v1 loads and caches; then the publish to v2 happens with NO eviction
+        EntityResolver.EntityHandle before = resolver.resolve(TENANT, "Invoice");
+        assertThat(before.entity().field("amount")).isEmpty();
+        version[0] = 2;
+
+        // past the index TTL the refresh must self-heal: the new field resolves, and
+        // v2's new entity is reachable bare (the 404 trap) — not still v1's bundle
+        Thread.sleep(120);
+        EntityResolver.EntityHandle after = resolver.resolve(TENANT, "Invoice");
+        assertThat(after.version()).isEqualTo(2);
+        assertThat(after.entity().field("amount")).isPresent();
+        EntityResolver.EntityHandle voucher = resolver.resolve(TENANT, "Voucher");
+        assertThat(voucher.entityKey()).isEqualTo("Erp.Voucher");
+        assertThat(resolver.cacheSize()).isEqualTo(1);
+    }
+
     private EntityResolver resolverWithLedger() {
         AppDefinition erp = DefinitionParser.parseApp("""
                 { "apiName": "Erp",

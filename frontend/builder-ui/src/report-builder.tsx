@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
+import { mergeBranch } from "./branch-merge.ts";
 import {
     Expression,
     type AppDefinition,
@@ -17,7 +18,7 @@ import {
 
 export interface ReportBuilderProps {
     app: AppDefinition;
-    saveReports: (reports: ReportDefinition[]) => Promise<void>;
+    saveReports: (mutate: (fresh: ReportDefinition[]) => ReportDefinition[]) => Promise<void>;
 }
 
 export function ReportBuilder({ app, saveReports }: ReportBuilderProps): ReactNode {
@@ -80,7 +81,10 @@ export function ReportBuilder({ app, saveReports }: ReportBuilderProps): ReactNo
             const next = app.reports.some((report) => report.id === draft.id)
                 ? app.reports.map((report) => (report.id === draft.id ? draft : report))
                 : [...app.reports, draft];
-            await saveReports(next);
+            // merged over a FRESH fetch inside the shell: this list is built from
+            // the mount-time snapshot, and saving it verbatim deleted a report
+            // another tab added meanwhile (the dashboards rule)
+            await saveReports((fresh) => mergeBranch(next, app.reports, fresh, (report) => report.id));
             setFlash(`Saved report ${draft.id}`);
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : String(caught));

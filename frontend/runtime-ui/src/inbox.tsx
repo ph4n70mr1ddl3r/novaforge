@@ -58,8 +58,11 @@ export function Inbox({ client }: { client: PlatformClient }): ReactNode {
 
     const resolve = (taskId: string, approve: boolean): Promise<void> =>
         run(async () => {
-            const comment = approve ? undefined : window.prompt("Rejection comment") ?? undefined;
-            await client.resolveTask(taskId, approve, comment);
+            const comment = approve ? undefined : window.prompt("Rejection comment");
+            // cancelling the comment prompt cancels the rejection — `null ?? undefined`
+            // turned the cancel into a comment-less reject (delegate's own contract)
+            if (!approve && comment === null) return;
+            await client.resolveTask(taskId, approve, comment ?? undefined);
         });
 
     const claim = (taskId: string): Promise<void> => run(() => client.claimTask(taskId));

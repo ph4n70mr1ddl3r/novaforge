@@ -67,7 +67,10 @@ class GoldenSqlTests {
                 "SELECT id, version, created_at, updated_at, created_by, updated_by, deleted, data "
                         + "FROM rec_journal_entry WHERE tenant_id = ? AND deleted = false "
                         + "AND (((data->>'status') = ?) AND (entry_date >= ?) "
-                        + "AND ((data->>'memo') ILIKE ? ESCAPE '\\') AND (((data->>'amount')::numeric) > ?)) "
+                        + "AND ((data->>'memo') ILIKE ? ESCAPE '\\') "
+                        + "AND ((CASE WHEN (data->>'amount')"
+                        + " ~ '^-?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?$'"
+                        + " THEN (data->>'amount')::numeric END) > ?)) "
                         + "ORDER BY entry_date DESC, id LIMIT ? OFFSET ?");
         assertThat(lowered.params()).containsExactly(
                 TENANT, "POSTED", "2026-01-01", "%spike%", new BigDecimal("100.5"), 50, 100L);
@@ -108,11 +111,17 @@ class GoldenSqlTests {
         Lowered lowered = lowering.aggregate("JournalEntry", TENANT, query);
 
         // GROUP BY addresses select ordinals since PHASE-5 §3 (a bucketed CASE in the
-        // select list would rebind every parameter if repeated in the tail)
+        // select list would rebind every parameter if repeated in the tail); the
+        // numeric leaf is the shape-gated cast (a legacy non-numeric string under a
+        // re-typed field evaluates NULL — skipped by the aggregate, never an abort)
         assertThat(lowered.sql()).isEqualTo(
                 "SELECT (data->>'status') AS \"status\", count(*) AS \"count\", "
-                        + "sum(((data->>'amount')::numeric)) AS \"total\", "
-                        + "max(((data->>'amount')::numeric)) AS \"max_amount\" "
+                        + "sum((CASE WHEN (data->>'amount')"
+                        + " ~ '^-?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?$'"
+                        + " THEN (data->>'amount')::numeric END)) AS \"total\", "
+                        + "max((CASE WHEN (data->>'amount')"
+                        + " ~ '^-?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?$'"
+                        + " THEN (data->>'amount')::numeric END)) AS \"max_amount\" "
                         + "FROM rec_journal_entry WHERE tenant_id = ? AND deleted = false "
                         + "GROUP BY 1");
     }

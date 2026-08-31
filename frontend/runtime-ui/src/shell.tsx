@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
     ApiError,
     PlatformClient,
@@ -72,6 +72,9 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
                 const field = entity?.displayField ?? "id";
                 return client.search(target, term, field, size);
             },
+            // lookup options label by the target's own display field — the widget
+            // cannot see other entities' definitions through its own field map
+            displayFieldOf: (target) => entities.get(target)?.displayField,
         }),
         [client, entities],
     );
@@ -206,9 +209,34 @@ function EntityPage(props: EntityPageProps): ReactNode {
         }
     };
 
-    if (kind !== "list" && id && record?.id !== id) {
-        void load(id);
-    }
+    // The record fetch rides an effect with an in-flight guard, never the render
+    // body: the old render-time call refetched on EVERY re-render while the record
+    // was loading (a fetch storm), clobbered typed edits when each response landed,
+    // and retried a failing load forever. The id comparison normalizes to strings —
+    // the route param is always a string, the server's id is whatever JSON gave.
+    const inFlightRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (kind === "list" || !id) {
+            return;
+        }
+        if (record?.id !== undefined && String(record.id) === id) {
+            return;
+        }
+        if (inFlightRef.current === id) {
+            return;
+        }
+        inFlightRef.current = id;
+        void load(id).finally(() => {
+            inFlightRef.current = null;
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- record is deliberately NOT a dependency: user edits must never re-trigger the fetch
+    }, [id, kind]);
+
+    // The save's double-submit fence: `busy` state is async (a fast double-click
+    // re-entered before the re-render), and the create leg additionally rides an
+    // idempotency key so even a raced double POST cannot mint two records.
+    const savingRef = useRef(false);
+    const createKeyRef = useRef<string | null>(null);
 
     const context: RendererContextValue = {
         mode: "runtime",
@@ -232,34 +260,55 @@ function EntityPage(props: EntityPageProps): ReactNode {
         },
         actions: {
             save: async () => {
+                if (savingRef.current) {
+                    return;
+                }
+                savingRef.current = true;
                 setBusy(true);
                 setErrors({});
                 try {
-                    const savedRecord =
-                        record?.id
-                            ? await client.updateRecord(entity.apiName, String(record.id), Number(record.version ?? 1), record)
-                            : await client.createRecord(entity.apiName, record ?? {});
+                    const savedRecord = record?.id
+                        ? await client.updateRecord(entity.apiName, String(record.id), Number(record.version ?? 1), record)
+                        : await client.createRecord(
+                              entity.apiName,
+                              record ?? {},
+                              // one key per unsaved draft: a re-click or a raced
+                              // retry of the same create collapses server-side
+                              createKeyRef.current ?? (createKeyRef.current = crypto.randomUUID()),
+                          );
+                    createKeyRef.current = null;
                     setRecord(savedRecord);
                     setFlash("Saved");
                     if (!record?.id) {
                         navigate(entity.apiName, "detail", String(savedRecord.id));
                     }
                 } catch (error) {
+                    // every failure surfaces: the callers dispatch with `void`, so a
+                    // rethrown non-ApiError (offline, gateway 502) was an unhandled
+                    // rejection with no UI — and the previous "Saved" flash stayed
+                    // on screen as active misinformation
                     if (error instanceof ApiError) {
                         setErrors(error.fieldErrors());
                         setFlash(error.message);
                     } else {
-                        throw error;
+                        setFlash(error instanceof Error ? error.message : "Save failed");
                     }
                 } finally {
+                    savingRef.current = false;
                     setBusy(false);
                 }
             },
             cancel: async () => navigate(entity.apiName, "list"),
             deleteRecord: async () => {
                 if (record?.id) {
-                    await client.deleteRecord(entity.apiName, String(record.id), Number(record.version ?? 1));
-                    navigate(entity.apiName, "list");
+                    try {
+                        await client.deleteRecord(entity.apiName, String(record.id), Number(record.version ?? 1));
+                        navigate(entity.apiName, "list");
+                    } catch (error) {
+                        // a 409 (stale version) or 403 on delete was a silent
+                        // unhandled rejection — the user clicked again and again
+                        setFlash(error instanceof Error ? error.message : "Delete failed");
+                    }
                 }
             },
             openPage: async (target, targetId) => {
@@ -291,7 +340,7 @@ function EntityPage(props: EntityPageProps): ReactNode {
                         setErrors(error.fieldErrors());
                         setFlash(error.message);
                     } else {
-                        throw error;
+                        setFlash(error instanceof Error ? error.message : `Running ${hook} failed`);
                     }
                 } finally {
                     setBusy(false);

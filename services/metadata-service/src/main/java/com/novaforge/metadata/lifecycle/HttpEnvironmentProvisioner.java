@@ -40,11 +40,25 @@ public class HttpEnvironmentProvisioner implements EnvironmentProvisioner {
             @Value("${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}") String issuer,
             @Value("${novaforge.auth.service-client.id:novaforge-runtime}") String clientId,
             @Value("${novaforge.auth.service-client.secret:novaforge-runtime-secret}") String clientSecret) {
-        this.runtime = RestClient.builder().baseUrl(runtimeUrl).build();
-        this.metadata = RestClient.builder().baseUrl(metadataUrl).build();
-        this.auth = RestClient.builder().baseUrl(issuer).build();
+        // bounded like every sibling client: provisioning runs synchronously inside
+        // the promote/rollback HTTP request — a hung leg wedged the builder's
+        // request thread indefinitely
+        this.runtime = RestClient.builder().baseUrl(runtimeUrl)
+                .requestFactory(timedFactory()).build();
+        this.metadata = RestClient.builder().baseUrl(metadataUrl)
+                .requestFactory(timedFactory()).build();
+        this.auth = RestClient.builder().baseUrl(issuer)
+                .requestFactory(timedFactory()).build();
         this.clientId = clientId;
         this.clientSecret = clientSecret;
+    }
+
+    private static org.springframework.http.client.ClientHttpRequestFactory timedFactory() {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(2_000);
+        factory.setReadTimeout(10_000);
+        return factory;
     }
 
     /**

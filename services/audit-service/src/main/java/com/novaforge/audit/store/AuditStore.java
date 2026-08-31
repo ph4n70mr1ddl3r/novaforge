@@ -33,11 +33,13 @@ public class AuditStore {
                 Timestamp.from(occurredAt), payloadJson);
     }
 
-    public List<Map<String, Object>> forRecord(UUID tenantId, UUID recordId) {
+    public List<Map<String, Object>> forRecord(UUID tenantId, UUID recordId, int limit) {
+        // bounded like forEntity: a hot record's full history is unbounded, and the
+        // endpoint renders it in one response
         return jdbc.queryForList("""
                 SELECT event_id, entity_id, record_id, event_type, actor_id, occurred_at, payload::text AS payload
                   FROM audit_events WHERE tenant_id = ? AND record_id = ?
-                 ORDER BY occurred_at DESC""", tenantId, recordId);
+                 ORDER BY occurred_at DESC LIMIT ?""", tenantId, recordId, limit);
     }
 
     public List<Map<String, Object>> forEntity(UUID tenantId, String entityId, int limit) {

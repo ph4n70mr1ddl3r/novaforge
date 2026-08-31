@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { PlatformClient } from "@novaforge/shared";
 
 /**
@@ -19,17 +19,30 @@ export function Notifications({ client }: { client: PlatformClient }): ReactNode
     const [error, setError] = useState<string | null>(null);
     const [flash, setFlash] = useState<string | null>(null);
     const size = 25;
+    const reloadSeq = useRef(0);
 
     const reload = (target: number): void => {
+        // only the LATEST load commits: a page change racing a markRead reload used
+        // to let the older request's rows land last
+        const seq = ++reloadSeq.current;
         setBusy(true);
+        setError(null);
         client
             .notifications(target, size)
             .then((result) => {
+                if (seq !== reloadSeq.current) return;
                 setRows(result.rows);
                 setTotal(result.total);
             })
-            .catch((caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught)))
-            .finally(() => setBusy(false));
+            .catch((caught: unknown) => {
+                if (seq !== reloadSeq.current) return;
+                setError(caught instanceof Error ? caught.message : String(caught));
+            })
+            .finally(() => {
+                if (seq === reloadSeq.current) {
+                    setBusy(false);
+                }
+            });
     };
 
     useEffect(() => {
@@ -64,7 +77,12 @@ export function Notifications({ client }: { client: PlatformClient }): ReactNode
         setBusy(true);
         try {
             await client.markNotificationRead(id);
-            reload(page);
+            // reload owns the busy flag from here — this method's finally must not
+            // clear it while the reload is still in flight
+            await client.notifications(page, size).then((result) => {
+                setRows(result.rows);
+                setTotal(result.total);
+            });
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : String(caught));
         } finally {

@@ -99,6 +99,20 @@ public class JobStore {
         }
     }
 
+    /**
+     * The cross-replica claim (eighteenth pass): the runner's in-process set fenced
+     * one replica's own overlapping scans only — two replicas (a rolling-deploy
+     * overlap, a scale-out) both selected the same pending row and both ran it,
+     * applying every import row twice through the batch API. The pending→running
+     * transition is a CAS: only the pass that flipped it owns the job.
+     */
+    public boolean claim(UUID tenantId, UUID id) {
+        return jdbc.update("""
+                UPDATE it_jobs SET status = 'running', updated_at = now()
+                 WHERE tenant_id = ? AND id = ? AND status = 'pending'""",
+                tenantId, id) > 0;
+    }
+
     /** Chunk commit: counters advance, the checkpoint moves (the resume point, §7). */
     public void checkpoint(UUID tenantId, UUID id, long processedRows, long failedRows,
                            Map<String, Object> checkpoint) {

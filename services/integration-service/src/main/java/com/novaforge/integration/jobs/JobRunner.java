@@ -53,6 +53,8 @@ public class JobRunner {
     private final ReportingClient reports;
     private final NotifyClient notify;
     private final int chunkSize;
+    /** The export ceiling (ReportRunner.requireWithinCeiling's pattern): the CSV is assembled in memory before the File Service upload — without a bound, a multi-million-row entity OOMs the pod on the shared scheduler pool. */
+    private final long exportMaxRows;
 
     /** Jobs claimed for execution this pass — one runner per job, idempotent claim. */
     private final Set<UUID> running = ConcurrentHashMap.newKeySet();
@@ -60,7 +62,8 @@ public class JobRunner {
     public JobRunner(JobStore jobs, DeliveryStore deliveries, PublishedIntegrations definitions,
                      RuntimeClient runtime, FileClient files, ReportingClient reports,
                      NotifyClient notify,
-                     @Value("${novaforge.jobs.chunk-size:100}") int chunkSize) {
+                     @Value("${novaforge.jobs.chunk-size:100}") int chunkSize,
+                     @Value("${novaforge.jobs.export-max-rows:200000}") long exportMaxRows) {
         this.jobs = jobs;
         this.deliveries = deliveries;
         this.definitions = definitions;
@@ -69,6 +72,7 @@ public class JobRunner {
         this.reports = reports;
         this.notify = notify;
         this.chunkSize = chunkSize;
+        this.exportMaxRows = exportMaxRows;
     }
 
     /** The scan: pending jobs (fresh or resumed from a checkpoint) claim in. */
@@ -97,7 +101,11 @@ public class JobRunner {
     }
 
     private void run(JobStore.Job job) {
-        jobs.updateStatus(job.tenantId(), job.id(), "running", null);
+        // the cross-replica fence: the in-process `running` set cannot see another
+        // replica's scan — only the pass that CASes pending→running owns the job
+        if (!jobs.claim(job.tenantId(), job.id())) {
+            return;
+        }
         try {
             switch (JobStore.Kind.of(job.kind())) {
                 case IMPORT -> runImport(job);
@@ -248,6 +256,16 @@ public class JobRunner {
                     job.runAsRole(), Map.of("page", Map.of("size", chunkSize, "offset", offset)));
             if (total < 0) {
                 total = page.total();
+                if (total > exportMaxRows) {
+                    // the assembly is in-memory (the File Service upload takes the
+                    // whole body): a boundless export OOMs the pod on the shared
+                    // scheduler pool — fail the job cleanly instead (the run catch
+                    // records + notifies), like ReportRunner.requireWithinCeiling
+                    throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                            "entity export of " + total + " rows exceeds the ceiling of "
+                                    + exportMaxRows + " (novaforge.jobs.export-max-rows) — "
+                                    + "export a filtered report or raise the ceiling");
+                }
             }
             for (Map<String, Object> row : page.rows()) {
                 if (header) {

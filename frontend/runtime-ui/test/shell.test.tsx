@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import axe from "axe-core";
 import {
@@ -118,6 +118,58 @@ describe("RuntimeShell", () => {
         await waitFor(() => expect(screen.getByText("0 records")).toBeTruthy());
         // the Order list exposes the create action (arClerk create grant)
         expect(screen.getByRole("button", { name: /new|add/i })).toBeTruthy();
+    });
+
+    it("a double-clicked Save creates exactly one record (in-flight fence + idempotency key)", async () => {
+        // Anti-regression (eighteenth pass): the save had no in-flight guard and
+        // the create carried no idempotency key — a fast double-click landed two
+        // POSTs and minted two records before the re-render disabled anything.
+        let release: ((response: Response) => void) | undefined;
+        const posts: { key: string | null }[] = [];
+        const fetchImpl = vi.fn(async (input: string | URL, init?: RequestInit) => {
+            const url = String(input);
+            const method = (init?.method ?? "GET").toUpperCase();
+            if (url.includes("/runtime/Customer") && method === "POST") {
+                posts.push({ key: (init?.headers as Record<string, string>)?.["Idempotency-Key"] ?? null });
+                return new Promise<Response>((resolve) => {
+                    release = resolve;
+                });
+            }
+            if (url.includes("/runtime/Customer")) {
+                return new Response(
+                    JSON.stringify({ rows: [{ id: "c-1", name: "Acme", region: "EU" }], total: 1 }),
+                    { status: 200, headers: { "Content-Type": "application/json" } },
+                );
+            }
+            if (url.includes("/runtime/Order")) {
+                return new Response(JSON.stringify({ rows: [], total: 0 }), { status: 200 });
+            }
+            return new Response(JSON.stringify({ title: "not stubbed", status: 404 }), { status: 404 });
+        });
+        const client = new PlatformClient("", () => "t", fetchImpl as unknown as typeof fetch);
+        render(shell(client));
+        screen.getByRole("button", { name: "Customers" }).click();
+        await waitFor(() => expect(screen.getByText("1 record")).toBeTruthy());
+        screen.getByRole("button", { name: /new|add/i }).click();
+        const name = (await screen.findByLabelText(/^Name/)) as HTMLInputElement;
+        await act(async () => {
+            fireEvent.change(name, { target: { value: "Acme" } });
+        });
+        const save = await screen.findByRole("button", { name: "Save" });
+        // two clicks before the create resolves — the fence must swallow the second
+        await act(async () => {
+            save.click();
+            save.click();
+        });
+        expect(posts).toHaveLength(1);
+        // the create rode an idempotency key (the server-side ceiling on the race)
+        expect(posts[0]!.key).toBeTruthy();
+        // the create resolves cleanly — and the fence never let a second POST out
+        release?.(new Response(JSON.stringify({ id: "c-2", name: "Acme" }), { status: 200 }));
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+        expect(posts).toHaveLength(1);
     });
 
     it("the inbox pages tasks and resolves approvals", async () => {

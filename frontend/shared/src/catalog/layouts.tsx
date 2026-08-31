@@ -87,6 +87,9 @@ export function FormLayout(props: LayoutProps & { columns?: number; section?: st
                         <button
                             key={index}
                             type="button"
+                            // the in-flight write fences the button too: a fast
+                            // double-click landed two POSTs before the re-render
+                            disabled={renderer.busy}
                             className={action.type === "save" ? "nf-action nf-action-primary" : "nf-action"}
                             onClick={() => void dispatchAction(renderer, action)}
                         >
@@ -246,6 +249,10 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
                     Next
                 </button>
             </div>
+            {/* Authored children render: the L1 list default (and any builder insert)
+                places column widgets and the record-actions node here — a list page
+                that dropped its children silently swallowed every node it was given. */}
+            {props.children}
         </section>
     );
 }

@@ -33,7 +33,11 @@ public interface VirusScanner {
 
         @Override
         public boolean infected(byte[] content) {
-            try (Socket socket = new Socket(host, port)) {
+            // a bounded connect, not new Socket(host, port): the scan runs inside
+            // the completing transaction, and a black-holed clamd held the request
+            // thread (and its DB connection) for the OS's whole connect timeout
+            try (Socket socket = new Socket()) {
+                socket.connect(new java.net.InetSocketAddress(host, port), 5_000);
                 socket.setSoTimeout(30_000);
                 OutputStream out = socket.getOutputStream();
                 InputStream in = socket.getInputStream();

@@ -91,6 +91,17 @@ public class AuditPartitionRotation {
      * indexes included — ATTACH requires them), the in-range rows moved across, the
      * default emptied of them, and the table attached — one owner transaction, so a
      * crash mid-move leaves the default untouched and the next pass retries clean.
+     *
+     * <p>Under READ COMMITTED the copy and the delete take separate snapshots: an
+     * event the ingest path commits into the default partition between the two
+     * statements would be deleted without ever being copied — silently gone from an
+     * append-only trail (the consumer's offset had already advanced; nothing
+     * replays it). The moved-vs-deleted count check closes that window: the delete's
+     * snapshot can only be a SUPERSET of the copy's (rows are only ever inserted),
+     * so any divergence means a concurrent ingest landed inside the window — the
+     * whole transaction rolls back and the next pass retries with the row included.
+     * A commit after the delete is fenced by ATTACH itself (the default holding an
+     * in-range row fails the attach, rolling the move back).</p>
      */
     private void moveOutOfDefault(String name, String from, String to) {
         ownerTx.executeWithoutResult(tx -> {
@@ -100,10 +111,15 @@ public class AuditPartitionRotation {
                     + " (tenant_id, record_id, occurred_at DESC)");
             owner.update("CREATE INDEX " + name + "_entity ON " + name
                     + " (tenant_id, entity_id, occurred_at DESC)");
-            owner.update("INSERT INTO " + name + " SELECT * FROM audit_events_default"
+            int moved = owner.update("INSERT INTO " + name + " SELECT * FROM audit_events_default"
                     + " WHERE occurred_at >= '" + from + "' AND occurred_at < '" + to + "'");
-            owner.update("DELETE FROM audit_events_default"
+            int deleted = owner.update("DELETE FROM audit_events_default"
                     + " WHERE occurred_at >= '" + from + "' AND occurred_at < '" + to + "'");
+            if (deleted != moved) {
+                throw new IllegalStateException("audit rotation window moved " + moved
+                        + " rows but deleted " + deleted + " — a concurrent ingest landed "
+                        + "inside the window; rolling back to retry with it included");
+            }
             owner.execute("ALTER TABLE audit_events ATTACH PARTITION " + name
                     + " FOR VALUES FROM ('" + from + "') TO ('" + to + "')");
         });

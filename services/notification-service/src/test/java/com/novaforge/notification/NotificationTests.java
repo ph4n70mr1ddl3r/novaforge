@@ -286,9 +286,25 @@ class NotificationTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("a replayed spine event re-emails nobody — the email leg claims its key")
+    void replayedEventNeverReEmails() {
+        // Anti-regression (eighteenth pass): the inbox insert deduped on event_id but
+        // the SMTP leg ran unconditionally — a Kafka redelivery of the event
+        // (TaskEventConsumer deliberately rethrows transient failures) collapsed the
+        // inbox row while every email-preferred recipient was emailed again.
+        String event = assignedEvent(MANAGER.toString(), null);
+        EMAILS.clear();
+        consumer.onEvent(record(event));
+        org.assertj.core.api.Assertions.assertThat(EMAILS).hasSize(1);
+        // the redelivery of the SAME event id: the inbox collapses AND the email
+        // leg's claim holds — exactly one email, ever
+        consumer.onEvent(record(event));
+        org.assertj.core.api.Assertions.assertThat(EMAILS).hasSize(1);
+    }
+
+    @Test
     @DisplayName("sla.warn delivers the warning category (§8)")
-    void slaWarningDelivers() throws Exception {
-        String body = """
+    void slaWarningDelivers() throws Exception {        String body = """
                 { "event": "sla.warn", "eventId": "%s", "taskId": "%s",
                   "tenantId": "%s", "entityId": "Purch.PurchaseOrder",
                   "recordId": "%s", "assignee": "%s", "role": "",

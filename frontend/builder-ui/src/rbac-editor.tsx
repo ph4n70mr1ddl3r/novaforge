@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { mergeBranch } from "./branch-merge.ts";
 import type {
     AppDefinition,
     FieldAccess,
@@ -18,7 +19,7 @@ import type {
 
 export interface RbacEditorProps {
     app: AppDefinition;
-    onSave: (permissionSet: AppDefinition["permissionSet"]) => Promise<void>;
+    onSave: (mutate: (fresh: AppDefinition["permissionSet"]) => AppDefinition["permissionSet"]) => Promise<void>;
 }
 
 const CRU = ["create", "read", "update", "delete", "reportExecute"] as const;
@@ -201,7 +202,32 @@ export function RbacEditor({ app, onSave }: RbacEditorProps): ReactNode {
                 onClick={async () => {
                     setBusy(true);
                     try {
-                        await onSave(draft);
+                        // merged over a FRESH fetch inside the shell: this draft is
+                        // seeded from the mount-time permission set, and saving it
+                        // verbatim deleted a permission another tab added meanwhile
+                        // (the dashboards rule)
+                        await onSave((fresh) => ({
+                            ...draft,
+                            roles: mergeBranch(draft.roles, app.permissionSet.roles, fresh.roles, (role) => role.name),
+                            objectPermissions: mergeBranch(
+                                draft.objectPermissions,
+                                app.permissionSet.objectPermissions,
+                                fresh.objectPermissions,
+                                (permission) => `${permission.role}:${permission.entity}`,
+                            ),
+                            fieldSecurity: mergeBranch(
+                                draft.fieldSecurity,
+                                app.permissionSet.fieldSecurity,
+                                fresh.fieldSecurity,
+                                (security) => `${security.role}:${security.entity}:${security.field}`,
+                            ),
+                            sharingRules: mergeBranch(
+                                draft.sharingRules,
+                                app.permissionSet.sharingRules,
+                                fresh.sharingRules,
+                                (rule) => `${rule.entity}:${rule.type}:${rule.roles?.join("+") ?? ""}`,
+                            ),
+                        }));
                         setFlash("Permissions saved");
                                         } catch (caught) {
                         // a failed save must never look like a success — the draft

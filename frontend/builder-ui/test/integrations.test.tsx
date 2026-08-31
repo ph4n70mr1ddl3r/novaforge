@@ -98,7 +98,7 @@ function stubClient(overrides: Partial<{
 
 describe("Integrations (PHASE-6 §3/§9)", () => {
     it("edits a connector's operations and saves the branch patch", async () => {
-        const onSave = vi.fn(async (_patch: Record<string, unknown>) => {});
+        const onSave = vi.fn(async (_mutate: (fresh: NonNullable<AppDefinition["integrations"]>) => NonNullable<AppDefinition["integrations"]>) => {});
         const { client } = stubClient();
         render(createElement(Integrations, { app, client, onSave }));
 
@@ -115,15 +115,17 @@ describe("Integrations (PHASE-6 §3/§9)", () => {
 
         fireEvent.click(screen.getByText("Save connectors"));
         await waitFor(() => expect(onSave).toHaveBeenCalled());
-        const patch = onSave.mock.calls[0]![0] as {
-            integrations: { connectors: { operations: { name: string }[] }[] };
+        // the mutation applies to the FRESH branch (the dashboards rule) — apply it
+        // to the authored branch to observe what would be saved
+        const branch = onSave.mock.calls[0]![0](app.integrations!) as {
+            connectors: { operations: { name: string }[] }[];
         };
-        expect(patch.integrations.connectors[0]!.operations.map((op) => op.name))
+        expect(branch.connectors[0]!.operations.map((op) => op.name))
             .toEqual(["listTransactions", "getBalance"]);
     });
 
     it("authors a credential reference and provisions the secret into the store — never the metadata", async () => {
-        const onSave = vi.fn(async (_patch: Record<string, unknown>) => {});
+        const onSave = vi.fn(async (_mutate: (fresh: NonNullable<AppDefinition["integrations"]>) => NonNullable<AppDefinition["integrations"]>) => {});
         const { client, calls } = stubClient();
         render(createElement(Integrations, { app, client, onSave }));
 
@@ -146,21 +148,21 @@ describe("Integrations (PHASE-6 §3/§9)", () => {
 
         fireEvent.click(screen.getByText("Save credentials"));
         await waitFor(() => expect(onSave).toHaveBeenCalled());
-        const patch = onSave.mock.calls[0]![0] as {
-            integrations: { credentials: { id: string; kind: string; tokenUrl?: string }[] };
+        const branch = onSave.mock.calls[0]![0](app.integrations!) as {
+            credentials: { id: string; kind: string; tokenUrl?: string }[];
         };
-        expect(patch.integrations.credentials.map((credential) => credential.id))
+        expect(branch.credentials.map((credential) => credential.id))
             .toEqual(["bankFeedKey", "erpOidc"]);
-        expect(patch.integrations.credentials[1]).toMatchObject({
+        expect(branch.credentials[1]).toMatchObject({
             kind: "oauth2_client_credentials",
             tokenUrl: "https://idp.example.local/token",
         });
         // the material never rides the branch — the schema cannot express it (§9)
-        expect(JSON.stringify(patch)).not.toContain("sk-live-123");
+        expect(JSON.stringify(branch)).not.toContain("sk-live-123");
     });
 
     it("authors an outbound webhook beside the inbound one; secrets provision per hook", async () => {
-        const onSave = vi.fn(async (_patch: Record<string, unknown>) => {});
+        const onSave = vi.fn(async (_mutate: (fresh: NonNullable<AppDefinition["integrations"]>) => NonNullable<AppDefinition["integrations"]>) => {});
         const { client, calls } = stubClient();
         render(createElement(Integrations, { app, client, onSave }));
 
@@ -181,11 +183,11 @@ describe("Integrations (PHASE-6 §3/§9)", () => {
 
         fireEvent.click(screen.getByText("Save webhooks"));
         await waitFor(() => expect(onSave).toHaveBeenCalled());
-        const patch = onSave.mock.calls[0]![0] as {
-            integrations: { webhooks: { id: string; direction: string }[] };
+        const branch = onSave.mock.calls[0]![0](app.integrations!) as {
+            webhooks: { id: string; direction: string }[];
         };
-        expect(patch.integrations.webhooks).toHaveLength(2);
-        expect(patch.integrations.webhooks[1]).toMatchObject({
+        expect(branch.webhooks).toHaveLength(2);
+        expect(branch.webhooks[1]).toMatchObject({
             id: "notifyErp",
             direction: "outbound",
             url: "https://hooks.example.local/nf",
@@ -218,7 +220,7 @@ describe("Integrations (PHASE-6 §3/§9)", () => {
     });
 
     it("renders import/export job runs with progress and drives the resume/inspect legs (§7)", async () => {
-        const onSave = vi.fn(async (_patch: Record<string, unknown>) => {});
+        const onSave = vi.fn(async (_mutate: (fresh: NonNullable<AppDefinition["integrations"]>) => NonNullable<AppDefinition["integrations"]>) => {});
         const { client, calls } = stubClient({
             jobs: [
                 { id: "job-1", kind: "IMPORT", status: "paused", importMapping: "paymentsFeed",

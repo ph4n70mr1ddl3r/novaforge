@@ -117,7 +117,8 @@ public class SlaScanner {
                        record_id, created_by, context_ref, instance_id, escalate_to,
                        notify_on
                   FROM wf_tasks
-                 WHERE status = 'OPEN' AND due_at IS NOT NULL AND due_at <= ?""";
+                 WHERE status = 'OPEN' AND sla_breached = false
+                   AND due_at IS NOT NULL AND due_at <= ?""";
         List<Map<String, Object>> due = tenantId == null
                 ? jdbc.queryForList(sql, Timestamp.from(now))
                 : jdbc.queryForList(sql + " AND tenant_id = ?", Timestamp.from(now), tenantId);
@@ -131,16 +132,32 @@ public class SlaScanner {
         return breached;
     }
 
+    /**
+     * The stay-OPEN breach's one-shot fence (V7): true when this pass flipped the
+     * flag (the breach is ours to emit), false when a concurrent pass already did —
+     * the warn path's conditional flip, applied to the branches that cannot terminalize.
+     */
+    private boolean markBreached(Map<String, Object> task) {
+        return jdbc.update("""
+                UPDATE wf_tasks SET sla_breached = true, updated_at = now()
+                 WHERE id = ? AND sla_breached = false""", task.get("id")) > 0;
+    }
+
     /** One task's breach block, atomic: flip + events + replacement together. */
-    private Integer breachOne(Map<String, Object> task) {
-        String escalateTo = task.get("escalate_to") == null ? null
+    private Integer breachOne(Map<String, Object> task) {        String escalateTo = task.get("escalate_to") == null ? null
                 : String.valueOf(task.get("escalate_to"));
         if (escalateTo == null) {
             // notify-only breach (§6's "escalate, notify, or both"): ESCALATED is
             // terminal and wf_tasks.resolve can never act on it — terminalizing an
             // approval here wedged the suspended instance forever with no surface to
             // resume it. The task stays OPEN (visible, resolvable) and the breach
-            // still rides the spine; the row must NOT flip.
+            // rides the spine exactly once — the conditional flag flip is the
+            // re-fire fence (V7): a still-open, still-overdue row without it was
+            // re-emitted every scanner pass, each with a fresh event id no consumer
+            // dedupe could collapse.
+            if (!markBreached(task)) {
+                return 0;
+            }
             emit(task, "sla.breach", "OPEN");
             counted("novaforge.sla.breach", appOf(task.get("entity_id")));
             LOG.warn("sla breach without escalation target: task {} stays OPEN "
@@ -152,7 +169,11 @@ public class SlaScanner {
             // role emptied since authoring): a replacement addressed to it would be
             // an OPEN task no inbox ever matches — the same permanent wedge as no
             // target at all. The task stays OPEN and resolvable; the breach rides
-            // the spine so the misconfiguration is visible.
+            // the spine once (the V7 flag) so the misconfiguration is visible
+            // without a per-pass flood.
+            if (!markBreached(task)) {
+                return 0;
+            }
             emit(task, "sla.breach", "OPEN");
             counted("novaforge.sla.breach", appOf(task.get("entity_id")));
             LOG.warn("sla breach escalation target {} has no holders in tenant {} — task {} "

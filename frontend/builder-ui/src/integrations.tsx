@@ -1,4 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { JsonTextField } from "./json-field.tsx";
+import { mergeBranch } from "./branch-merge.ts";
 import {
     type AppDefinition,
     type ConnectorDefinition,
@@ -22,8 +24,8 @@ import {
 export interface IntegrationsProps {
     app: AppDefinition;
     client: PlatformClient;
-    /** Saves a metadata branch patch ({integrations}). */
-    onSave: (patch: Record<string, unknown>) => Promise<void>;
+    /** Saves the integrations branch — the mutation applies to a FRESH fetch (the dashboards rule). */
+    onSave: (mutate: (fresh: NonNullable<AppDefinition["integrations"]>) => NonNullable<AppDefinition["integrations"]>) => Promise<void>;
 }
 
 export function Integrations({ app, client, onSave }: IntegrationsProps): ReactNode {
@@ -60,7 +62,15 @@ export function Integrations({ app, client, onSave }: IntegrationsProps): ReactN
         setError(null);
         setBusy(true);
         try {
-            await onSave({ integrations: { connectors, webhooks, credentials, imports } });
+            // merged over a FRESH fetch inside the shell: these arrays are seeded
+            // from the mount-time branch, and saving them verbatim deleted a
+            // definition another tab added meanwhile (the dashboards rule)
+            await onSave((fresh) => ({
+                connectors: mergeBranch(connectors, branch.connectors, fresh.connectors, (c) => c.id),
+                webhooks: mergeBranch(webhooks, branch.webhooks, fresh.webhooks, (w) => w.id),
+                credentials: mergeBranch(credentials, branch.credentials, fresh.credentials, (c) => c.id),
+                imports: mergeBranch(imports, branch.imports, fresh.imports, (i) => i.apiName),
+            }));
             setFlash(`Saved ${what}`);
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : String(caught));
@@ -362,23 +372,17 @@ function WebhookEditor({
                                         fields: webhook.mapping?.fields,
                                     },
                                 })} />
-                            <input aria-label={`Webhook mapping ${index}`}
+                            <JsonTextField aria-label={`Webhook mapping ${index}`}
                                 placeholder='field templates JSON, e.g. {"number": "${txn_id}"}'
-                                value={webhook.mapping?.fields && Object.keys(webhook.mapping.fields).length > 0
-                                    ? JSON.stringify(webhook.mapping.fields) : ""}
-                                onChange={(e) => {
-                                    const text = e.target.value.trim();
-                                    update(index, {
-                                        mapping: {
-                                            mode: webhook.mapping?.mode ?? "upsert",
-                                            keyFields: webhook.mapping?.keyFields,
-                                            idempotencyKey: webhook.mapping?.idempotencyKey,
-                                            fields: text
-                                                ? JSON.parse(text) as Record<string, unknown>
-                                                : undefined,
-                                        },
-                                    });
-                                }} />
+                                value={webhook.mapping?.fields}
+                                onParsed={(fields) => update(index, {
+                                    mapping: {
+                                        mode: webhook.mapping?.mode ?? "upsert",
+                                        keyFields: webhook.mapping?.keyFields,
+                                        idempotencyKey: webhook.mapping?.idempotencyKey,
+                                        fields,
+                                    },
+                                })} />
                         </>
                     ) : (
                         <>
@@ -473,16 +477,10 @@ function ImportEditor({
                                 ? e.target.value.split(",").map((field) => field.trim()).filter(Boolean)
                                 : undefined,
                         })} />
-                    <input aria-label={`Import mapping ${index}`}
+                    <JsonTextField aria-label={`Import mapping ${index}`}
                         placeholder='mapping JSON, e.g. {"reference": "Ref"}'
-                        value={mapping.mapping && Object.keys(mapping.mapping).length > 0
-                            ? JSON.stringify(mapping.mapping) : ""}
-                        onChange={(e) => {
-                            const text = e.target.value.trim();
-                            update(index, {
-                                mapping: text ? JSON.parse(text) as Record<string, unknown> : undefined,
-                            });
-                        }} />
+                        value={mapping.mapping}
+                        onParsed={(parsed) => update(index, { mapping: parsed })} />
                     <button type="button" aria-label={`Remove import ${mapping.apiName}`}
                         onClick={() => onChange(imports.filter((_, i) => i !== index))}>×</button>
                 </div>

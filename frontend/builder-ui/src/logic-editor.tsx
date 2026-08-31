@@ -238,7 +238,14 @@ function chain(rows: StepRow[]): FlowStep | undefined {
     if (rows.length === 0) return undefined;
     const parseParams = (text: string): Record<string, unknown> => {
         if (!text.trim()) return {};
-        return JSON.parse(text) as Record<string, unknown>;
+        // keep-typing: an incomplete literal (`{`, to-be-closed brackets) parses to
+        // EMPTY params — throwing here rejected the keystroke, so valid JSON could
+        // never be typed character by character (suites-editor's own convention)
+        try {
+            return JSON.parse(text) as Record<string, unknown>;
+        } catch {
+            return {};
+        }
     };
     const nodes = new Map<string, FlowStep>();
     for (const row of rows) {

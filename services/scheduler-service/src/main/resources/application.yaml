@@ -1,4 +1,11 @@
 spring:
+  task:
+    scheduling:
+      # Eighteenth pass: Boot's default scheduler is ONE thread — a long leg
+      # (a wedged remote read, a multi-minute import) starved every other
+      # @Scheduled duty of this service (outbox relays, scanners, reapers).
+      pool:
+        size: 4
   application:
     name: novaforge-scheduler-service
   security:

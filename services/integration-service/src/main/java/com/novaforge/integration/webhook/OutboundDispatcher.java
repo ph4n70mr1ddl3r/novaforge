@@ -52,13 +52,16 @@ public class OutboundDispatcher {
     private final int attempts;
     private final long backoffInitial;
     private final long backoffMax;
+    /** Bounded once, not per attempt: the dispatch consumer is a shared thread — an unbounded receiver wedges every tenant's deliveries. */
+    private final RestClient restClient;
 
     public OutboundDispatcher(PublishedIntegrations definitions, SecretStore secrets,
                               DeliveryStore deliveries, HmacScheme hmac,
                               io.micrometer.tracing.Tracer tracer,
                               @Value("${novaforge.webhook.attempts:5}") int attempts,
                               @Value("${novaforge.webhook.backoff-initial-ms:200}") long backoffInitial,
-                              @Value("${novaforge.webhook.backoff-max-ms:2000}") long backoffMax) {
+                              @Value("${novaforge.webhook.backoff-max-ms:2000}") long backoffMax,
+                              @Value("${novaforge.webhook.read-timeout-ms:10000}") long readTimeout) {
         this.definitions = definitions;
         this.secrets = secrets;
         this.deliveries = deliveries;
@@ -67,6 +70,11 @@ public class OutboundDispatcher {
         this.attempts = attempts;
         this.backoffInitial = backoffInitial;
         this.backoffMax = backoffMax;
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(2_000);
+        factory.setReadTimeout((int) readTimeout);
+        this.restClient = RestClient.builder().requestFactory(factory).build();
     }
 
     /** The spine: every family topic (record.*, app events, platform events alike). */
@@ -103,7 +111,17 @@ public class OutboundDispatcher {
                 if (!matches(webhook, bindings)) {
                     continue;
                 }
-                deliver(tenantId, webhook, eventId, raw);
+                // per-webhook isolation: a misconfigured webhook (an unprovisioned
+                // secret) is already parked in the DLQ by its own fail path — the
+                // throw must not unwind past the remaining subscriptions of this
+                // event, which silently skipped every webhook ordered after it
+                // platform-wide with no redelivery ever coming.
+                try {
+                    deliver(tenantId, webhook, eventId, raw);
+                } catch (IllegalArgumentException e) {
+                    LOG.error("webhook {} skipped for event {}: {}", webhook.id(), eventId,
+                            e.getMessage());
+                }
             }
         }
     }
@@ -147,7 +165,7 @@ public class OutboundDispatcher {
         long start = System.nanoTime();
         for (int attempt = 1; attempt <= attempts; attempt++) {
             try {
-                RestClient.create().method(HttpMethod.POST)
+                restClient.method(HttpMethod.POST)
                         .uri(webhook.url())
                         .header(HmacScheme.TIMESTAMP_HEADER, signed.timestamp())
                         .header(HmacScheme.SIGNATURE_HEADER, signed.signature())

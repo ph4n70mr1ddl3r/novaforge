@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import { Decimal } from "../expression/decimal.ts";
 import { useBoundValue, useRenderer } from "../renderer/context.ts";
 import { resolveLabel } from "../metadata.ts";
@@ -206,15 +206,32 @@ export function FieldLookup(props: FieldWidgetProps): ReactNode {
     const [open, setOpen] = useState(false);
     const minChars = Number(props.minChars ?? 2);
     const target = String(props.target ?? "");
+    // the display field of the TARGET entity — the current entity's field map
+    // never contains it (target is an entity name), so every option rendered the
+    // raw id before
+    const displayField = renderer.data?.displayFieldOf?.(target);
+    // only the LATEST search's response commits: out-of-order responses used to
+    // overwrite the newer term's results with the older term's
+    const seqRef = useRef(0);
     const search = async (next: string): Promise<void> => {
         setTerm(next);
         if (next.length < minChars || !renderer.data || !target) {
+            seqRef.current++;
             setResults([]);
             return;
         }
-        const rows = await renderer.data.search(target, next);
-        setResults(rows);
-        setOpen(true);
+        const seq = ++seqRef.current;
+        try {
+            const rows = await renderer.data.search(target, next);
+            if (seq === seqRef.current) {
+                setResults(rows);
+                setOpen(true);
+            }
+        } catch {
+            if (seq === seqRef.current) {
+                setResults([]);
+            }
+        }
     };
     return (
         <div className="nf-field nf-field-lookup">
@@ -261,7 +278,11 @@ export function FieldLookup(props: FieldWidgetProps): ReactNode {
                                     setOpen(false);
                                 }}
                             >
-                                {String(row[renderer.fields[target]?.apiName ?? "id"] ?? row.id ?? "")}
+                                {String(
+                                    (displayField && row[displayField] != null
+                                        ? row[displayField]
+                                        : row.id) ?? "",
+                                )}
                             </button>
                         </li>
                     ))}
@@ -281,14 +302,29 @@ export function FieldMultiLookup(props: FieldWidgetProps): ReactNode {
     const [results, setResults] = useState<Record<string, unknown>[]>([]);
     const minChars = 2;
     const target = String(props.target ?? "");
+    const displayField = renderer.data?.displayFieldOf?.(target);
+    const seqRef = useRef(0);
     const search = async (next: string): Promise<void> => {
         setTerm(next);
         if (next.length < minChars || !renderer.data || !target) {
+            seqRef.current++;
             setResults([]);
             return;
         }
-        setResults(await renderer.data.search(target, next));
+        const seq = ++seqRef.current;
+        try {
+            const rows = await renderer.data.search(target, next);
+            if (seq === seqRef.current) {
+                setResults(rows);
+            }
+        } catch {
+            if (seq === seqRef.current) {
+                setResults([]);
+            }
+        }
     };
+    const labelOf = (row: Record<string, unknown>): string =>
+        String((displayField && row[displayField] != null ? row[displayField] : row.id) ?? "");
     return (
         <div className="nf-field nf-field-multilookup">
             <label htmlFor={id}>
@@ -346,7 +382,7 @@ export function FieldMultiLookup(props: FieldWidgetProps): ReactNode {
                                     setResults([]);
                                 }}
                             >
-                                {String(row.id ?? "")}
+                                {labelOf(row)}
                             </button>
                         </li>
                     ))}

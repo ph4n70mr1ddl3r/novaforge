@@ -169,11 +169,17 @@ public class RecordEngine {
         evaluateValidationRules(handle.entity(), merged, errors);
         reject(errors, "update " + entityApiName + "/" + id + " failed validation");
         String transition = transitionOf(app, handle, existing.data(), merged);
+        // guards before hooks — the create path's invariant: a write doomed by
+        // freeze or period must not fire its hooks' external side effects (connector
+        // deliveries, approval tasks) first. The rollback undoes the DB writes but
+        // not the remote effects, and the connector's dedupe key
+        // (tenant:entity:record:hook:step) would then swallow the retried write's
+        // call — the real integration effect silently never happens.
+        requireParentsNotFrozen(tenantId, app, handle, merged);
+        enforcePeriodLock(tenantId, app, handle, merged);
         runHooks(app, handle, tenantId, id, merged, "beforeSave", appSystemPrincipal(handle), actorId, transition);
         reCanonicalizeHookWrites(tenantId, app, handle, merged, id);
-        requireParentsNotFrozen(tenantId, app, handle, merged);
         enforceTransition(app, handle, existing.data(), merged);
-        enforcePeriodLock(tenantId, app, handle, merged);
 
         int newVersion = updateShaped(tenantId, actorId, handle, id, merged,
                 expectedVersion, "update");
@@ -1015,6 +1021,35 @@ public class RecordEngine {
     public void resumeApproval(UUID tenantId, String entityApiName, UUID recordId,
                                String hookName, String afterStep,
                                com.novaforge.metadata.FlowStep onReject, boolean approved) {
+        doResumeApproval(tenantId, entityApiName, recordId, hookName, afterStep, onReject,
+                approved);
+    }
+
+    /**
+     * The claimed re-entry (V6): the instanceId-keyed idempotency claim rides the
+     * SAME transaction as the resume itself — a failed resume rolls the claim back
+     * with everything else, so the workflow side's retry re-enters cleanly instead
+     * of being told "already-resumed" for a subgraph that never ran (the permanent
+     * wedge the controller-level claim had). Returns false when a delivery of this
+     * instance already resumed — the caller answers and skips the re-entry.
+     */
+    @Transactional
+    public boolean resumeApprovalOnce(UUID tenantId, String entityApiName, UUID recordId,
+                                      String hookName, String afterStep,
+                                      com.novaforge.metadata.FlowStep onReject, boolean approved,
+                                      UUID instanceId) {
+        if (instanceId != null && !records.claimResume(instanceId, tenantId, recordId,
+                approved)) {
+            return false;
+        }
+        doResumeApproval(tenantId, entityApiName, recordId, hookName, afterStep, onReject,
+                approved);
+        return true;
+    }
+
+    private void doResumeApproval(UUID tenantId, String entityApiName, UUID recordId,
+                                  String hookName, String afterStep,
+                                  com.novaforge.metadata.FlowStep onReject, boolean approved) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         AppDefinition app = resolver.bundle(tenantId, handle.appId());
         HookRule hook = handle.entity().hooks().stream()
@@ -2153,16 +2188,6 @@ public class RecordEngine {
             }
         });
         return shaped;
-    }
-
-    /**
-     * The resume idempotency claim (V6, sixteenth pass): true when this
-     * instanceId-keyed resume has not run yet (the claim is recorded), false when a
-     * retried delivery arrives — the engine already ran and must not re-enter. The
-     * api layer reaches the claim through the engine (no layer skips).
-     */
-    public boolean claimResume(UUID instanceId, UUID tenantId, UUID recordId, boolean approved) {
-        return records.claimResume(instanceId, tenantId, recordId, approved);
     }
 
     private static PlatformException notFound(String entityApiName, UUID id) {

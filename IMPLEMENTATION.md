@@ -2506,3 +2506,54 @@ defect items close with pins.**
 Verified: full serial `./mvnw verify` green end to end (23 modules); frontend
 workspace green (157 vitest + typecheck). Remaining recorded-open: the delegation
 read-scope decision and M11/M12 by decision — no known-open defect items.
+
+**The fan-out audit closeout (2026-08-31, eighteenth pass) — three concurrent
+adversarial sweeps, thirty-plus candidates, twenty-seven confirmed closures.**
+
+- **The resume claim fence rebuilt** (H-18P1): atomic insert-count claim riding
+  the resume's own transaction — the old precheck raced concurrent deliveries,
+  passed opposite verdicts, and wedged failed resumes behind standing claims.
+- **The metadata bundle cache self-heals** (H-18P2): version-checked reload on
+  the index TTL (a missed `metadata.published` used to serve stale authority
+  forever and 404 the bare-name path permanently), and the lifecycle promotion
+  tail is one transaction — the env tenant's outbox row can no longer be
+  skipped by a crash between commits.
+- **The SLA breach fires once** (H-18P3): V7's `sla_breached` flag fences the
+  stay-OPEN branches that used to re-emit every 5 s pass — one fresh event id
+  per pass, flooding inboxes and emails forever.
+- **Cross-tenant OAuth leakage closed** (H-18P4): the connector token cache keys
+  on `tenant:credential` — same-named credentials across tenants served each
+  other's tokens.
+- **The dispatch consumer is bounded and isolated** (H-18P5): webhook sends ride
+  a 2 s/10 s client (one hung receiver stalled every tenant's dispatch), and one
+  unprovisioned secret no longer skips every webhook ordered after it.
+- **The integration job CAS** (H-18P6): pending→running is conditional — two
+  replicas double-ran every import.
+- Mediums: the spine email leg claims its key (redelivery re-emailed everyone);
+  the update path guards freeze/period BEFORE hooks (doomed writes fired
+  connector deliveries the dedupe key then swallowed on retry); two unbounded
+  remote clients on hot write paths; the JSONB numeric cast is shape-gated
+  (one legacy string 500'd every query over the field). Lows: bounded ClamAV
+  connect, the audit rotation's moved-vs-deleted check, scheduler pool sizes
+  everywhere, the 200k export ceiling, the bounded audit record read.
+- **The frontend harvest**: the double-submit fence + create idempotency key,
+  the render-time fetch storm, four keep-typing JSON inputs, the 409 rebase's
+  stale closure and fabricated revisions, surfaced delete/save failures, the
+  lifecycle ack/override inversion, fresh-fetch branch saves everywhere (the
+  dashboards rule, generalized), the i18n cross-locale race, list-page children,
+  the palette's silent no-op on list/detail, the prompt-cancel reject, lookup
+  sequencing + display labels, the chart shape guard — plus the error-body
+  parse and the notifications reload ordering.
+- **The pods no longer run as root**: eleven jib images pin UID 1000; eleven
+  charts carry the locked-down securityContext (drop ALL, no escalation,
+  readOnlyRootFilesystem + /tmp emptyDir, RuntimeDefault seccomp).
+- **The pass's own process fix**: intermediate "green" gates piped Maven through
+  `tail` — the pipeline's exit code masked real failures. Caught by the
+  completion audit (a yaml regression this pass introduced among them);
+  everything in this record ran with honest exit codes.
+
+Verified: full serial `./mvnw verify` green end to end; frontend workspace green
+(typecheck + vitest, the double-submit/chart-guard/JSON-field pins included).
+Recorded open: the `attachments.bind` record gate (LOW, no listing surface
+yet), the rate-limiter key residue, the warn-count cosmetic — with the prior
+decisions unchanged.

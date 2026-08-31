@@ -18,27 +18,37 @@ export function ChartWidget(props: {
   height?: number;
 }): ReactNode {
   const kind = props.kind ?? "bar";
-  const axis = props.chart.xAxis.data.map((value) => String(value));
+  // A malformed/failed run feeds this straight from the API response: an
+  // unguarded deref threw during render, and the only boundary is the app root —
+  // one bad widget replaced the whole shell (KpiTile guards its totals; this
+  // guards the projection's own shape).
+  const axisData = props.chart?.xAxis?.data ?? [];
+  const series = props.chart?.series ?? [];
+  const axis = axisData.map((value) => String(value));
   const option = {
     animation: false,
     tooltip: { trigger: "axis" },
     xAxis: { type: "category" as const, data: axis },
     yAxis: { type: "value" as const },
-    series: props.chart.series.map((series) => ({
+    series: series.map((series) => ({
       name: series.name,
       type: kind,
       data: series.data,
     })),
   };
   const ariaLabel =
-    `${props.title ?? props.reportRef}: ${props.chart.series.length} series over ` +
+    `${props.title ?? props.reportRef}: ${series.length} series over ` +
     `${axis.length} categories (${axis.slice(0, 3).join(", ")}…)`;
   return (
     <figure className="nf-chart-widget" style={{ margin: 0 }}>
       {props.title ? <figcaption className="nf-widget-title">{props.title}</figcaption> : null}
-      <Suspense fallback={<div role="status">Loading chart…</div>}>
-        <EChartCanvas option={option} height={props.height} ariaLabel={ariaLabel} />
-      </Suspense>
+      {series.length === 0 && axis.length === 0 ? (
+        <div role="status" className="nf-empty">No chart data for this run</div>
+      ) : (
+        <Suspense fallback={<div role="status">Loading chart…</div>}>
+          <EChartCanvas option={option} height={props.height} ariaLabel={ariaLabel} />
+        </Suspense>
+      )}
     </figure>
   );
 }

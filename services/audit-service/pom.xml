@@ -130,6 +130,7 @@
             </to>
             <container>
               <creationTime>USE_CURRENT_TIMESTAMP</creationTime>
+              <user>1000</user>
               <jvmFlags>
                 <jvmFlag>-XX:MaxRAMPercentage=75.0</jvmFlag>
               </jvmFlags>

@@ -1796,3 +1796,203 @@ workflow 28 (+1: the parallel-gateway pin), script-engine 26 (+1: the allocation
 bomb), shared 99 with the hardened loop pin, full frontend workspace green
 (157 vitest + typecheck). Full serial `./mvnw verify` green end to end (23
 modules).
+
+## Eighteenth Pass — 2026-08-31 (the fan-out audit: three parallel adversarial sweeps + the deploy-posture leg)
+
+The recorded-open defect list was empty, so this pass ran three concurrent
+adversarial audits (data plane, frontend, remaining services) plus a deploy
+hardening sweep. Thirty-plus candidates reported; each was re-verified against
+the mechanism before fixing. Confirmed and closed: 6 highs, 8 mediums, 6 lows
+across the backend, 13 frontend defects, and one production-posture gap.
+
+### H-18P1 — the resume claim fence was broken three ways
+
+The sixteenth pass's `resume_claims` fence had (a) the claim auto-committing
+before the resume transaction ran — a failed resume left the claim standing and
+every retry answered HTTP 200 `already-resumed` for a subgraph that never ran
+(the permanent wedge the fence existed to prevent); (b) the INSERT's affected-row
+count discarded behind a precheck SELECT — two concurrent deliveries both passed
+the precheck and both ran; (c) the precheck filtering on
+`(instance_id, approved)` while the conflict target is `instance_id` alone — a
+replayed opposite verdict ran BOTH the approve continuation and the reject
+subgraph. The insert count IS the claim now, and it rides
+`resumeApprovalOnce`'s own transaction (a failed resume rolls the claim back).
+Pinned ×2: the opposite-verdict replay collapses; the failed resume releases the
+claim and the retry re-enters.
+
+### H-18P2 — a missed `metadata.published` wedged a tenant's cached bundles forever
+
+The resolver cached bundles with `computeIfAbsent` — no version check, eviction
+by Kafka only. A dropped `metadata.published` delivery (outbox crash, consumer
+rebalance gap) left the stale bundle serving forever on the qualified path while
+the unqualified path's version-skipping search 404ed the entity outright,
+permanently. The lifecycle promotion tail made the drop concrete:
+`deployToEnvironment` ran publish, outbox insert, and pin as three separate
+auto-commits — a crash between the first two skipped the env tenant's event
+entirely. Two legs: the bundle load is version-checked against the index (the
+30 s TTL refresh self-heals; staleness costs one window, never a restart), and
+the promotion tail is one `TransactionTemplate` transaction (the manager arrives
+as an ObjectProvider — the no-datasource smoke context has none). Pinned: a
+version bump with NO eviction reloads on the next refresh — the new field
+resolves, v2's new entity is reachable bare.
+
+### H-18P3 — the SLA breach re-fired every scanner pass, forever
+
+The two stay-OPEN breach branches (notify-only SLAs; escalation targets whose
+role has no holders) emitted `sla.breach` and returned without any marker — the
+still-open, still-overdue row was re-selected by every 5 s pass, each emission
+with a fresh event id no consumer dedupe could collapse: a new inbox row and a
+new email per recipient per pass, an unbounded spine/audit stream, and a
+`novaforge.sla.breach` counter that climbed 0.2 Hz per wedged task. V7 adds
+`sla_breached`, the warn path's conditional-flip pattern applied to the branches
+that cannot terminalize. Pinned ×2: a second `scanOnce()` emits nothing for the
+same task; both stay-OPEN branches one-shot.
+
+### H-18P4 — the connector OAuth token cache leaked across tenants
+
+`tokenCache` keyed by the credential's authored id alone — credential ids are
+per-app strings with no cross-tenant uniqueness, so two tenants sharing a name
+served each other's tokens: tenant B's provider call rode tenant A's OAuth grant
+(a leak into A's provider account and a wrong-tenant side effect). The key is
+`tenantId:credentialId` now. Pinned: a same-named credential in a second tenant
+fetches its own grant (its own Basic client id, its own token) — never the
+first tenant's cached entry.
+
+### H-18P5 — one hung webhook receiver wedged every tenant's dispatch; one unprovisioned secret skipped every webhook after it
+
+The outbound dispatcher built `RestClient.create()` per attempt with no
+timeouts, inside the single-threaded Kafka consumer group — one slow receiver
+(a builder-authored external host) stalled all dispatch platform-wide. The
+client is bounded once (2 s connect / 10 s read, `novaforge.webhook.read-timeout-ms`).
+Separately, the missing-secret throw unwound the per-app/per-webhook loops and
+the consumer acked it as a malformed event: every webhook ordered after one
+unprovisioned secret silently never dispatched, with no redelivery. The loops
+isolate per webhook now (the broken one is already parked in the DLQ by its own
+fail path). Pinned: a broken subscription ordered first no longer suppresses the
+healthy one behind it.
+
+### H-18P6 — two replicas double-ran every integration job
+
+The job runner claimed work with an in-process set only — two replicas (a
+rolling-deploy overlap, a scale-out) both selected the same pending row and both
+ran it, applying every import row twice through the batch API. The pending→running
+transition is a CAS (`WHERE status = 'pending'`, affected-rows checked); only
+the pass that flips it owns the job. Pinned: the claim is true once and false
+for the second claimer, whose scan applies nothing.
+
+### M-18P7 through M-18P10 — the mediums
+
+- **The spine-event email leg had no idempotency claim**: `Notifier.onEvent`
+  deduped the inbox row on event_id but ran SMTP unconditionally — a Kafka
+  redelivery re-emailed every email-preferred recipient. The leg claims its key
+  in REQUIRES_NEW exactly like `deliverDirect`. Pinned: a replayed event
+  re-emails nobody.
+- **The update path fired hooks before the doom-guards**: `beforeSave` connector
+  deliveries and approval tasks went out before the freeze/period checks
+  rejected the write — remote effects persisted uncompensated, and the connector
+  dedupe key then swallowed the retried write's call (the real integration
+  effect never happened). The guards precede the hooks now, the create path's
+  own documented invariant.
+- **Two unbounded remote clients sat on hot paths**: `RestMetadataClient`
+  (called inside @Transactional writes on the resolver's TTL refresh — a hung
+  metadata service held the write's DB connection toward pool exhaustion) and
+  `HttpEnvironmentProvisioner` (synchronous inside promote/rollback). Both
+  bounded 2 s/10 s like every sibling.
+- **The JSONB numeric cast had no shape gate**: one legacy non-numeric string
+  under a re-typed numeric field aborted every filter/sort/rollup/sharing
+  predicate over the field (`invalid input syntax for type numeric`). The cast
+  rides the same regex CASE gate as `RecordStore.numericValueExists` — malformed
+  rows evaluate NULL and never match. Goldens updated.
+
+### L-18P11 through L-18P15 — the lows
+
+ClamAV's connect is bounded (5 s — the scan runs inside the completing
+transaction); the audit partition move checks moved-vs-deleted counts and rolls
+back on divergence (under READ COMMITTED the two statements take separate
+snapshots — a concurrently-ingested row was deleted without being copied,
+silently, from an append-only trail; ATTACH already fenced the later window);
+every service pins `spring.task.scheduling.pool.size` (Boot's default ONE
+scheduler thread starved the outbox relays behind any long leg); the entity
+export honors `novaforge.jobs.export-max-rows` (200k default — the in-memory
+CSV assembly OOMed the pod on the shared scheduler pool);
+`audit/records/{id}` is LIMIT-bounded like the entity path (1..200).
+
+### The frontend harvest — thirteen confirmed defects
+
+The runtime form save had no in-flight fence and the create no idempotency key
+(a double-click minted two records; both fences added, pinned); the record fetch
+fired from the render body unguarded (a per-keystroke fetch storm, typed edits
+clobbered by each response, a retry storm on failure — now a guarded effect,
+pinned shape); four authoring JSON inputs parsed on every keystroke (a new
+`JsonTextField` keeps typing and commits parseable edits, pinned ×3); the page
+builder's 409 rebase read the server page from the stale prop captured at click
+time (the shell now pins the fresh saved page onto the rethrown error; the save
+and rebase revisions come from the server's own response, not local fiction);
+record/entity delete failures were silent unhandled rejections (both surface
+now); non-ApiError save failures threw into `void` dispatches leaving the
+previous "Saved" flash as misinformation; the lifecycle ack leaked across
+environment switches and doubled as the override switch (staging promotions were
+recorded as admin overrides forever — the red-gate override is now its own
+reasoned action, and the ack resets on switch); reports/rbac/integrations saved
+whole branches from mount-time snapshots (a shared `mergeBranch` applies the
+dashboards' fresh-fetch rule — concurrent additions survive, deletions stand);
+the i18n workspace race (a failed load left locale A's strings editable under
+locale B's header — Save wrote German into French; loading state fences it);
+ListLayout dropped its authored children (the record-actions node and builder
+inserts never rendered); the palette insert defaulted its parent to "form" (a
+silent stale no-op on list/detail pages, now root-keyed with stale surfaced);
+cancelling the rejection-comment prompt still rejected the approval; the lookup
+widget raced out-of-order responses and labeled options with raw ids (sequenced
+search + the target's display field via the shell); one malformed chart run
+unmounted the whole SPA (ChartWidget guards the projection's shape — KpiTile's
+own rule; a failed dashboard auto-refresh now says it is showing the last
+successful run); the client parses error bodies defensively (a gateway 502 HTML
+page threw SyntaxError instead of the problem contract).
+
+### The deploy-posture leg — the pods no longer run as root
+
+None of the eleven jib images set a user and none of the eleven charts set a
+securityContext — every pod ran as root. The poms pin `<user>1000</user>` and
+every deployment template carries the locked-down container context
+(runAsNonRoot, no privilege escalation, ALL capabilities dropped, RuntimeDefault
+seccomp, readOnlyRootFilesystem) with an emptyDir at /tmp (every service logs to
+/tmp/novaforge/logs). Templates validated by parse; the chart set stays
+ClusterIP-only per the L-TP7 posture.
+
+### The process defect this pass found in itself
+
+The per-module verification commands piped Maven through `tail`, and a pipeline's
+exit code is the last command's — several "green" intermediate results were
+`tail`'s exit code, not Maven's. The completion audit caught it: surefire
+reports showed a context-load failure the "green" runs masked (a yaml insertion
+this pass made between `spring.application` and its `name:` child — the
+`${spring.application.name}` log placeholder became unresolvable in eight
+services). Both repaired; every verification gate in this pass's record ran with
+an honest exit code.
+
+### Recorded open after this pass
+
+`attachments.bind` consults no record-read gate (LOW today — no
+list-by-record surface exists, ids unguessable; becomes an IDOR the moment one
+does — needs the runtime read gate threaded into the file service). The
+gateway rate limiter's INCR/EXPIRE is not atomic (a crash between the two leaks
+one minute-bucket key in Redis — residue only, never over-blocking).
+`SlaScanner.warn` reports the selected count, not the flipped count (cosmetic
+scratch-surface drift). Delegation read-scope remains the product decision;
+M11/M12 remain deferred; the sandbox process-isolation pools remain the growth
+path.
+
+### Verification (this pass)
+
+Full serial `./mvnw verify` **BUILD SUCCESS with an honest exit code** — 23
+modules, 484 backend tests, zero failures (data-runtime api 88 / engine 25 /
+storage 16 with the resume-claim, self-heal, and numeric-gate pins; metadata 54
+with the transactional tail; workflow 39 with the one-shot breach pins;
+integration 21 with the cross-tenant-token, cross-replica-claim, and
+webhook-isolation pins; notification 14 with the replay pin; audit, file,
+scheduler, gateway, reporting, script-engine green under the rotation check,
+bounded clamd connect, pools, and caps). Frontend: typecheck clean + 162 vitest
+(shared 100 incl. the chart-guard pin, builder-ui 47 incl. the JSON-field pins,
+runtime-ui 15 incl. the double-submit pin). The eleven chart templates
+parse-validated with the securityContext and /tmp volume; the eleven poms
+well-formed with UID 1000.

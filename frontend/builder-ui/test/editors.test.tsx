@@ -40,7 +40,13 @@ const app: AppDefinition = {
 
 describe("RbacEditor (T9)", () => {
     it("edits the object matrix and cycles field security, then saves the permission set", async () => {
-        const onSave = vi.fn<(permissionSet: import("@novaforge/shared").PermissionSet) => Promise<void>>(async () => {});
+        // the save mutates a FRESH fetch (the dashboards rule) — apply the captured
+        // mutation to the authored set to observe what would be saved
+        const captured: AppDefinition["permissionSet"][] = [];
+        const onSave = vi.fn<(mutate: (fresh: import("@novaforge/shared").PermissionSet) => import("@novaforge/shared").PermissionSet) => Promise<void>>(
+            async (mutate) => {
+                captured.push(mutate(app.permissionSet));
+            });
         render(createElement(RbacEditor, { app, onSave }));
         // absent flags deny — the matrix starts from the authored state
         fireEvent.click(screen.getByLabelText("delete"));
@@ -50,13 +56,17 @@ describe("RbacEditor (T9)", () => {
         fireEvent.click(totalCell); // hidden → visible (cycle wraps)
         screen.getByRole("button", { name: "Save permissions" }).click();
         await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
-        const saved = onSave.mock.calls[0]![0] as AppDefinition["permissionSet"];
-        expect(saved.objectPermissions.find((p) => p.entity === "Invoice")?.delete).toBe(true);
-        expect(saved.fieldSecurity).toEqual([]); // cycled back to visible = no override rows
+        const permissionSet = captured[0]!;
+        expect(permissionSet.objectPermissions.find((p) => p.entity === "Invoice")?.delete).toBe(true);
+        expect(permissionSet.fieldSecurity).toEqual([]); // cycled back to visible = no override rows
     });
 
     it("authors sharing rules beside the matrix and levels the roles (PHASE-4 §10/§11)", async () => {
-        const onSave = vi.fn<(permissionSet: import("@novaforge/shared").PermissionSet) => Promise<void>>(async () => {});
+        const captured: AppDefinition["permissionSet"][] = [];
+        const onSave = vi.fn<(mutate: (fresh: import("@novaforge/shared").PermissionSet) => import("@novaforge/shared").PermissionSet) => Promise<void>>(
+            async (mutate) => {
+                captured.push(mutate(app.permissionSet));
+            });
         render(createElement(RbacEditor, { app, onSave }));
 
         // roleHierarchy rules read numeric levels — the editor authors them
@@ -79,9 +89,9 @@ describe("RbacEditor (T9)", () => {
 
         screen.getByRole("button", { name: "Save permissions" }).click();
         await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
-        const saved = onSave.mock.calls[0]![0] as AppDefinition["permissionSet"];
-        expect(saved.roles).toEqual([{ name: "arClerk", description: "AR clerk", level: 3 }]);
-        expect(saved.sharingRules).toEqual([
+        const permissionSet = captured[0]!;
+        expect(permissionSet.roles).toEqual([{ name: "arClerk", description: "AR clerk", level: 3 }]);
+        expect(permissionSet.sharingRules).toEqual([
             { entity: "Invoice", type: "criteria", roles: ["arClerk", "controller"], criteria: "total > 1000" },
             { entity: "Invoice", type: "owner", roles: [], ownerField: "salesRep" },
         ]);

@@ -140,6 +140,7 @@ function EntityEditor({
     onDelete: (apiName: string) => Promise<void>;
 }): ReactNode {
     const [draft, setDraft] = useState<EntityDefinition>(entity);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
     // selection resets the draft: a fresh "New entity" selection or picking another
     // entity must never carry the previous draft's fields/hooks — found live at the
     // golden-journey run (a stale draft from the shell's first-loaded app rode into
@@ -259,8 +260,16 @@ function EntityEditor({
                 <button type="submit" className="nf-action-primary" disabled={busy}>Save entity</button>
                 {app.entities.some((candidate) => candidate.apiName === draft.apiName) ? (
                     <button type="button" className="nf-danger"
-                        onClick={() => void onDelete(draft.apiName)}>Delete entity</button>
+                        disabled={busy}
+                        onClick={() => {
+                            // a rejected delete (409 referenced-by-pages, 403) was a
+                            // silent unhandled rejection — surface it, never swallow
+                            void onDelete(draft.apiName)
+                                .catch((caught: unknown) =>
+                                    setDeleteError(caught instanceof Error ? caught.message : String(caught)));
+                        }}>Delete entity</button>
                 ) : null}
+                {deleteError ? <p role="alert">{deleteError}</p> : null}
             </div>
         </form>
     );

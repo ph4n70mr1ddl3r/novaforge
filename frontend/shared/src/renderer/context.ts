@@ -40,6 +40,8 @@ export interface ListResult {
 export interface RendererDataService {
     list(request: ListRequest): Promise<ListResult>;
     search(target: string, term: string, size?: number): Promise<Record<string, unknown>[]>;
+    /** The TARGET entity's display field — lookup options label by it, never raw ids. */
+    displayFieldOf?(target: string): string | undefined;
 }
 
 export interface RendererUser {

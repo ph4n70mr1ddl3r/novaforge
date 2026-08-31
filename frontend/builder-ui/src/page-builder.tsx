@@ -61,7 +61,11 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
     const [error, setError] = useState<string | null>(null);
     /** Lifecycle warnings (§6 item 2): deprecations surface at save, never block it. */
     const [warnings, setWarnings] = useState<string[]>([]);
-    const [conflict, setConflict] = useState<{ message: string; serverPage: ResolvedPage } | null>(null);
+    const [conflict, setConflict] = useState<{
+        message: string;
+        serverPage: ResolvedPage;
+        serverRevision: number | null;
+    } | null>(null);
     const [flash, setFlash] = useState<string | null>(null);
 
     // Anti-regression (2026-08-31, thirteenth pass): the editor seeded from the L1
@@ -95,6 +99,17 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
 
     const apply = (deltas: PageDelta[]): void => {
         edit((page) => applyDeltas(page, deltas).page);
+    };
+
+    /** Applies deltas, surfacing a stale rejection — a silently dropped insert grew the undo stack while the canvas never changed. */
+    const applyAudibly = (deltas: PageDelta[]): void => {
+        edit((page) => {
+            const verdict = applyDeltas(page, deltas);
+            if (verdict.stale) {
+                setError("That edit found no home (the target node is not on this page) — select a node on the canvas and retry");
+            }
+            return verdict.page;
+        });
     };
 
     const undo = (): void => {
@@ -135,37 +150,48 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
         setWarnings(verdict.warnings.map((warning) => `${warning.path}: ${warning.message}`));
         const layout = toPersistedLayout(pinned, current.base);
         try {
-            await savePage({
+            const savedApp = (await savePage({
                 apiName: pageApiName(entity.apiName, kind),
                 label: `${entity.label ?? entity.apiName} ${kind}`,
                 type: kind,
                 entity: entity.apiName,
                 layout,
                 ...(current.revision !== null ? { revision: current.revision } : {}),
-            });
+            })) as { pages?: { apiName: string; revision?: number | null }[] } | null;
             setError(null);
             setConflict(null);
             setFlash("Page saved");
-            const nextRevision = current.revision === null ? 1 : current.revision + 1;
+            // the server's own revision from its response — a locally computed
+            // current+1 was fiction that drifted from the CAS base on any
+            // intermediate save
+            const savedRevision = savedApp?.pages?.find(
+                (candidate) => candidate.apiName === pageApiName(entity.apiName, kind))?.revision;
+            const nextRevision = savedRevision ?? (current.revision === null ? 1 : current.revision + 1);
             setState({ ...current, page: pinned, loaded: pinned, revision: nextRevision });
             setUndoStack([]);
             setRedoStack([]);
         } catch (caught) {
             if (caught instanceof ApiError && caught.status === 409) {
-                // Rebase prompt (§8): the server won the race — offer the server's
-                // actual saved page (the shell refetches the app into props), not
-                // just the default, so rebasing never discards the other editor's
-                // customizations.
-                const saved = entity
+                // Rebase prompt (§8): the server won the race. The shell's savePage
+                // refetched the app and pinned the FRESH saved page onto the thrown
+                // error — the `app` prop captured at click time is stale (setApp had
+                // only scheduled a re-render), so reading it here resolved the
+                // "server page" to the same tree the editor already had, and
+                // rebasing silently discarded the winning editor's work.
+                const fresh = (caught as ApiError & { freshSavedPage?: unknown }).freshSavedPage as
+                    | { apiName: string; revision?: number | null }
+                    | undefined;
+                const saved = fresh ?? (entity
                     ? app.pages.find((candidate) =>
                         candidate.apiName === pageApiName(entity.apiName, kind))
-                    : undefined;
+                    : undefined);
                 const serverPage = entity
-                    ? resolvePage(saved, entity, { role, permissions: app.permissionSet, kind }).page
+                    ? resolvePage(saved as AppDefinition["pages"][number] | undefined, entity, { role, permissions: app.permissionSet, kind }).page
                     : base;
                 setConflict({
                     message: caught.message,
                     serverPage,
+                    serverRevision: saved?.revision ?? null,
                 });
             } else {
                 setError(caught instanceof Error ? caught.message : String(caught));
@@ -225,16 +251,17 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
                         type="button"
                         onClick={() => {
                             setConflict(null);
-                            // rebase onto the SERVER's page (customizations included)
-                            // with its next revision — the old reset-to-default
-                            // discarded the other editor's work and the next save
-                            // would have wiped it server-side too
+                            // rebase onto the SERVER's page (customizations included),
+                            // CASing from the server's own revision — the fabricated
+                            // local+1 could mismatch the server's counter and 409 the
+                            // very next save
                             setState({
                                 key: current!.key,
                                 page: conflict.serverPage,
                                 base,
                                 loaded: conflict.serverPage,
-                                revision: (current!.revision ?? 0) + 1,
+                                revision: conflict.serverRevision
+                                    ?? (current!.revision === null ? null : current!.revision + 1),
                             });
                             setUndoStack([]);
                             setRedoStack([]);
@@ -256,16 +283,24 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
                                 draggable
                                 aria-label={`${entry.id}${entry.status === "deprecated" ? " (deprecated)" : ""}`}
                                 onDragStart={(event) => event.dataTransfer.setData("text/novaforge-component", entry.id)}
-                                onClick={() =>
-                                    apply([
-                                        {
-                                            op: "insertNode",
-                                            parent: selected?.parentKey ?? "form",
-                                            index: selected?.node.children?.length ?? 0,
-                                            node: newNode(entry.id),
-                                        },
-                                    ])
-                                }
+                                onClick={() => {
+                                    // The fallback parent is THIS page's root key —
+                                    // the hardcoded "form" made every palette insert
+                                    // on a list or detail page (root keys "list"/
+                                    // "header") a silent no-op: the delta reported
+                                    // stale, applyDeltas dropped it, and the undo
+                                    // stack grew anyway.
+                                    const parent = selected?.parentKey ?? current!.page.model.root.key ?? null;
+                                    const parentNode = selected?.parentKey != null
+                                        ? findNode(current!.page.model.root, selected.parentKey)?.node
+                                        : current!.page.model.root;
+                                    applyAudibly([{
+                                        op: "insertNode",
+                                        parent,
+                                        index: parentNode?.children?.length ?? 0,
+                                        node: newNode(entry.id),
+                                    }]);
+                                }}
                             >
                                 {entry.id.replace("novaforge.", "")}
                                 {entry.status === "deprecated" ? " (deprecated)" : ""}

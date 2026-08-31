@@ -191,18 +191,29 @@ function WidgetCell({
                 <p role="status">{widget.reportRef} unavailable — the run failed.</p>
             ) : !run ? (
                 <p role="status">Loading {widget.reportRef}…</p>
-            ) : widget.widget === "kpi" ? (
-                <KpiTile reportRef={widget.reportRef} totals={run.totals} metric={metric} label={widget.reportRef} />
-            ) : widget.widget === "chart" ? (
-                <ChartWidget reportRef={widget.reportRef} chart={run.chart} title={widget.reportRef} />
             ) : (
-                <ReportTable
-                    reportRef={widget.reportRef}
-                    run={run}
-                    title={widget.reportRef}
-                    drillThrough={drill}
-                    onDrill={drill ? (_row, filter) => drill.drill(filter) : undefined}
-                />
+                <>
+                    {/* a failed AUTO-refresh keeps the last successful run — say so:
+                        silent stale numbers read as current ones */}
+                    {failed ? (
+                        <p role="status" className="nf-refresh-failed">
+                            showing the last successful run — refresh failed
+                        </p>
+                    ) : null}
+                    {widget.widget === "kpi" ? (
+                        <KpiTile reportRef={widget.reportRef} totals={run.totals} metric={metric} label={widget.reportRef} />
+                    ) : widget.widget === "chart" ? (
+                        <ChartWidget reportRef={widget.reportRef} chart={run.chart} title={widget.reportRef} />
+                    ) : (
+                        <ReportTable
+                            reportRef={widget.reportRef}
+                            run={run}
+                            title={widget.reportRef}
+                            drillThrough={drill}
+                            onDrill={drill ? (_row, filter) => drill.drill(filter) : undefined}
+                        />
+                    )}
+                </>
             )}
         </DashboardCell>
     );

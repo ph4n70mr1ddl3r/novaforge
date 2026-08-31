@@ -41,7 +41,15 @@ export function Lifecycle({ client, appId }: { client: PlatformClient; appId: st
     const [error, setError] = useState<string | null>(null);
     const [flash, setFlash] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
+    // The prod hop's approval acknowledgment — NEVER the override switch: a checked
+    // ack used to ride into a later staging promotion as {override: true} and land
+    // in the permanent override history with a fabricated reason.
     const [ack, setAck] = useState(false);
+    // The red-gate bypass is its own explicit, reasoned action (§4 item 3) — the
+    // old disabled-when-red button made overrides unreachable while still sending
+    // override:true for every acked prod promote.
+    const [overrideGate, setOverrideGate] = useState(false);
+    const [overrideReason, setOverrideReason] = useState("");
 
     useEffect(() => {
         let cancelled = false;
@@ -99,7 +107,17 @@ export function Lifecycle({ client, appId }: { client: PlatformClient; appId: st
             </div>
             <label>
                 Environment
-                <select value={env} onChange={(event) => setEnv(event.target.value as typeof env)}>
+                <select
+                    value={env}
+                    onChange={(event) => {
+                        setEnv(event.target.value as typeof env);
+                        // the acknowledgment belongs to ONE environment's hop —
+                        // carrying it across the switch promoted staging with a
+                        // phantom admin override
+                        setAck(false);
+                        setOverrideGate(false);
+                    }}
+                >
                     <option value="staging">staging</option>
                     <option value="prod">prod</option>
                 </select>
@@ -181,17 +199,46 @@ export function Lifecycle({ client, appId }: { client: PlatformClient; appId: st
                             </ul>
                         </details>
                     ) : null}
+                    {!gateGreen ? (
+                        <div className="nf-b-override" role="group" aria-label="Gate override">
+                            <p role="alert">The promotion gate is red — a platform admin may override with a recorded reason (visible in the history forever).</p>
+                            <label className="nf-inline">
+                                <input
+                                    type="checkbox"
+                                    checked={overrideGate}
+                                    onChange={(event) => setOverrideGate(event.target.checked)}
+                                />
+                                Override the red gate (platform admin)
+                            </label>
+                            <input
+                                aria-label="Override reason"
+                                placeholder="recorded reason (required)"
+                                value={overrideReason}
+                                onChange={(event) => setOverrideReason(event.target.value)}
+                            />
+                        </div>
+                    ) : null}
                     <div className="nf-b-actions">
                         <button
                             type="button"
                             className="nf-action-primary"
-                            disabled={busy || !gateGreen || (env === "prod" && !ack)}
+                            disabled={busy
+                                || (!gateGreen && !(overrideGate && overrideReason.trim().length > 0))
+                                || (env === "prod" && !ack)}
                             data-testid="promote"
                             onClick={async () => {
                                 setBusy(true);
                                 try {
-                                    await client.promote(appId, env, ack ? { override: true, reason: "admin override" } : {});
+                                    await client.promote(
+                                        appId,
+                                        env,
+                                        !gateGreen && overrideGate && overrideReason.trim()
+                                            ? { override: true, reason: overrideReason.trim() }
+                                            : {},
+                                    );
                                     setFlash(`Promoted to ${env}`);
+                                    setOverrideGate(false);
+                                    setOverrideReason("");
                                 } catch (caught) {
                                     setError(caught instanceof Error ? caught.message : String(caught));
                                 } finally {
@@ -227,7 +274,7 @@ export function Lifecycle({ client, appId }: { client: PlatformClient; appId: st
                     {env === "prod" ? (
                         <label className="nf-inline">
                             <input type="checkbox" checked={ack} onChange={(event) => setAck(event.target.checked)} />
-                            Platform-admin approval / data-migration acknowledgment
+                            Platform-admin approval for the prod hop (§4)
                         </label>
                     ) : null}
                 </>

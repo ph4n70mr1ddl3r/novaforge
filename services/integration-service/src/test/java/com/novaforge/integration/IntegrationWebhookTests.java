@@ -456,25 +456,7 @@ class IntegrationWebhookTests extends PostgresTestBase {
                         com.novaforge.metadata.WebhookDefinition.OUTBOUND, url,
                         "event == 'record.created' && entityId == 'Payment'",
                         null, null, "hook_wh_notify", true);
-        com.novaforge.metadata.IntegrationsDefinition withHook =
-                new com.novaforge.metadata.IntegrationsDefinition(
-                        app.integrations().connectors(),
-                        java.util.List.of(outboundHook),
-                        app.integrations().credentials(),
-                        app.integrations().imports());
-        AppDefinition original = app;
-        app = new AppDefinition(original.id(), original.apiName(), original.label(),
-                original.labelI18n(), original.description(), original.entities(),
-                original.pages(), original.settings(), original.permissionSet(),
-                original.testSuites(), original.stateMachines(), original.slas(),
-                original.jobs(), original.workflows(), original.reports(),
-                original.dashboards(), withHook);
-        secrets.put(TENANT, "hook_wh_notify", SecretStore.PURPOSE_WEBHOOK, "notify-secret");
-        try {
-            body.accept(null);
-        } finally {
-            app = original;
-        }
+        withOutboundWebhooks(java.util.List.of(outboundHook), () -> body.accept(null));
     }
 
     @Test
@@ -503,6 +485,64 @@ class IntegrationWebhookTests extends PostgresTestBase {
                     "occurredAt", Instant.now().toString()))));
             assertThat(RECEIVED).hasSize(1);
         });
+    }
+
+    @Test
+    @DisplayName("per-webhook isolation: a misconfigured webhook never skips the subscriptions after it")
+    void unprovisionedSecretDoesNotSkipLaterWebhooks() {
+        // Anti-regression (eighteenth pass): the missing-secret throw unwound
+        // dispatch's per-app/per-webhook loops — every webhook ordered after one
+        // unprovisioned secret was silently skipped for that event, with the
+        // IllegalArgumentException acked as "malformed event": no delivery, no DLQ,
+        // no redelivery, platform-wide, from a single tenant's misconfiguration.
+        withOutboundWebhooks(java.util.List.of(
+                // the broken subscription FIRST — its failure must be terminal for
+                // itself only
+                new com.novaforge.metadata.WebhookDefinition("wh_broken",
+                        com.novaforge.metadata.WebhookDefinition.OUTBOUND,
+                        "http://127.0.0.1:1/hook",
+                        "event == 'record.created' && entityId == 'Payment'",
+                        null, null, "hook_wh_missing", true),
+                // the healthy subscription ordered after it
+                new com.novaforge.metadata.WebhookDefinition("wh_notify",
+                        com.novaforge.metadata.WebhookDefinition.OUTBOUND,
+                        "http://127.0.0.1:" + receiver.getAddress().getPort() + "/hook",
+                        "event == 'record.created' && entityId == 'Payment'",
+                        null, null, "hook_wh_notify", true)),
+                () -> {
+                    RECEIVED.clear();
+                    outbound.onEvent(record(MAPPER.writeValueAsString(Map.of(
+                            "event", "record.created", "eventId", UUID.randomUUID().toString(),
+                            "tenantId", TENANT.toString(), "entityId", "Payment",
+                            "recordId", UUID.randomUUID().toString(),
+                            "actorId", UUID.randomUUID().toString(),
+                            "occurredAt", Instant.now().toString()))));
+                    assertThat(RECEIVED).hasSize(1);   // the good webhook delivered
+                });
+    }
+
+    /** Splices an arbitrary outbound webhook set into the stubbed published app. */
+    private void withOutboundWebhooks(java.util.List<com.novaforge.metadata.WebhookDefinition> hooks,
+                                      Runnable body) {
+        com.novaforge.metadata.IntegrationsDefinition withHooks =
+                new com.novaforge.metadata.IntegrationsDefinition(
+                        app.integrations().connectors(),
+                        hooks,
+                        app.integrations().credentials(),
+                        app.integrations().imports());
+        AppDefinition original = app;
+        app = new AppDefinition(original.id(), original.apiName(), original.label(),
+                original.labelI18n(), original.description(), original.entities(),
+                original.pages(), original.settings(), original.permissionSet(),
+                original.testSuites(), original.stateMachines(), original.slas(),
+                original.jobs(), original.workflows(), original.reports(),
+                original.dashboards(), withHooks);
+        secrets.put(TENANT, "hook_wh_notify", SecretStore.PURPOSE_WEBHOOK, "notify-secret");
+        try {
+            body.run();
+        } finally {
+            app = original;
+        }
     }
 
     @Test

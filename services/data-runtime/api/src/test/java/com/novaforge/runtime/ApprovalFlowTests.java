@@ -250,6 +250,77 @@ class ApprovalFlowTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("resume claim: a replayed opposite verdict collapses onto the first (the instanceId, not the verdict, is the key)")
+    void resumeClaimFirstVerdictWins() throws Exception {
+        // Anti-regression (eighteenth pass): the old precheck filtered on
+        // (instanceId, approved) while the conflict target was instanceId alone —
+        // an opposite-verdict delivery of a resolved instance passed the precheck,
+        // silently conflicted, and returned "claimed," running BOTH the approve
+        // continuation and the reject subgraph of one approval.
+        String id = createOrder(100);
+        SUSPENSIONS.clear();
+        mockMvc.perform(patch("/api/v1/runtime/PurchaseOrder/" + id).with(jwtFor())
+                        .contentType("application/json")
+                        .content("{\"version\":1,\"label\":\"submit\"}"))
+                .andExpect(status().isOk());
+        ApprovalClient.Suspension suspension = SUSPENSIONS.getFirst();
+        String instanceKey = UUID.randomUUID().toString();
+
+        // the approved delivery resumes; the reject delivery of the SAME instance
+        // must collapse (already-resumed), never run the onReject subgraph too
+        mockMvc.perform(post("/api/v1/hooks/resume").with(serviceJwt())
+                        .contentType("application/json")
+                        .content(bodyWithInstance(suspension, true, instanceKey)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("resumed"));
+        mockMvc.perform(post("/api/v1/hooks/resume").with(serviceJwt())
+                        .contentType("application/json")
+                        .content(bodyWithInstance(suspension, false, instanceKey)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("already-resumed"));
+        mockMvc.perform(get("/api/v1/runtime/PurchaseOrder/" + id).with(jwtFor()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"));
+    }
+
+    @Test
+    @DisplayName("resume claim: a FAILED resume releases the claim — the retry re-enters, it never wedges behind work that did not run")
+    void resumeClaimRollsBackWithAFailedResume() throws Exception {
+        // Anti-regression (eighteenth pass): the claim auto-committed before the
+        // resume transaction ran; a failing resume left the claim standing, and
+        // every retry answered "already-resumed" with HTTP 200 while the suspended
+        // flow stayed wedged forever.
+        String id = createOrder(100);
+        SUSPENSIONS.clear();
+        mockMvc.perform(patch("/api/v1/runtime/PurchaseOrder/" + id).with(jwtFor())
+                        .contentType("application/json")
+                        .content("{\"version\":1,\"label\":\"submit\"}"))
+                .andExpect(status().isOk());
+        ApprovalClient.Suspension suspension = SUSPENSIONS.getFirst();
+        String instanceKey = UUID.randomUUID().toString();
+
+        // the doomed delivery: a hook that no longer exists fails the resume —
+        // and must roll the claim back with it
+        Map<String, Object> doomed = bodyMapWithInstance(suspension, true, instanceKey);
+        doomed.put("hook", "no-such-hook");
+        mockMvc.perform(post("/api/v1/hooks/resume").with(serviceJwt())
+                        .contentType("application/json")
+                        .content(MAPPER.writeValueAsString(doomed)))
+                .andExpect(status().isNotFound());
+
+        // the retried delivery with the SAME key resumes — the claim went with the
+        // rollback, so the answer is "resumed," not a 200 "already-resumed" wedge
+        mockMvc.perform(post("/api/v1/hooks/resume").with(serviceJwt())
+                        .contentType("application/json")
+                        .content(bodyWithInstance(suspension, true, instanceKey)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("resumed"));
+        mockMvc.perform(get("/api/v1/runtime/PurchaseOrder/" + id).with(jwtFor()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"));
+    }
+
+    @Test
     @DisplayName("reject routes the step's own onReject subgraph (§4)")
     void approvalJourneyReject() throws Exception {
         String id = createOrder(100);
@@ -368,6 +439,27 @@ class ApprovalFlowTests extends PostgresTestBase {
                 "afterStep", s.afterStep() == null ? "" : s.afterStep(),
                 "onReject", s.onReject() == null ? "" : MAPPER.writeValueAsString(s.onReject()),
                 "approved", approved));
+    }
+
+    /** The resume body with the idempotency instanceId — the workflow side's key. */
+    private static Map<String, Object> bodyMapWithInstance(ApprovalClient.Suspension s,
+                                                           boolean approved, String instanceId) {
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("tenantId", s.tenantId().toString());
+        body.put("app", s.appApiName());
+        body.put("entityApiName", s.entityApiName());
+        body.put("recordId", s.recordId().toString());
+        body.put("hook", String.valueOf(s.hookName()));
+        body.put("afterStep", s.afterStep() == null ? "" : s.afterStep());
+        body.put("onReject", s.onReject() == null ? "" : MAPPER.writeValueAsString(s.onReject()));
+        body.put("approved", approved);
+        body.put("instanceId", instanceId);
+        return body;
+    }
+
+    private static String bodyWithInstance(ApprovalClient.Suspension s, boolean approved,
+                                           String instanceId) {
+        return MAPPER.writeValueAsString(bodyMapWithInstance(s, approved, instanceId));
     }
 
     private static ApprovalClient.Suspension stubSuspension(String recordId) {

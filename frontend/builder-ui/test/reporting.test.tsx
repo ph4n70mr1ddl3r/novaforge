@@ -68,7 +68,7 @@ describe("ReportBuilder (PHASE-5 T6)", () => {
     });
 
     it("rejects a bucket expression that does not compile — live, before save", async () => {
-        const saveReports = vi.fn<(reports: ReportDefinition[]) => Promise<void>>(async () => {});
+        const saveReports = vi.fn<(mutate: (fresh: ReportDefinition[]) => ReportDefinition[]) => Promise<void>>(async () => {});
         render(createElement(ReportBuilder, { app, saveReports }));
         fireEvent.change(screen.getByLabelText("bucket expression 0.0"), {
             target: { value: "ghostField > 1" },
@@ -79,12 +79,17 @@ describe("ReportBuilder (PHASE-5 T6)", () => {
     });
 
     it("saves the edited report through the metadata app patch", async () => {
-        const saveReports = vi.fn<(reports: ReportDefinition[]) => Promise<void>>(async () => {});
+        // the save mutates a FRESH fetch (the dashboards rule): a snapshot-built
+        // list deleted a report another tab added meanwhile
+        let captured: ReportDefinition[] = [];
+        const saveReports = vi.fn<(mutate: (fresh: ReportDefinition[]) => ReportDefinition[]) => Promise<void>>(async (mutate) => {
+            captured = mutate([{ ...app.reports[0]! }]);
+        });
         render(createElement(ReportBuilder, { app, saveReports }));
         fireEvent.change(screen.getByLabelText("aggregate alias 0"), { target: { value: "outstandingEur" } });
         fireEvent.click(screen.getByRole("button", { name: "Save report" }));
         await waitFor(() => expect(saveReports).toHaveBeenCalledTimes(1));
-        const saved = saveReports.mock.calls[0]![0][0] as ReportDefinition;
+        const saved = captured[0] as ReportDefinition;
         expect(saved.aggregates![0]!.alias).toBe("outstandingEur");
     });
 });

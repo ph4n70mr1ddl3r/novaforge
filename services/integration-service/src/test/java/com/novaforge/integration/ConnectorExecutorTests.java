@@ -54,6 +54,9 @@ class ConnectorExecutorTests extends PostgresTestBase {
 
     static final UUID TENANT = UUID.fromString("11111111-1111-4111-8111-111111111111");
 
+    /** The second tenant: its own app sharing the SAME credential id (the leak case). */
+    static final UUID TENANT_B = UUID.fromString("22222222-2222-4222-8222-222222222222");
+
     static final String APP_JSON = """
             { "apiName": "Erp",
               "entities": [
@@ -97,6 +100,9 @@ class ConnectorExecutorTests extends PostgresTestBase {
 
     static AppDefinition app;
 
+    /** Tenant B's app: the same credential id, a different client (the assertable difference). */
+    static AppDefinition appB;
+
     @Autowired
     ConnectorExecutor connectors;
 
@@ -128,12 +134,12 @@ class ConnectorExecutorTests extends PostgresTestBase {
 
                 @Override
                 public java.util.Optional<AppDefinition> byApiName(UUID tenantId, String apiName) {
-                    return java.util.Optional.of(app);
+                    return java.util.Optional.of(TENANT_B.equals(tenantId) ? appB : app);
                 }
 
                 @Override
                 public List<AppDefinition> allApps(UUID tenantId) {
-                    return List.of(app);
+                    return List.of(TENANT_B.equals(tenantId) ? appB : app);
                 }
             };
         }
@@ -196,6 +202,25 @@ class ConnectorExecutorTests extends PostgresTestBase {
                 .replace("OAUTH_A", base + "/con_oauth")
                 .replace("OAUTH_B", base + "/con_oauth_exp")
                 .replace("OAUTH_C", base + "/con_oauth_flaky"));
+        // tenant B: the same credential id "cred_oauth" over its own client id —
+        // the cross-tenant cache-key case (the connector id stays "con_oauth" so
+        // the provider leg records into the same observed slot)
+        appB = DefinitionParser.parseApp("""
+                { "apiName": "ErpB",
+                  "entities": [
+                    { "apiName": "Payment", "displayField": "reference",
+                      "fields": [ { "apiName": "reference", "type": "text", "required": true } ] } ],
+                  "integrations": {
+                    "connectors": [
+                      { "id": "con_oauth", "type": "rest",
+                        "baseUrl": "%s/con_oauth",
+                        "credential": "cred_oauth",
+                        "operations": [
+                          { "name": "ping", "method": "GET", "path": "/ping" } ] } ],
+                    "credentials": [
+                      { "id": "cred_oauth", "kind": "oauth2_client_credentials",
+                        "tokenUrl": "%s/token", "clientId": "other-client" } ] } }
+                """.formatted(base, base));
     }
 
     @AfterAll
@@ -222,6 +247,7 @@ class ConnectorExecutorTests extends PostgresTestBase {
         for (String credential : List.of("cred_oauth", "cred_oauth_exp", "cred_oauth_flaky")) {
             secretStore.put(TENANT, credential, SecretStore.PURPOSE_CREDENTIAL, "sk-oauth-1");
         }
+        secretStore.put(TENANT_B, "cred_oauth", SecretStore.PURPOSE_CREDENTIAL, "sk-oauth-2");
     }
 
     @Test
@@ -336,5 +362,25 @@ class ConnectorExecutorTests extends PostgresTestBase {
         var recovered = connectors.execute(TENANT, "Erp", "con_oauth_flaky",
                 "ping", Map.of(), "oauth-key-6");
         assertThat(recovered.status()).isEqualTo(200);
+    }
+
+    @Test
+    @Order(8)
+    @DisplayName("cross-tenant: a same-named credential never serves another tenant's cached token")
+    void sameNamedCredentialDoesNotLeakAcrossTenants() {
+        // Anti-regression (eighteenth pass): the token cache was keyed by the
+        // credential's authored id alone — two tenants sharing a credential name
+        // served each other's tokens, so tenant B's provider call rode tenant A's
+        // OAuth grant (cross-tenant leakage into A's provider account).
+        int before = TOKEN_HITS.get();
+        var execution = connectors.execute(TENANT_B, "ErpB", "con_oauth", "ping",
+                Map.of(), "oauth-tenantb-1");
+        assertThat(execution.status()).isEqualTo(200);
+        // a FRESH grant for tenant B (its own client id), never A's cached entry
+        int fetched = TOKEN_HITS.get();
+        assertThat(fetched).isEqualTo(before + 1);
+        assertThat(lastTokenAuthorization).isEqualTo("Basic " + Base64.getEncoder()
+                .encodeToString("other-client:sk-oauth-2".getBytes(StandardCharsets.UTF_8)));
+        assertThat(lastAuthorization).isEqualTo("Bearer tok-" + fetched);
     }
 }

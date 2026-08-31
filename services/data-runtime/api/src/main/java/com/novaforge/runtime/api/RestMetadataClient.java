@@ -47,11 +47,25 @@ public class RestMetadataClient implements MetadataClient {
                               @Value("${novaforge.auth.issuer-uri:http://localhost:8082/realms/novaforge}") String issuer,
                               @Value("${novaforge.auth.service-client.id:novaforge-runtime}") String serviceClientId,
                               @Value("${novaforge.auth.service-client.secret:novaforge-runtime-secret}") String serviceClientSecret) {
-        this.restClient = RestClient.builder().baseUrl(baseUrl).build();
-        this.tokenClient = RestClient.builder().baseUrl(issuer).build();
+        // bounded like every sibling client: this call sits INSIDE @Transactional
+        // record writes (the resolver's TTL refresh) — an unbounded read timeout
+        // hung the write while holding its DB connection, cascading into pool
+        // exhaustion of the whole data plane
+        this.restClient = RestClient.builder().baseUrl(baseUrl)
+                .requestFactory(timedFactory()).build();
+        this.tokenClient = RestClient.builder().baseUrl(issuer)
+                .requestFactory(timedFactory()).build();
         this.issuer = issuer;
         this.serviceClientId = serviceClientId;
         this.serviceClientSecret = serviceClientSecret;
+    }
+
+    private static org.springframework.http.client.ClientHttpRequestFactory timedFactory() {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(2_000);
+        factory.setReadTimeout(10_000);
+        return factory;
     }
 
     @Override

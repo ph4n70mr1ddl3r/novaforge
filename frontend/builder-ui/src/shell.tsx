@@ -67,7 +67,11 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
         return () => {
             cancelled = true;
         };
-    }, [client, app === null]);
+        // once per client — the old `app === null` dependency re-fired the whole
+        // listApps+getApp load exactly when the first app landed, duplicating it
+        // on every mount
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [client]);
 
     const reload = useMemo(
         () => async (): Promise<void> => {
@@ -121,9 +125,17 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                                         return await client.putPage(app.id ?? "", page);
                                     } catch (caught) {
                                         if (caught instanceof ApiError && caught.status === 409) {
-                                            // refresh the revision base, then surface the rebase prompt
+                                            // refresh the revision base, then surface the rebase prompt.
+                                            // The FRESH saved page rides the error: the editor's catch
+                                            // runs synchronously with the `app` prop captured at click
+                                            // time (setApp has only scheduled a re-render), so reading
+                                            // the prop there resolved the "server page" to the stale
+                                            // tree the editor already had.
                                             const fresh = (await client.getApp(app.id ?? "")) as AppDefinition;
                                             setApp({ ...fresh, id: app.id });
+                                            (caught as ApiError & { freshSavedPage?: unknown }).freshSavedPage =
+                                                fresh.pages.find(
+                                                    (candidate) => candidate.apiName === page.apiName);
                                         }
                                         throw caught;
                                     }
@@ -164,9 +176,13 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                         {screen === "rbac" ? (
                             <RbacEditor
                                 app={app}
-                                onSave={async (permissionSet) => {
-                                    // PermissionSet rides the app document (versioned, promoted — §9)
-                                    await client.patchApp(app.id ?? "", { permissionSet } as Record<string, unknown>);
+                                onSave={async (mutate) => {
+                                    // PermissionSet rides the app document (versioned, promoted — §9);
+                                    // the mutation applies to a FRESH fetch (the dashboards rule)
+                                    const fresh = (await client.getApp(app.id ?? "")) as AppDefinition;
+                                    await client.patchApp(app.id ?? "", {
+                                        permissionSet: mutate(fresh.permissionSet),
+                                    } as Record<string, unknown>);
                                     await reload();
                                 }}
                             />
@@ -174,8 +190,14 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                         {screen === "reports" ? (
                             <ReportBuilder
                                 app={app}
-                                saveReports={async (reports) => {
-                                    await client.patchApp(app.id ?? "", { reports } as Record<string, unknown>);
+                                saveReports={async (mutate) => {
+                                    // the mutation applies to a FRESH fetch: a stale
+                                    // mount-time snapshot must never replace another
+                                    // tab's concurrent report save (the dashboards rule)
+                                    const fresh = (await client.getApp(app.id ?? "")) as {
+                                        reports?: Parameters<typeof mutate>[0];
+                                    };
+                                    await client.patchApp(app.id ?? "", { reports: mutate(fresh.reports ?? []) } as Record<string, unknown>);
                                     await reload();
                                 }}
                             />
@@ -200,8 +222,14 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                             <Integrations
                                 app={app}
                                 client={client}
-                                onSave={async (patch) => {
-                                    await client.patchApp(app.id ?? "", patch);
+                                onSave={async (mutate) => {
+                                    // the mutation applies to a FRESH fetch: the editor's
+                                    // mount-time branch must never replace another tab's
+                                    // concurrent integrations save (the dashboards rule)
+                                    const fresh = (await client.getApp(app.id ?? "")) as AppDefinition;
+                                    await client.patchApp(app.id ?? "", {
+                                        integrations: mutate(fresh.integrations ?? {}),
+                                    } as Record<string, unknown>);
                                     await reload();
                                 }}
                             />

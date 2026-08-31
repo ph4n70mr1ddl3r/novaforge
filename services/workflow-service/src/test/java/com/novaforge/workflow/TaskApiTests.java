@@ -129,6 +129,17 @@ class TaskApiTests extends PostgresTestBase {
                 .isEqualTo("OPEN");
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
                 "SELECT event_type FROM wf_event_outbox", String.class)).contains("sla.breach");
+
+        // one-shot (eighteenth pass): a second scanner pass must NOT re-emit — the
+        // still-open, still-overdue row used to re-fire sla.breach every 5 s pass,
+        // each with a fresh event id, flooding inboxes and the spine forever
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM wf_event_outbox WHERE task_id = ? "
+                + "AND event_type = 'sla.breach'", Integer.class, taskId)).isEqualTo(1);
+        slaScanner.scanOnce();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM wf_event_outbox WHERE task_id = ? "
+                + "AND event_type = 'sla.breach'", Integer.class, taskId)).isEqualTo(1);
         mockMvc.perform(post("/api/v1/workflow/tasks/" + taskId + "/approve")
                         .with(jwtFor(MANAGER)))
                 .andExpect(status().isOk());
@@ -167,6 +178,16 @@ class TaskApiTests extends PostgresTestBase {
                 "SELECT event_type FROM wf_event_outbox", String.class);
         org.assertj.core.api.Assertions.assertThat(events).contains("sla.breach");
         org.assertj.core.api.Assertions.assertThat(events).doesNotContain("task.escalated");
+
+        // one-shot (eighteenth pass): the notify-only breach fires exactly once —
+        // not again on every scanner pass while the task stays overdue
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM wf_event_outbox WHERE task_id = ? "
+                + "AND event_type = 'sla.breach'", Integer.class, taskId)).isEqualTo(1);
+        slaScanner.scanOnce();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM wf_event_outbox WHERE task_id = ? "
+                + "AND event_type = 'sla.breach'", Integer.class, taskId)).isEqualTo(1);
 
         // and the approval still resolves — the record unwedges
         mockMvc.perform(post("/api/v1/workflow/tasks/" + taskId + "/approve")

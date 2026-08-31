@@ -102,10 +102,28 @@ public class EntityResolver {
                 .filter(app -> app.appId().equals(appId)).findFirst()
                 .orElseThrow(() -> new PlatformException(PlatformErrorCode.NOT_FOUND,
                         "app " + appId + " has no published version"));
-        return bundles.computeIfAbsent(tenantId + ":" + appId, k -> {
-            MetadataClient.PublishedBundle fresh = client.publishedBundle(appId);
-            return new BundleEntry(fresh.version(), fresh.app());
-        }).app();
+        return bundleOf(tenantId, indexed);
+    }
+
+    /**
+     * The version-checked bundle load: a cached entry whose version no longer
+     * matches the index RELOADS. The Kafka eviction is best-effort — a dropped
+     * delivery, a consumer rebalance gap, a publish whose outbox leg crashed — and
+     * {@code computeIfAbsent} would serve the superseded bundle forever (writes
+     * validated and authorized against dead metadata) while the unqualified path's
+     * version-skipping search 404s the entity outright. The index TTL refresh is
+     * the self-healing backstop: staleness now costs one TTL window, never a
+     * restart.
+     */
+    private AppDefinition bundleOf(UUID tenantId, MetadataClient.PublishedApp indexed) {
+        String key = tenantId + ":" + indexed.appId();
+        BundleEntry entry = bundles.get(key);
+        if (entry == null || entry.version() != indexed.version()) {
+            MetadataClient.PublishedBundle fresh = client.publishedBundle(indexed.appId());
+            entry = new BundleEntry(fresh.version(), fresh.app());
+            bundles.put(key, entry);
+        }
+        return entry.app();
     }
 
     /** Evicts a tenant app's cached bundle + index — the publish subscriber calls this (T4). */
@@ -148,10 +166,7 @@ public class EntityResolver {
                 .toList();
         indexes.put(tenantId, new IndexEntry(System.currentTimeMillis(), apps));
         for (MetadataClient.PublishedApp app : apps) {
-            bundles.computeIfAbsent(tenantId + ":" + app.appId(), k -> {
-                MetadataClient.PublishedBundle fresh = client.publishedBundle(app.appId());
-                return new BundleEntry(fresh.version(), fresh.app());
-            });
+            bundleOf(tenantId, app);
         }
     }
 

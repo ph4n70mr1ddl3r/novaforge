@@ -234,7 +234,7 @@ public class ConnectorExecutor {
                 spec.header("Authorization", "Basic " + token);
             }
             case CredentialDefinition.KIND_OAUTH2_CC -> spec.header("Authorization",
-                    "Bearer " + oauthToken(credential, secret));
+                    "Bearer " + oauthToken(tenantId, credential, secret));
             default -> throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "unknown credential kind: " + credential.kind());
         }
@@ -251,14 +251,18 @@ public class ConnectorExecutor {
      * one refetches under {@code compute} (concurrent callers coalesce onto one grant),
      * and a failed fetch leaves nothing cached — an auth-server blip never poisons the
      * credential's next call. Cache entries are values, not futures: a cached failed
-     * future would replay its failure forever.
+     * future would replay its failure forever. The key carries the tenant: credential
+     * ids are authored per-app strings with no cross-tenant uniqueness — a bare id
+     * let two tenants sharing a name serve each other's tokens (tenant A's grant
+     * attached to tenant B's egress, both a leak and a wrong-tenant side effect).
      */
-    private String oauthToken(CredentialDefinition credential, String secret) {
-        CachedToken cached = tokenCache.get(credential.id());
+    private String oauthToken(UUID tenantId, CredentialDefinition credential, String secret) {
+        String key = tenantId + ":" + credential.id();
+        CachedToken cached = tokenCache.get(key);
         if (cached != null && Instant.now().isBefore(cached.refreshAt())) {
             return cached.token();   // fresh — serve without contending the map
         }
-        return tokenCache.compute(credential.id(), (id, existing) -> {
+        return tokenCache.compute(key, (id, existing) -> {
             if (existing != null && Instant.now().isBefore(existing.refreshAt())) {
                 return existing;   // refreshed by another caller while this one waited
             }

@@ -49,16 +49,27 @@ public class LifecycleService {
     private final MetadataPublishEventPublisher events;
     private final String signingKey;
     private final JsonMapper mapper = JsonMapper.builder().build();
+    private final org.springframework.transaction.support.TransactionTemplate deployTx;
 
     public LifecycleService(MetadataStore store, DefinitionService definitions,
                             EnvironmentProvisioner provisioner,
                             MetadataPublishEventPublisher events,
+                            org.springframework.beans.factory.ObjectProvider<org.springframework.transaction.PlatformTransactionManager> transactions,
                             @Value("${novaforge.artifacts.signing-key:novaforge-dev-artifact-key}") String signingKey) {
         this.store = store;
         this.definitions = definitions;
         this.provisioner = provisioner;
         this.events = events;
         this.signingKey = signingKey;
+        // The promotion tail (publish + outbox + pin) is one transaction: three
+        // separate auto-commits left a crash between them able to skip the
+        // metadata.published outbox row for the environment tenant's new version
+        // entirely — its data runtime would hold stale cached bundles with no
+        // eviction ever coming. Null only in the no-datasource smoke context.
+        org.springframework.transaction.PlatformTransactionManager manager =
+                transactions.getIfAvailable();
+        this.deployTx = manager == null ? null
+                : new org.springframework.transaction.support.TransactionTemplate(manager);
     }
 
     // --- environments (§2) ---
@@ -279,8 +290,22 @@ public class LifecycleService {
         int next = store.versions(envTenant, envApp).stream().findFirst()
                 .map(MetadataStore.VersionInfo::version).orElse(0) + 1;
         store.updateApp(envTenant, actorId, envApp, bundle);
-        store.publish(envTenant, actorId, envApp, next, bundle, List.of(), false);
-        events.publishMetadataPublished(envTenant, envApp, next, actorId, Instant.now());
+        if (deployTx != null) {
+            int publishedVersion = next;
+            deployTx.executeWithoutResult(tx -> deployTail(tenantId, appId, env, version,
+                    envTenant, envApp, publishedVersion, bundle, actorId));
+        } else {
+            deployTail(tenantId, appId, env, version, envTenant, envApp, next, bundle, actorId);
+        }
+    }
+
+    /** publish + outbox + pin — one unit whenever a transaction manager exists. */
+    private void deployTail(UUID tenantId, UUID appId, String env, int version, UUID envTenant,
+                            UUID envApp, int publishedVersion, AppDefinition bundle,
+                            UUID actorId) {
+        store.publish(envTenant, actorId, envApp, publishedVersion, bundle, List.of(), false);
+        events.publishMetadataPublished(envTenant, envApp, publishedVersion, actorId,
+                Instant.now());
         store.pinEnvironment(tenantId, appId, env, version, envTenant, envApp, actorId);
     }
 

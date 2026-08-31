@@ -52,4 +52,21 @@ describe("ChartWidget", () => {
     expect(region?.getAttribute("aria-label")).toContain("2 series");
     expect(region?.getAttribute("aria-label")).toContain("acme");
   });
+
+  it("survives a malformed run — a missing projection renders the empty state, never an unmount of the shell", async () => {
+    // Anti-regression (eighteenth pass): the projection came straight from the API
+    // response with no shape guard — a run missing chart/xAxis/series threw during
+    // render, and the only boundary was the app root: one bad widget replaced the
+    // whole runtime shell.
+    const missing = render(
+      <ChartWidget reportRef="bad" chart={undefined as unknown as typeof chart} />,
+    );
+    expect(missing.container.textContent).toContain("No chart data for this run");
+    const empty = render(<ChartWidget reportRef="bad2" chart={{} as unknown as typeof chart} />);
+    expect(empty.container.textContent).toContain("No chart data for this run");
+    const noAxis = render(
+      <ChartWidget reportRef="bad3" chart={{ xAxis: {}, series: [] } as unknown as typeof chart} />,
+    );
+    expect(noAxis.container.textContent).toContain("No chart data for this run");
+  });
 });

@@ -99,9 +99,24 @@ export class PlatformClient {
         }
         if (response.status === 204) return null;
         const text = await response.text();
-        const parsed = text ? (JSON.parse(text) as unknown) : null;
+        // a non-JSON body (a gateway 502/503 HTML page, an empty proxy response)
+        // threw SyntaxError instead of the problem contract every error surface
+        // renders — parse defensively: the failure reports the actual status
+        let parsed: unknown = null;
+        if (text) {
+            try {
+                parsed = JSON.parse(text) as unknown;
+            } catch {
+                parsed = null;
+            }
+        }
         if (!response.ok) {
-            throw new ApiError(response.status, (parsed ?? {}) as Problem);
+            throw new ApiError(response.status, (parsed ?? {
+                type: "about:blank",
+                title: `request failed (${response.status})`,
+                status: response.status,
+                detail: text.slice(0, 200) || undefined,
+            }) as Problem);
         }
         return parsed;
     }

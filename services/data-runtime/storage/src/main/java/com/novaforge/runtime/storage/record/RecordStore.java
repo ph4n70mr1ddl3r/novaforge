@@ -203,21 +203,18 @@ public class RecordStore {
      * The resume idempotency claim (V6): the first execution of an instanceId-keyed
      * resume inserts and returns true; a retried delivery of the same key (the
      * workflow side's remote-succeeds-local-commit-fails shape) returns false — the
-     * engine already ran and must not re-enter.
+     * engine already ran and must not re-enter. The insert's affected-row count IS
+     * the claim: a precheck-then-insert would race two concurrent deliveries past
+     * the precheck, and the instanceId alone (not the verdict) keys the claim —
+     * the first verdict of a resolved approval wins; a replayed opposite verdict
+     * collapses onto it like any other retry.
      */
     public boolean claimResume(UUID instanceId, UUID tenantId, UUID recordId, boolean approved) {
-        Integer existing = jdbc.queryForObject(
-                "SELECT count(*) FROM resume_claims WHERE instance_id = ? AND approved = ?",
-                Integer.class, instanceId, approved);
-        if (existing != null && existing > 0) {
-            return false;
-        }
-        jdbc.update("""
+        return jdbc.update("""
                 INSERT INTO resume_claims (instance_id, tenant_id, record_id, approved)
                 VALUES (?, ?, ?, ?)
                 ON CONFLICT (instance_id) DO NOTHING""",
-                instanceId, tenantId, recordId, approved);
-        return true;
+                instanceId, tenantId, recordId, approved) > 0;
     }
 
     public Long countValue(String sql, List<Object> params) {

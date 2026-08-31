@@ -202,4 +202,24 @@ class ImportResumeTests extends PostgresTestBase {
         assertThat(rows.stream().map(JobStore.RowOutcome::recordId))
                 .doesNotContainNull();
     }
+
+    @Test
+    @DisplayName("cross-replica claim: the pending→running CAS runs exactly one runner")
+    void crossReplicaClaimRunsExactlyOneRunner() {
+        // Anti-regression (eighteenth pass): the runner fenced only its own
+        // overlapping scans with an in-process set — two replicas (a rolling-deploy
+        // overlap, a scale-out) both selected the same pending row and both ran it,
+        // applying every import row twice. The CAS is the cross-replica fence.
+        APPLIED.clear();   // static and shared across this suite's tests
+        UUID jobId = jobs.create(TENANT, JobStore.Kind.IMPORT, "Erp", null, "paymentFeed",
+                null, null, null, UUID.randomUUID(), "feed.csv", null, ACTOR, null);
+        // two replicas both read the pending row; only one flips pending→running
+        assertThat(jobs.claim(TENANT, jobId)).isTrue();
+        assertThat(jobs.claim(TENANT, jobId)).isFalse();
+        assertThat(APPLIED).isEmpty();
+        // the losing replica's scanner pass finds no pending row — nothing runs
+        runner.scan();
+        assertThat(APPLIED).isEmpty();
+        assertThat(jobs.find(TENANT, jobId).orElseThrow().status()).isEqualTo("running");
+    }
 }

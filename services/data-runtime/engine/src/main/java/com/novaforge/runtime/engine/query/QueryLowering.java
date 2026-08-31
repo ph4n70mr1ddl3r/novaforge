@@ -249,7 +249,20 @@ public final class QueryLowering {
             return system;
         }
         String column = promotedColumns.get(field);
-        return column != null ? column : "((data->>'" + field + "')::numeric)";
+        if (column != null) {
+            return column;
+        }
+        // The regex gate keeps the cast total — RecordStore.numericValueExists's
+        // own rule: a re-typed field can hold legacy non-numeric strings in JSONB
+        // (an acknowledged breaking change; the materializer skips the failed
+        // generated column, forcing queries onto this path), and an ungated cast
+        // aborts the ENTIRE scan with 'invalid input syntax for type numeric' —
+        // every list, sort, rollup, and sharing predicate over the field 500s.
+        // Gated, the malformed row evaluates NULL: it never matches a numeric
+        // filter and the aggregate skips it, exactly like an absent value.
+        return "(CASE WHEN (data->>'" + field + "')"
+                + " ~ '^-?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?$'"
+                + " THEN (data->>'" + field + "')::numeric END)";
     }
 
     private String lowerFilter(Filter filter, List<Object> params) {

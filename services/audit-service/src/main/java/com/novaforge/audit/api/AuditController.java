@@ -27,8 +27,13 @@ public class AuditController {
     }
 
     @GetMapping("/records/{recordId}")
-    public List<Map<String, Object>> forRecord(@PathVariable UUID recordId) {
-        return store.forRecord(tenant(), recordId);
+    public List<Map<String, Object>> forRecord(@PathVariable UUID recordId,
+                                               @RequestParam(defaultValue = "200") int limit) {
+        if (limit < 1 || limit > 200) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "limit must be 1..200");
+        }
+        return store.forRecord(tenant(), recordId, limit);
     }
 
     @GetMapping("/entities/{entityId}")

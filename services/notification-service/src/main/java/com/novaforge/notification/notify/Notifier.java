@@ -78,6 +78,14 @@ public class Notifier {
                 }
             }
             if (emailOn) {
+                // the email leg claims its own key (REQUIRES_NEW) exactly like
+                // deliverDirect: the inbox insert dedupes on event_id, but a Kafka
+                // redelivery of this event — which TaskEventConsumer deliberately
+                // allows for transient failures — collapsed the inbox row while the
+                // SMTP leg re-fired: one duplicate email per recipient per replay.
+                if (!claimEmailDelivery(tenantId, user, eventId)) {
+                    continue;
+                }
                 email.send(recipients.addressOf(user), title, body);
                 delivered(tenantId, user, "email", category);
             }

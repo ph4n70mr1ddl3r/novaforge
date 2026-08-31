@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { JsonTextField } from "./json-field.tsx";
 import {
     type AppDefinition,
     type EntityDefinition,
@@ -367,14 +368,9 @@ function JobsEditor({
                             <option key={target} value={target}>{target}</option>
                         ))}
                     </select>
-                    <input aria-label={`Job params ${index}`} placeholder='params JSON, e.g. {"hook": "nightly"}'
-                        value={job.params && Object.keys(job.params).length > 0 ? JSON.stringify(job.params) : ""}
-                        onChange={(e) => {
-                            const text = e.target.value.trim();
-                            update(index, {
-                                params: text ? (JSON.parse(text) as Record<string, unknown>) : {},
-                            });
-                        }} />
+                    <JsonTextField aria-label={`Job params ${index}`} placeholder='params JSON, e.g. {"hook": "nightly"}'
+                        value={job.params}
+                        onParsed={(parsed) => update(index, { params: parsed ?? {} })} />
                     <label className="nf-inline">
                         <input type="checkbox" aria-label={`Job enabled ${job.name}`}
                             checked={job.enabled !== false}
