@@ -16,8 +16,11 @@ public interface EnvironmentProvisioner {
      * Provisions (or refreshes) the environment tenant for the bundle and returns
      * its coordinates — {@code tenantId} the isolated data plane,
      * {@code appId} the environment's copy of the app (published, version-pinned).
+     * The source workspace's tenant id keys the environment identity: names derive
+     * deterministically from (tenant, app, env), so a retried or crashed promotion
+     * re-provisions the SAME environment — adopt-before-create, never a leak.
      */
-    EnvironmentRef provision(AppDefinition bundle, String envName);
+    EnvironmentRef provision(java.util.UUID sourceTenantId, AppDefinition bundle, String envName);
 
     record EnvironmentRef(java.util.UUID tenantId, java.util.UUID appId) {
     }

@@ -1141,3 +1141,75 @@ untouched branches stay) plus the existing `appPatchKeepsPermissionSet` legs.
 Verified: metadata-model (incl. the validator pin), metadata-service (53, incl.
 the AppPatch pin and the gapLog coverage), integration-service, data-runtime —
 all green; full serial `./mvnw verify` recorded in IMPLEMENTATION.md.
+
+## Eleventh Pass — 2026-08-31 (the two deep-structural items close)
+
+### H-11P1 — per-app unique-index scoping: two same-named entities in one tenant cross-collided
+
+Projection tables are shared per bare entity apiName across apps and tenants, and
+the partial unique index was `(tenant_id, target) WHERE NOT deleted` — no entity
+discriminator. Two published apps in one tenant defining the same entity apiName
+with a unique field (the ERP and the A/R demo both defining `Invoice`, exactly the
+shape the tenth-spec review's `App.Entity` disambiguation enabled) cross-collided:
+the app-qualified pre-check passed while the index rejected app B's legitimate
+value on app A's row — an unexplained uniqueness failure blocking legitimate
+writes. Projections now carry the owning `App.Entity` key (`entity_id`, a system
+column: new tables declare it, the reconcile backfills it onto pre-existing tables
+from the base rows and drops orphaned projection rows before asserting NOT NULL),
+and every unique index is `(tenant_id, entity_id, target)` — the `_app`-named twin
+retiring its tenant-wide predecessor through the managed-index sweep. Non-unique
+indexes and the trigger's sync set are unchanged (multi-app sharing of one table is
+the design, only uniqueness needed the scope). Pinned in
+`MaterializerTests.perAppUniqueScoping` (same tenant, same value, two apps — both
+land; within one app still exclusive; the pre-entity_id migration leg restores
+nulled keys from the base rows) and the definition assertion in `createsProjection`.
+
+### H-11P2 — the promotion chain's multi-system atomicity: intent journal, keyed provisioning, boot reconcile
+
+Three legs, closing both recorded failure windows:
+
+- **The intent row lands first (V12).** The first promotion of an environment wrote
+  nothing before the remote calls — a crash between provision and pin was invisible
+  and every retry provisioned a *second* sandbox tenant (random names, random
+  credentials — unreachable except by platform admin). `md_environments` gains
+  `status`/`provision_key`; `recordProvisionIntent` writes the row (version pinned,
+  identity blank, status 'provisioning') *before* the provisioner runs, and
+  `completeProvision` fills the identity. A dangling intent is a visible stuck
+  state the reconciler logs loudly.
+- **Provisioning is keyed on (tenant, app, env).** The provisioner's names derive
+  deterministically from the key (the source workspace's tenant joins the interface),
+  so a retry adopts instead of leaking: the runtime's admin API grows a by-name
+  tenant lookup (`GET /api/v1/admin/tenants?apiName=…`, platform-admin) used
+  adopt-before-create; the admin credential regenerates onto the same deterministic
+  username (Keycloak user provisioning was already idempotent with password reset);
+  and an app left by a partial attempt is retired and re-imported (`md_apps` pins
+  one apiName per tenant). Every leg of a retried promotion converges on the same
+  environment identity.
+- **The boot reconcile.** A promote/rollback dying between the environment tenant's
+  publish and the pin left the environment serving a version the control plane
+  could not see — the prod parity check then rejected the matching promote. On
+  ready, `EnvironmentReconciler` compares every environment's pin against its
+  tenant's actual latest publish (a local read — the environment's app rows live in
+  this store), realigns, and records a `reconcile` promotion row (V12 extends the
+  kind CHECK) under a named system actor; one environment's failure never blocks
+  the others.
+
+Pinned in `LifecycleTests.crashedProvisionRetriesConverge` (a promotion that dies
+*after* the remote provision lands retries to the same deterministic environment
+tenant — one row, active, identified) and `.bootReconcileAlignsDriftedPins` (an
+environment-tenant publish the pin never saw realigns at boot with an audited
+reconcile row). The suite's provisioner stub is keyed like the real one.
+
+### Verification (this pass)
+
+data-runtime storage (11 — the scoping pin; engine 21, api 26 unchanged-green),
+metadata-service 29 green across both suites (the two atomicity pins; the suite
+provisioner stub rewritten to keyed semantics). Full serial `./mvnw verify`
+recorded in IMPLEMENTATION.md's closeout.
+
+### Recorded open after this pass
+
+None. The audit trail's recorded-open list — every finding from passes 7–11 — is
+closed and pinned. The helm chart's env posture remains operator-verified by
+design (documented create-secret steps; no cluster deploy exists in this
+environment to render against).

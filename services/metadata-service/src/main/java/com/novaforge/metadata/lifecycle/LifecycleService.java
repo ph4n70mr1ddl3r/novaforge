@@ -256,8 +256,16 @@ public class LifecycleService {
                                      int version, AppDefinition bundle) {
         var existing = store.environment(tenantId, appId, env);
         if (existing.isEmpty() || existing.get().envTenantId() == null) {
-            EnvironmentProvisioner.EnvironmentRef ref = provisioner.provision(bundle, env);
-            store.pinEnvironment(tenantId, appId, env, version, ref.tenantId(), ref.appId(), actorId);
+            // The intent lands first (V12): a crash between here and completion is a
+            // visible dangling intent, and the retry converges — provisioning is keyed
+            // on (tenant, app, env) with deterministic names and adopt-before-create,
+            // so no orphaned sandbox tenant can accumulate.
+            store.recordProvisionIntent(tenantId, appId, env, version,
+                    existing.map(MetadataStore.EnvironmentRow::provisionKey)
+                            .orElse(UUID.randomUUID()), actorId);
+            EnvironmentProvisioner.EnvironmentRef ref = provisioner.provision(tenantId,
+                    bundle, env);
+            store.completeProvision(tenantId, appId, env, ref.tenantId(), ref.appId(), actorId);
             return;
         }
         UUID envTenant = existing.get().envTenantId();

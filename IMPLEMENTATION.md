@@ -2290,3 +2290,27 @@ missed `gapLog` — `changeSetRendersResolvedGaps` caught the dropped branch liv
 Pinned (`appPatchEmptyListClears` + the validator pin). Remaining recorded open:
 promotion multi-system atomicity and per-app unique-index scoping — the two
 deep-structural items, each a scoped next pass of its own.
+
+**Spec-review closeout (2026-08-31, eleventh pass) — the two deep-structural items
+close; the recorded-open list is empty.**
+
+- **Per-app unique-index scoping** (H-11P1): projections carry the owning
+  `App.Entity` key (`entity_id`, backfilled onto pre-existing tables from the base
+  rows, orphans dropped, then NOT NULL), and unique indexes scope by it —
+  `(tenant_id, entity_id, target)` — so two same-named entities in one tenant (the
+  ERP/A-R `Invoice` shape) no longer cross-collide on unique values. Sharing of one
+  projection table across apps is unchanged; only uniqueness needed the scope.
+  Pinned (`perAppUniqueScoping`, plus the index-definition assertion).
+- **The promotion chain's atomicity** (H-11P2): V12's intent journal writes the
+  environment row *before* the remote provisioning calls; provisioning is keyed on
+  (tenant, app, env) — deterministic names, by-name tenant adoption (a new
+  platform-admin lookup), credential regeneration onto the same deterministic
+  username, adopt-or-recreate for a partially imported app — so a crashed promotion
+  retried converges on the same environment instead of leaking a second sandbox
+  tenant; and the boot reconciler realigns pins that drifted from the environment
+  tenant's actual publish, recording `reconcile` rows in the audited history.
+  Pinned (`crashedProvisionRetriesConverge`, `bootReconcileAlignsDriftedPins`).
+
+Verified: full serial `./mvnw verify` green end to end (23 reactor modules,
+container suites on the podman socket). CODE_REVIEW.md's recorded-open list — every
+finding surfaced across passes 7–11 — is now closed and pinned.

@@ -50,6 +50,20 @@ public class AdminController {
     }
 
     /** The tenant row — the Workflow service's scratch gate (PHASE-4 §12). */
+    /** By-name lookup — the provisioner adopts an existing environment tenant (idempotent provisioning). */
+    @GetMapping("/tenants")
+    public Map<String, Object> tenantByApiName(@org.springframework.web.bind.annotation.RequestParam
+                                               String apiName) {
+        requirePlatformAdmin();
+        Map<String, Object> tenant = admin.tenantByApiName(apiName);
+        if (tenant == null) {
+            throw new com.novaforge.common.error.PlatformException(
+                    com.novaforge.common.error.PlatformErrorCode.NOT_FOUND,
+                    "tenant " + apiName + " not found");
+        }
+        return tenant;
+    }
+
     @GetMapping("/tenants/{tenantId}")
     public Map<String, Object> tenant(@PathVariable UUID tenantId) {
         requirePlatformAdmin();

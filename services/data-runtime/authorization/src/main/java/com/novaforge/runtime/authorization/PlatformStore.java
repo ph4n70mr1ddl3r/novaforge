@@ -71,4 +71,10 @@ public class PlatformStore {
                 "SELECT count(*) FROM platform.tenants WHERE id = ?", Integer.class, tenantId);
         return count != null && count > 0;
     }
+
+    /** By-name lookup (api_name is UNIQUE): the provisioner's adopt-before-create leg. */
+    public java.util.Optional<UUID> tenantByApiName(String apiName) {
+        return jdbc.query("SELECT id FROM platform.tenants WHERE api_name = ?",
+                (rs, i) -> rs.getObject(1, UUID.class), apiName).stream().findFirst();
+    }
 }

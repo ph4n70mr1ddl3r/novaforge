@@ -120,7 +120,14 @@ class MaterializerTests extends PostgresTestBase {
                 SELECT count(*) FROM pg_indexes
                  WHERE tablename = 'rec_journal_entry' AND indexname LIKE 'ux_%'""",
                 Integer.class);
-        assertThat(uniques).isEqualTo(1);   // uniqueness on reference (§6 partial unique)
+        assertThat(uniques).isEqualTo(1);   // uniqueness on reference, scoped per app (§6)
+        // the per-app scope: the unique index discriminates by the App.Entity key
+        Map<String, Object> uniqueDefinition = jdbc.queryForMap("""
+                SELECT indexdef FROM pg_indexes
+                 WHERE tablename = 'rec_journal_entry' AND indexname LIKE 'ux_%'""");
+        assertThat(String.valueOf(uniqueDefinition.get("indexdef")))
+                .contains("tenant_id, entity_id")
+                .contains("WHERE (NOT deleted)");
         Integer triggers = jdbc.queryForObject("""
                 SELECT count(DISTINCT trigger_name) FROM information_schema.triggers
                  WHERE event_object_table = 'rec_records' AND trigger_name = 'trg_rec_journal_entry'""",
@@ -180,7 +187,8 @@ class MaterializerTests extends PostgresTestBase {
         assertThat(columns).isZero();
         Integer uniques = jdbc.queryForObject("""
                 SELECT count(*) FROM pg_indexes
-                 WHERE tablename = 'rec_journal_entry' AND indexname = 'ux_rec_journal_entry_reference'""",
+                 WHERE tablename = 'rec_journal_entry'
+                   AND indexname = 'ux_rec_journal_entry_reference_app'""",
                 Integer.class);
         assertThat(uniques).isZero();
         // nothing is destroyed at publish: the value survives in the base table's JSONB
@@ -328,6 +336,56 @@ class MaterializerTests extends PostgresTestBase {
         // Soft-delete frees the value: delete → recreate with the same value works (§6).
         jdbc.update("UPDATE rec_records SET deleted = true WHERE id = ?", first);
         insertRaw(UUID.randomUUID(), "JE-DUP");
+    }
+
+    @Test
+    @DisplayName("per-app unique scoping: the same value in two same-named entities of one tenant coexists")
+    void perAppUniqueScoping() {
+        // Anti-regression (2026-08-31): the projection's unique index was tenant-wide
+        // with no entity discriminator — two published apps defining the same entity
+        // apiName with a unique field cross-collided: app B's legitimate value
+        // rejected on app A's row (the app-qualified pre-check passed; the index
+        // enforced across apps). The index now scopes by the App.Entity key.
+        AppDefinition erp = DefinitionParser.parseApp(APP_JSON);
+        AppDefinition billing = DefinitionParser.parseApp("""
+                { "apiName": "Billing", "entities": [ { "apiName": "JournalEntry",
+                  "displayField": "reference",
+                  "fields": [ { "apiName": "reference", "type": "text", "uniqueness": true },
+                              { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 } ] } ] }
+                """);
+        materializer.applyAll(List.of(erp, billing));
+
+        // the same tenant, the same unique value, two apps — both rows land
+        UUID erpRow = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO rec_records (id, tenant_id, entity_id, created_by, updated_by, data)
+                VALUES (?, ?, 'Erp.JournalEntry', ?, ?, ?::jsonb)""",
+                erpRow, TENANT, ACTOR, ACTOR, "{\"reference\":\"SHARED-1\",\"amount\":5}");
+        UUID billingRow = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO rec_records (id, tenant_id, entity_id, created_by, updated_by, data)
+                VALUES (?, ?, 'Billing.JournalEntry', ?, ?, ?::jsonb)""",
+                billingRow, TENANT, ACTOR, ACTOR, "{\"reference\":\"SHARED-1\",\"amount\":9}");
+        assertThat(jdbc.queryForList("""
+                        SELECT entity_id FROM rec_journal_entry WHERE id IN (?, ?) ORDER BY entity_id""",
+                String.class, erpRow, billingRow))
+                .containsExactly("Billing.JournalEntry", "Erp.JournalEntry");
+
+        // within one app the value stays exclusive — the scope narrowed, not removed
+        assertThatThrownBy(() -> insertRaw(UUID.randomUUID(), "SHARED-1"))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+
+        // the pre-entity_id migration leg: a projection row that lost its key
+        // backfills from the base row on the next pass, then goes NOT NULL again
+        jdbc.execute("ALTER TABLE rec_journal_entry ALTER COLUMN entity_id DROP NOT NULL");
+        jdbc.update("UPDATE rec_journal_entry SET entity_id = NULL");
+        materializer.apply(erp);
+        Integer nullKeys = jdbc.queryForObject(
+                "SELECT count(*) FROM rec_journal_entry WHERE entity_id IS NULL", Integer.class);
+        assertThat(nullKeys).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT entity_id FROM rec_journal_entry WHERE id = ?",
+                String.class, erpRow)).isEqualTo("Erp.JournalEntry");
     }
 
     @Test

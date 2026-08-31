@@ -51,8 +51,26 @@ class LifecycleTests extends PostgresTestBase {
     /** Red/green switchable runner stub — the gate consumes recorded artifacts only. */
     private static final AtomicBoolean GREEN = new AtomicBoolean(true);
 
+    /** Simulates a promotion crashing after the remote provision landed (the intent window). */
+    private static final AtomicBoolean CRASH_AFTER_PROVISION = new AtomicBoolean(false);
+
     @Autowired
     MockMvc mockMvc;
+
+    @Autowired
+    org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    @Autowired
+    com.novaforge.metadata.store.MetadataStore store;
+
+    @Autowired
+    com.novaforge.metadata.lifecycle.EnvironmentReconciler reconciler;
+
+    /** One MockMvc result → a parsed JSON value (maps/lists), for typed assertions. */
+    private Object objectMapperRead(org.springframework.test.web.servlet.MvcResult result)
+            throws Exception {
+        return MAPPER.readValue(result.getResponse().getContentAsString(), Object.class);
+    }
 
     @TestConfiguration
     static class Stubs {
@@ -79,12 +97,31 @@ class LifecycleTests extends PostgresTestBase {
         @Primary
         EnvironmentProvisioner environmentProvisioner(com.novaforge.metadata.store.MetadataStore store) {
             EnvironmentProvisioner provisioner = Mockito.mock(EnvironmentProvisioner.class);
-            Mockito.when(provisioner.provision(Mockito.any(AppDefinition.class), Mockito.anyString()))
+            // keyed on (source tenant, app, env) like the real HTTP provisioner: the
+            // env tenant id is deterministic, a repeat provision adopts (recreates)
+            // the app row instead of provisioning a second tenant, and a caller can
+            // make the first call crash AFTER the remote work lands — the exact
+            // window the intent journal exists for
+            java.util.Set<String> provisioned = java.util.concurrent.ConcurrentHashMap.newKeySet();
+            Mockito.when(provisioner.provision(Mockito.any(UUID.class),
+                            Mockito.any(AppDefinition.class), Mockito.anyString()))
                     .thenAnswer(inv -> {
-                        AppDefinition bundle = inv.getArgument(0);
-                        UUID envTenant = UUID.randomUUID();
-                        // the real first-promotion writes a real app row for the env tenant,
-                        // so later promotions re-import against it (§2: envs keep their data)
+                        UUID sourceTenant = inv.getArgument(0);
+                        AppDefinition bundle = inv.getArgument(1);
+                        String envName = inv.getArgument(2);
+                        UUID envTenant = UUID.nameUUIDFromBytes(
+                                ("env:" + sourceTenant + ":" + bundle.apiName() + ":"
+                                        + envName).getBytes());
+                        String key = sourceTenant + ":" + bundle.apiName() + ":" + envName;
+                        boolean first = provisioned.add(key);
+                        // a partial prior attempt left its app behind — retire it (the
+                        // real provisioner's adopt-or-recreate leg; md_apps pins one
+                        // apiName per tenant)
+                        for (AppDefinition existing : store.listApps(envTenant)) {
+                            if (existing.apiName().equals(bundle.apiName())) {
+                                store.deleteApp(envTenant, UUID.fromString(existing.id()));
+                            }
+                        }
                         AppDefinition fresh = new AppDefinition(null, bundle.apiName(),
                                 bundle.label(), bundle.labelI18n(), bundle.description(),
                                 bundle.entities(), bundle.pages(), bundle.settings(),
@@ -96,12 +133,17 @@ class LifecycleTests extends PostgresTestBase {
                                 UUID.fromString(ACTOR), fresh);
                         store.publish(envTenant, UUID.fromString(ACTOR),
                                 UUID.fromString(created.id()), 1, bundle, java.util.List.of(), false);
+                        if (first && CRASH_AFTER_PROVISION.get()) {
+                            CRASH_AFTER_PROVISION.set(false);
+                            throw new com.novaforge.common.error.PlatformException(
+                                    com.novaforge.common.error.PlatformErrorCode.INTERNAL,
+                                    "simulated crash after the remote provision landed");
+                        }
                         return new EnvironmentProvisioner.EnvironmentRef(envTenant,
                                 UUID.fromString(created.id()));
                     });
             return provisioner;
-        }
-    }
+        }    }
 
     @DynamicPropertySource
     static void infrastructure(DynamicPropertyRegistry registry) {
@@ -461,6 +503,97 @@ class LifecycleTests extends PostgresTestBase {
                         .with(builderJwt()).contentType("application/json")
                         .content("{\"version\":" + v1 + "}"))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("a promotion crashing after the remote provision converges on retry — no leaked tenant")
+    void crashedProvisionRetriesConverge() throws Exception {
+        // Anti-regression (2026-08-31): the first promotion wrote nothing before the
+        // remote provisioning calls — a failure between provision and pin was
+        // invisible, and every retry provisioned a second sandbox tenant. The intent
+        // row (V12) lands first; provisioning is keyed on (tenant, app, env).
+        String appId = createGatedApp();
+        GREEN.set(true);
+        publish(appId);
+        int version = latestVersion(appId);
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/suite-runs").with(builderJwt())
+                        .contentType("application/json").content("{}"))
+                .andExpect(status().isOk());
+
+        // the first attempt crashes after the remote work landed
+        CRASH_AFTER_PROVISION.set(true);
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/environments/staging/promote")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("{\"version\":" + version + "}"))
+                .andExpect(status().is5xxServerError());
+
+        // the retry converges: the environment completes under the SAME identity —
+        // the deterministic env tenant the crashed attempt already provisioned
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/environments/staging/promote")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("{\"version\":" + version + "}"))
+                .andExpect(status().isOk());
+        var app = objectMapperRead(mockMvc.perform(
+                        get("/api/v1/metadata/apps/" + appId).with(builderJwt()))
+                .andExpect(status().isOk()).andReturn());
+        var environments = objectMapperRead(mockMvc.perform(
+                        get("/api/v1/metadata/apps/" + appId + "/environments").with(builderJwt()))
+                .andExpect(status().isOk()).andReturn());
+        String apiName = String.valueOf(((java.util.Map<?, ?>) app).get("apiName"));
+        UUID expectedTenant = UUID.nameUUIDFromBytes(
+                ("env:" + TENANT + ":" + apiName + ":staging").getBytes());
+        org.assertj.core.api.Assertions.assertThat(
+                        String.valueOf(((java.util.Map<?, ?>) ((java.util.List<?>) environments)
+                                .get(0)).get("tenantId")))
+                .isEqualTo(expectedTenant.toString());
+        // exactly one environment row, active, with its identity complete
+        var row = jdbc.queryForMap(
+                "SELECT status, env_tenant_id, provision_key FROM md_environments WHERE app_id = ?::uuid",
+                appId);
+        org.assertj.core.api.Assertions.assertThat(row.get("status")).isEqualTo("active");
+        org.assertj.core.api.Assertions.assertThat(row.get("env_tenant_id"))
+                .isEqualTo(expectedTenant);
+        org.assertj.core.api.Assertions.assertThat(row.get("provision_key")).isNotNull();
+    }
+
+    @Test
+    @DisplayName("boot reconcile aligns a pin that drifted from the environment's published version")
+    void bootReconcileAlignsDriftedPins() throws Exception {
+        // Anti-regression (2026-08-31): a promote/rollback dying between the
+        // environment tenant's publish and the pin left the environment serving a
+        // version the control plane could not see. The reconciler compares each pin
+        // against the environment tenant's actual latest publish and realigns.
+        String appId = createGatedApp();
+        GREEN.set(true);
+        publish(appId);
+        int version = latestVersion(appId);
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/suite-runs").with(builderJwt())
+                        .contentType("application/json").content("{}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/environments/staging/promote")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("{\"version\":" + version + "}"))
+                .andExpect(status().isOk());
+
+        // simulate the drift: the environment tenant publishes v2 while the pin dies
+        var row = jdbc.queryForMap("""
+                SELECT env_tenant_id, env_app_id FROM md_environments
+                 WHERE app_id = ?::uuid AND env = 'staging'""", appId);
+        UUID envTenant = (UUID) row.get("env_tenant_id");
+        UUID envApp = (UUID) row.get("env_app_id");
+        store.publish(envTenant, UUID.fromString(ACTOR), envApp, 2,
+                store.requireApp(envTenant, envApp), java.util.List.of(), false);
+
+        reconciler.reconcile();
+
+        Integer pinned = jdbc.queryForObject("""
+                SELECT pinned_version FROM md_environments
+                 WHERE app_id = ?::uuid AND env = 'staging'""", Integer.class, appId);
+        org.assertj.core.api.Assertions.assertThat(pinned).isEqualTo(2);
+        String kinds = jdbc.queryForObject("""
+                SELECT string_agg(kind, ',' ORDER BY promoted_at) FROM md_promotions
+                 WHERE app_id = ?::uuid AND env = 'staging'""", String.class, appId);
+        org.assertj.core.api.Assertions.assertThat(kinds).contains("reconcile");
     }
 
     // --- §2: the promotion artifact + §6: templates ---

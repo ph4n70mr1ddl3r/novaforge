@@ -83,6 +83,13 @@ public class AdminService {
         return Map.of("tenantId", tenantId.toString(), "adminUserId", adminId.toString());
     }
 
+    /** By-name tenant lookup — the environment provisioner's adopt-before-create leg. */
+    public Map<String, Object> tenantByApiName(String apiName) {
+        return platform.tenantByApiName(apiName)
+                .map(id -> Map.<String, Object>of("tenantId", id.toString()))
+                .orElse(null);
+    }
+
     /** Scratch-tenant actor provisioning (ADR-010's synthetic actors). */
     @Transactional
     public Map<String, Object> createUser(UUID tenantId, String username, String password) {

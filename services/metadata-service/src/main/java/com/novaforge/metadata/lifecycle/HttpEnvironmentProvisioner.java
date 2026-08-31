@@ -47,23 +47,39 @@ public class HttpEnvironmentProvisioner implements EnvironmentProvisioner {
         this.clientSecret = clientSecret;
     }
 
+    /**
+     * Idempotent per (tenant, app, env): the environment tenant's name derives from
+     * the key — a retried or crashed promotion adopts the existing tenant (the
+     * by-name lookup) instead of provisioning a second one, the admin credential is
+     * regenerated onto the same deterministic username (user provisioning is
+     * idempotent and resets the password), and an app left by a partial prior attempt
+     * is recreated (md_apps pins one apiName per tenant) before publishing. Every leg
+     * converges to the same environment identity.
+     */
     @Override
-    public EnvironmentRef provision(AppDefinition bundle, String envName) {
-        String suffix = UUID.randomUUID().toString().substring(0, 8);
-        String tenantName = (bundle.apiName() + "-" + envName + "-" + suffix).toLowerCase();
-        String adminUsername = "env-" + envName + "-" + suffix;
+    public EnvironmentRef provision(UUID sourceTenantId, AppDefinition bundle, String envName) {
+        String key = bundle.apiName() + "-" + envName + "-"
+                + sourceTenantId.toString().substring(0, 8);
+        String tenantName = key.toLowerCase();
+        String adminUsername = ("env-" + envName + "-" + sourceTenantId.toString()
+                .substring(0, 8)).toLowerCase();
         String adminPassword = "env-" + UUID.randomUUID();
-        Map<String, Object> tenant = runtime.method(HttpMethod.POST)
-                .uri("/api/v1/admin/tenants")
-                .headers(headers -> headers.setBearerAuth(serviceToken()))
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(mapper.writeValueAsString(Map.of(
-                        "apiName", tenantName,
-                        "adminUsername", adminUsername,
-                        "adminPassword", adminPassword)))
-                .retrieve()
-                .body(Map.class);
-        String tenantId = String.valueOf(tenant.get("tenantId"));
+
+        // adopt-before-create: a crashed first promotion leaves the tenant behind
+        String tenantId = adoptTenant(tenantName);
+        if (tenantId == null) {
+            Map<String, Object> tenant = runtime.method(HttpMethod.POST)
+                    .uri("/api/v1/admin/tenants")
+                    .headers(headers -> headers.setBearerAuth(serviceToken()))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(mapper.writeValueAsString(Map.of(
+                            "apiName", tenantName,
+                            "adminUsername", adminUsername,
+                            "adminPassword", adminPassword)))
+                    .retrieve()
+                    .body(Map.class);
+            tenantId = String.valueOf(tenant.get("tenantId"));
+        }
         String token = passwordGrant(adminUsername, adminPassword);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("apiName", bundle.apiName());
@@ -79,6 +95,16 @@ public class HttpEnvironmentProvisioner implements EnvironmentProvisioner {
         body.put("reports", mapper.convertValue(bundle.reports(), List.class));
         body.put("dashboards", mapper.convertValue(bundle.dashboards(), List.class));
         body.put("translations", mapper.convertValue(bundle.translations(), List.class));
+        // a partial prior attempt may have left the app behind (md_apps pins one
+        // apiName per tenant) — retire it and import fresh, so the retry converges
+        String existingApp = existingApp(token, bundle.apiName());
+        if (existingApp != null) {
+            metadata.delete()
+                    .uri("/api/v1/metadata/apps/" + existingApp)
+                    .headers(headers -> headers.setBearerAuth(token))
+                    .retrieve()
+                    .toBodilessEntity();
+        }
         Map<String, Object> created = metadata.post()
                 .uri("/api/v1/metadata/apps")
                 .headers(headers -> headers.setBearerAuth(token))
@@ -93,6 +119,39 @@ public class HttpEnvironmentProvisioner implements EnvironmentProvisioner {
                 .body(String.class);
         return new EnvironmentRef(UUID.fromString(tenantId),
                 UUID.fromString(String.valueOf(created.get("id"))));
+    }
+
+    /** The by-name adopt leg: the environment tenant from a crashed attempt, if any. */
+    private String adoptTenant(String tenantName) {
+        try {
+            Map<?, ?> found = runtime.get()
+                    .uri(uri -> uri.path("/api/v1/admin/tenants")
+                            .queryParam("apiName", tenantName).build())
+                    .headers(headers -> headers.setBearerAuth(serviceToken()))
+                    .retrieve()
+                    .body(Map.class);
+            return found == null ? null : String.valueOf(found.get("tenantId"));
+        } catch (org.springframework.web.client.RestClientResponseException notFound) {
+            return null;   // 404 — nothing to adopt
+        }
+    }
+
+    /** The app a partial prior attempt left in the environment tenant, if any. */
+    private String existingApp(String token, String apiName) {
+        java.util.List<?> apps = metadata.get()
+                .uri("/api/v1/metadata/apps")
+                .headers(headers -> headers.setBearerAuth(token))
+                .retrieve()
+                .body(java.util.List.class);
+        if (apps == null) {
+            return null;
+        }
+        for (Object app : apps) {
+            if (app instanceof Map<?, ?> row && apiName.equals(String.valueOf(row.get("apiName")))) {
+                return String.valueOf(row.get("id"));
+            }
+        }
+        return null;
     }
 
     private String passwordGrant(String username, String password) {

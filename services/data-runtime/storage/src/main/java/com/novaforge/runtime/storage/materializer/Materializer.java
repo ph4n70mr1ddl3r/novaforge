@@ -83,7 +83,10 @@ public class Materializer {
 
     /** The fixed non-generated columns every projection carries (ADR-001 schema). */
     private static final Set<String> SYSTEM_COLUMNS = Set.of("id", "tenant_id", "version",
-            "created_at", "updated_at", "created_by", "updated_by", "deleted", "data");
+            "created_at", "updated_at", "created_by", "updated_by", "deleted", "data",
+            // the owning App.Entity key — projections are shared per bare entity
+            // apiName, and per-app unique enforcement needs the discriminator
+            "entity_id");
 
     private final JdbcTemplate jdbc;
 
@@ -263,6 +266,8 @@ public class Materializer {
         boolean existing = tableExists(shape.table);
         if (!existing) {
             jdbc.execute(createTable(shape));
+        } else {
+            ensureEntityKey(shape);
         }
         reconcileColumns(shape);
         reconcileIndexes(shape);
@@ -282,6 +287,7 @@ public class Materializer {
                 .append(" (")
                 .append("id uuid PRIMARY KEY, ")
                 .append("tenant_id uuid NOT NULL, ")
+                .append("entity_id text NOT NULL, ")
                 .append("version int NOT NULL, ")
                 .append("created_at timestamptz NOT NULL, ")
                 .append("updated_at timestamptz NOT NULL, ")
@@ -301,10 +307,29 @@ public class Materializer {
 
     private String backfill(Shape shape) {
         return "INSERT INTO " + shape.table
-                + " (id, tenant_id, version, created_at, updated_at, created_by, updated_by, deleted, data) "
-                + "SELECT id, tenant_id, version, created_at, updated_at, created_by, updated_by, deleted, data "
+                + " (id, tenant_id, entity_id, version, created_at, updated_at, created_by, "
+                + "updated_by, deleted, data) "
+                + "SELECT id, tenant_id, entity_id, version, created_at, updated_at, created_by, "
+                + "updated_by, deleted, data "
                 + "FROM rec_records WHERE entity_id = ANY(" + keyLiterals(shape) + "::text[]) "
                 + "ON CONFLICT (id) DO NOTHING";
+    }
+
+    /**
+     * Pre-entity_id projections (and any orphaned by a hard base-table delete) gain
+     * the owning App.Entity key: the column backfills from the base row, rows with no
+     * base counterpart are dead artifacts the sync trigger would have removed, and
+     * the column then goes NOT NULL — the per-app unique index depends on it.
+     */
+    private void ensureEntityKey(Shape shape) {
+        jdbc.execute("ALTER TABLE " + shape.table + " ADD COLUMN IF NOT EXISTS entity_id text");
+        jdbc.update("UPDATE " + shape.table + " p SET entity_id = r.entity_id "
+                + "FROM rec_records r WHERE r.id = p.id AND (p.entity_id IS NULL "
+                + "OR p.entity_id <> r.entity_id)");
+        jdbc.update("DELETE FROM " + shape.table + " p WHERE p.entity_id IS NULL "
+                + "AND NOT EXISTS (SELECT 1 FROM rec_records r WHERE r.id = p.id)");
+        jdbc.execute("ALTER TABLE " + shape.table
+                + " ALTER COLUMN entity_id SET NOT NULL");
     }
 
     private void reconcileColumns(Shape shape) {
@@ -342,7 +367,9 @@ public class Materializer {
     private void reconcileIndexes(Shape shape) {
         Set<String> expected = new LinkedHashSet<>(shape.indexColumns.keySet());
         for (String field : shape.uniqueFields) {
-            expected.add("ux_" + shape.table + "_" + Snake.caseName(field));
+            // the _app twin retires the tenant-wide predecessor (the managed-index
+            // sweep below) — scoping by the App.Entity key is the whole point
+            expected.add("ux_" + shape.table + "_" + Snake.caseName(field) + "_app");
         }
         boolean displayIndexed = shape.displayField != null
                 && shape.promotedByField.containsKey(shape.displayField);
@@ -365,8 +392,9 @@ public class Materializer {
         }
         for (String field : shape.uniqueFields) {
             jdbc.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_" + shape.table + "_"
-                    + Snake.caseName(field)
-                    + " ON " + shape.table + " (tenant_id, " + shape.indexTarget(field)
+                    + Snake.caseName(field) + "_app"
+                    + " ON " + shape.table + " (tenant_id, entity_id, "
+                    + shape.indexTarget(field)
                     + ") WHERE NOT deleted");
         }
         if (displayIndexed) {
@@ -385,8 +413,8 @@ public class Materializer {
                 CREATE OR REPLACE FUNCTION %s() RETURNS trigger AS $$
                 BEGIN
                   IF TG_OP = 'INSERT' AND NEW.entity_id = ANY(%s::text[]) THEN
-                    INSERT INTO %s (id, tenant_id, version, created_at, updated_at, created_by, updated_by, deleted, data)
-                    VALUES (NEW.id, NEW.tenant_id, NEW.version, NEW.created_at, NEW.updated_at, NEW.created_by, NEW.updated_by, NEW.deleted, NEW.data);
+                    INSERT INTO %s (id, tenant_id, entity_id, version, created_at, updated_at, created_by, updated_by, deleted, data)
+                    VALUES (NEW.id, NEW.tenant_id, NEW.entity_id, NEW.version, NEW.created_at, NEW.updated_at, NEW.created_by, NEW.updated_by, NEW.deleted, NEW.data);
                   ELSIF TG_OP = 'UPDATE' AND NEW.entity_id = ANY(%s::text[]) THEN
                     UPDATE %s SET version = NEW.version, updated_at = NEW.updated_at, updated_by = NEW.updated_by,
                                    deleted = NEW.deleted, data = NEW.data WHERE id = NEW.id;

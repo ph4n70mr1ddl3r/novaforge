@@ -434,30 +434,94 @@ public class MetadataStore {
     // --- environments + promotions (PHASE-8 §2/§4) ---
 
     public record EnvironmentRow(UUID appId, String env, int pinnedVersion,
-                                 UUID envTenantId, UUID envAppId) {
+                                 UUID envTenantId, UUID envAppId, String status,
+                                 UUID provisionKey) {
     }
 
     public Optional<EnvironmentRow> environment(UUID tenantId, UUID appId, String env) {
         return jdbc.query("""
-                SELECT app_id, env, pinned_version, env_tenant_id, env_app_id FROM md_environments
+                SELECT app_id, env, pinned_version, env_tenant_id, env_app_id, status,
+                       provision_key FROM md_environments
                  WHERE tenant_id = ? AND app_id = ? AND env = ?""",
                 (rs, i) -> new EnvironmentRow(rs.getObject("app_id", UUID.class), rs.getString("env"),
                         rs.getInt("pinned_version"), rs.getObject("env_tenant_id", UUID.class),
-                        rs.getObject("env_app_id", UUID.class)),
+                        rs.getObject("env_app_id", UUID.class), rs.getString("status"),
+                        rs.getObject("provision_key", UUID.class)),
                 tenantId, appId, env).stream().findFirst();
     }
 
     public List<EnvironmentRow> environments(UUID tenantId, UUID appId) {
         return jdbc.query("""
-                SELECT app_id, env, pinned_version, env_tenant_id, env_app_id FROM md_environments
+                SELECT app_id, env, pinned_version, env_tenant_id, env_app_id, status,
+                       provision_key FROM md_environments
                  WHERE tenant_id = ? AND app_id = ? ORDER BY env""",
                 (rs, i) -> new EnvironmentRow(rs.getObject("app_id", UUID.class), rs.getString("env"),
                         rs.getInt("pinned_version"), rs.getObject("env_tenant_id", UUID.class),
-                        rs.getObject("env_app_id", UUID.class)),
+                        rs.getObject("env_app_id", UUID.class), rs.getString("status"),
+                        rs.getObject("provision_key", UUID.class)),
                 tenantId, appId);
     }
 
+    /**
+     * The first-promotion intent (V12): the row lands BEFORE the remote provisioning
+     * calls — status 'provisioning', the version pinned, the environment identity
+     * blank. A crash past this point is a visible dangling intent a retry converges
+     * (provisioning is keyed on tenant/app/env), never a silently leaked tenant.
+     * Only first provisions write an intent: an existing environment row is left
+     * untouched.
+     */
     @Transactional
+    public void recordProvisionIntent(UUID tenantId, UUID appId, String env, int version,
+                                      UUID provisionKey, UUID actorId) {
+        jdbc.update("""
+                INSERT INTO md_environments (id, tenant_id, app_id, env, pinned_version,
+                                             env_tenant_id, env_app_id, status, provision_key,
+                                             created_by, updated_by)
+                VALUES (?, ?, ?, ?, ?, NULL, NULL, 'provisioning', ?, ?, ?)
+                ON CONFLICT (tenant_id, app_id, env) DO UPDATE
+                   SET pinned_version = EXCLUDED.pinned_version,
+                       status = 'provisioning',
+                       provision_key = EXCLUDED.provision_key,
+                       updated_at = now(), updated_by = EXCLUDED.updated_by
+                 WHERE md_environments.env_tenant_id IS NULL""",
+                UUID.randomUUID(), tenantId, appId, env, version, provisionKey,
+                actorId, actorId);
+    }
+
+    /** Completion: the provisioned identity lands and the intent goes active. */
+    public void completeProvision(UUID tenantId, UUID appId, String env,
+                                  UUID envTenantId, UUID envAppId, UUID actorId) {
+        jdbc.update("""
+                UPDATE md_environments
+                   SET env_tenant_id = ?, env_app_id = ?, status = 'active',
+                       updated_at = now(), updated_by = ?
+                 WHERE tenant_id = ? AND app_id = ? AND env = ?""",
+                envTenantId, envAppId, actorId, tenantId, appId, env);
+    }
+
+    /** Every environment row, with its source workspace — the boot reconciler's input. */
+    public java.util.List<EnvironmentRefRow> allEnvironments() {
+        return jdbc.query("""
+                SELECT tenant_id, app_id, env, pinned_version, env_tenant_id, env_app_id,
+                       status FROM md_environments ORDER BY created_at""",
+                (rs, i) -> new EnvironmentRefRow(rs.getObject("tenant_id", UUID.class),
+                        rs.getObject("app_id", UUID.class), rs.getString("env"),
+                        rs.getInt("pinned_version"), rs.getObject("env_tenant_id", UUID.class),
+                        rs.getObject("env_app_id", UUID.class), rs.getString("status")));
+    }
+
+    /** The reconciler's view: an environment with the tenant that owns it. */
+    public record EnvironmentRefRow(UUID tenantId, UUID appId, String env, int pinnedVersion,
+                                    UUID envTenantId, UUID envAppId, String status) {
+    }
+
+    public void pinVersion(UUID tenantId, UUID appId, String env, int version) {
+        jdbc.update("""
+                UPDATE md_environments SET pinned_version = ?, updated_at = now()
+                 WHERE tenant_id = ? AND app_id = ? AND env = ?""",
+                version, tenantId, appId, env);
+    }
+
     public void pinEnvironment(UUID tenantId, UUID appId, String env, int version,
                                UUID envTenantId, UUID envAppId, UUID actorId) {
         jdbc.update("""
