@@ -1,0 +1,31 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+# Disruption posture (twenty-third pass): one budget per component, each
+# selecting exactly that component's pods — the same selector shape the
+# workload and networkpolicy templates already carry, so a component renamed
+# here must be renamed there too. maxUnavailable: 1, deliberately NOT
+# minAvailable: 1: this stack ships single replicas by POSTURE (Chart.yaml),
+# and minAvailable: 1 against one pod blocks EVERY voluntary eviction — the
+# budget becomes a wedge that hangs the drain on any node the component lands
+# on. maxUnavailable registers the budget (visibility into what may drain,
+# future-proofing the day a component scales) while each single replica still
+# drains. Switch the field to minAvailable when a component scales past 1.
+# The minio-init Job is deliberately absent: Jobs are not evictable pods in
+# the PDB sense — a one-shot bootstrap pod is no maintained replica for a
+# budget to guard, and sweeping it into a selector would only muddy the
+# arithmetic (the bucket bootstrap must never gate a drain anyway).
+{{- range $component := list "postgres" "kafka" "redis" "keycloak" "tempo" "minio" "clamav" }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: novaforge-{{ $component }}
+  labels:
+  {{- include "novaforge-infra.labels" $ | nindent 4 }}
+    component: {{ $component }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" $ "component" $component) | nindent 6 }}
+{{- end }}
+{{- end }}

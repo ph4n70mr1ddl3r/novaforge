@@ -2475,3 +2475,76 @@ with no CI image publish (skaffold's gitCommit override is the working path),
 actions on major-version tags rather than SHAs — plus the prior deliberate
 set (delegation read-scope, M11/M12, sandbox pools, the stuck-running job
 row, the production-budget-duration observation limit).
+
+## Twenty-Third Pass — 2026-08-31 (the remaining posture deferrals close: PDB/HPA, immutable images + CI publish, SHA-pinned actions)
+
+### The e221937 re-audit
+
+The twelve charts' ServiceAccount/NetworkPolicy templates held under fresh
+review — the policy semantics are right (selection for both policyTypes is
+default-deny; the allow lists are the env wiring), the DNS/kube-dns peer
+shape is correct (namespace+pod selectors AND within one `to` entry), and the
+gateway's nine-backend egress block renders every peer. The extended gate's
+own new checks were re-audited too and one real bug in them was fixed on the
+spot: the final chart-name derivation read the render DIRECTORY instead of
+the file basename (flagging `tmp.xxxxx` as a chart-less render).
+
+### Disruption budgets and autoscaling, all twelve charts
+
+Every workload chart registers a PodDisruptionBudget — deliberately
+`maxUnavailable: 1`, not `minAvailable: 1`: v1 ships replicaCount 1, where
+minAvailable blocks EVERY voluntary eviction and hangs node drains;
+maxUnavailable registers the budget (visibility, future-proofing) while the
+single replica still drains, and the template documents the switch point.
+The infra chart budgets each component (the minio-init Job is excluded — a
+one-shot bootstrap pod has no maintained replica to budget). HPA templates
+ship enabled-by-default-OFF with the why in values (no metrics-server on the
+kind cluster; an HPA without one reads <unknown> and scales nothing), and
+enabling one removes the Deployment's `replicas` field — a hard-coded count
+fights the autoscaler.
+
+### Immutable images + the CI publish leg
+
+A new `images` job (push-to-main only, after build/frontend/charts/clamav
+gates; packages: write) builds all eleven service images through jib to
+GHCR under the IMMUTABLE commit SHA — the tag pattern the chart values now
+document (`helm upgrade --set image.tag=<sha>`); `0.1.0-SNAPSHOT` remains
+the local dev default and skaffold's per-build override stays the dev path.
+The publish loop itself was audited before landing: the first draft's
+`echo | while` pipe would have swallowed a failed middle image (pipeline
+status is the last command's — the exact masked-failure class the eighteenth
+pass recorded); it is a here-string loop now, where set -e governs every
+invocation.
+
+### SHA-pinned actions
+
+All fourteen `uses` references across the workflows are pinned to the exact
+commit each major tag named when this pass landed (resolved via
+`git ls-remote`, not guessed), with the intended major version kept as a
+trailing comment. A tag is a moving target; the pin makes a compromised or
+breaking tag update unable to rewrite the pipeline in place.
+
+### The gate's contract grows again
+
+check-charts.sh now also requires every chart to render a PodDisruptionBudget
+(defaults render them on) — bite-proven: removing one PDB fails the gate with
+the chart named; restored, the gate is green across all twelve charts:
+lint, render, file drift, DNS consistency (16 hosts), isolation posture (19
+pods, 12 default-denies), and 18 registered disruption budgets.
+
+### Verification (this pass)
+
+Full serial `./mvnw verify` **BUILD SUCCESS, honest exit 0** — 499 backend
+tests, zero failures (the pass touches charts and CI only; the suites re-ran
+as the honest current-tree check). The chart gate CLEAN as above.
+
+### Recorded open after this pass
+
+The posture ledger is empty: every named deferral (infra charts, flat DNS,
+NetworkPolicy/SA, PDB/HPA, immutable tags + CI publish, SHA-pinned actions)
+is now a landed artifact under the gate. What remains recorded is the prior
+deliberate set — delegation read-scope, M11/M12, sandbox pools, the
+stuck-running job row, the production-budget-duration observation limit —
+plus this pass's honest boundary: the infra chart's runtime behavior is
+render-verified and empirically uid-checked, not yet live-cluster-observed
+(the kind-on-podman flow is the recorded environment for that).

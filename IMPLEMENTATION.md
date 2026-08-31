@@ -2690,3 +2690,19 @@ infra chart's first boot is honest.**
 Verified: full serial `./mvnw verify` BUILD SUCCESS (honest exit 0; 499
 tests); the chart gate CLEAN across 12 charts including the new posture
 checks. Recorded open: PDB/HPA, image tags/CI publish, SHA-pinned actions.
+
+**The twenty-third pass (2026-08-31) — the posture ledger empties.**
+
+- Disruption budgets register on every workload (maxUnavailable: 1 — the
+  single-replica-safe form; minAvailable would hang drains), HPAs ship
+  enabled-off with the metrics-server rationale and replicas-field
+  delegation, the CI images job publishes SHA-immutable GHCR tags for all
+  eleven services on main, and every workflow action is SHA-pinned.
+- The chart gate enforces the newest contracts from the render alone — PDB
+  presence joins isolation posture, DNS consistency, drift, and lint/render —
+  and each new check is bite-proven before trusting it.
+
+Verified: full serial `./mvnw verify` BUILD SUCCESS (honest exit 0; 499
+tests); chart gate CLEAN across 12 charts, 18 disruption budgets. The
+remaining recorded set is the prior deliberate decisions and the honest
+not-yet-live-cluster observation boundary for the infra chart.

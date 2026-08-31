@@ -5,7 +5,11 @@ metadata:
   labels:
   {{- include "novaforge-notification-service.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
+  {{- else }}
+  # the HPA owns the count now — a hard-coded replicas field fights the autoscaler
+  {{- end }}
   selector:
     matchLabels:
     {{- include "novaforge-notification-service.selectorLabels" . | nindent 6 }}

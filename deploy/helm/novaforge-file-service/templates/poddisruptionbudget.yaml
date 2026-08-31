@@ -1,0 +1,23 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+# Disruption posture (twenty-third pass): the budget the eviction API consults
+# before VOLUNTARILY taking one of these pods (node drain, host maintenance —
+# kubectl drain is the caller operators meet); without one no budget applies
+# and evictions proceed unconstrained. maxUnavailable: 1, deliberately NOT
+# minAvailable: 1: v1 ships replicaCount 1 (values.yaml), and minAvailable: 1
+# against a single pod blocks EVERY voluntary eviction — the budget becomes a
+# wedge that hangs the drain on any node the pod lands on. maxUnavailable
+# registers the budget (visibility into what may drain, future-proofing the
+# day replicas scale) while the single replica still drains. Switch the field
+# to minAvailable when replicaCount scales past 1.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-novaforge-file-service
+  labels:
+  {{- include "novaforge-file-service.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+    {{- include "novaforge-file-service.selectorLabels" . | nindent 6 }}
+{{- end }}

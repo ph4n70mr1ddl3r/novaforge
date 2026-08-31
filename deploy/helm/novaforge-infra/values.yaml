@@ -77,3 +77,22 @@ serviceAccount:
 # silent false security.
 networkPolicy:
   enabled: true
+
+# Disruption posture (twenty-third pass): one PodDisruptionBudget per
+# component (templates/poddisruptionbudget.yaml — postgres, kafka, redis,
+# keycloak, tempo, minio, clamav; NOT the minio-init Job: Jobs are not
+# evictable pods in the PDB sense, and a one-shot bootstrap pod is no
+# maintained replica to budget). maxUnavailable: 1 on purpose — single
+# replicas by POSTURE mean minAvailable: 1 would block every voluntary
+# eviction and hang node drains; the template's comment carries the full
+# rationale.
+podDisruptionBudget:
+  enabled: true
+
+# no HPA: single-node infra. postgres is a single primary (a second instance
+# is replication topology, not a CPU-scaled replica), kafka is single-node
+# KRaft by design (controller quorum 1@localhost:9093 — the egress note in
+# networkpolicy.yaml), and the rest are dev-sized sinks; horizontally scaling
+# any of them is not a v1 concern, so this chart ships no hpa.yaml at all.
+# When a component outgrows the dev cluster it leaves this chart for a real
+# operator or managed service (Chart.yaml's POSTURE) anyway.

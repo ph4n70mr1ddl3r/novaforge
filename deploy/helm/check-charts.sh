@@ -50,6 +50,7 @@ render_dir = sys.argv[1]
 services = set()
 accounts = set()
 policies = {}
+budgets = {}
 pods = []
 env_hosts = set()
 # A bare value is a HOST only when its env NAME says so — anything else
@@ -88,6 +89,8 @@ for path in glob.glob(render_dir + "/*.yaml"):
         elif kind == "NetworkPolicy":
             types = set((obj.get("spec") or {}).get("policyTypes") or [])
             policies[chart] = policies.get(chart, set()) | types
+        elif kind == "PodDisruptionBudget":
+            budgets[chart] = budgets.get(chart, 0) + 1
         elif kind in ("Deployment", "StatefulSet", "Job", "CronJob", "ReplicaSet"):
             template = (obj.get("spec") or {}).get("template")
             ps = (template or {}).get("spec") if isinstance(template, dict) else None
@@ -127,6 +130,11 @@ for chart, workload, sa, automount in pods:
         print("CHART-GATE FAIL: %s/%s does not disable token automount at the pod level" % (chart, workload))
         ok = False
 for chart in sorted(os.path.basename(p)[:-5] for p in glob.glob(render_dir + "/*.yaml")):
+    if budgets.get(chart, 0) == 0:
+        # the disruption budget is the twenty-third pass's contract: a voluntary
+        # eviction (node drain) must meet a registered budget even at replicaCount 1
+        print("CHART-GATE FAIL: %s renders no PodDisruptionBudget" % chart)
+        ok = False
     if chart not in policies:
         print("CHART-GATE FAIL: %s renders no NetworkPolicy at all" % chart)
         ok = False
@@ -134,8 +142,8 @@ for chart in sorted(os.path.basename(p)[:-5] for p in glob.glob(render_dir + "/*
         print("CHART-GATE FAIL: %s carries no default-deny (Ingress+Egress) NetworkPolicy" % chart)
         ok = False
 if ok:
-    print("isolation posture: %d workload pods on named ServiceAccounts, token automount off; %d charts default-deny both ways"
-          % (len(pods), len(policies)))
+    print("isolation posture: %d workload pods on named ServiceAccounts, token automount off; %d charts default-deny both ways; %d disruption budgets registered"
+          % (len(pods), len(policies), sum(budgets.values())))
 
 sys.exit(0 if ok else 1)
 PY

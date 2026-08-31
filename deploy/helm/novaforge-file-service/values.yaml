@@ -1,3 +1,8 @@
+# Image tags (twenty-third pass): 0.1.0-SNAPSHOT is the LOCAL DEV default —
+# skaffold overrides it per-build with its gitCommit tag, and CI's images job
+# publishes immutable <commit-sha> tags to GHCR on every push to main
+# (`helm upgrade --set image.tag=<sha>`); IfNotPresent is correct for both —
+# the immutability lives in the tag, not the pull policy.
 image:
   repository: ghcr.io/novaforge/novaforge-file-service
   tag: "0.1.0-SNAPSHOT"
@@ -117,3 +122,24 @@ serviceAccount:
 # enforces no network policy — an unenforced policy is silent false security.
 networkPolicy:
   enabled: true
+
+# Disruption posture (twenty-third pass): the eviction budget
+# (templates/poddisruptionbudget.yaml) node drains consult before taking this
+# service's pod — registering it makes drain behavior visible and deliberate
+# instead of best-effort. The maxUnavailable-vs-minAvailable rationale lives
+# with the template; flip the field there when replicas scale.
+podDisruptionBudget:
+  enabled: true
+
+# Autoscaling (twenty-third pass): OFF by default, on purpose: v1 ships one
+# replica per service and the kind dev cluster runs no metrics-server by
+# default, so an enabled HPA has no metrics to act on — utilization reads
+# <unknown>, nothing ever scales, and the Deployment drops its replicas field
+# for an autoscaler that cannot decide: pods unschedulable-at-scale for
+# nothing, exactly when scaling was the point. Flip this only on clusters
+# that actually run a metrics-server; the bounds below are dev-sized.
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 75

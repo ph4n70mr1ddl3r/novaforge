@@ -1,5 +1,10 @@
 name: build
 
+# Actions are SHA-pinned (twenty-third pass): a major-version tag is a moving
+# target, and a compromised or breaking tag update rewrites this pipeline in
+# place — the pin is the commit each tag named when this file landed (the
+# trailing comment keeps the intended major version readable).
+
 on:
   pull_request:
   push:
@@ -18,10 +23,10 @@ jobs:
     # default (this repo's own history includes surefire hangs — they happen)
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Set up Temurin 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:
           distribution: temurin
           java-version: "21"
@@ -35,7 +40,7 @@ jobs:
 
       - name: Upload Surefire reports on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: surefire-reports
           path: "**/target/surefire-reports/"
@@ -49,14 +54,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 11
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
           cache: pnpm
@@ -77,10 +82,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a
         with:
           version: "3.16.4"
 
@@ -102,10 +107,10 @@ jobs:
     # default (this repo's own history includes surefire hangs — they happen)
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Set up Temurin 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:
           distribution: temurin
           java-version: "21"
@@ -116,12 +121,73 @@ jobs:
 
       - name: Upload Surefire reports on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: surefire-reports-clamav
           path: "**/target/surefire-reports/"
           if-no-files-found: ignore
           retention-days: 7
+
+  images:
+    # The image-publish leg (twenty-third pass, closing the mutable-tag deferral):
+    # every push to main builds all eleven service images to GHCR under the
+    # IMMUTABLE commit SHA — the tag pattern the charts' values comments name
+    # (`helm upgrade --set image.tag=<sha>`); 0.1.0-SNAPSHOT remains the local
+    # dev default only. PRs skip this: the build job already verified them, and
+    # pull-request runs carry no registry credentials by design.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, frontend, charts, clamav-on]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
+
+      - name: Set up Temurin 21
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3   # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build and push SHA-tagged images (jib)
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          sha="${GITHUB_SHA}"
+          # module -> image (the data-runtime artifact lives under api/)
+          pairs="services/gateway ghcr.io/novaforge/novaforge-gateway
+          services/metadata-service ghcr.io/novaforge/novaforge-metadata-service
+          services/data-runtime/api ghcr.io/novaforge/novaforge-data-runtime
+          services/audit-service ghcr.io/novaforge/novaforge-audit-service
+          services/script-engine ghcr.io/novaforge/novaforge-script-engine
+          services/workflow-service ghcr.io/novaforge/novaforge-workflow-service
+          services/scheduler-service ghcr.io/novaforge/novaforge-scheduler-service
+          services/notification-service ghcr.io/novaforge/novaforge-notification-service
+          services/reporting-service ghcr.io/novaforge/novaforge-reporting-service
+          services/integration-service ghcr.io/novaforge/novaforge-integration-service
+          services/file-service ghcr.io/novaforge/novaforge-file-service"
+          mods=$(echo "$pairs" | awk '{printf "%s%s", sep, $1; sep=","}')
+          # one reactor pass builds every module's artifact into the local repo;
+          # jib is goal-invoked per module after (no execution binding by design)
+          ./mvnw -B -ntp -pl "$mods" -am -DskipTests package
+          # here-string, NOT a pipe: a piped while runs in a subshell whose
+          # status is only the last iteration's — a failed middle image would
+          # vanish. The here-string keeps the loop in this shell, where set -e
+          # governs every jib invocation.
+          while read -r mod image; do
+            [ -z "$mod" ] && continue
+            echo "::group::jib $image:$sha"
+            ./mvnw -B -ntp -pl "$mod" jib:build \
+              -Djib.to.image="$image:$sha" \
+              -Djib.to.auth.username="$GHCR_USER" \
+              -Djib.to.auth.password="$GHCR_TOKEN"
+            echo "::endgroup::"
+          done <<< "$pairs"
 
   integration-podman:
     # The PHASE-1 §8 Podman-socket runner (quay.io/podman/stable labels): the same
@@ -132,10 +198,10 @@ jobs:
     # GitHub's 360-minute default on runner-hours
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Set up Temurin 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:
           distribution: temurin
           java-version: "21"
@@ -149,7 +215,7 @@ jobs:
 
       - name: Upload Surefire reports on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: surefire-reports-podman
           path: "**/target/surefire-reports/"

@@ -1,0 +1,32 @@
+{{- if .Values.autoscaling.enabled }}
+# Autoscaling (twenty-third pass): the HPA that owns the replica count when
+# enabled — the Deployment omits its replicas field on that path, because a
+# hard-coded replicas fights the autoscaler: every apply snaps the count back
+# to the chart's number and flaps whatever scale the HPA just chose. CPU
+# utilization is the only signal wired, and it is measurable because the
+# deployment carries a CPU request (values.yaml resources — a Utilization
+# target without a request reads <unknown> forever and never scales anything).
+# Default OFF; values.yaml carries why.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Release.Name }}-novaforge-notification-service
+  labels:
+  {{- include "novaforge-notification-service.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Release.Name }}-novaforge-notification-service
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    # CPU 75: scale before the JVM saturates while staying above its idle
+    # jitter, so a loaded service scales once — not on every GC pause
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
