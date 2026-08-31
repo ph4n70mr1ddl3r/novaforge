@@ -184,7 +184,7 @@ public class SuspensionService {
                             : String.valueOf(instance.get("after_step")),
                     instance.get("on_reject") == null ? null
                             : String.valueOf(instance.get("on_reject")),
-                    approved));
+                    approved, instanceId));
             jdbc.update("""
                     UPDATE wf_suspended_flows SET status = ?, updated_at = now()
                      WHERE id = ?""", approved ? "RESUMED" : "REJECTED", instanceId);

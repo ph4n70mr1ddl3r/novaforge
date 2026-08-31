@@ -199,6 +199,27 @@ public class RecordStore {
     }
 
     /** Scalar count for roll-ups. */
+    /**
+     * The resume idempotency claim (V6): the first execution of an instanceId-keyed
+     * resume inserts and returns true; a retried delivery of the same key (the
+     * workflow side's remote-succeeds-local-commit-fails shape) returns false — the
+     * engine already ran and must not re-enter.
+     */
+    public boolean claimResume(UUID instanceId, UUID tenantId, UUID recordId, boolean approved) {
+        Integer existing = jdbc.queryForObject(
+                "SELECT count(*) FROM resume_claims WHERE instance_id = ? AND approved = ?",
+                Integer.class, instanceId, approved);
+        if (existing != null && existing > 0) {
+            return false;
+        }
+        jdbc.update("""
+                INSERT INTO resume_claims (instance_id, tenant_id, record_id, approved)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT (instance_id) DO NOTHING""",
+                instanceId, tenantId, recordId, approved);
+        return true;
+    }
+
     public Long countValue(String sql, List<Object> params) {
         return jdbc.queryForObject(sql, Long.class, params.toArray());
     }

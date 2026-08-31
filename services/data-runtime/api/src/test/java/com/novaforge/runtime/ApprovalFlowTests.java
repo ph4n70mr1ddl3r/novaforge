@@ -199,6 +199,57 @@ class ApprovalFlowTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("resume idempotency: a retried same-instanceId delivery skips the re-entry")
+    void resumeClaimCollapsesRetriedDeliveries() throws Exception {
+        // Anti-regression (2026-08-31, sixteenth pass): the workflow side's
+        // remote-succeeds-local-commit-fails retry re-entered the engine and re-ran
+        // the approval subgraph (duplicate transitions, duplicate created records).
+        // The instanceId keys a claim inside the runtime's resume transaction.
+        String id = createOrder(100);
+        SUSPENSIONS.clear();
+        mockMvc.perform(patch("/api/v1/runtime/PurchaseOrder/" + id).with(jwtFor())
+                        .contentType("application/json")
+                        .content("{\"version\":1,\"label\":\"submit\"}"))
+                .andExpect(status().isOk());
+        ApprovalClient.Suspension suspension = SUSPENSIONS.getFirst();
+        String instanceKey = UUID.randomUUID().toString();
+
+        String body = MAPPER.writeValueAsString(Map.of(
+                "tenantId", suspension.tenantId().toString(),
+                "app", suspension.appApiName(),
+                "entityApiName", suspension.entityApiName(),
+                "recordId", suspension.recordId().toString(),
+                "hook", String.valueOf(suspension.hookName()),
+                "afterStep", suspension.afterStep() == null ? ""
+                        : suspension.afterStep(),
+                "onReject", "",
+                "approved", true,
+                "instanceId", instanceKey));
+        mockMvc.perform(post("/api/v1/hooks/resume").with(serviceJwt())
+                        .contentType("application/json").content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("resumed"));
+        mockMvc.perform(get("/api/v1/runtime/PurchaseOrder/" + id).with(jwtFor()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"));
+
+        // the retried delivery of the SAME key: already-resumed, no re-entry
+        String statusAfter = mockMvc.perform(get("/api/v1/runtime/PurchaseOrder/" + id)
+                        .with(jwtFor()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        int version = MAPPER.readTree(statusAfter).get("version").asInt();
+        mockMvc.perform(post("/api/v1/hooks/resume").with(serviceJwt())
+                        .contentType("application/json").content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("already-resumed"));
+        // the record did not move again (no second re-entry's version bump)
+        mockMvc.perform(get("/api/v1/runtime/PurchaseOrder/" + id).with(jwtFor()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value(version));
+    }
+
+    @Test
     @DisplayName("reject routes the step's own onReject subgraph (§4)")
     void approvalJourneyReject() throws Exception {
         String id = createOrder(100);

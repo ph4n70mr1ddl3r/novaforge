@@ -2155,6 +2155,16 @@ public class RecordEngine {
         return shaped;
     }
 
+    /**
+     * The resume idempotency claim (V6, sixteenth pass): true when this
+     * instanceId-keyed resume has not run yet (the claim is recorded), false when a
+     * retried delivery arrives — the engine already ran and must not re-enter. The
+     * api layer reaches the claim through the engine (no layer skips).
+     */
+    public boolean claimResume(UUID instanceId, UUID tenantId, UUID recordId, boolean approved) {
+        return records.claimResume(instanceId, tenantId, recordId, approved);
+    }
+
     private static PlatformException notFound(String entityApiName, UUID id) {
         return new PlatformException(PlatformErrorCode.NOT_FOUND,
                 entityApiName + "/" + id + " not found");

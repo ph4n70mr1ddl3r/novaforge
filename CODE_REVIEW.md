@@ -1668,3 +1668,73 @@ SSRF pins), data-runtime storage/api/engine green with the lock-mode change,
 frontend 157 vitest (+2: the every-catalog-id render pin — which now guards the
 five-loader regression class — and the composer New-dashboard pin) + typecheck
 clean. Full serial `./mvnw verify` green end to end.
+
+## Sixteenth Pass — 2026-08-31 (the bounded recorded-open set closes)
+
+### H-16P1 — no request-size cap anywhere: the anonymous route was an unauthenticated OOM vector
+
+The platform had no body limit — no route filter, no servlet max-* — and the one
+anonymous route buffers the entire payload into a `byte[]` before HMAC
+verification. `RequestSizeCapFilter` (edge, inside the rate limiter) rejects a
+declared Content-Length over the cap with 413 before a byte is read, and truncates
+chunked/lying streams at the cap (EOF at the limit — never a silent partial
+payload). Default 10 MB (`novaforge.request-cap-bytes`). Pinned ×3: the 413
+before-read, the chunked truncation reading exactly the cap (never the 4096 behind
+it), and normal bodies passing untouched.
+
+### H-16P2 — spine events were silently dropped: no error handler, no dead letters
+
+Boot's listener defaults retry a failing record nine times with zero backoff, then
+log-and-skip — for the workflow record consumer that is silent data loss (a
+metadata blip while an event-start matched meant the process never started and the
+offset committed anyway). `ConsumerErrorConfig` gives every workflow listener a
+`DefaultErrorHandler` with real exponential backoff (1 s doubling to a 60 s
+ceiling, ten attempts) and a dead-letter publisher: after the budget the record
+lands on `<topic>.DLT.novaforge-workflow`, durable and replayable — never skipped.
+Envelope-shaped failures (IllegalArgumentException) skip the retry budget and go
+straight to the DLT — no backoff can fix a malformed payload.
+
+### H-16P3 — the escalation target's role is now validated at breach
+
+A replacement addressed to a role nobody holds (a typo'd ghost, or a role emptied
+since authoring) was an OPEN task no inbox would ever match, with null timers so
+it could never breach again — the approval wedged permanently, precisely when SLAs
+were already being ignored. `RoleLookup` grew a `holdersOf` leg (the runtime's
+existing by-role admin listing); at breach, an unheld target keeps the task OPEN
+and resolvable while the breach rides the spine (the misconfiguration is visible).
+An unreachable runtime answers "held" — the breach path's availability beats the
+fence. Pinned (a ghost-role escalation stays OPEN, breaches audibly, and the
+approval still resolves).
+
+### H-16P4 — the resume re-entry is idempotent on the suspension's instanceId
+
+The workflow side's remote resume and its local commit are one dual-write: when
+the runtime leg succeeds and the workflow transaction fails to commit, the
+approver's retry re-entered the engine and re-ran the approval subgraph —
+duplicate state transitions, duplicate created records, duplicated notification
+side effects. The `Resume` record and the `/api/v1/hooks/resume` request carry the
+suspension's `instanceId`; the runtime records a `resume_claims` row (V6) inside
+the resume transaction — the first execution inserts it, a retried delivery of the
+same key answers `already-resumed` without re-entering (layering preserved: the
+claim lives in the storage SPI behind an engine facade). Pinned end-to-end (the
+retry answers already-resumed; the record's version does not move again).
+
+### Recorded open after this pass
+
+The sandbox heap cap remains the sampled tripwire (single-statement allocation
+bombs; per-context metering is GraalVM Enterprise — containment wants ADR-003's
+process-isolation pools, a scoped pass of its own). The BPMN bridge's single
+`resolution` variable cross-contaminates parallel-gateway/multi-instance outcomes
+(per-task variable naming is a contract change for authored gateway conditions —
+a design decision, not a mechanical fix). Delegation replacements keep the
+original role for visibility while `requireAccess` accepts any holder of it (the
+claim CAS closed the steal; whether delegation should narrow the read scope is a
+product decision). M11/M12 remain deferred by decision.
+
+### Verification (this pass)
+
+gateway 20 (+3: the cap pins), workflow 27 (+2: the unheld-target and
+notify-only-breach pins now coexisting), data-runtime api 27 (+1: the resume
+idempotency pin) with the layering rule green (the claim reached storage through
+the engine facade), notification/script/model/engine/storage suites green. Full
+serial `./mvnw verify` green end to end.

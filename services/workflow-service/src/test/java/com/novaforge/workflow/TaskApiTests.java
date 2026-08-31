@@ -105,6 +105,36 @@ class TaskApiTests extends PostgresTestBase {
     io.micrometer.core.instrument.MeterRegistry meters;
 
     @Test
+    @DisplayName("an escalation target no user holds keeps the task OPEN — no ghost-role wedge")
+    void unheldEscalationTargetStaysOpen() throws Exception {
+        // Anti-regression (2026-08-31, sixteenth pass): the replacement was addressed
+        // to the raw authored role with no reachability check — a typo'd ghost (or a
+        // role emptied later) produced an OPEN task no inbox ever matches, with null
+        // timers so it could never breach again: the approval wedged permanently.
+        var result = suspensions.request(TENANT, "Quiet3", "PurchaseOrder",
+                "Quiet3.PurchaseOrder", UUID.randomUUID(), "submit", "a1", "s9", null,
+                "Purch.manager", null, "any", "PT1H", "role:Purch.ghostRole", CLERK,
+                "DRAFT->SUBMITTED");
+        UUID instance = UUID.fromString(String.valueOf(result.get("instanceId")));
+        UUID taskId = jdbc.queryForObject(
+                "SELECT id FROM wf_tasks WHERE instance_id = ?", UUID.class, instance);
+
+        jdbc.update("UPDATE wf_tasks SET warn_at = now() - interval '1 second', "
+                + "due_at = now() - interval '1 second' WHERE instance_id = ?", instance);
+        slaScanner.scanOnce();
+
+        // the breach rode the spine; the task stayed OPEN and resolvable
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_tasks WHERE id = ?", String.class, taskId))
+                .isEqualTo("OPEN");
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
+                "SELECT event_type FROM wf_event_outbox", String.class)).contains("sla.breach");
+        mockMvc.perform(post("/api/v1/workflow/tasks/" + taskId + "/approve")
+                        .with(jwtFor(MANAGER)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("a notify-only breach (no escalation target) leaves the task OPEN and resolvable")
     void notifyOnlyBreachStaysOpen() throws Exception {
         // Anti-regression (2026-08-31, fifteenth pass): ESCALATED is terminal and
@@ -153,7 +183,22 @@ class TaskApiTests extends PostgresTestBase {
         @Bean
         @Primary
         RoleLookup roleLookup() {
-            return (tenantId, actor) -> ROLES.getOrDefault(actor.toString(), List.of());
+            return new RoleLookup() {
+                @Override
+                public List<String> of(UUID tenantId, UUID actor) {
+                    return ROLES.getOrDefault(actor.toString(), List.of());
+                }
+
+                @Override
+                public List<UUID> holdersOf(UUID tenantId, String role) {
+                    // inverted from the ROLES map: the escalation-target fence reads
+                    // exactly what the inbox would match
+                    return ROLES.entrySet().stream()
+                            .filter(entry -> entry.getValue().contains(role))
+                            .map(entry -> UUID.fromString(entry.getKey()))
+                            .toList();
+                }
+            };
         }
 
         /** Tenant names — the scratch gate's stand-in for the runtime admin read. */

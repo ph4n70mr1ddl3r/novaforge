@@ -44,6 +44,7 @@ public class SlaScanner {
     private final TaskService tasks;
     private final MeterRegistry meters;
     private final io.micrometer.tracing.Tracer tracer;
+    private final com.novaforge.workflow.roles.RoleLookup roles;
     /** One transaction per task's warn/breach block: the flip, its events, and the
      *  replacement commit together or not at all — a crash between the statements
      *  previously left a task terminalized with no replacement and no retry (a
@@ -52,11 +53,13 @@ public class SlaScanner {
 
     public SlaScanner(JdbcTemplate jdbc, TaskService tasks, MeterRegistry meters,
                       io.micrometer.tracing.Tracer tracer,
-                      org.springframework.transaction.PlatformTransactionManager transactions) {
+                      org.springframework.transaction.PlatformTransactionManager transactions,
+                      com.novaforge.workflow.roles.RoleLookup roles) {
         this.jdbc = jdbc;
         this.tasks = tasks;
         this.meters = meters;
         this.tracer = tracer;
+        this.roles = roles;
         this.perTask = new org.springframework.transaction.support.TransactionTemplate(transactions);
     }
 
@@ -144,6 +147,19 @@ public class SlaScanner {
                     + "(notify-only SLA, still resolvable)", task.get("task_id"));
             return 0;
         }
+        if (!escalationTargetReachable((UUID) task.get("tenant_id"), escalateTo)) {
+            // the target role has no holders in the tenant (a typo'd ghost, or a
+            // role emptied since authoring): a replacement addressed to it would be
+            // an OPEN task no inbox ever matches — the same permanent wedge as no
+            // target at all. The task stays OPEN and resolvable; the breach rides
+            // the spine so the misconfiguration is visible.
+            emit(task, "sla.breach", "OPEN");
+            counted("novaforge.sla.breach", appOf(task.get("entity_id")));
+            LOG.warn("sla breach escalation target {} has no holders in tenant {} — task {} "
+                    + "stays OPEN (fix the role binding)", escalateTo, task.get("tenant_id"),
+                    task.get("task_id"));
+            return 0;
+        }
         int escalated = jdbc.update("""
                 UPDATE wf_tasks SET status = 'ESCALATED', updated_at = now()
                  WHERE id = ? AND status = 'OPEN'""", task.get("id"));
@@ -165,6 +181,20 @@ public class SlaScanner {
                 (UUID) task.get("context_ref"), (UUID) task.get("instance_id"));
         LOG.warn("sla breach: task {} escalated to {}", task.get("task_id"), escalateTo);
         return 1;
+    }
+
+    /**
+     * The escalation-target fence: an unheld role produces an unmatchable
+     * replacement. Unknown (runtime unreachable) answers as held — availability of
+     * the breach path beats the fence.
+     */
+    private boolean escalationTargetReachable(UUID tenantId, String escalateTo) {
+        try {
+            List<UUID> holders = roles.holdersOf(tenantId, escalateTo);
+            return holders == null || !holders.isEmpty();
+        } catch (RuntimeException e) {
+            return true;
+        }
     }
 
     /** The §6 metrics: warn/breach counters labeled per app (the Grafana feed). */

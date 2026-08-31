@@ -12,4 +12,15 @@ public interface RoleLookup {
 
     /** The actor's roles in the tenant — platform set + app-scoped ({@code app.role}). */
     List<String> of(UUID tenantId, UUID actor);
+
+    /** Whether any user holds the role in the tenant — the escalation-target fence
+     *  (a role nobody holds produces an OPEN task no inbox ever matches). */
+    default boolean roleHeld(UUID tenantId, String role) {
+        return !holdersOf(tenantId, role).isEmpty();
+    }
+
+    /** The role's holders (the admin surface's by-role listing). */
+    default List<UUID> holdersOf(UUID tenantId, String role) {
+        return List.of();
+    }
 }

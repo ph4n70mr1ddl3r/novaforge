@@ -46,7 +46,9 @@ public class RestResumeClient implements ResumeClient {
                             "hook", resume.hook(),
                             "afterStep", resume.afterStep() == null ? "" : resume.afterStep(),
                             "onReject", resume.onRejectJson() == null ? "" : resume.onRejectJson(),
-                            "approved", resume.approved()))
+                            "approved", resume.approved(),
+                            "instanceId", resume.instanceId() == null ? ""
+                                    : resume.instanceId().toString()))
                     .retrieve()
                     .toBodilessEntity();
         } catch (Exception e) {

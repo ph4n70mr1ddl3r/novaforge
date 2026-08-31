@@ -10,7 +10,15 @@ import java.util.UUID;
 public interface ResumeClient {
 
     record Resume(UUID tenantId, String app, String entityApiName, UUID recordId,
-                  String hook, String afterStep, String onRejectJson, boolean approved) {
+                  String hook, String afterStep, String onRejectJson, boolean approved,
+                  UUID instanceId) {
+
+        /** The pre-instanceId shape (tests, older callers) — no dedupe key. */
+        Resume(UUID tenantId, String app, String entityApiName, UUID recordId,
+               String hook, String afterStep, String onRejectJson, boolean approved) {
+            this(tenantId, app, entityApiName, recordId, hook, afterStep, onRejectJson,
+                    approved, null);
+        }
     }
 
     /** Throws on failure — the caller records it on the suspended instance. */

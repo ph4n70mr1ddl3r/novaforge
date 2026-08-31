@@ -2459,3 +2459,28 @@ Verified: full serial `./mvnw verify` green end to end (23 modules); frontend
 contract, the resume idempotency key, escalation role validation, consumer
 DLT/error-handler configuration, the delegation read-scope decision) — each with
 its mechanism, none silently dropped.
+
+**Spec-review closeout (2026-08-31, sixteenth pass) — the bounded recorded-open
+set closes: the edge body cap, the spine's dead letters, the escalation fence,
+and the resume idempotency key.**
+
+- **The edge body cap** (H-16P1): a `RequestSizeCapFilter` at the gateway — 413 on
+  an over-cap declared length before any read, chunked streams truncated at the
+  cap. The one anonymous route's unbounded `byte[]` buffering was an
+  unauthenticated OOM vector the request-count limiter never saw. Pinned ×3.
+- **Dead letters for the spine** (H-16P2): every workflow listener carries a
+  DefaultErrorHandler with exponential backoff (1 s → 60 s, ten attempts) and a
+  DLT publisher — the nine-zero-backoff-retries-then-skip default was silent data
+  loss on record events.
+- **The escalation fence** (H-16P3): a breach target nobody holds keeps the task
+  OPEN and resolvable (the ghost-role wedge closed); `RoleLookup` grew the
+  holders leg over the runtime's existing admin listing. Pinned.
+- **Resume idempotency** (H-16P4): the suspension's instanceId keys a
+  `resume_claims` row (V6) inside the runtime's resume transaction — the
+  remote-succeeds-local-commit-fails retry answers `already-resumed` instead of
+  re-running the approval subgraph. Pinned end-to-end (version does not move).
+
+Verified: full serial `./mvnw verify` green end to end (23 modules); gateway 20,
+workflow 27, data-runtime api 27 — each with its new pin. Remaining
+recorded-open: the sandbox process-isolation pools, the BPMN per-task resolution
+contract, the delegation read-scope decision, M11/M12 by decision.

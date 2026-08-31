@@ -27,13 +27,14 @@ public class HookResumeController {
 
     private final RecordEngine engine;
 
+
     public HookResumeController(RecordEngine engine) {
         this.engine = engine;
     }
 
     public record ResumeRequest(String tenantId, String app, String entityApiName,
                                 String recordId, String hook, String afterStep,
-                                String onReject, boolean approved) {
+                                String onReject, boolean approved, String instanceId) {
     }
 
     @PostMapping("/resume")
@@ -43,6 +44,17 @@ public class HookResumeController {
         UUID recordId = UUID.fromString(request.recordId());
         FlowStep onReject = request.onReject() == null || request.onReject().isBlank()
                 ? null : MAPPER.readValue(request.onReject(), FlowStep.class);
+        // The instanceId-keyed claim: the workflow side's remote-succeeds-local-
+        // commit-fails retry re-entered the engine and re-ran the approval subgraph.
+        // The claim rides the resume's own transaction — the first execution inserts
+        // it, a retried delivery of the same key observes it and skips (the engine
+        // already ran; the workflow side simply re-commits its side).
+        UUID instanceId = request.instanceId() == null || request.instanceId().isBlank()
+                ? null : UUID.fromString(request.instanceId());
+        if (instanceId != null && !engine.claimResume(instanceId, tenantId, recordId,
+                request.approved())) {
+            return Map.of("status", "already-resumed");
+        }
         TenantContext.with(new TenantContext.Context(request.tenantId(),
                 UUID.nameUUIDFromBytes(("system:" + request.app()).getBytes()).toString()),
                 () -> engine.resumeApproval(tenantId, request.entityApiName(), recordId,

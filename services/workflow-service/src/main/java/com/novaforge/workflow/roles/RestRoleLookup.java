@@ -35,6 +35,26 @@ public class RestRoleLookup implements RoleLookup {
 
     @Override
     @SuppressWarnings("unchecked")
+    public List<UUID> holdersOf(UUID tenantId, String role) {
+        try {
+            List<String> users = runtime.method(HttpMethod.GET)
+                    .uri("/api/v1/admin/tenants/" + tenantId + "/roles/"
+                            + java.net.URLEncoder.encode(role, java.nio.charset.StandardCharsets.UTF_8)
+                            + "/users")
+                    .headers(headers -> headers.setBearerAuth(serviceToken.token()))
+                    .retrieve()
+                    .body(ArrayList.class);
+            if (users == null) {
+                return List.of();
+            }
+            return users.stream().map(user -> UUID.fromString(String.valueOf(user))).toList();
+        } catch (Exception e) {
+            // an unreachable runtime must not wedge the breach path — the caller
+            // treats an unknown answer as "held" (the pre-validation behavior)
+            return null;
+        }
+    }
+
     public List<String> of(UUID tenantId, UUID actor) {
         try {
             List<String> roles = runtime.method(HttpMethod.GET)
