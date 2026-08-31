@@ -29,6 +29,13 @@ spec:
       labels:
       {{- include "novaforge-infra.selector" (dict "root" . "component" "postgres") | nindent 8 }}
     spec:
+      # k8s EnableServiceLinks auto-injects <FLATNAME>_PORT=tcp://10.96.x.x:PORT for every
+      # Service whose name collides with an env placeholder — NOVAFORGE_REDIS_PORT and
+      # NOVAFORGE_POSTGRES_PORT both resolved to tcp:// URLs in-cluster (found live: the
+      # gateway died binding spring.data.redis.port to int, scheduler/workflow died on a
+      # mangled JDBC URL, while identical boots outside a cluster were clean). DNS owns
+      # name resolution here; the injected links are pure collision surface.
+      enableServiceLinks: false
       # Cluster isolation (twenty-second pass): run on the component's own
       # token-less ServiceAccount, never the namespace default — and repeat
       # automountServiceAccountToken: false at the pod level because the
@@ -86,7 +93,12 @@ spec:
         - name: initdb
           configMap:
             name: novaforge-postgres-initdb
-            defaultMode: 0500
+            # 0500 made the script root-owned-unreadable to the postgres uid
+            # (999): initdb created the cluster, the script step could not even
+            # read its own file, the container died, and every later boot
+            # "skipped initialization" over a half-born cluster (found live).
+            # Scripts are not secrets — readable by all, executable by none.
+            defaultMode: 0444
         - name: tmp
           emptyDir: {}
   volumeClaimTemplates:

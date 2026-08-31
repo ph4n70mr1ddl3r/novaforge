@@ -19,6 +19,13 @@ spec:
       labels:
       {{- include "novaforge-infra.selector" (dict "root" . "component" "minio") | nindent 8 }}
     spec:
+      # k8s EnableServiceLinks auto-injects <FLATNAME>_PORT=tcp://10.96.x.x:PORT for every
+      # Service whose name collides with an env placeholder — NOVAFORGE_REDIS_PORT and
+      # NOVAFORGE_POSTGRES_PORT both resolved to tcp:// URLs in-cluster (found live: the
+      # gateway died binding spring.data.redis.port to int, scheduler/workflow died on a
+      # mangled JDBC URL, while identical boots outside a cluster were clean). DNS owns
+      # name resolution here; the injected links are pure collision surface.
+      enableServiceLinks: false
       # Cluster isolation (twenty-second pass): run on the component's own
       # token-less ServiceAccount, never the namespace default — and repeat
       # automountServiceAccountToken: false at the pod level because the
@@ -111,6 +118,15 @@ spec:
       # has even less business holding an API credential.
       serviceAccountName: {{ .Release.Name }}-novaforge-infra-minio-init
       automountServiceAccountToken: false
+      # Required by the API server and lost once — a twenty-second-pass edit
+      # added the isolation fields above and dropped this line; every render
+      # check passed and only the live API server refused the Job. The chart
+      # gate demands it on every Job render now.
+      restartPolicy: OnFailure
+      enableServiceLinks: false
+      volumes:
+        - name: tmp
+          emptyDir: {}
       containers:
         - name: mc
           image: {{ .Values.minio.mcImage }}
@@ -121,7 +137,7 @@ spec:
               mc alias set drprep http://novaforge-minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
               && (mc version enable "drprep/$NOVAFORGE_MINIO_BUCKET"
               || (mc mb "drprep/$NOVAFORGE_MINIO_BUCKET" && mc version enable "drprep/$NOVAFORGE_MINIO_BUCKET"))
-              && mc version info "drprep/$NOVAFORGE_MINIO_BUCKET""
+              && mc version info "drprep/$NOVAFORGE_MINIO_BUCKET"
           env:
             - name: MINIO_ROOT_USER
               valueFrom:
@@ -135,6 +151,14 @@ spec:
                   key: secret-key
             - name: NOVAFORGE_MINIO_BUCKET
               value: {{ .Values.minio.bucket | quote }}
+            # mc persists its alias config under $HOME/.mc — HOME for uid 1000
+            # is the root-owned /, so the Job died on "mkdir /.mc: permission
+            # denied" (found live). MC_CONFIG_DIR is mc's own honored override.
+            - name: MC_CONFIG_DIR
+              value: /tmp/mc
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           resources:
           {{- toYaml .Values.resources | nindent 12 }}
           securityContext:

@@ -2548,3 +2548,105 @@ stuck-running job row, the production-budget-duration observation limit —
 plus this pass's honest boundary: the infra chart's runtime behavior is
 render-verified and empirically uid-checked, not yet live-cluster-observed
 (the kind-on-podman flow is the recorded environment for that).
+
+## Twenty-Fourth Pass — 2026-08-31 (the live-cluster leg: the kind-on-Podman stack boots end to end, and ten runtime-only defects flush out)
+
+The recorded boundary — "the infra chart is render-verified and uid-empiric but
+not yet live-cluster-observed" — is closed: a cold kind-on-Podman cluster was
+created, novaforge-infra installed, all eleven service images built (jib
+`buildTar`) and loaded, all eleven charts installed, and the stack observed to
+steady state: **every pod 1/1 Running** — eight infra components (postgres,
+kafka, redis, keycloak, tempo, minio, clamav) plus all eleven services, with
+the bucket-init Job Complete. Verified live: the initdb script's three roles
+and nine databases in Postgres, the imported Keycloak realm (Ready probe on
+/realms/novaforge), the versioned novaforge-attachments bucket, Kafka consumed
+by every spine service (readiness requires the consumer), and the full OIDC
+chain — `curl` through the gateway answers 200 on health and 401 on a JWKS-gated
+route, bogus token or none.
+
+The pass's premise held: the runtime found ten defects no render check could.
+
+1. **The minio-init Job's `restartPolicy` was gone** — a twenty-second-pass
+   edit added the isolation fields and dropped the line; the live API server
+   refused the Job. Restored; the gate now demands a valid restartPolicy on
+   every Job render.
+2. **My own fix mis-landed in the StatefulSet** (an edit anchored on
+   `image:`+`args:` matched the wrong block): invalid `restartPolicy:
+   OnFailure` on the StatefulSet, still nothing on the Job. Both corrected.
+3. **Kafka's probes used `sh` with `/dev/tcp`** — a bash-ism; the image's sh
+   can't. `nc -z` (the image ships nc).
+4. **ClamAV's entrypoint `chown`s its data dir** — illegal at uid 100; a root
+   initContainer pre-owns the volume, the main container keeps the non-root
+   posture.
+5. **ClamAV also writes `/run/clamav` and `/var/lock`** — root-owned paths;
+   emptyDirs carry them.
+6. **The initdb ConfigMap mounted `defaultMode: 0500`** — root-owned files
+   unreadable to postgres's uid 999: initdb created the cluster, the script
+   step could not even read itself, and every later boot skipped
+   initialization over a half-born cluster. `0444` — scripts are not secrets.
+7. **The bucket-init command carried a stray trailing quote** (a string-edit
+   artifact): `unexpected EOF while looking for matching '"'`. Fixed.
+8. **`mc` writes its config under root-owned `$HOME`** — `MC_CONFIG_DIR=/tmp/mc`
+   plus a tmp emptyDir.
+9. **THE BIG ONE — Kubernetes EnableServiceLinks collides with the env
+   placeholders.** For every Service named `novaforge-X`, k8s injects
+   `NOVAFORGE_X_PORT=tcp://10.96.x.x:PORT` — so `NOVAFORGE_REDIS_PORT` and
+   `NOVAFORGE_POSTGRES_PORT` resolved to tcp:// URLs in-cluster: the gateway
+   died binding `spring.data.redis.port` to int, scheduler/workflow died on
+   mangled JDBC URLs, while byte-identical boots outside a cluster (podman,
+   same image, same env) ran clean — reproduced and isolated before the
+   mechanism was named. Every pod spec now carries `enableServiceLinks:
+   false` (DNS owns resolution), and the gate demands it on every workload
+   render.
+10. **The NetworkPolicy peer selectors matched the instance label** — correct
+    in a single-release world, wrong in the stack's one-release-per-chart
+    layout: services (instance=novaforge-metadata-service) never matched
+    infra pods (instance=infra), and kindnet (which DOES enforce policy)
+    silently dropped every service→infra flow — DB connects timed out.
+    Peers now match by name/component labels only; kindnet enforcing them is
+    itself runtime proof the policies load.
+
+Plus one chart-mechanics defect found mid-pass and fixed: **helm does not
+template values.yaml** — a `{{ .Values.* }}` expression in the env list
+rendered literally into the pod (`Invalid boolean value [{{ ... }}]`). The
+fail-closed `auth.allowDefaultSecret` posture is plain data in values,
+consumed by the deployment template; the dev cluster overrides it with
+`--set auth.allowDefaultSecret=true` (the compose stack's own posture — the
+realm's dev client is the only credential that exists there), keeping the
+fail-closed default for staged environments.
+
+Two environment facts recorded for honesty: kind node containers that restart
+under memory pressure can come back with a changed bridge IP (the kubelet then
+dials the old one — recreate the cluster rather than restart it), and the
+cold-cluster run that produced this record is the reproducible path.
+
+### Verification (this pass)
+
+The chart gate CLEAN across all 12 charts with two new contracts (Job
+restartPolicy; enableServiceLinks false on every workload) — each new check
+bite-proven by the very defects that motivated it. The live observation:
+every pod 1/1 Running, the smoke evidence above, and the full serial
+`./mvnw verify` (below). Cluster evidence retained in this record; the
+environment's kind cluster was deleted after capture.
+
+### Recorded open after this pass
+
+The prior deliberate set stands. The live-cluster boundary is closed for the
+dev stack; what remains honestly unobserved is a policy-enforcing CNI under
+load, and multi-node behavior — both outside the recorded environment.
+
+### Addendum — the live leg flushed an eleventh defect, in the test suite itself
+
+The post-record full `./mvnw verify` failed: `GatewayApplicationTests` answered
+503 on `/actuator/health` — at clean HEAD, worktree stashed, so nothing this
+pass touched. The slice boots the rate limiter's `StringRedisTemplate`, whose
+redis health contributor pings `spring.data.redis` — silently `localhost:6379`.
+Nothing listening → DOWN → 503. The suite had passed for twenty-three passes
+only when some ambient redis happened to be listening during the run — a
+test-isolation defect (a hermetic slice with an ambient dependency), exposed
+the moment the live-cluster work ran it against a quiet port. The slice
+excludes the redis health contributor now (with the rationale in-code); the
+limiter's own behavior stays pinned in `WebhookRateLimitFilterTest` (mocked
+template, the atomic Lua window included), and the live leg itself proved the
+real redis path in-cluster. Gateway 24/24 standalone; the full verify re-ran
+green with the fix.

@@ -98,6 +98,14 @@ for path in glob.glob(render_dir + "/*.yaml"):
                 pods.append((chart, meta.get("name"),
                              ps.get("serviceAccountName"),
                              ps.get("automountServiceAccountToken")))
+                if ps.get("enableServiceLinks") is not False:
+                    print("CHART-GATE FAIL: %s/%s does not disable k8s service-link env injection" % (chart, meta.get("name")))
+                    ok = False
+                if kind == "Job" and ps.get("restartPolicy") not in ("OnFailure", "Never"):
+                    # the API server rejects a Job without it — found the hard way
+                    # when a live install refused exactly this (twenty-fourth pass)
+                    print("CHART-GATE FAIL: %s/%s Job lacks a valid restartPolicy" % (chart, meta.get("name")))
+                    ok = False
         for env_name, value in walk(obj):
             m = re.match(r"https?://([a-z0-9.-]+)(?::\d+)?", value)
             if m:
@@ -128,6 +136,12 @@ for chart, workload, sa, automount in pods:
         ok = False
     if automount is not False:
         print("CHART-GATE FAIL: %s/%s does not disable token automount at the pod level" % (chart, workload))
+        ok = False
+    if ps.get("enableServiceLinks") is not False:
+        # the EnableServiceLinks collision (found live on the kind cluster): any
+        # Service whose name prefixes an env placeholder injects <NAME>_PORT as a
+        # tcp:// URL and every such boot dies
+        print("CHART-GATE FAIL: %s/%s does not disable k8s service-link env injection" % (chart, workload))
         ok = False
 for chart in sorted(os.path.basename(p)[:-5] for p in glob.glob(render_dir + "/*.yaml")):
     if budgets.get(chart, 0) == 0:

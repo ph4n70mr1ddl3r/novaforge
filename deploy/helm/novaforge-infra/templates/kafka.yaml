@@ -20,6 +20,13 @@ spec:
       labels:
       {{- include "novaforge-infra.selector" (dict "root" . "component" "kafka") | nindent 8 }}
     spec:
+      # k8s EnableServiceLinks auto-injects <FLATNAME>_PORT=tcp://10.96.x.x:PORT for every
+      # Service whose name collides with an env placeholder — NOVAFORGE_REDIS_PORT and
+      # NOVAFORGE_POSTGRES_PORT both resolved to tcp:// URLs in-cluster (found live: the
+      # gateway died binding spring.data.redis.port to int, scheduler/workflow died on a
+      # mangled JDBC URL, while identical boots outside a cluster were clean). DNS owns
+      # name resolution here; the injected links are pure collision surface.
+      enableServiceLinks: false
       # Cluster isolation (twenty-second pass): run on the component's own
       # token-less ServiceAccount, never the namespace default — and repeat
       # automountServiceAccountToken: false at the pod level because the
@@ -67,15 +74,15 @@ spec:
           startupProbe:
             # first boot formats the storage directories — give it room
             exec:
-              command: ["sh", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9092"]
+              command: ["nc", "-z", "127.0.0.1", "9092"]
             periodSeconds: 5
             failureThreshold: 60
           readinessProbe:
             exec:
-              command: ["sh", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9092"]
+              command: ["nc", "-z", "127.0.0.1", "9092"]
           livenessProbe:
             exec:
-              command: ["sh", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9092"]
+              command: ["nc", "-z", "127.0.0.1", "9092"]
           volumeMounts:
             - name: data
               mountPath: /var/lib/kafka/data

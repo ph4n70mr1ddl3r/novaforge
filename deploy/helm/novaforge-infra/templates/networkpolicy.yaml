@@ -8,6 +8,10 @@
 # the release's instance label plus the target's name/component labels — the
 # same convention every chart's selectors already carry, so a peer renamed here
 # must be renamed there too.
+# Peer selectors match by name/component labels WITHOUT the instance label: the stack
+# deploys as one release per chart (infra + eleven services), and instance-matching
+# never crossed releases — every service→infra flow was silently dropped under a
+# policy-enforcing CNI (found live on kind: DB connects timed out).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -28,7 +32,6 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
       ports:
         - protocol: TCP
           port: 5432
@@ -66,7 +69,6 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
       ports:
         - protocol: TCP
           port: 9092
@@ -107,7 +109,6 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
       ports:
         - protocol: TCP
           port: 6379
@@ -146,7 +147,6 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
       ports:
         - protocol: TCP
           port: 8080
@@ -169,7 +169,6 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/name: novaforge-infra
               component: postgres
       ports:
@@ -195,7 +194,6 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
       ports:
         - protocol: TCP
           port: 4318
@@ -240,7 +238,6 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
       ports:
         - protocol: TCP
           port: 9000
@@ -296,7 +293,6 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/name: novaforge-infra
               component: minio
       ports:
@@ -324,7 +320,6 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
       ports:
         - protocol: TCP
           port: 3310

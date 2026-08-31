@@ -58,9 +58,13 @@ resources:
 # The issuer, Kafka, Tempo, and sibling names assume the novaforge-infra chart's
 # services (deploy/helm/novaforge-infra — the compose stack's in-cluster twin);
 # override per environment in values overlays.
+auth:
+  # fail-closed BY DEFAULT (staged environments reject the committed dev
+  # secret); the kind dev cluster sets --set auth.allowDefaultSecret=true — the
+  # compose stack's own local bring-up posture. Consumed by the deployment
+  # template: values env lists are pure data, no templating here.
+  allowDefaultSecret: false
 env:
-  - name: NOVAFORGE_AUTH_ALLOW_DEFAULT_SECRET
-    value: "false"
   - name: NOVAFORGE_SERVICE_CLIENT_SECRET
     valueFrom:
       secretKeyRef:

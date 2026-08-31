@@ -18,6 +18,13 @@ spec:
       labels:
       {{- include "novaforge-notification-service.selectorLabels" . | nindent 8 }}
     spec:
+      # k8s EnableServiceLinks auto-injects <FLATNAME>_PORT=tcp://10.96.x.x:PORT for every
+      # Service whose name collides with an env placeholder — NOVAFORGE_REDIS_PORT and
+      # NOVAFORGE_POSTGRES_PORT both resolved to tcp:// URLs in-cluster (found live: the
+      # gateway died binding spring.data.redis.port to int, scheduler/workflow died on a
+      # mangled JDBC URL, while identical boots outside a cluster were clean). DNS owns
+      # name resolution here; the injected links are pure collision surface.
+      enableServiceLinks: false
       # Cluster isolation (twenty-second pass): run on the chart's own
       # token-less ServiceAccount, never the namespace default — and repeat
       # automountServiceAccountToken: false at the pod level because the
@@ -33,6 +40,10 @@ spec:
             - containerPort: 8088
               name: http
           env:
+            # fail-closed by default; the dev cluster overrides via values
+            # (values env lists are pure data — the templating lives here)
+            - name: NOVAFORGE_AUTH_ALLOW_DEFAULT_SECRET
+              value: {{ .Values.auth.allowDefaultSecret | default false | quote }}
           {{- toYaml .Values.env | nindent 12 }}
           # Startup grace (nineteenth pass): a Boot fat jar — Flyway, the JWKS fetch,
           # Kafka listeners — sharing a kind node with ten sibling JVMs can exceed

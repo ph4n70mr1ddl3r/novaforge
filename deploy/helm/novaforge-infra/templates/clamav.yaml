@@ -20,6 +20,7 @@ spec:
       labels:
       {{- include "novaforge-infra.selector" (dict "root" . "component" "clamav") | nindent 8 }}
     spec:
+      enableServiceLinks: false
       # Cluster isolation (twenty-second pass): run on the component's own
       # token-less ServiceAccount, never the namespace default — and repeat
       # automountServiceAccountToken: false at the pod level because the
@@ -27,6 +28,22 @@ spec:
       # itself back to automounting. Belt and braces.
       serviceAccountName: {{ .Release.Name }}-novaforge-infra-clamav
       automountServiceAccountToken: false
+      # The image's entrypoint chowns its data dir at boot — legal only for
+      # root, and the pod runs as uid 100 (found live: CrashLoop on
+      # "chown: /var/lib/clamav: Operation not permitted"). A root init
+      # container pre-owns the volume for the clamav user; the main container
+      # keeps the non-root posture (the entrypoint's own chown then no-ops as
+      # a same-owner rename).
+      initContainers:
+        - name: chown-signatures
+          image: {{ .Values.clamav.image }}
+          command: ["chown", "-R", "100:101", "/var/lib/clamav"]
+          volumeMounts:
+            - name: signatures
+              mountPath: /var/lib/clamav
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
       containers:
         - name: clamav
           image: {{ .Values.clamav.image }}
@@ -48,6 +65,15 @@ spec:
           volumeMounts:
             - name: signatures
               mountPath: /var/lib/clamav
+            # the image's entrypoint creates /run/clamav at boot — root-owned
+            # path, unwritable at uid 100 (found live: CrashLoop on Permission
+            # denied). An emptyDir gives the non-root user its own.
+            - name: run
+              mountPath: /run/clamav
+            # the entrypoint also ln -s's its lockfile under /var/lock (found
+            # live: "ln: /var/lock/lock: Permission denied" as uid 100)
+            - name: lock
+              mountPath: /var/lock
             - name: tmp
               mountPath: /tmp
           resources:
@@ -59,6 +85,10 @@ spec:
         - name: signatures
           persistentVolumeClaim:
             claimName: novaforge-clamav-signatures
+        - name: run
+          emptyDir: {}
+        - name: lock
+          emptyDir: {}
         - name: tmp
           emptyDir: {}
 ---

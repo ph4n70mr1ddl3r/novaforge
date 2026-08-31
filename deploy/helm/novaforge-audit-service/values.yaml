@@ -37,6 +37,11 @@ resources:
 # The issuer, Kafka, Tempo, and sibling names assume the novaforge-infra chart's
 # services (deploy/helm/novaforge-infra — the compose stack's in-cluster twin);
 # override per environment in values overlays.
+auth:
+  # fail-closed BY DEFAULT; the kind dev cluster sets
+  # --set auth.allowDefaultSecret=true (the compose stack's own local bring-up
+  # posture). Consumed by the deployment template: values env lists are pure data.
+  allowDefaultSecret: false
 env:
   - name: NOVAFORGE_POSTGRES_HOST
     value: "novaforge-postgres"

@@ -2706,3 +2706,26 @@ Verified: full serial `./mvnw verify` BUILD SUCCESS (honest exit 0; 499
 tests); chart gate CLEAN across 12 charts, 18 disruption budgets. The
 remaining recorded set is the prior deliberate decisions and the honest
 not-yet-live-cluster observation boundary for the infra chart.
+
+**The twenty-fourth pass (2026-08-31) — the live-cluster leg: the stack boots
+end to end on kind-on-Podman, and eleven runtime-only defects flush out.**
+
+A cold cluster, novaforge-infra, eleven jib-built images kind-loaded, eleven
+charts installed: every pod 1/1 Running — postgres roles and nine databases
+verified live, the Keycloak realm serving, the versioned attachment bucket
+created by a Completed Job, Kafka consumed by every spine service, and the
+gateway answering 200 on health and 401 on a JWKS-gated route through a
+port-forward. The eleven defects (Job restartPolicy dropped by an earlier
+edit; a mis-landed fix putting OnFailure on the StatefulSet; kafka's sh
+without /dev/tcp; clamav's chown and /run and /var/lock paths; the initdb
+ConfigMap mode 0500 unreadable to the postgres uid; a stray quote in the
+bucket Job; mc's root-owned HOME; the EnableServiceLinks collision that
+resolved NOVAFORGE_*_PORT placeholders to tcp:// URLs; instance-matched
+NetworkPolicy peers that never crossed releases — kindnet enforces them; the
+values.yaml-not-templated literal; and the gateway test slice's ambient
+localhost:6379 dependency) are all fixed, each with the mechanism recorded.
+The chart gate gained two contracts (Job restartPolicy, enableServiceLinks
+false), each bite-proven by the defect that motivated it.
+
+Verified live and offline: every pod Ready, the smoke evidence above, chart
+gate CLEAN across 12 charts, and the full `./mvnw verify` green end to end.

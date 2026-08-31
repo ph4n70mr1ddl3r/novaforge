@@ -5,6 +5,10 @@
 # and a compromised pod cannot scout its next hop. The allow list is the env
 # wiring the chart already carries: every peer below is a host its values
 # name, so enforcing this breaks nothing the service actually dials.
+# Peer selectors match by name/component labels WITHOUT the instance label: the stack
+# deploys as one release per chart (infra + eleven services), and instance-matching
+# never crossed releases — every service→infra flow was silently dropped under a
+# policy-enforcing CNI (found live on kind: DB connects timed out).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -24,7 +28,6 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
       ports:
         - protocol: TCP
           port: 8089
@@ -48,7 +51,6 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/name: novaforge-infra
               component: keycloak
       ports:
@@ -58,7 +60,6 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/name: novaforge-infra
               component: tempo
       ports:
@@ -68,7 +69,6 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/name: novaforge-infra
               component: kafka
       ports:
@@ -78,7 +78,6 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/name: novaforge-infra
               component: redis
       ports:
@@ -88,7 +87,6 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/name: novaforge-metadata-service
       ports:
         - protocol: TCP
@@ -97,7 +95,6 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/name: novaforge-data-runtime
       ports:
         - protocol: TCP
@@ -106,7 +103,6 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/name: novaforge-notification-service
       ports:
         - protocol: TCP

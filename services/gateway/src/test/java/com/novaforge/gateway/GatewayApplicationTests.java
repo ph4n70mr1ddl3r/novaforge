@@ -21,7 +21,15 @@ import org.springframework.web.client.ResourceAccessException;
 /** PHASE-0 §6.3 gateway test slice (default, hermetic — Keycloak-backed tests are the
  * {@code integration} profile/tag suite). The route proof pins a dead upstream port so
  * the proxy attempt is observable even when a real service happens to run locally. */
-@SpringBootTest(properties = "novaforge.upstreams.metadata-service=http://localhost:8099")
+@SpringBootTest(properties = {"novaforge.upstreams.metadata-service=http://localhost:8099",
+        // Hermetic slice (found live, twenty-fourth pass): the context boots the
+        // rate limiter's StringRedisTemplate, whose health contributor pings
+        // spring.data.redis — silently localhost:6379. Standalone runs against a
+        // quiet port answered 503 on /actuator/health; the suite had passed only
+        // when some ambient redis happened to listen. The limiter's own behavior
+        // is pinned in WebhookRateLimitFilterTest (mocked template, the atomic
+        // Lua window included); this slice asserts the platform's own health.
+        "management.health.redis.enabled=false"})
 @AutoConfigureMockMvc
 class GatewayApplicationTests {
 
