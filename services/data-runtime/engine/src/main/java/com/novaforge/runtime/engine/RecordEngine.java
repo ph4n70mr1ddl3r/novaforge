@@ -49,6 +49,10 @@ import tools.jackson.databind.json.JsonMapper;
 @Service
 public class RecordEngine {
 
+    private static final org.slf4j.Logger LOG =
+            org.slf4j.LoggerFactory.getLogger(RecordEngine.class);
+
+
     public static final int MAX_INLINE_CHILDREN = 100;
     public static final int MAX_BATCH = 500;
 
@@ -92,6 +96,12 @@ public class RecordEngine {
         AppDefinition app = resolver.bundle(tenantId, handle.appId());
         roleMatrix.require(tenantId, actorId, RoleMatrix.Action.CREATE, handle.entity().apiName(),
                 handle.appApiName(), app.permissionSet());
+        // §9 parity with the update door: a role that cannot read or write a field
+        // (field-security hidden, metadata readonly) must not seed it through the
+        // create door either — values laundered in at create could never be seen or
+        // corrected by that role afterwards
+        rejectReadonlyWrites(handle.entity(), body);
+        rejectFieldSecurityWrites(tenantId, actorId, handle, app, body);
 
         List<ProblemErrors.FieldError> errors = new ArrayList<>();
         Map<String, Object> fields = new LinkedHashMap<>();
@@ -107,10 +117,15 @@ public class RecordEngine {
         reject(errors, "create " + entityApiName + " failed validation");
 
         UUID id = UUID.randomUUID();
-        runHooks(app, handle, tenantId, id, canonical, "beforeSave", appSystemPrincipal(handle), actorId, null);
+        // guards before hooks: a write doomed by freeze/period must not fire its
+        // hooks' external side effects (connector calls, approval tasks) first
         requireParentsNotFrozen(tenantId, app, handle, canonical);
-        enforceCreateState(app, handle, canonical);
         enforcePeriodLock(tenantId, app, handle, canonical);
+        runHooks(app, handle, tenantId, id, canonical, "beforeSave", appSystemPrincipal(handle), actorId, null);
+        reCanonicalizeHookWrites(tenantId, app, handle, canonical, id);
+        // the initial-state guard validates the state the record LANDS in — hook
+        // writes included (a transitionState hook cannot smuggle a non-initial state)
+        enforceCreateState(app, handle, canonical);
         evaluateRollupsFromChildren(app, handle, children, canonical);
         persistWithChildren(tenantId, actorId, app, handle, id, canonical, children, errors);
 
@@ -155,6 +170,7 @@ public class RecordEngine {
         reject(errors, "update " + entityApiName + "/" + id + " failed validation");
         String transition = transitionOf(app, handle, existing.data(), merged);
         runHooks(app, handle, tenantId, id, merged, "beforeSave", appSystemPrincipal(handle), actorId, transition);
+        reCanonicalizeHookWrites(tenantId, app, handle, merged, id);
         requireParentsNotFrozen(tenantId, app, handle, merged);
         enforceTransition(app, handle, existing.data(), merged);
         enforcePeriodLock(tenantId, app, handle, merged);
@@ -166,7 +182,7 @@ public class RecordEngine {
         newVersion = recomputeRollupsIfChanged(tenantId, actorId, app, handle, id, merged,
                 newVersion, false);
         events.publish(event("record.updated", tenantId, handle.entityKey(), id, actorId),
-                changeMetadata(before, merged));
+                changeMetadata(before, merged, strip(tenantId, actorId, handle, app)));
         recomputeParentRollups(tenantId, actorId, app, handle, merged, existing.data());
         runHooks(app, handle, tenantId, id, merged, "afterSave", appSystemPrincipal(handle), actorId, transition);
 
@@ -196,7 +212,7 @@ public class RecordEngine {
         records.softDelete(tenantId, handle.entityKey(), id, expectedVersion, actorId);
         cascadeChildren(tenantId, actorId, app, handle, id);
         events.publish(event("record.deleted", tenantId, handle.entityKey(), id, actorId),
-                deletedMetadata(existingData));
+                deletedMetadata(existingData, strip(tenantId, actorId, handle, app)));
         recomputeParentRollups(tenantId, actorId, app, handle, existingData, existingData);
         runHooks(app, handle, tenantId, id, existingData, "afterDelete",
                 appSystemPrincipal(handle), actorId, null);
@@ -502,12 +518,14 @@ public class RecordEngine {
                 // rolls back only this item's transaction (the proxy's tx boundary), so
                 // it reports as that item's error outcome. Letting it escape would 500
                 // the whole request after earlier items already committed, losing their
-                // verdicts exactly when the caller needs them most.
+                // verdicts exactly when the caller needs them most. The verdict names
+                // the failure class only — the raw message (constraint names, value
+                // excerpts) stays in the log, never the API response.
+                LOG.warn("batch item failed ({}): {}", e.getClass().getSimpleName(), e.getMessage());
                 outcomes.add(Map.of(
                         "status", "error",
                         "code", PlatformErrorCode.INTERNAL.code(),
-                        "detail", "item failed: " + e.getClass().getSimpleName()
-                                + (e.getMessage() == null ? "" : ": " + e.getMessage())));
+                        "detail", "item failed: " + e.getClass().getSimpleName()));
             }
         }
         return outcomes;
@@ -588,14 +606,23 @@ public class RecordEngine {
         reject(errors, "integration create " + entityApiName + " failed validation");
 
         UUID id = UUID.randomUUID();
+        // guards before hooks: a write doomed by freeze/period must not fire its
+        // hooks' external side effects (connector calls, approval tasks) first
+        requireParentsNotFrozen(tenantId, app, handle, canonical);
+        enforcePeriodLock(tenantId, app, handle, canonical);
         runHooks(app, handle, tenantId, id, canonical, "beforeSave", appSystemPrincipal(handle),
                 principal, null);
-        requireParentsNotFrozen(tenantId, app, handle, canonical);
+        reCanonicalizeHookWrites(tenantId, app, handle, canonical, id);
+        // the initial-state guard validates the landing state, hook writes included
         enforceCreateState(app, handle, canonical);
-        enforcePeriodLock(tenantId, app, handle, canonical);
         evaluateRollupsFromChildren(app, handle, children, canonical);
         persistWithChildren(tenantId, principal, app, handle, id, canonical, children, errors);
         events.publish(event("record.created", tenantId, handle.entityKey(), id, principal));
+        // standalone writes recompute every parent roll-up naming this entity (§3) —
+        // the user doors always did; without this leg a webhook/import feeding child
+        // rows leaves the parents' aggregates stale (the StockLedger/Item finding,
+        // on the integration door)
+        recomputeParentRollups(tenantId, principal, app, handle, canonical, null);
         runHooks(app, handle, tenantId, id, canonical, "afterSave", appSystemPrincipal(handle),
                 principal, null);
         Map<String, Object> shaped = shape(handle.entity(),
@@ -632,22 +659,26 @@ public class RecordEngine {
         evaluateFormulas(handle.entity(), merged);
         evaluateValidationRules(handle.entity(), merged, errors);
         reject(errors, "integration update " + entityApiName + "/" + id + " failed validation");
+        // guards before hooks (mirror the user update door): a doomed write must not
+        // fire connector calls or approval tasks on its way to RECORD_FROZEN
+        requireNotFrozen(app, handle, existing.data());
+        requireParentsNotFrozen(tenantId, app, handle, merged);
         String transition = transitionOf(app, handle, existing.data(), merged);
         runHooks(app, handle, tenantId, id, merged, "beforeSave", appSystemPrincipal(handle),
                 principal, transition);
-        requireNotFrozen(app, handle, existing.data());
-        requireParentsNotFrozen(tenantId, app, handle, merged);
+        reCanonicalizeHookWrites(tenantId, app, handle, merged, id);
         enforceTransition(app, handle, existing.data(), merged);
         enforcePeriodLock(tenantId, app, handle, merged);
 
+        Map<String, Object> before = existing.data();
         int newVersion = updateShaped(tenantId, principal, handle, id, merged,
                 expectedVersion, "integration update");
-        Map<String, Object> before = existing.data();
         replaceChildren(tenantId, principal, app, handle, id, children);
         newVersion = recomputeRollupsIfChanged(tenantId, principal, app, handle, id, merged,
                 newVersion, false);
         events.publish(event("record.updated", tenantId, handle.entityKey(), id, principal),
-                changeMetadata(before, merged));
+                changeMetadata(before, merged, strip(tenantId, principal, handle, app)));
+        recomputeParentRollups(tenantId, principal, app, handle, merged, before);
         runHooks(app, handle, tenantId, id, merged, "afterSave", appSystemPrincipal(handle),
                 principal, transition);
         Map<String, Object> shaped = shape(handle.entity(),
@@ -1201,6 +1232,8 @@ public class RecordEngine {
         evaluateRollupsFromChildren(app, handle, children, canonical);
         persistWithChildren(tenantId, systemPrincipal, app, handle, id, canonical, children, errors);
         events.publish(event("record.created", tenantId, handle.entityKey(), id, systemPrincipal));
+        // flow-created standalone rows feed parent roll-ups like any write (§3)
+        recomputeParentRollups(tenantId, systemPrincipal, app, handle, canonical, null);
         // The created id rides the returned view (§3.3, the G-1 harvest): a
         // createRecord step captures it into flow scope as ${record.<stepId>.id}.
         // The persisted canonical map stays field-pure — the copy is the view.
@@ -1248,9 +1281,13 @@ public class RecordEngine {
                 : existing.version();
         updateShaped(tenantId, systemPrincipal, handle, UUID.fromString(recordId), merged,
                 version, "hook update");
+        java.util.function.Predicate<String> hookHidden = TenantContext.current()
+                .map(context -> strip(tenantId, UUID.fromString(context.actorId()), handle, app))
+                .orElse(field -> false);
         events.publish(event("record.updated", tenantId, handle.entityKey(),
                 UUID.fromString(recordId), systemPrincipal),
-                changeMetadata(existing.data(), merged));
+                changeMetadata(existing.data(), merged, hookHidden));
+        recomputeParentRollups(tenantId, systemPrincipal, app, handle, merged, existing.data());
         return merged;
     }
 
@@ -1309,7 +1346,8 @@ public class RecordEngine {
                 // own update path publishes its record.updated after this call, so it
                 // passes false and the parent is not double-published.
                 events.publish(event("record.updated", tenantId, parent.entityKey(),
-                        parentId, actorId), changeMetadata(before, parentData));
+                        parentId, actorId), changeMetadata(before, parentData,
+                        strip(tenantId, actorId, parent, app)));
             }
             return newVersion;
         }
@@ -1317,15 +1355,50 @@ public class RecordEngine {
     }
 
     /**
+     * Post-hook canonicalization (2026-08-31, twelfth pass): beforeSave hooks (setField
+     * steps, script returns) mutate the record AFTER validation ran — their writes
+     * must ride the same type/shape contract as every writer, or a hook rendering
+     * {@code amount} as "12." would poison ((data->>'amount')::numeric) for every
+     * later query, exactly the unbound-template class the principal paths fixed.
+     * Runs over the hook-mutated map, rejecting shaped violations; formulas
+     * re-evaluate afterwards so derived fields follow hook-written inputs.
+     */
+    private void reCanonicalizeHookWrites(UUID tenantId, AppDefinition app, EntityHandle handle,
+                                          Map<String, Object> data, UUID recordId) {
+        List<ProblemErrors.FieldError> errors = new ArrayList<>();
+        Map<String, Object> fields = new LinkedHashMap<>();
+        data.forEach((key, value) -> {
+            if (handle.entity().field(key).isPresent()) {
+                fields.put(key, value);
+            }
+        });
+        Map<String, Object> canonical = FieldCoercer.canonicalize(handle.entity(), fields,
+                externalChecks(tenantId, handle, app), recordId, errors);
+        canonical.forEach(data::put);
+        evaluateFormulas(handle.entity(), data);
+        evaluateValidationRules(handle.entity(), data, errors);
+        reject(errors, "hook write failed validation on " + handle.entity().apiName());
+    }
+    /**
      * The event payload's change legs (2026-08-31): an update carries each changed
      * field's prior and next value (a consumer or the audit trail can reconstruct
      * what moved without re-fetching), a delete carries the deleted record's data —
      * a {@code record.deleted} consumer otherwise cannot know what left.
+     *
+     * <p>The spine is a distribution surface, not a private channel: outbound
+     * webhooks subscribe to these topics and post payloads verbatim, so the change
+     * legs ride through the writing actor's field visibility — a field the actor
+     * cannot read (HIDDEN under field security) never rides the event it caused,
+     * exactly as the read doors strip it.</p>
      */
     private static Map<String, Object> changeMetadata(Map<String, Object> before,
-                                                      Map<String, Object> after) {
+                                                      Map<String, Object> after,
+                                                      java.util.function.Predicate<String> hidden) {
         Map<String, Object> changed = new LinkedHashMap<>();
         for (Map.Entry<String, Object> entry : after.entrySet()) {
+            if (hidden.test(entry.getKey())) {
+                continue;
+            }
             if (!java.util.Objects.equals(entry.getValue(), before.get(entry.getKey()))) {
                 // Arrays.asList, not List.of: a field may change from (or to) null —
                 // the value pair is content, and List.of rejects null elements
@@ -1338,8 +1411,15 @@ public class RecordEngine {
         return metadata;
     }
 
-    private static Map<String, Object> deletedMetadata(Map<String, Object> data) {
-        return Map.of("before", data);
+    private static Map<String, Object> deletedMetadata(Map<String, Object> data,
+                                                       java.util.function.Predicate<String> hidden) {
+        Map<String, Object> visible = new LinkedHashMap<>();
+        data.forEach((key, value) -> {
+            if (!hidden.test(key)) {
+                visible.put(key, value);
+            }
+        });
+        return Map.of("before", visible);
     }
 
     /**
@@ -1352,8 +1432,13 @@ public class RecordEngine {
         if (aggregate == null && stored == null) {
             return false;
         }
-        if (aggregate instanceof java.math.BigDecimal next && stored instanceof java.math.BigDecimal prev) {
-            return next.compareTo(prev) != 0;
+        // numeric comparison across the value's many carriers: SQL aggregates arrive
+        // as BigDecimal, jsonb-parsed data and the coercer's INT results as
+        // Integer/Long — equal numbers must never read as drift (each false move
+        // rewrites the parent and churns its version)
+        if (aggregate instanceof Number next && stored instanceof Number prev) {
+            return new java.math.BigDecimal(next.toString())
+                    .compareTo(new java.math.BigDecimal(prev.toString())) != 0;
         }
         return !java.util.Objects.equals(aggregate, stored);
     }
@@ -1418,10 +1503,26 @@ public class RecordEngine {
                 }
             }
             for (UUID parentId : parents) {
-                records.find(tenantId, parentHandle.entityKey(), parentId, false)
-                        .ifPresent(stored -> recomputeRollupsIfChanged(tenantId, actorId,
-                                app, parentHandle, parentId, stored.data(), stored.version(),
-                                true));
+                // Two child writes to one parent read the same parent version; the
+                // loser's CAS would fail the WHOLE child transaction (a legitimate
+                // insert dying as 409 with no conflicting edit of its own). One
+                // bounded re-read retry absorbs the lost race; a second loss means
+                // real contention and surfaces as usual.
+                for (int attempt = 0; attempt < 2; attempt++) {
+                    var stored = records.find(tenantId, parentHandle.entityKey(), parentId, false);
+                    if (stored.isEmpty()) {
+                        break;
+                    }
+                    try {
+                        recomputeRollupsIfChanged(tenantId, actorId, app, parentHandle,
+                                parentId, stored.get().data(), stored.get().version(), true);
+                        break;
+                    } catch (PlatformException e) {
+                        if (e.errorCode() != PlatformErrorCode.CONFLICT_VERSION || attempt == 1) {
+                            throw e;
+                        }
+                    }
+                }
             }
         }
     }
@@ -1788,7 +1889,8 @@ public class RecordEngine {
                 records.softDelete(tenantId, childHandle.entityKey(), existing.id(),
                         existing.version(), actorId);
                 events.publish(event("record.deleted", tenantId, childHandle.entityKey(),
-                        existing.id(), actorId), deletedMetadata(existing.data()));
+                        existing.id(), actorId), deletedMetadata(existing.data(),
+                        strip(tenantId, actorId, childHandle, app)));
             }
             List<ProblemErrors.FieldError> errors = new ArrayList<>();
             for (Map<String, Object> childBody : entry.getValue()) {
@@ -1855,7 +1957,8 @@ public class RecordEngine {
                 records.softDelete(tenantId, childHandle.entityKey(), child.id(),
                         child.version(), actorId);
                 events.publish(event("record.deleted", tenantId, childHandle.entityKey(),
-                        child.id(), actorId), deletedMetadata(child.data()));
+                        child.id(), actorId), deletedMetadata(child.data(),
+                        strip(tenantId, actorId, childHandle, app)));
             }
         }
     }

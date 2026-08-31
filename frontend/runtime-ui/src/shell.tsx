@@ -146,6 +146,11 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
                     <Dashboards client={client} appApiName={app.apiName} app={app} roles={roles} onDrill={drillTo} />
                 ) : (
                     <EntityPage
+                        // keyed by the route's identity: without it React reuses the
+                        // instance across entity/kind navigation, and a previously
+                        // loaded record bled into "New form" for another entity —
+                        // whose save PATCHed the wrong record with foreign data
+                        key={`${route.entity}:${route.kind}:${route.id ?? "new"}`}
                         client={client}
                         entity={entities.get(route.entity) as EntityDefinition}
                         kind={route.kind}
@@ -188,8 +193,17 @@ function EntityPage(props: EntityPageProps): ReactNode {
     const [busy, setBusy] = useState(false);
     const [flash, setFlash] = useState<string | null>(null);
 
+    const [loadError, setLoadError] = useState<string | null>(null);
+
     const load = async (recordId: string): Promise<void> => {
-        setRecord(await client.getRecord(entity.apiName, recordId));
+        try {
+            setRecord(await client.getRecord(entity.apiName, recordId));
+            setLoadError(null);
+        } catch (caught) {
+            // a failed detail load used to leave a silent empty form plus an
+            // unhandled rejection — the user sees what happened and can retry
+            setLoadError(caught instanceof Error ? caught.message : String(caught));
+        }
     };
 
     if (kind !== "list" && id && record?.id !== id) {
@@ -302,6 +316,11 @@ function EntityPage(props: EntityPageProps): ReactNode {
             ) : null}
             {flash ? (
                 <p role="status" className="nf-flash" aria-live="polite">{flash}</p>
+            ) : null}
+            {loadError ? (
+                <p role="alert" className="nf-error">
+                    Could not load {entity.apiName}/{id}: {loadError}
+                </p>
             ) : null}
             <PageRenderer page={page} entity={entity} context={context} />
             {context.transitions && context.transitions.length > 0 ? (

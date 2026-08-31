@@ -2,14 +2,17 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Release.Name }}-novaforge-gateway
-  labels: {{ include "novaforge-gateway.labels" . | indent 4 }}
+  labels:
+  {{- include "novaforge-gateway.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
-    matchLabels: {{ include "novaforge-gateway.selectorLabels" . | indent 6 }}
+    matchLabels:
+    {{- include "novaforge-gateway.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      labels: {{ include "novaforge-gateway.selectorLabels" . | indent 8 }}
+      labels:
+      {{- include "novaforge-gateway.selectorLabels" . | nindent 8 }}
     spec:
       containers:
         - name: novaforge-gateway
@@ -18,7 +21,8 @@ spec:
           ports:
             - containerPort: 8080
               name: http
-          env: {{ toYaml .Values.env | nindent 12 }}
+          env:
+          {{- toYaml .Values.env | nindent 12 }}
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
@@ -27,4 +31,5 @@ spec:
             httpGet:
               path: /actuator/health/liveness
               port: http
-          resources: {{ toYaml .Values.resources | nindent 12 }}
+          resources:
+          {{- toYaml .Values.resources | nindent 12 }}

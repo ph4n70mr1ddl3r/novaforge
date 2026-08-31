@@ -3,6 +3,7 @@ export {
   ChartWidget,
 } from "./catalog/ChartWidget.tsx";
 export { KpiTile } from "./catalog/KpiTile.tsx";
+export { ErrorBoundary } from "./catalog/ErrorBoundary.tsx";
 export { ReportTable, drillFilters, type DrillFilter, type DrillThroughBinding } from "./catalog/ReportTable.tsx";
 export { DashboardGrid, DashboardCell } from "./catalog/DashboardGrid.tsx";
 export { FileUpload } from "./catalog/FileUpload.tsx";

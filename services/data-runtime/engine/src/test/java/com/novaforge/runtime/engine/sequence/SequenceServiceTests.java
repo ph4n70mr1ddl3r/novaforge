@@ -102,6 +102,45 @@ class SequenceServiceTests {
     }
 
     @Test
+    @DisplayName("threads racing the last slot of a block never overlap or exceed it")
+    void lastSlotRaceNeverDuplicates() throws Exception {
+        // Anti-regression (2026-08-31, twelfth pass): checking exhaustion BEFORE the
+        // increment let two threads both pass at current == max; the loser returned
+        // max+1 — outside the window — and the next allocation served max+1 again
+        // as a duplicate. The check now happens after the increment.
+        SequenceService service = service(8);   // tiny blocks: constant last-slot races
+        SequenceDefinition sequence = cached("racy", 1);
+        int threads = 8;
+        int drawsEach = 64;
+        java.util.List<java.util.concurrent.Future<java.util.List<Long>>> results =
+                new java.util.ArrayList<>();
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        for (int t = 0; t < threads; t++) {
+            results.add(pool.submit(() -> {
+                java.util.List<Long> mine = new java.util.ArrayList<>();
+                for (int i = 0; i < drawsEach; i++) {
+                    mine.add(Long.parseLong(service.draw(TENANT, "App", sequence)));
+                }
+                return mine;
+            }));
+        }
+        Set<Long> all = new java.util.HashSet<>();
+        long expectedMax = (long) threads * drawsEach;
+        for (var future : results) {
+            all.addAll(future.get());
+        }
+
+        pool.shutdown();
+        assertThat(all).hasSize(threads * drawsEach);   // no duplicates across threads
+        // gaps are cached mode's contract: a thread losing the last-slot race
+        // discards its overflow draw and racing allocations claim whole windows, so
+        // the served maximum legitimately exceeds threads×draws — uniqueness is the
+        // invariant, not density. It stays bounded by the windows actually claimed.
+        assertThat(java.util.Collections.max(all))
+                .isLessThanOrEqualTo(expectedMax + (long) threads * drawsEach * 8);
+    }
+
+    @Test
     @DisplayName("start below the block size keeps serving 1..blockSize as before")
     void smallStartUnchanged() {
         SequenceService service = service(100);

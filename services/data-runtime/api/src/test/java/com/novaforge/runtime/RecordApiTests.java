@@ -400,6 +400,7 @@ class RecordApiTests extends PostgresTestBase {
         mockMvc.perform(patch("/api/v1/runtime/JournalEntry/" + id).with(jwtFor(TENANT))
                         .contentType("application/json")
                         .content("{\"version\":1,\"status\":\"POSTED\"}"))
+                .andDo(org.springframework.test.web.servlet.result.MockMvcResultHandlers.log())
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("POSTED"))
                 .andExpect(jsonPath("$.version").value(2));
@@ -998,11 +999,21 @@ class RecordApiTests extends PostgresTestBase {
                 .jwt(token -> token.claim("tenant_id", TENANT.toString()).subject(clerkUser.toString()))
                 .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
 
-        // create allowed by the matrix; the shaped response strips the hidden title
-        MvcResult created = mockMvc.perform(post("/api/v1/runtime/Ticket").with(clerkJwt)
+        // Anti-regression (2026-08-31, twelfth pass): the create door used to accept
+        // writes to fields the role can never read — a hidden field's value laundered
+        // in at create could not be seen or corrected by that role afterwards. The
+        // create door now enforces §9's write rule symmetrically with update.
+        mockMvc.perform(post("/api/v1/runtime/Ticket").with(clerkJwt)
+                        .contentType("application/json").content("{\"title\":\"clerk ticket\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("field is hidden")));
+
+        // the admin creates the ticket the later legs exercise (matrix create grant,
+        // shaped responses still strip the hidden field for the clerk)
+        MvcResult created = mockMvc.perform(post("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
                         .contentType("application/json").content("{\"title\":\"clerk ticket\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.title").doesNotExist())
                 .andExpect(jsonPath("$.number").isNotEmpty())
                 .andReturn();
         String id = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();

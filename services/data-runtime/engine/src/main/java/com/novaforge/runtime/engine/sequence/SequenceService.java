@@ -70,34 +70,55 @@ public class SequenceService {
 
     private long drawCached(UUID tenantId, String appApiName, SequenceDefinition sequence) {
         String key = "novaforge:seq:" + tenantId + ":" + appApiName + ":" + sequence.apiName();
-        Block block = blocks.get(key);
-        if (block == null || block.exhausted()) {
-            long start = sequence.startOrOne();
-            long last = redis.opsForValue().increment(key, blockSize);
-            long first = last - blockSize + 1;
-            if (last < start) {
-                // The whole claimed window sits below the authored start (fresh key, or
-                // the start was raised past the counter): advance the counter to
-                // start-1, then claim a fresh full block there. Every served window is
-                // the range of one atomic increment, so concurrent claimers never
-                // overlap; the numbers skipped below start are gaps — which cached mode
-                // allows — never re-served duplicates. The counter only ever moves
-                // forward.
-                redis.opsForValue().increment(key, start - 1 - last);
-                last = redis.opsForValue().increment(key, blockSize);
-                first = last - blockSize + 1;
-            } else if (first < start) {
-                // The window straddles the start — serve from start upward; the few
-                // numbers below it inside this claim are gaps, never served.
-                first = start;
+        for (;;) {
+            Block block = blocks.get(key);
+            if (block == null) {
+                block = allocateBlock(key, sequence);
             }
-            if (first > last) {
-                throw new IllegalStateException(
-                        "sequence block " + first + "-" + last + " is empty (start " + start + ")");
+            // Check AFTER the increment: two threads drawing the last slot both pass
+            // a pre-check (current == max is not exhausted yet), and the loser's
+            // getAndIncrement returns max+1 — outside the window — which the next
+            // allocation would serve again as a duplicate. The loser allocates a
+            // fresh window (an atomic INCRBY range, exclusively its own) and retries.
+            long value = block.current.getAndIncrement();
+            if (value <= block.max) {
+                return value;
             }
-            block = new Block(first, last);
-            blocks.put(key, block);
+            block = allocateBlock(key, sequence);
         }
-        return block.current.getAndIncrement();
+    }
+
+    private Block allocateBlock(String key, SequenceDefinition sequence) {
+        Block block = blocks.get(key);
+        if (block != null && !block.exhausted()) {
+            // someone else allocated while we were here — serve from theirs
+            return block;
+        }
+        long start = sequence.startOrOne();
+        long last = redis.opsForValue().increment(key, blockSize);
+        long first = last - blockSize + 1;
+        if (last < start) {
+            // The whole claimed window sits below the authored start (fresh key, or
+            // the start was raised past the counter): advance the counter to
+            // start-1, then claim a fresh full block there. Every served window is
+            // the range of one atomic increment, so concurrent claimers never
+            // overlap; the numbers skipped below start are gaps — which cached mode
+            // allows — never re-served duplicates. The counter only ever moves
+            // forward.
+            redis.opsForValue().increment(key, start - 1 - last);
+            last = redis.opsForValue().increment(key, blockSize);
+            first = last - blockSize + 1;
+        } else if (first < start) {
+            // The window straddles the start — serve from start upward; the few
+            // numbers below it inside this claim are gaps, never served.
+            first = start;
+        }
+        if (first > last) {
+            throw new IllegalStateException(
+                    "sequence block " + first + "-" + last + " is empty (start " + start + ")");
+        }
+        Block allocated = new Block(first, last);
+        blocks.put(key, allocated);
+        return allocated;
     }
 }

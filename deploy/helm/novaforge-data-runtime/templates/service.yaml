@@ -2,11 +2,13 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ .Release.Name }}-novaforge-data-runtime
-  labels: {{ include "novaforge-data-runtime.labels" . | indent 4 }}
+  labels:
+  {{- include "novaforge-data-runtime.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
   ports:
     - port: {{ .Values.service.port }}
       targetPort: http
       name: http
-  selector: {{ include "novaforge-data-runtime.selectorLabels" . | indent 4 }}
+  selector:
+  {{- include "novaforge-data-runtime.selectorLabels" . | nindent 4 }}

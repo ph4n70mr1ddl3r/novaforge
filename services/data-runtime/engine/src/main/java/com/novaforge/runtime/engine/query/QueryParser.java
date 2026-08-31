@@ -220,6 +220,11 @@ public final class QueryParser {
         if ("in".equals(op) && !(javaValue instanceof List)) {
             throw validation("filter.value", "in requires an array value");
         }
+        if ("in".equals(op) && ((List<?>) javaValue).isEmpty()) {
+            // an empty in-list lowers to "()" — a raw SQL syntax error, not a shaped
+            // rejection at the door
+            throw validation("filter.value", "in requires a non-empty array");
+        }
         return new QueryModel.Filter.Leaf(field, op, canonicalizeSystemLeaf(field, javaValue));
     }
 

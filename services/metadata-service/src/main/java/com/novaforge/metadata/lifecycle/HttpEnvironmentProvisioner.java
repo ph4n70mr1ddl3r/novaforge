@@ -79,6 +79,20 @@ public class HttpEnvironmentProvisioner implements EnvironmentProvisioner {
                     .retrieve()
                     .body(Map.class);
             tenantId = String.valueOf(tenant.get("tenantId"));
+        } else {
+            // the adopted tenant's admin still holds the password from the crashed
+            // attempt (long lost) — user provisioning is idempotent and resets the
+            // credential, so this attempt can grant with the fresh one. Without this
+            // leg every retry died at the password grant and the intent never cleared.
+            runtime.post()
+                    .uri("/api/v1/admin/tenants/" + tenantId + "/users")
+                    .headers(headers -> headers.setBearerAuth(serviceToken()))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(mapper.writeValueAsString(Map.of(
+                            "username", adminUsername,
+                            "password", adminPassword)))
+                    .retrieve()
+                    .toBodilessEntity();
         }
         String token = passwordGrant(adminUsername, adminPassword);
         Map<String, Object> body = new LinkedHashMap<>();

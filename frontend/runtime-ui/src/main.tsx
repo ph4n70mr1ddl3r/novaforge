@@ -83,4 +83,9 @@ function RuntimeBridge({ client, session }: { client: PlatformClient; session: O
     });
 }
 
-hydrateRoot(document.getElementById("root")!, h(Root));
+import { ErrorBoundary } from "@novaforge/shared";
+
+hydrateRoot(
+    document.getElementById("root")!,
+    h(ErrorBoundary, { label: "NovaForge" }, h(Root)),
+);

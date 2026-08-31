@@ -2,11 +2,13 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ .Release.Name }}-novaforge-gateway
-  labels: {{ include "novaforge-gateway.labels" . | indent 4 }}
+  labels:
+  {{- include "novaforge-gateway.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
   ports:
     - port: {{ .Values.service.port }}
       targetPort: http
       name: http
-  selector: {{ include "novaforge-gateway.selectorLabels" . | indent 4 }}
+  selector:
+  {{- include "novaforge-gateway.selectorLabels" . | nindent 4 }}

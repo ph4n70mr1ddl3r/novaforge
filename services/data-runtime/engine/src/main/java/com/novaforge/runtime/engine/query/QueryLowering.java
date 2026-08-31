@@ -95,7 +95,14 @@ public final class QueryLowering {
         } else {
             List<String> orderItems = new ArrayList<>();
             for (Sort sort : query.sort()) {
-                orderItems.add(textExpr(sort.field()) + " "
+                // numeric fields sort numerically: the text expression orders 9, 100,
+                // 10 lexicographically on unpromoted decimals (the promoted column is
+                // typed, so textExpr is only wrong on the JSONB path)
+                boolean numeric = numericFields.getOrDefault(sort.field(), false)
+                        && promotedColumns.get(sort.field()) == null
+                        && !SYSTEM_COLUMN_EXPR.containsKey(sort.field());
+                String expr = numeric ? numericExpr(sort.field()) : textExpr(sort.field());
+                orderItems.add(expr + " "
                         + (sort.dir() == QueryModel.SortDir.desc ? "DESC" : "ASC"));
             }
             orderItems.add("id");
@@ -201,6 +208,12 @@ public final class QueryLowering {
                 ordinals.add(String.valueOf(i));
             }
             sql.append(" GROUP BY ").append(String.join(", ", ordinals));
+            if (query.limit() != null) {
+                // an unordered hash-aggregate truncates arbitrarily under LIMIT —
+                // which groups survive would differ run to run; order by the group
+                // keys so the truncation is reproducible
+                sql.append(" ORDER BY ").append(String.join(", ", ordinals));
+            }
         }
         if (query.limit() != null) {
             sql.append(" LIMIT ?");

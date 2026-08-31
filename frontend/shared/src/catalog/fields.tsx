@@ -83,7 +83,10 @@ export function FieldNumber(props: FieldWidgetProps): ReactNode {
     const { renderer, value, error, label, readonly, required } = useFieldSlot(props);
     const id = useId();
     const text = value == null || value === "" ? "" : String(value);
-    const valid = text === "" || Decimal.parse(text) !== undefined;
+    // total validity: intermediate typing states ("12.", ".", "1e5") are invalid but
+    // never throw — Decimal.parse rejects them and parse used to be called as if it
+    // returned undefined, crashing the whole tree on the first "."
+    const valid = text === "" || Decimal.tryParse(text) !== undefined;
     return (
         <div className="nf-field">
             <label htmlFor={id}>

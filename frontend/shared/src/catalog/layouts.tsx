@@ -121,6 +121,10 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
     const renderer = useRenderer();
     const pageSize = Number(props.pageSize ?? 50);
     const [state, setState] = useState<{ rows: Record<string, unknown>[]; total: number }>({ rows: [], total: 0 });
+    // a failed fetch must never render as "No records yet" — the user would conclude
+    // their data is gone (the sixth pass's stuck-surface class, on the primary
+    // data surface)
+    const [failure, setFailure] = useState<string | null>(null);
     const [offset, setOffset] = useState(0);
     const [sortField, setSortField] = useState<string | null>(null);
     const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -143,6 +147,12 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
             .then((result: ListResult) => {
                 if (!cancelled) {
                     setState({ rows: result.rows, total: result.total });
+                    setFailure(null);
+                }
+            })
+            .catch((caught: unknown) => {
+                if (!cancelled) {
+                    setFailure(caught instanceof Error ? caught.message : String(caught));
                 }
             })
             .finally(() => {
@@ -214,7 +224,11 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
                     ))}
                     </tbody>
             </table>
-            {state.rows.length === 0 && !loading ? (
+            {failure ? (
+                <p role="alert" className="nf-error">
+                    Could not load {props.title ?? "records"}: {failure}
+                </p>
+            ) : state.rows.length === 0 && !loading ? (
                 <EmptyState message={`No ${props.title ?? "records"} yet`} />
             ) : null}
             <div className="nf-pager">

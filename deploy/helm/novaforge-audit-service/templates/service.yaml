@@ -2,11 +2,13 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ .Release.Name }}-novaforge-audit-service
-  labels: {{ include "novaforge-audit-service.labels" . | indent 4 }}
+  labels:
+  {{- include "novaforge-audit-service.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
   ports:
     - port: {{ .Values.service.port }}
       targetPort: http
       name: http
-  selector: {{ include "novaforge-audit-service.selectorLabels" . | indent 4 }}
+  selector:
+  {{- include "novaforge-audit-service.selectorLabels" . | nindent 4 }}

@@ -2314,3 +2314,56 @@ close; the recorded-open list is empty.**
 Verified: full serial `./mvnw verify` green end to end (23 reactor modules,
 container suites on the podman socket). CODE_REVIEW.md's recorded-open list — every
 finding surfaced across passes 7–11 — is now closed and pinned.
+
+**Spec-review closeout (2026-08-31, twelfth pass) — the adversarial re-audit:
+charts rendered, fourteen more defects closed (three of them in the eleventh pass's
+own new code), M11/M12 recorded as an explicit decision.**
+
+- **The helm charts had never rendered** (H-12P1): all 22 templates used the
+  invalid `key: {{ … | indent N }}` shape — `helm template` (containerized, no
+  cluster) fails on the first chart. Fixed to the canonical nindent form; every
+  service chart and the umbrella render, and the file-service Deployment verifiably
+  carries the ClamAV/MinIO/Postgres env + secretKeyRefs — the tenth pass's
+  operator-verified posture is now render-verified.
+- **The eleventh pass's own migration was a deploy breaker** (H-12P2):
+  `entity_id NOT NULL` landed while the previous trigger (inserting without the
+  column) was still live — inserts would abort through the whole index-build
+  window. Staged: nullable column + backfill → trigger swap → final stamp →
+  NOT NULL (fail-soft, deferred to the next pass on unresolved rows).
+- **The cached sequence's last-slot race** served `max+1` outside the window —
+  the next allocation re-served it as a duplicate (H-12P3). Check-after-increment
+  with window-exclusive retry; pinned with a true 8-thread race.
+- **Event payloads leaked HIDDEN field values to outbound webhooks** (H-12P4):
+  the change/delete legs now ride the writing actor's field visibility on every
+  publish leg.
+- **Integration and flow writes never recomputed parent roll-ups** (H-12P5) —
+  the StockLedger/Item fix was user-door-only; all doors recompute now.
+- **beforeSave hook writes bypassed coercion** (H-12P6) — proven live by the
+  audit (a fixture hook had been silently nulling a required field into the DB);
+  all four doors re-canonicalize hook writes, freeze/period guards precede hooks
+  (no external side effects on doomed writes), and the initial-state guard stays
+  post-hook (the StateMachine pin caught the reorder going too far).
+- **The create door accepted hidden/readonly field writes** (H-12P7) — §9 parity
+  with update; the baked-in test inverted.
+- **Eight mediums** (M-12P1): numeric ORDER BY lexicographic on unpromoted
+  fields; GROUP BY+LIMIT nondeterministic truncation; empty `in` → raw SQL 500;
+  batch verdicts leaking exception internals; projection index-name collisions
+  silently dropping declarations; roll-up parent CAS failing legitimate concurrent
+  child writes (bounded retry); numeric-carrier-agnostic rollup comparison; the
+  provisioner adopt path resetting the env-admin credential (retry wedges).
+- **Frontend's first dedicated pass**: the CRITICAL number-field crash
+  (`Decimal.parse` throws on intermediate typing, no boundary anywhere) fixed with
+  `tryParse` + a render ErrorBoundary on both mounts; EntityPage's cross-entity
+  record bleed (missing route key — wrong-record PATCHes) keyed; ListLayout's
+  failure-as-empty rendering surfaced. 149 vitest + typecheck green. The
+  audit's remaining frontend findings (token refresh, PageBuilder page
+  resolution, composer stale-snapshot PATCHing, FileUpload wiring, expression
+  value decoding, lookup blur, four missing save catches) are recorded with
+  mechanisms in CODE_REVIEW.md — the next pass's scope.
+- **M11/M12**: recorded as an explicit decision — accepted maintainability debt
+  with no behavioral delta, deliberately deferred (a 10+ service refactor
+  mid-hardening trades zero fixed bugs for regression risk).
+
+Verified: full serial `./mvnw verify` green end to end (23 reactor modules,
+container suites on the podman socket); frontend workspace green (149 vitest +
+typecheck); all 12 charts render via containerized helm.

@@ -18,6 +18,17 @@ export class Decimal {
     static readonly ZERO = new Decimal(0n, 0);
     static readonly ONE = new Decimal(1n, 0);
 
+    /** Total parse for input validation: intermediate typing states ("12.", ".",
+     * "-") return undefined instead of throwing — a widget must never crash the tree
+     * on a half-typed number. */
+    static tryParse(source: string): Decimal | undefined {
+        try {
+            return Decimal.parse(source);
+        } catch {
+            return undefined;
+        }
+    }
+
     /** Parses an exact decimal string (`-12.3400` keeps its trailing zeros). */
     static parse(source: string): Decimal {
         const m = /^([+-]?)(\d+)(?:\.(\d+))?$/.exec(source.trim());

@@ -70,7 +70,7 @@ class ManualHookTests extends PostgresTestBase {
                                     "template": { "about": "${id}", "severity": "${status}" } } } },
                     { "name": "greet", "trigger": "beforeSave", "flow":
                       { "id": "g1", "op": "setField",
-                        "params": { "field": "subject", "value": "'re: ' + subject" } } },
+                        "params": { "field": "subject", "expression": "upper(subject)" } } },
                     { "name": "shouty", "trigger": "afterSave",
                       "script": { "language": "js", "source": "$log.info('saved')" } } ] },
                 { "apiName": "DeskNote",

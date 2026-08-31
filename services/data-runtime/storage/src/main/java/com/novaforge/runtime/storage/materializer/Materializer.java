@@ -230,8 +230,16 @@ public class Materializer {
                 promotedByField.putIfAbsent(field, column);
             }
             for (EntityDefinition.IndexDefinition index : entity.indexes()) {
-                indexColumns.putIfAbsent(indexName(table, index.fields()),
-                        new ArrayList<>(index.fields()));
+                // Snake-cased field lists collide ([totalAmount] vs [total, amount]
+                // both lower to total_amount) and CREATE INDEX IF NOT EXISTS would
+                // silently drop the second declaration — disambiguate with a suffix
+                // so every declared index exists
+                String name = indexName(table, index.fields());
+                while (indexColumns.containsKey(name)
+                        && !indexColumns.get(name).equals(index.fields())) {
+                    name = name + "_";
+                }
+                indexColumns.putIfAbsent(name, new ArrayList<>(index.fields()));
             }
             for (FieldDefinition field : entity.fields()) {
                 if (field.uniqueOn()) {
@@ -267,11 +275,22 @@ public class Materializer {
         if (!existing) {
             jdbc.execute(createTable(shape));
         } else {
-            ensureEntityKey(shape);
+            // Stage 1 of the pre-entity_id migration: the column lands NULLABLE and
+            // backfills — never NOT NULL yet, because the trigger function installed
+            // by the previous code version still inserts WITHOUT entity_id, and a
+            // NOT NULL column would abort every live insert from here until the
+            // function swap below commits.
+            ensureEntityKeyColumn(shape);
         }
         reconcileColumns(shape);
         reconcileIndexes(shape);
         applySyncMachinery(shape);
+        if (existing) {
+            // Stage 2: the new trigger (which stamps entity_id) is live and every row
+            // carries its key — rows the old function wrote during the window get a
+            // final stamp here — so the column can go NOT NULL safely.
+            enforceEntityKeyNotNull(shape);
+        }
         if (!existing) {
             // Backfill a freshly created (or recreated) projection from the base table;
             // an existing projection stays current through its trigger, and a generated
@@ -316,20 +335,39 @@ public class Materializer {
     }
 
     /**
-     * Pre-entity_id projections (and any orphaned by a hard base-table delete) gain
-     * the owning App.Entity key: the column backfills from the base row, rows with no
-     * base counterpart are dead artifacts the sync trigger would have removed, and
-     * the column then goes NOT NULL — the per-app unique index depends on it.
+     * Migration stage 1: pre-entity_id projections gain the owning App.Entity key —
+     * the column lands nullable and backfills from the base rows; rows with no base
+     * counterpart are dead artifacts the sync trigger would have removed. Nullable
+     * on purpose: until {@code applySyncMachinery} installs the new trigger body,
+     * the previous function still inserts without the column.
      */
-    private void ensureEntityKey(Shape shape) {
+    private void ensureEntityKeyColumn(Shape shape) {
         jdbc.execute("ALTER TABLE " + shape.table + " ADD COLUMN IF NOT EXISTS entity_id text");
         jdbc.update("UPDATE " + shape.table + " p SET entity_id = r.entity_id "
                 + "FROM rec_records r WHERE r.id = p.id AND (p.entity_id IS NULL "
                 + "OR p.entity_id <> r.entity_id)");
         jdbc.update("DELETE FROM " + shape.table + " p WHERE p.entity_id IS NULL "
                 + "AND NOT EXISTS (SELECT 1 FROM rec_records r WHERE r.id = p.id)");
-        jdbc.execute("ALTER TABLE " + shape.table
-                + " ALTER COLUMN entity_id SET NOT NULL");
+    }
+
+    /**
+     * Migration stage 2 — after the new trigger is live: a final stamp for rows the
+     * old function wrote during the window, then the column goes NOT NULL. Fails
+     * soft: if a row still cannot resolve (no base counterpart, no trigger stamp),
+     * the column stays nullable and the next pass retries — inserts keep working,
+     * and the per-app unique index (NULLs distinct) just enforces less until it
+     * converges.
+     */
+    private void enforceEntityKeyNotNull(Shape shape) {
+        jdbc.update("UPDATE " + shape.table + " p SET entity_id = r.entity_id "
+                + "FROM rec_records r WHERE r.id = p.id AND p.entity_id IS NULL");
+        try {
+            jdbc.execute("ALTER TABLE " + shape.table
+                    + " ALTER COLUMN entity_id SET NOT NULL");
+        } catch (org.springframework.dao.DataAccessException unresolved) {
+            LOG.warn("projection {} still holds rows without an entity key — NOT NULL "
+                    + "deferred to the next pass: {}", shape.table, unresolved.getMessage());
+        }
     }
 
     private void reconcileColumns(Shape shape) {

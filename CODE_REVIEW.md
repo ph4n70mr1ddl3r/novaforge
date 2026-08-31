@@ -1213,3 +1213,159 @@ None. The audit trail's recorded-open list — every finding from passes 7–11 
 closed and pinned. The helm chart's env posture remains operator-verified by
 design (documented create-secret steps; no cluster deploy exists in this
 environment to render against).
+
+## Twelfth Pass — 2026-08-31 (adversarial re-audit: charts rendered, newest code reviewed, frontend swept)
+
+Three fresh adversarial audits (this session's newest code; the record engine/query
+path re-swept; the SPAs — previously the least-audited surface). Fourteen more live
+defects closed; the deferred M11/M12 recorded as an explicit decision.
+
+### H-12P1 — the helm charts had never rendered: 22 templates were invalid YAML
+
+`helm template` (via a containerized helm — no cluster needed) failed on the first
+chart: every template used `key: {{ include … | indent N }}` / `key: {{ toYaml … |
+nindent N }}` — the expansion's first line lands on the key's line, which is not
+YAML. All 22 templates across 12 charts fixed to the canonical `key:` +
+`{{- … | nindent N }}` form; every service chart and the umbrella (after
+`helm dependency build` — the standard deploy step, now documented by this record)
+render clean, and the rendered file-service Deployment carries the tenth pass's
+ClamAV/MinIO/Postgres env and secretKeyRefs verbatim — the "operator-verified"
+posture is now render-verified.
+
+### H-12P2 — the entity_id migration would have broken live inserts mid-pass
+
+`ensureEntityKey` set `entity_id NOT NULL` while the previous code version's sync
+trigger (which inserts without the column) was still installed — every
+`rec_records` insert between the `SET NOT NULL` and the function swap would abort
+with a NOT NULL violation, a window spanning the full non-concurrent index builds.
+The migration is staged now: the column lands nullable + backfills first, the
+trigger swap happens in `applySyncMachinery`, and `SET NOT NULL` runs last with a
+final stamp and a fail-soft retry (unresolved rows defer to the next pass —
+inserts keep working; the per-app unique index treats NULLs as distinct until it
+converges).
+
+### H-12P3 — the cached sequence's last-slot race served a number outside the window
+
+`drawCached` checked exhaustion BEFORE the increment: at `current == max` two
+threads both pass, the loser's `getAndIncrement` returns `max+1` — outside the
+window — and the next allocation serves `max+1` again: a deterministic duplicate.
+The check now happens after the increment (overflow → fresh window, which is an
+atomic INCRBY range exclusively the claimer's → retry). Pinned with a true
+8-thread race over tiny blocks (`lastSlotRaceNeverDuplicates` — 512 draws, all
+distinct; gap-aware bound, since wasted overflow draws are cached mode's contract).
+
+### H-12P4 — event payloads exfiltrated HIDDEN field values to outbound webhooks
+
+The eleventh pass's `changed`/`before` legs shipped every changed field's values
+with no field-security shaping — and the OutboundDispatcher posts raw payloads to
+external endpoints. A field the writing actor cannot read (HIDDEN) never rides the
+event it causes now: the change/delete metadata is shaped through the same
+`strip` predicate the read doors use, on every publish leg (the hook/principal leg
+shapes through the initiating actor from the bound context).
+
+### H-12P5 — integration and flow-driven writes never recomputed parent roll-ups
+
+The StockLedger/Item fix (standalone child writes recompute parent roll-ups) was
+wired to the user doors only: webhook/import writes and flow `createRecord`/
+`updateRecord` steps fed child rows all day while the parents' aggregates sat
+stale (silently wrong money). `recomputeParentRollups` now runs on the integration
+doors (with prior data, so re-parenting refreshes both sides) and both principal
+paths.
+
+### H-12P6 — beforeSave hook writes bypassed coercion entirely
+
+Validation ran, then hooks mutated the record, then the write persisted verbatim —
+a `setField`/script value of the wrong shape (the unbound-template class the
+principal paths fixed in pass 7) poisoned typed fields on the human doors too; the
+advisory run proved it live: the ManualHook fixture's mis-parametrized hook had
+been silently nulling `subject` into the database. All four doors now re-canonicalize
+hook writes (`reCanonicalizeHookWrites`: coerce typed fields, re-run formulas and
+record rules, reject shaped violations), and the create doors moved their
+freeze/period guards BEFORE the hooks (a doomed write no longer fires connector
+calls or approval tasks first) while the initial-state guard stays after them (it
+validates the landing state — a transitionState hook cannot smuggle a non-initial
+state; the StateMachine pin caught exactly that when the reorder first went too far).
+
+### H-12P7 — the create door enforced neither readonly nor field-security writes
+
+Update rejected writes to hidden/readonly fields; create accepted them — a
+restricted role could launder values into fields it could never read or correct.
+Both guards now run on create (the baked-in test inverted: the clerk's
+hidden-`title` create rejects with "field is hidden"; the admin feeds the later
+legs).
+
+### M-12P1 — mediums closed in the same pass
+
+- **Numeric ORDER BY on unpromoted fields** sorted lexicographically (9, 100, 10);
+  the lowering now uses the numeric expression for numeric fields on the JSONB
+  path (promoted columns were already typed).
+- **Aggregate GROUP BY + LIMIT** truncated arbitrary hash-aggregate order — which
+  groups survive differed run to run; the group keys are ordered before the limit.
+- **An empty `in` filter** lowered to `()` — a raw SQL 500; the parser rejects it
+  at the door.
+- **Batch non-Platform verdicts** leaked raw exception messages (constraint names,
+  value excerpts) into API responses; the verdict names the class, the log keeps
+  the message.
+- **Projection index-name collisions** ([totalAmount] vs [total, amount] both
+  snake to `total_amount`; a field named `display`/`updated` collided with the
+  fixed indexes) silently dropped declarations via `CREATE INDEX IF NOT EXISTS`;
+  colliding names disambiguate with a suffix.
+- **Roll-up parent CAS** killed concurrent child writes to one parent (a legitimate
+  insert died as 409 with no conflicting edit of its own); the recompute re-reads
+  the parent and retries once before surfacing.
+- **`rollupMoved`** now compares any numeric carriers (BigDecimal vs Integer/Long
+  across SQL/jsonb/coercer) — the pass's own pins caught the phantom-drift version
+  churn live.
+- **The provisioner's adopt path** now resets the env-admin credential through the
+  idempotent user-provisioning leg — a crashed promotion's retry previously died at
+  the password grant (fresh password, lost original) and the intent never cleared.
+
+### Frontend (the first dedicated pass): 3 closed, the rest recorded
+
+- **CRITICAL — typing "12." into any number field crashed the whole SPA**:
+  `Decimal.parse` throws (the validity check treated it as returning undefined)
+  and no error boundary existed anywhere. `Decimal.tryParse` makes the check
+  total, and a render `ErrorBoundary` wraps both mounts (contained blast radius +
+  retry).
+- **EntityPage cross-entity bleed**: no `key` on navigation meant a previously
+  loaded record rendered in another entity's "New form" — whose save PATCHed the
+  wrong record with foreign data. Keyed by route identity; failed detail loads now
+  render an error instead of a silent empty form.
+- **ListLayout swallowed fetch failures as "No records yet"**: a backend blip (or
+  the expired-token case below) presented every list as empty — failures render an
+  alert now.
+
+**Recorded open (frontend, each with the audit's mechanism)**: no token refresh
+after page load (5-minute access tokens → every call 401s until a manual reload
+discards unsaved state); PageBuilder never resolves `app.pages` (a second edit
+session silently wipes prior customizations; entity-switch edits the wrong tree);
+DashboardComposer PATCHes the whole branch per keystroke over a stale snapshot
+(lost updates, cross-tab clobber); FileUpload is unwirable through the renderer (no
+token reaches it, its result never binds back to the record); the renderer feeds
+raw JSON to the expression twin (numeric/date slot rules always take the fallback
+— readonly/required wrongly true); FieldLookup's blur writes raw typed text and
+eats option clicks; KpiTile renders money through binary floats; builder saves
+without catch on four screens (rbac/composer/lifecycle/i18n). Backend recorded
+open: keyed-notification replays still re-email inbox-opted-out recipients (the
+dedupe rides the inbox row); sharing criteria using `now()` disagree between the
+Java doors (live instant) and the SQL lowering (start-of-day); period-lock and
+parent-freeze checks are check-then-write without row locks.
+
+### M11/M12 — the explicit decision
+
+**Deferred indefinitely as accepted maintainability debt, not defects.** M11
+(extract `novaforge-common-web` from the per-service web infra) and M12 (magic
+limits → `@ConfigurationProperties`) have no behavioral delta — the second pass
+already scoped them as "not a review-commit item", and a 10+ service structural
+refactor mid-hardening trades zero fixed bugs for real regression risk. M13
+(per-tenant circuit breakers) stays as-is by design (isolation). Revisit M11/M12
+as a dedicated refactor pass after the defect trail goes quiet.
+
+### Verification (this pass)
+
+data-runtime engine (22, incl. the race pin), api (25 — `permissionSetEnforcement`
+re-pinned for the create-door guard; ManualHook's fixture corrected to a legal
+`expression` param, which is itself the H-12P6 proof), storage (12); frontend 149
+vitest + typecheck green with the boundary/key/failure-surface changes; all 12
+charts render via containerized helm. Full serial `./mvnw verify` recorded in
+IMPLEMENTATION.md's closeout.
