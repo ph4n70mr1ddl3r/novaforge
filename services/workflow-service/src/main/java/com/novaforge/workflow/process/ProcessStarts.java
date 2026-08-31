@@ -72,14 +72,24 @@ public class ProcessStarts {
                             eventId, workflow.workflowId());
                     continue;
                 }
-                ProcessInstance instance = runtime.startProcessInstanceByKeyAndTenantId(
-                        workflow.workflowId(), recordId == null ? null : recordId.toString(),
-                        variables(tenantId, workflow.app(), entityId, recordId, actorId),
-                        tenantId.toString());
-                registry.recordInstance(eventId, workflow.workflowId(), instance.getId());
-                LOG.info("event-start fired workflow {} on {} {}/{} → instance {}",
-                        workflow.workflowId(), eventType, entityId, recordId,
-                        instance.getId());
+                // One workflow's failure must not abort the rest of the delivery: a
+                // throwing start here used to unwind onRecordEvent, so every
+                // subscription after it on the same event silently never started.
+                // The claim row rolls back with the failed start, so redelivery
+                // retries exactly this workflow.
+                try {
+                    ProcessInstance instance = runtime.startProcessInstanceByKeyAndTenantId(
+                            workflow.workflowId(), recordId == null ? null : recordId.toString(),
+                            variables(tenantId, workflow.app(), entityId, recordId, actorId),
+                            tenantId.toString());
+                    registry.recordInstance(eventId, workflow.workflowId(), instance.getId());
+                    LOG.info("event-start fired workflow {} on {} {}/{} → instance {}",
+                            workflow.workflowId(), eventType, entityId, recordId,
+                            instance.getId());
+                } catch (RuntimeException e) {
+                    LOG.error("event-start for workflow {} on event {} failed (redelivery "
+                            + "will retry this workflow)", workflow.workflowId(), eventId, e);
+                }
             }
         }
     }

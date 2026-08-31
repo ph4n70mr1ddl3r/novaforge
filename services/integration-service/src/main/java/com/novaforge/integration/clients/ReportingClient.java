@@ -30,7 +30,9 @@ public class ReportingClient {
 
     public ReportingClient(@Value("${novaforge.reporting.url:http://localhost:8089}") String url,
                            ServiceTokenClient serviceToken) {
-        this.reports = RestClient.builder().baseUrl(url).build();
+        this.reports = RestClient.builder().baseUrl(url)
+                        .requestFactory(bounded(url))
+                        .build();
         this.serviceToken = serviceToken;
     }
 
@@ -75,5 +77,19 @@ public class ReportingClient {
             throw new PlatformException(PlatformErrorCode.INTERNAL,
                     "reporting unreachable: " + e.getMessage());
         }
+    }
+
+    /**
+     * East-west calls are bounded (the pattern the other internal clients already
+     * ride): a hung upstream must fail in seconds, not hold the calling thread —
+     * the job scanner runs jobs serially on one scheduler thread, so an unbounded
+     * read stalls every tenant's pipeline.
+     */
+    private static org.springframework.http.client.SimpleClientHttpRequestFactory bounded(String ignored) {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(2_000);
+        factory.setReadTimeout(60_000);   // the export renders the dataset inline
+        return factory;
     }
 }

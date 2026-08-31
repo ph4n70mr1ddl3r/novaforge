@@ -44,13 +44,20 @@ public class SlaScanner {
     private final TaskService tasks;
     private final MeterRegistry meters;
     private final io.micrometer.tracing.Tracer tracer;
+    /** One transaction per task's warn/breach block: the flip, its events, and the
+     *  replacement commit together or not at all — a crash between the statements
+     *  previously left a task terminalized with no replacement and no retry (a
+     *  suspended approval wedged permanently). */
+    private final org.springframework.transaction.support.TransactionTemplate perTask;
 
     public SlaScanner(JdbcTemplate jdbc, TaskService tasks, MeterRegistry meters,
-                      io.micrometer.tracing.Tracer tracer) {
+                      io.micrometer.tracing.Tracer tracer,
+                      org.springframework.transaction.PlatformTransactionManager transactions) {
         this.jdbc = jdbc;
         this.tasks = tasks;
         this.meters = meters;
         this.tracer = tracer;
+        this.perTask = new org.springframework.transaction.support.TransactionTemplate(transactions);
     }
 
     @Scheduled(fixedDelayString = "${novaforge.sla.scan-interval-ms:5000}")
@@ -113,33 +120,51 @@ public class SlaScanner {
                 : jdbc.queryForList(sql + " AND tenant_id = ?", Timestamp.from(now), tenantId);
         int breached = 0;
         for (Map<String, Object> task : due) {
-            int escalated = jdbc.update("""
-                    UPDATE wf_tasks SET status = 'ESCALATED', updated_at = now()
-                     WHERE id = ? AND status = 'OPEN'""", task.get("id"));
-            if (escalated == 0) {
-                continue;   // resolved between the query and the flip
+            Integer done = perTask.execute(status -> breachOne(task));
+            if (done != null && done > 0) {
+                breached++;
             }
-            breached++;
-            emit(task, "task.escalated", "ESCALATED");
-            // §6's onBreach.notify: an authored "notify: false" escalation still
-            // rides the spine (metrics, audit) but carries the flag — the
-            // Notification Service skips the sla-warning fan-out on it
-            boolean notifyOn = !Boolean.FALSE.equals(task.get("notify_on"));
-            emit(task, "sla.breach", "ESCALATED",
-                    notifyOn ? Map.of() : Map.of("notify", false));
-            counted("novaforge.sla.breach", appOf(task.get("entity_id")));
-            String escalateTo = task.get("escalate_to") == null ? null
-                    : String.valueOf(task.get("escalate_to"));
-            if (escalateTo != null) {
-                // §6: a replacement task for the escalation role — single-level in v1.
-                tasks.create((UUID) task.get("tenant_id"), (String) task.get("type"),
-                        (String) task.get("entity_id"), (UUID) task.get("record_id"),
-                        null, escalateTo, null, null, (UUID) task.get("created_by"),
-                        (UUID) task.get("context_ref"), (UUID) task.get("instance_id"));
-            }
-            LOG.warn("sla breach: task {} escalated to {}", task.get("task_id"), escalateTo);
         }
         return breached;
+    }
+
+    /** One task's breach block, atomic: flip + events + replacement together. */
+    private Integer breachOne(Map<String, Object> task) {
+        String escalateTo = task.get("escalate_to") == null ? null
+                : String.valueOf(task.get("escalate_to"));
+        if (escalateTo == null) {
+            // notify-only breach (§6's "escalate, notify, or both"): ESCALATED is
+            // terminal and wf_tasks.resolve can never act on it — terminalizing an
+            // approval here wedged the suspended instance forever with no surface to
+            // resume it. The task stays OPEN (visible, resolvable) and the breach
+            // still rides the spine; the row must NOT flip.
+            emit(task, "sla.breach", "OPEN");
+            counted("novaforge.sla.breach", appOf(task.get("entity_id")));
+            LOG.warn("sla breach without escalation target: task {} stays OPEN "
+                    + "(notify-only SLA, still resolvable)", task.get("task_id"));
+            return 0;
+        }
+        int escalated = jdbc.update("""
+                UPDATE wf_tasks SET status = 'ESCALATED', updated_at = now()
+                 WHERE id = ? AND status = 'OPEN'""", task.get("id"));
+        if (escalated == 0) {
+            return 0;   // resolved between the query and the flip
+        }
+        emit(task, "task.escalated", "ESCALATED");
+        // §6's onBreach.notify: an authored "notify: false" escalation still
+        // rides the spine (metrics, audit) but carries the flag — the
+        // Notification Service skips the sla-warning fan-out on it
+        boolean notifyOn = !Boolean.FALSE.equals(task.get("notify_on"));
+        emit(task, "sla.breach", "ESCALATED",
+                notifyOn ? Map.of() : Map.of("notify", false));
+        counted("novaforge.sla.breach", appOf(task.get("entity_id")));
+        // §6: a replacement task for the escalation role — single-level in v1.
+        tasks.create((UUID) task.get("tenant_id"), (String) task.get("type"),
+                (String) task.get("entity_id"), (UUID) task.get("record_id"),
+                null, escalateTo, null, null, (UUID) task.get("created_by"),
+                (UUID) task.get("context_ref"), (UUID) task.get("instance_id"));
+        LOG.warn("sla breach: task {} escalated to {}", task.get("task_id"), escalateTo);
+        return 1;
     }
 
     /** The §6 metrics: warn/breach counters labeled per app (the Grafana feed). */

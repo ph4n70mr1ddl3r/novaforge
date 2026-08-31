@@ -33,6 +33,13 @@ public class ApiDocsController {
             new String[]{"file-service", "http://localhost:8091"});
 
     private static final long CACHE_MILLIS = 60_000;
+    /** The refetch floor: a degraded document (an upstream down) used to disable the
+     *  cache entirely — every request re-fetched all nine upstreams serially during
+     *  exactly the incidents when they are slowest, stacking worker exhaustion on
+     *  the edge. A degraded doc now serves until the floor elapses, then one
+     *  refetch runs (single-flight via the synchronized fetch below). */
+    private static final long DEGRADED_MIN_REFRESH_MILLIS = 10_000;
+    private final Object fetchGuard = new Object();
 
     private final ApiDocsAggregator aggregator;
     private final Environment environment;
@@ -51,11 +58,25 @@ public class ApiDocsController {
     public Map<String, Object> openApi(@RequestHeader(value = "Authorization", required = false)
                                        String authorization) {
         Cached current = cached;
-        if (current == null || Instant.now().isAfter(current.fetchedAt().plusMillis(CACHE_MILLIS))
-                || degraded(current.document())) {
-            Map<String, Object> document = aggregator.aggregate(upstreams(), authorization);
-            cached = new Cached(document, Instant.now());
-            current = cached;
+        boolean expired = current == null
+                || Instant.now().isAfter(current.fetchedAt().plusMillis(CACHE_MILLIS));
+        boolean degradedDue = current != null && degraded(current.document())
+                && Instant.now().isAfter(
+                        current.fetchedAt().plusMillis(DEGRADED_MIN_REFRESH_MILLIS));
+        if (expired || degradedDue) {
+            synchronized (fetchGuard) {
+                current = cached;   // re-read: a concurrent caller may have refreshed
+                expired = current == null
+                        || Instant.now().isAfter(current.fetchedAt().plusMillis(CACHE_MILLIS));
+                degradedDue = current != null && degraded(current.document())
+                        && Instant.now().isAfter(
+                                current.fetchedAt().plusMillis(DEGRADED_MIN_REFRESH_MILLIS));
+                if (expired || degradedDue) {
+                    Map<String, Object> document = aggregator.aggregate(upstreams(), authorization);
+                    cached = new Cached(document, Instant.now());
+                    current = cached;
+                }
+            }
         }
         return current.document();
     }

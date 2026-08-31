@@ -29,7 +29,7 @@ public class WebhookRateLimitFilter extends OncePerRequestFilter {
     private static final Logger LOG = LoggerFactory.getLogger(WebhookRateLimitFilter.class);
 
     /** The one prefix the limiter guards (§2: exactly one anonymous route). */
-    public static final String PUBLIC_PREFIX = "/api/v1/webhooks/inbound/";
+    public static final String PUBLIC_PREFIX = "/api/v1/webhooks/inbound";
 
     private final StringRedisTemplate redis;
     private final int requestsPerMinute;
@@ -44,8 +44,13 @@ public class WebhookRateLimitFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        if (!request.getRequestURI().startsWith(PUBLIC_PREFIX)
-                || request.getRequestURI().startsWith("/actuator")) {
+        // match the route/security patterns' semantics: both the exact prefix
+        // (Path=/api/v1/webhooks/inbound/** matches the slash-less form too) and
+        // everything under it — the trailing-slash-only check left the exact path
+        // anonymous, routed, and unthrottled
+        String uri = request.getRequestURI();
+        boolean publicRoute = uri.equals(PUBLIC_PREFIX) || uri.startsWith(PUBLIC_PREFIX + "/");
+        if (!publicRoute || uri.startsWith("/actuator")) {
             filterChain.doFilter(request, response);
             return;
         }

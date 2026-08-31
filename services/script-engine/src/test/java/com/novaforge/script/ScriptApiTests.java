@@ -48,6 +48,18 @@ class ScriptApiTests {
     /** The scheduled leg's system queries the stub observed (PHASE-4 §7). */
     static final List<String> SYSTEM_QUERIES = new CopyOnWriteArrayList<>();
 
+    @Test
+    @DisplayName("execute is service-client gated — a user token cannot drive $http egress")
+    void executeRejectsUserTokens() throws Exception {
+        mockMvc.perform(post("/api/v1/scripts/execute").with(userJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "app": "Erp", "hook": "h", "trigger": "beforeSave",
+                                  "language": "js", "script": "({ ok: true })",
+                                  "sandbox": "connector" }"""))
+                .andExpect(status().isForbidden());
+    }
+
     @TestConfiguration
     static class StubQuery {
 
@@ -87,7 +99,17 @@ class ScriptApiTests {
     @Autowired
     MockMvc mockMvc;
 
+    /** The runtime's relay leg: the service client's token with the tenant bound. */
     private static RequestPostProcessor engineJwt() {
+        return jwt()
+                .jwt(token -> token.claim("tenant_id", TENANT).subject(ACTOR)
+                        .claim("azp", com.novaforge.security.ServiceClientGate.CLIENT_ID)
+                        .claim("client_id", com.novaforge.security.ServiceClientGate.CLIENT_ID))
+                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
+    }
+
+    /** A plain user token (browser scope) — must NOT reach the execute surface. */
+    private static RequestPostProcessor userJwt() {
         return jwt()
                 .jwt(token -> token.claim("tenant_id", TENANT).subject(ACTOR))
                 .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
@@ -239,7 +261,7 @@ class ScriptApiTests {
     @Test
     @DisplayName("the scheduled leg is service-client only — a user token answers 403 (§7)")
     void scheduledSurfaceIsServiceGated() throws Exception {
-        mockMvc.perform(post("/api/v1/scripts/scheduled").with(engineJwt())
+        mockMvc.perform(post("/api/v1/scripts/scheduled").with(userJwt())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"tenantId\":\"" + TENANT + "\", \"app\":\"Erp\","
                                 + " \"hook\":\"sweep\", \"script\":\"1\"}"))

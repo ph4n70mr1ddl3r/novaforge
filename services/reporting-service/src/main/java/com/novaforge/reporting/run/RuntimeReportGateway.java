@@ -33,7 +33,9 @@ public class RuntimeReportGateway {
     public RuntimeReportGateway(
             @Value("${novaforge.data-runtime.url:http://localhost:8083}") String runtimeUrl,
             ServiceTokenClient serviceToken) {
-        this.runtime = RestClient.builder().baseUrl(runtimeUrl).build();
+        this.runtime = RestClient.builder().baseUrl(runtimeUrl)
+                        .requestFactory(bounded(runtimeUrl))
+                        .build();
         this.serviceToken = serviceToken;
     }
 
@@ -110,5 +112,19 @@ public class RuntimeReportGateway {
             return new PlatformException(PlatformErrorCode.INTERNAL,
                     "runtime " + where + " leg failed: " + body);
         }
+    }
+
+    /**
+     * East-west calls are bounded (the pattern the other internal clients already
+     * ride): a hung upstream must fail in seconds, not hold the calling thread —
+     * the job scanner runs jobs serially on one scheduler thread, so an unbounded
+     * read stalls every tenant's pipeline.
+     */
+    private static org.springframework.http.client.SimpleClientHttpRequestFactory bounded(String ignored) {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(2_000);
+        factory.setReadTimeout(60_000);   // the export renders the dataset inline
+        return factory;
     }
 }

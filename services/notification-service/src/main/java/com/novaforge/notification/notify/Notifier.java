@@ -118,25 +118,16 @@ public class Notifier {
                 if (written > 0) {
                     delivered(tenantId, user, "inbox", category);
                     delivered++;
-                } else if (keyed) {
-                    // a keyed replay: the original send already landed this inbox row
-                    // (and its email) — do not duplicate either leg
-                    continue;
                 }
             }
             if (emailOn) {
-                if (keyed) {
-                    // the email leg dedupes on its own marker (V2): an inbox-off
-                    // recipient has no inbox row to collide on, so without this a
-                    // keyed replay re-emailed them every time
-                    int marked = jdbc.update("""
-                            INSERT INTO nf_email_deliveries (tenant_id, user_id, event_id)
-                            VALUES (?, ?, ?)
-                            ON CONFLICT DO NOTHING""",
-                            tenantId, user, dedupeKey);
-                    if (marked == 0) {
-                        continue;   // this keyed send already emailed them
-                    }
+                if (keyed && !claimEmailDelivery(tenantId, user, dedupeKey)) {
+                    // the marker alone gates the email leg: the inbox row's presence
+                    // says nothing about whether an email was ever sent (the original
+                    // send may have had email off, or inbox on and email off — the
+                    // earlier inbox-collision shortcut suppressed emails that had
+                    // never gone out and never would)
+                    continue;
                 }
                 if (attachment == null) {
                     email.send(recipients.addressOf(user), title, body);
@@ -148,6 +139,32 @@ public class Notifier {
             }
         }
         return delivered;
+    }
+
+    /**
+     * Claims the email delivery in its OWN transaction, before the send: the email
+     * is an external, non-rollbackable side effect, and a marker that rolls back with
+     * the enclosing transaction (a later recipient's SMTP failure aborting the batch)
+     * would let a retry re-email everyone already sent to. Committed independently,
+     * the claim survives the rollback and the retry collapses correctly. If the send
+     * then fails, the claim is stale-but-harmless: one email was attempted under this
+     * key and the next keyed send for it skips — at-least-once with a ceiling of one
+     * per key per process, which is the delivery contract.
+     */
+    private boolean claimEmailDelivery(UUID tenantId, UUID user, String dedupeKey) {
+        org.springframework.transaction.support.DefaultTransactionDefinition definition =
+                new org.springframework.transaction.support.DefaultTransactionDefinition();
+        definition.setPropagationBehavior(
+                org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        org.springframework.transaction.support.TransactionTemplate template =
+                new org.springframework.transaction.support.TransactionTemplate(
+                        new org.springframework.jdbc.datasource.DataSourceTransactionManager(
+                                jdbc.getDataSource()), definition);
+        return Boolean.TRUE.equals(template.execute(status -> jdbc.update("""
+                INSERT INTO nf_email_deliveries (tenant_id, user_id, event_id)
+                VALUES (?, ?, ?)
+                ON CONFLICT DO NOTHING""",
+                tenantId, user, dedupeKey) > 0));
     }
 
     private boolean preference(UUID tenantId, UUID user, String category, String channel) {

@@ -113,6 +113,32 @@ describe("DashboardComposer (PHASE-5 T6)", () => {
         expect(saved.widgets[1]).toMatchObject({ widget: "kpi", reportRef: "arAging", span: 4 });
     });
 
+    it("New-dashboard keeps unsaved edits to other dashboards (no silent wipe)", async () => {
+        // Anti-regression (2026-08-31, fifteenth pass): the save used to clear the
+        // WHOLE local edit map, and New-dashboard's mutate ignored the edits —
+        // creating a dashboard silently discarded every unsaved widget/role edit.
+        let captured: DashboardDefinition[] = [];
+        const saveDashboards = vi.fn<
+            (mutate: (current: DashboardDefinition[]) => DashboardDefinition[]) => Promise<void>
+        >(async (mutate) => {
+            captured = mutate([{ ...app.dashboards[0]! }]);
+        });
+        render(createElement(DashboardComposer, { app, saveDashboards }));
+        fireEvent.click(screen.getByRole("button", { name: "Add widget" }));
+        // the edit is local and unsaved — New-dashboard is disabled rather than
+        // discarding it
+        expect((screen.getByRole("button", { name: "New dashboard" }) as HTMLButtonElement).disabled)
+            .toBe(true);
+        // saving the edit re-enables it, and the new dashboard lands after
+        fireEvent.click(screen.getByTestId("save-dashboards"));
+        await waitFor(() => expect(saveDashboards).toHaveBeenCalledTimes(1));
+        expect((screen.getByRole("button", { name: "New dashboard" }) as HTMLButtonElement).disabled)
+            .toBe(false);
+        fireEvent.click(screen.getByRole("button", { name: "New dashboard" }));
+        await waitFor(() => expect(saveDashboards).toHaveBeenCalledTimes(2));
+        expect(captured).toHaveLength(2);   // the existing dashboard + the append
+    });
+
     it("edits role visibility composition (saved with the dashboard)", async () => {
         let captured: DashboardDefinition[] = [];
         const saveDashboards = vi.fn<

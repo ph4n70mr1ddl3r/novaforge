@@ -2425,3 +2425,37 @@ frontend 155 vitest (+2) + typecheck clean; full serial `./mvnw verify` green
 end to end. The recorded-open list is empty of defect items — what stands is
 the M11/M12 decision and the unwired logout action (the storage contract clears
 the session on tab close).
+
+**Spec-review closeout (2026-08-31, fifteenth pass) — the adversarial re-audit:
+fourteen findings, ten closed and pinned, the newest code again the richest vein.**
+
+- **The fourteenth pass's own locks deadlocked** (H-15P1): FOR SHARE on a parent the
+  same transaction then UPDATED — the share→upgrade cycle on the exact concurrent
+  child-write case the locks were built for. `FOR NO KEY UPDATE` serializes writers
+  at the check point without the cycle; the locking count gained a shape guard.
+- **The script engine's execute surface was a connector-egress primitive**
+  (H-15P2): user-scope auth + a body-borne sandbox opt-in meant any user token with
+  pod reach could drive `$http` under tenant credentials. Service-client gated.
+- **A notify-only SLA breach wedged approvals permanently** (H-15P3): ESCALATED is
+  terminal — a no-target breach now rides the spine and leaves the task OPEN and
+  resolvable; the breach block is one transaction per task. Pinned end-to-end.
+- **Task claim was last-writer-wins** (H-15P4): CAS on `assignee IS NULL` —
+  concurrent claims and assignment-steals both close. Pinned.
+- **The notifier's email marker rolled back with the batch** (M-15P1): claims commit
+  in REQUIRES_NEW before the send; the marker alone gates the email leg (the
+  inbox-collision shortcut suppressed never-sent emails); markers ride the outbox's
+  retention.
+- **The composer still wiped edits two ways** (M-15P2): the save clears only the
+  keys it sent; New-dashboard is disabled while dirty. Pinned.
+- **The tail** (M-15P3): subprocess user tasks bridge (recursive lookup, loud on
+  failure); per-workflow event-start isolation; the slash-less webhook path
+  throttled (pinned); connector baseUrls reject internal targets at publish
+  (pinned); four east-west clients bounded; the degraded OpenAPI serves from a
+  10 s floor with single-flight refetch; quarantined uploads never bind.
+
+Verified: full serial `./mvnw verify` green end to end (23 modules); frontend
+157 vitest + typecheck clean. The recorded-open list carries the scoped items
+(process-isolated sandbox pools, the edge body cap, the BPMN per-task resolution
+contract, the resume idempotency key, escalation role validation, consumer
+DLT/error-handler configuration, the delegation read-scope decision) — each with
+its mechanism, none silently dropped.

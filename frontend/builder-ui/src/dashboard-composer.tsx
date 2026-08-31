@@ -44,9 +44,20 @@ export function DashboardComposer({
         thenSelect?: string,
     ): Promise<void> => {
         setBusy(true);
+        // the snapshot of local edits this save carries: on success ONLY these keys
+        // clear — wiping the whole map discarded edits made after the click (lost
+        // mid-flight) and edits to other dashboards when New-dashboard saved an
+        // unrelated append
+        const sent = { ...edits };
         try {
             await saveDashboards(mutate);
-            setEdits({});
+            setEdits((current) => {
+                const next = { ...current };
+                for (const key of Object.keys(sent)) {
+                    delete next[key];
+                }
+                return next;
+            });
             if (thenSelect) {
                 setSelectedId(thenSelect);
             }
@@ -79,6 +90,7 @@ export function DashboardComposer({
                 </label>
                 <button
                     type="button"
+                    disabled={dirty || busy}
                     onClick={() => {
                         const id = `dash${app.dashboards.length + 1}`;
                         void persist(

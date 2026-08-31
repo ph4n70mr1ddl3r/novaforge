@@ -1527,3 +1527,144 @@ notification-service 13 green (+the marker pin), data-runtime api 26 / storage 1
 / engine 22 green with the locking reads, frontend 155 vitest (+2: the
 upload-wiring pin, the composer local-edit pin) + typecheck clean. Full serial
 `./mvnw verify` green end to end.
+
+## Fifteenth Pass — 2026-08-31 (the adversarial re-audit: newest code first, then the unaudited services)
+
+Three fresh audits: the fourteenth pass's own code, the workflow-service task/SLA
+internals (not re-audited since the sixth pass), and reporting/script-engine/gateway.
+Fourteen findings; the ten concretely-bounded ones closed and pinned this pass, the
+rest recorded with mechanisms.
+
+### H-15P1 — the fourteenth pass's own locks deadlocked the exact case they guarded
+
+`findForShare` took FOR SHARE on the parent row and the same transaction then
+UPDATED it through the roll-up recompute — two concurrent child writes to one
+parent both acquired SHARE (compatible), then both requested exclusive for the
+UPDATE: the textbook share→upgrade deadlock, turning a race the bounded CAS retry
+handled cleanly into a raw 40P01. The lock is `FOR NO KEY UPDATE` now (writers
+serialize at the check point; the roll-up UPDATE follows in the same mode without a
+cycle), and the locking count's string surgery gained a shape guard (a LIMIT/OFFSET
+tail would silently truncate the wrapped count — an undercount here would let a
+locked period pass; it rejects loudly instead).
+
+### H-15P2 — the script engine's execute surface was a connector-egress primitive
+
+`/api/v1/scripts/execute` authenticated at user scope with no service gate, and the
+connector sandbox opt-in rode the request body: any user token with pod-network
+reach (no gateway route, but no NetworkPolicy either) could execute any connector
+operation of their tenant under tenant credentials with a fully
+attacker-controlled template — external writes the builder-authored model exists
+to gate. The surface now requires the trusted service client (mirroring
+`/scheduled`); the runtime's relay leg is the only legitimate caller.
+
+### H-15P3 — a notify-only SLA breach permanently wedged the approval
+
+`ESCALATED` is terminal and `wf_tasks.resolve` CASes on `status = 'OPEN'` — a
+breach with no escalation target (§6's notify-only branch, or a step timeout
+without `escalateTo`) terminalized the task, so the suspended instance could never
+resume and no admin surface existed to unwedge it: the "parked with nothing
+re-drivable" class, entering through the SLA path. A no-target breach now rides
+the spine (`sla.breach`, metrics) and leaves the task OPEN and resolvable — the
+flip happens only when a replacement will exist. Pinned end-to-end (breach →
+still OPEN → the approval resolves → the record unwedges). The breach block also
+became one transaction per task (the flip, events, and replacement previously
+committed in 4+ separate transactions — a crash between them lost the replacement
+with no retry).
+
+### H-15P4 — task claim was last-writer-wins, and delegation narrowed nothing
+
+The claim UPDATE matched any OPEN role task: concurrent claims both succeeded (the
+loser never told), and any later role holder could silently steal an assigned or
+delegated task. The claim is a CAS on `assignee IS NULL` now (the loser gets the
+existing conflict path). Pinned. (Delegation's role-vs-assignee visibility question
+is recorded below — the CAS closes the steal, the read-scope decision stands.)
+
+### M-15P1 — the notifier's email marker rolled back with the batch
+
+The fourteenth pass's marker inserted inside the `@Transactional` batch loop — a
+later recipient's SMTP failure rolled back earlier recipients' markers while their
+emails had physically gone, so the retry re-emailed exactly the people already
+sent to (the guarantee the marker existed to provide). The claim now commits in
+its own `REQUIRES_NEW` transaction before the send: it survives the rollback, and
+a send-then-fail leaves the claim harmlessly held (one attempt per key —
+at-least-once with a ceiling of one). The marker also became the SOLE gate on the
+email leg (the old inbox-collision shortcut suppressed emails that had never gone
+out — the original send may have had email off), and `nf_email_deliveries` gained
+the outbox's retention window (one row per recipient per keyed send was otherwise
+permanent growth).
+
+### M-15P2 — the composer still wiped edits two ways
+
+The save cleared the ENTIRE local edit map: edits made while the save was in
+flight (after the click, before the reload) were deleted locally and never sent,
+and New-dashboard's mutate ignored the edits entirely — creating a dashboard
+silently discarded every unsaved widget/role edit. The save now clears only the
+keys it sent; New-dashboard is disabled while dirty. Pinned (edit → New disabled →
+save → New enabled → append lands with the edited dashboard intact).
+
+### M-15P3 — the medium tail
+
+- **Subprocess-nested user tasks never bridged**: the deploy gate validates user
+  tasks recursively (findFlowElementsOfType) while the bridge resolved
+  non-recursively (getFlowElement scans direct children only) — a subprocess task
+  deployed cleanly, then sat unbridged forever with no inbox row and no log. The
+  lookup is recursive and a failed resolution logs at warn, never silently.
+- **One workflow's event-start failure poisoned the delivery**: `onRecordEvent`
+  looped all matching workflows with no isolation — a throwing start aborted the
+  subscriptions after it on the same event. Per-workflow try/catch (the claim row
+  rolls back with the failed start, so redelivery retries exactly that one).
+- **The webhook rate limiter missed the slash-less path**: the prefix check
+  required the trailing slash while the route/security patterns match the exact
+  form — `POST /api/v1/webhooks/inbound` was anonymous, proxied, and unthrottled.
+  The guard matches the patterns' semantics now. Pinned.
+- **Connector SSRF at the publish door**: `baseUrl` validated only `^https?://` —
+  a loopback/link-local/private target (cloud metadata, actuator ports) dressed as
+  a connector returned its body to the caller. The validator rejects internal
+  targets: literal IPv4/IPv6 addresses resolve against the RFC ranges, and the
+  internal-suffix hostnames (`.svc`, `.cluster.local`, `.internal`, `.localhost`)
+  reject outright. The first cut also resolved real DNS names and failed closed on
+  NXDOMAIN — the full verify caught it rejecting the ERP corpus's
+  `bank.example.local` (an unresolvable-at-CI provider is normal at publish);
+  rebinding through real DNS is the execution-time check's job, so the door checks
+  literals only. Pinned (169.254.169.254 and localhost both reject).
+- **Four east-west RestClients had no timeouts** (reporting→runtime, reporting→
+  notifications, integration→reporting, the async-export leg): a hung upstream
+  held the calling thread forever — and the job scanner runs jobs serially on one
+  scheduler thread, so one black-holed export stalled every tenant's pipeline.
+  All four are bounded (2s connect / 60s read).
+- **The aggregated OpenAPI disabled its cache when degraded**: an upstream down
+  made every request re-fetch all nine upstreams serially during exactly the
+  incidents when they are slowest. A degraded document serves until a 10 s floor,
+  then one single-flight refetch runs.
+- **Quarantined uploads bound to the record**: the file-upload wiring wrote the
+  attachment id on every completion — including `virusScan: "infected"`,
+  persisting a reference to a file that can never be downloaded. The bind skips
+  the infected case.
+
+### Recorded open (mechanisms verified, deliberate scope)
+
+The sandbox heap cap is a sampled process-wide tripwire (a single-statement
+allocation bomb completes before any sample; per-context metering is Enterprise —
+containment wants ADR-003's process-isolation pools, a scoped pass). The gateway
+still has no request-body size cap on the anonymous webhook route (bounded body +
+edge cap is the fix; compose/kind deployments front it today). The BPMN bridge's
+single `resolution` variable cross-contaminates parallel-gateway/multi-instance
+outcomes (per-task variable scoping is a contract change for authored
+gateway conditions). The resume re-entry carries no idempotency key (a
+remote-succeeds-local-commit-fails retry re-runs the approval subgraph once). The
+escalation replacement's role is unvalidated at creation (a typo'd role is a
+silent wedge — needs a role-exists lookup). Record-event consumers have no
+configured error handler/DLT (Boot defaults: 9 zero-backoff retries then skip) —
+the per-workflow isolation added this pass bounds the blast radius. Delegation
+replacements keep the original role for visibility while `requireAccess` accepts
+any holder of it (the CAS stops the steal; whether delegation should narrow the
+read scope is a product decision). M11/M12 remain deferred by decision.
+
+### Verification (this pass)
+
+workflow 25 (+2 pins: notify-only breach, claim CAS), script-engine 12 (+1: the
+user-token rejection), gateway 17 (+1: the slash-less path), metadata-model (+2
+SSRF pins), data-runtime storage/api/engine green with the lock-mode change,
+frontend 157 vitest (+2: the every-catalog-id render pin — which now guards the
+five-loader regression class — and the composer New-dashboard pin) + typecheck
+clean. Full serial `./mvnw verify` green end to end.

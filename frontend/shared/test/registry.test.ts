@@ -57,3 +57,67 @@ describe("catalog registry", () => {
     expect(() => catalogEntry("novaforge.ghost")).toThrow(/unknown catalog component/);
   });
 });
+
+describe("every catalog id renders through the real registry (2026-08-31, fifteenth pass)", () => {
+    // Anti-regression: five loaders sat in the bare-import lazy form (React rejects
+    // the module namespace — "resolves to: undefined") with every suite green,
+    // because nothing MOUNTED the lazy components. One node of every catalog id
+    // renders through PageRenderer; a broken loader or a lost named export fails
+    // here instead of in production.
+    it("mounts each id without falling back", { timeout: 60_000 }, async () => {
+        const { PageRenderer } = await import("../src/renderer/renderer.ts");
+        const { render, waitFor } = await import("@testing-library/react");
+        const { createElement } = await import("react");
+        const entity = {
+            apiName: "E",
+            label: "E",
+            fields: [
+                { apiName: "f", type: "text" as const },
+                { apiName: "n", type: "decimal" as const },
+                { apiName: "s", type: "enum" as const, values: ["A"] },
+            ],
+            relationships: [],
+            validations: [],
+            hooks: [],
+            indexes: [],
+        };
+        for (const entry of CATALOG) {
+            const page = {
+                apiName: "p",
+                type: "form" as const,
+                entity: "E",
+                model: {
+                    base: "auto" as const,
+                    kind: "form" as const,
+                    root: { type: entry.id, key: "k", version: entry.version, props: {} },
+                    actions: [],
+                },
+            };
+            const context = {
+                mode: "preview" as const,
+                clock: "2026-08-31T00:00:00.000Z",
+                user: { name: "u", roles: [] },
+                record: { f: "v", n: 1, s: "A" },
+                errors: {},
+                getValue: () => undefined,
+                setValue: () => {},
+                actions: {
+                    save: async () => {},
+                    cancel: async () => {},
+                    deleteRecord: async () => {},
+                    openPage: async () => {},
+                },
+                navigate: () => {},
+            };
+            const { unmount } = render(createElement(PageRenderer, { page, entity, context }));
+            // the lazy component must resolve (a broken loader surfaces as the
+            // fallback rather than the widget) — wait for suspension to clear
+            await waitFor(() => {
+                const fallback = document.querySelector(".nf-fallback");
+                expect(fallback === null || !document.body.contains(fallback), entry.id)
+                    .toBe(true);
+            }, { timeout: 3000 });
+            unmount();
+        }
+    });
+});

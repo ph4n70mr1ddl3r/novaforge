@@ -97,6 +97,20 @@ public class ProcessTaskBridge implements FlowableEventListener {
 
     // --- engine → inbox ---
 
+    /** Recursive user-task lookup (subprocesses included), mirroring the deploy gate. */
+    private FlowElement findUserTask(TaskEntity task, String definitionKey) {
+        var model = repository.getObject().getBpmnModel(task.getProcessDefinitionId());
+        if (model == null || model.getMainProcess() == null) {
+            return null;
+        }
+        for (UserTask candidate : model.getMainProcess().findFlowElementsOfType(UserTask.class)) {
+            if (definitionKey.equals(candidate.getId())) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
     /** A deployed workflow's user task becomes an inbox row (type todo, §9). */
     void taskCreated(TaskEntity task) {
         UUID tenantId = tenantOf(task);
@@ -107,9 +121,18 @@ public class ProcessTaskBridge implements FlowableEventListener {
         if (deployment.isEmpty()) {
             return;   // not one of our published workflows — never bridged
         }
-        FlowElement element = repository.getObject().getBpmnModel(task.getProcessDefinitionId())
-                .getMainProcess().getFlowElement(task.getTaskDefinitionKey());
+        // Recursive resolution: the deploy gate validates user tasks with
+        // findFlowElementsOfType (which descends into subprocesses), while
+        // getFlowElement(key) scans only direct children — a subprocess-nested user
+        // task deployed cleanly, then silently never bridged (no wf_tasks row, the
+        // instance parked at the task forever with no inbox surface anywhere).
+        FlowElement element = findUserTask(task, task.getTaskDefinitionKey());
         if (!(element instanceof UserTask userTask)) {
+            // never silent: a deployed workflow's engine task that cannot be
+            // resolved is a bridging defect, not a skip condition
+            LOG.warn("workflow task {} of definition {} resolved to no BPMN user task "
+                    + "(subprocess nesting?) — not bridged", task.getTaskDefinitionKey(),
+                    task.getProcessDefinitionId());
             return;
         }
         UUID assignee = literalUuid(userTask.getAssignee());

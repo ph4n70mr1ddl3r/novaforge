@@ -159,17 +159,20 @@ public class RecordStore {
     }
 
     /**
-     * The parent-freeze check's locking read: FOR SHARE holds the parent row against
-     * a concurrent terminal transition until this write commits, closing the
+     * The parent-freeze check's locking read: FOR NO KEY UPDATE holds the parent row
+     * against a concurrent terminal transition until this write commits, closing the
      * check-then-write window where a child inserted past a parent that froze
-     * mid-flight.
+     * mid-flight. NO KEY UPDATE (not FOR SHARE) because this same transaction
+     * typically UPDATEs the row again through the roll-up recompute — two writers
+     * holding SHARE locks and both upgrading deadlock, while NO KEY UPDATE
+     * serializes at the check point and the second waits cleanly.
      */
     public Optional<StoredRecord> findForShare(UUID tenantId, String entityId, UUID id) {
         return jdbc.query("""
                         SELECT id, tenant_id, entity_id, version, created_at, updated_at, created_by, updated_by, deleted, data
                           FROM rec_records
                          WHERE id = ? AND tenant_id = ? AND entity_id = ? AND NOT deleted
-                         FOR SHARE""",
+                         FOR NO KEY UPDATE""",
                 RecordStore::mapRow, id, tenantId, entityId).stream().findFirst();
     }
 
@@ -182,8 +185,16 @@ public class RecordStore {
      */
     public Long countValueForShare(String sql, List<Object> params) {
         String body = sql.replaceFirst("(?i)^SELECT count\\(\\*\\)\\s+", "");
+        // shape contract: the rewrite assumes a plain "SELECT count(*) FROM … WHERE …"
+        // — a LIMIT/OFFSET tail would silently truncate the wrapped count. Fail loud
+        // instead of undercounting (an undercount here would let a locked period pass).
+        if (!body.startsWith("FROM") || body.toUpperCase().contains(" LIMIT")
+                || body.toUpperCase().contains(" ORDER BY")) {
+            throw new IllegalArgumentException(
+                    "locking count requires a plain SELECT count(*) FROM … WHERE shape: " + sql);
+        }
         return jdbc.queryForObject(
-                "SELECT count(*) FROM (SELECT 1 " + body + " FOR SHARE) locked",
+                "SELECT count(*) FROM (SELECT 1 " + body + " FOR NO KEY UPDATE) locked",
                 Long.class, params.toArray());
     }
 

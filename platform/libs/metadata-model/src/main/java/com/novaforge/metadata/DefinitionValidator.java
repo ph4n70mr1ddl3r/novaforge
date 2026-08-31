@@ -731,6 +731,14 @@ public final class DefinitionValidator {
             if (connector.baseUrl() == null || !connector.baseUrl().matches("^https?://.+")) {
                 errors.add(field(scope + ".baseUrl",
                         "connector baseUrl must be an http(s) URL", connector.baseUrl()));
+            } else if (targetsInternalNetwork(connector.baseUrl())) {
+                // Egress policy (§9): connector calls run from the integration
+                // service's pod and return the provider body to the caller — a
+                // loopback/link-local/private baseUrl is an in-cluster SSRF read
+                // (cloud metadata, actuator ports) dressed as a connector.
+                errors.add(field(scope + ".baseUrl",
+                        "connector baseUrl must not target loopback, link-local, or "
+                                + "private-network addresses (SSRF, §9)", connector.baseUrl()));
             }
             if (connector.credential() != null
                     && integrations.credential(connector.credential()).isEmpty()) {
@@ -1335,6 +1343,46 @@ public final class DefinitionValidator {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    /**
+     * The egress policy leg: loopback, link-local (169.254.0.0/16 — the cloud
+     * metadata range), and RFC1918 private hosts are not connector targets. Literal
+     * IPs checked directly; a hostname resolving only publicly can still be rebinding
+     * — the execution-time re-check is the durable layer, this is the publish door.
+     */
+    static boolean targetsInternalNetwork(String baseUrl) {
+        try {
+            String host = new java.net.URI(baseUrl).getHost();
+            if (host == null) {
+                return true;
+            }
+            if (host.equals("localhost") || host.endsWith(".localhost")
+                    || host.endsWith(".internal") || host.endsWith(".svc")
+                    || host.endsWith(".cluster.local")) {
+                return true;
+            }
+            // Resolve only when the host is a literal IP (the RFC ranges) — a DNS
+            // name that fails to resolve is normal at publish time (offline CI, a
+            // not-yet-provisioned provider) and must not block the save; rebinding
+            // through real DNS is the execution-time check's job.
+            java.util.regex.Matcher literal = java.util.regex.Pattern
+                    .compile("^(\\d{1,3}(\\.\\d{1,3}){3})$|^(\\[[0-9a-fA-F:]+\\])$")
+                    .matcher(host);
+            if (!literal.matches()) {
+                return false;
+            }
+            java.net.InetAddress[] addresses = java.net.InetAddress.getAllByName(host);
+            for (java.net.InetAddress address : addresses) {
+                if (address.isLoopbackAddress() || address.isLinkLocalAddress()
+                        || address.isSiteLocalAddress() || address.isAnyLocalAddress()) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            return false;   // an unparseable shape is the URL-format rule's business
+        }
     }
 
     private static ProblemErrors.FieldError field(String field, String message, Object rejected) {

@@ -104,5 +104,17 @@ public class NotificationOutboxRelay {
             LOG.info("outbox retention dropped {} published row(s) older than {} day(s)",
                     dropped, retentionDays);
         }
+        // the email delivery markers ride the same window: a marker older than the
+        // retention period belongs to a key nothing will replay again (each scheduler
+        // window fires once), so it is pure growth otherwise — one row per recipient
+        // per keyed send, forever
+        int markers = jdbc.update("""
+                DELETE FROM nf_email_deliveries
+                 WHERE delivered_at < now() - (? * interval '1 day')""",
+                retentionDays);
+        if (markers > 0) {
+            LOG.info("email delivery markers dropped {} row(s) older than {} day(s)",
+                    markers, retentionDays);
+        }
     }
 }

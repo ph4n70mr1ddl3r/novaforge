@@ -25,7 +25,7 @@ class WebhookRateLimitFilterTest {
         WebhookRateLimitFilter filter = new WebhookRateLimitFilter(redis, 2);
 
         MockHttpServletRequest request = new MockHttpServletRequest("POST",
-                WebhookRateLimitFilter.PUBLIC_PREFIX + "tenant/Payment/wh_feed");
+                WebhookRateLimitFilter.PUBLIC_PREFIX + "/tenant/Payment/wh_feed");
         request.setRemoteAddr("203.0.113.9");
 
         MockHttpServletResponse first = new MockHttpServletResponse();
@@ -75,7 +75,7 @@ class WebhookRateLimitFilterTest {
         WebhookRateLimitFilter filter = new WebhookRateLimitFilter(redis, 2);
 
         MockHttpServletRequest request = new MockHttpServletRequest("POST",
-                WebhookRateLimitFilter.PUBLIC_PREFIX + "tenant/Payment/wh_feed");
+                WebhookRateLimitFilter.PUBLIC_PREFIX + "/tenant/Payment/wh_feed");
         request.setRemoteAddr("203.0.113.9");
         request.addHeader("X-Forwarded-For", "198.51.100.1");
 
@@ -86,12 +86,36 @@ class WebhookRateLimitFilterTest {
         }
         // third call from the same socket, a brand-new spoofed hop — still over limit
         MockHttpServletRequest rotated = new MockHttpServletRequest("POST",
-                WebhookRateLimitFilter.PUBLIC_PREFIX + "tenant/Payment/wh_feed");
+                WebhookRateLimitFilter.PUBLIC_PREFIX + "/tenant/Payment/wh_feed");
         rotated.setRemoteAddr("203.0.113.9");
         rotated.addHeader("X-Forwarded-For", "198.51.100.77");
         MockHttpServletResponse third = new MockHttpServletResponse();
         filter.doFilter(rotated, third, passing());
         assertThat(third.getStatus()).isEqualTo(429);
+    }
+
+    @Test
+    @DisplayName("the slash-less public path is throttled too (the route pattern matches it)")
+    void slashLessPublicPathIsLimited() throws Exception {
+        // Anti-regression (2026-08-31, fifteenth pass): the limiter keyed on the
+        // trailing-slash prefix while the route and security patterns match the exact
+        // slash-less form — POST /api/v1/webhooks/inbound was anonymous, proxied,
+        // and unthrottled.
+        CountingRedis redis = new CountingRedis();
+        WebhookRateLimitFilter filter = new WebhookRateLimitFilter(redis, 2);
+
+        MockHttpServletRequest request = new MockHttpServletRequest("POST",
+                WebhookRateLimitFilter.PUBLIC_PREFIX);   // no trailing slash
+        request.setRemoteAddr("203.0.113.9");
+        for (int i = 0; i < 2; i++) {
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            filter.doFilter(request, response, passing());
+            assertThat(response.getStatus()).isEqualTo(200);
+        }
+        MockHttpServletResponse third = new MockHttpServletResponse();
+        filter.doFilter(request, third, passing());
+        assertThat(third.getStatus()).isEqualTo(429);
+        assertThat(redis.increments).isEqualTo(3);
     }
 
     private static FilterChain passing() {

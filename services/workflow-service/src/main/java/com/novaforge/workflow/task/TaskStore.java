@@ -105,9 +105,13 @@ public class TaskStore {
 
     /** Claim: a role-assigned task gains an assignee, staying OPEN (§5). */
     public int claim(UUID tenantId, UUID id, UUID assignee) {
+        // CAS on assignee: without IS NULL, two concurrent claims both matched
+        // (last-writer-wins, the loser never told) and any later role holder could
+        // silently steal an already-claimed — or delegated — task.
         return jdbc.update("""
                 UPDATE wf_tasks SET assignee = ?, updated_at = now()
-                 WHERE tenant_id = ? AND id = ? AND status = 'OPEN' AND role IS NOT NULL""",
+                 WHERE tenant_id = ? AND id = ? AND status = 'OPEN'
+                   AND role IS NOT NULL AND assignee IS NULL""",
                 assignee, tenantId, id);
     }
 

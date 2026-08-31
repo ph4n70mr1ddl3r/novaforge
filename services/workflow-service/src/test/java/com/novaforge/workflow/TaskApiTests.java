@@ -104,6 +104,49 @@ class TaskApiTests extends PostgresTestBase {
     @Autowired
     io.micrometer.core.instrument.MeterRegistry meters;
 
+    @Test
+    @DisplayName("a notify-only breach (no escalation target) leaves the task OPEN and resolvable")
+    void notifyOnlyBreachStaysOpen() throws Exception {
+        // Anti-regression (2026-08-31, fifteenth pass): ESCALATED is terminal and
+        // wf_tasks.resolve can never act on it — a notify-only SLA (§6's "notify"
+        // branch, or a step timeout with no escalateTo) terminalized the approval and
+        // wedged the suspended instance forever with no surface to resume it.
+        // the canned overlay carries an escalation — swap it for a notify-only one,
+        // under a distinct app so the resolver's 30 s cache serves no prior entry
+        CANNED_SLAS.set(java.util.List.of(
+                new com.novaforge.metadata.SlaDefinition("sla_notify_only",
+                        new com.novaforge.metadata.SlaDefinition.Scope("approval",
+                                "entity == 'Quiet2.PurchaseOrder'"),
+                        "PT1H", 0.5,
+                        new com.novaforge.metadata.SlaDefinition.OnBreach(null, true))));
+        var result = suspensions.request(TENANT, "Quiet2", "PurchaseOrder",
+                "Quiet2.PurchaseOrder", UUID.randomUUID(), "submit", "a1", "s9", null,
+                "Purch.manager", null, "any", "PT1H", null, CLERK, "DRAFT->SUBMITTED");
+        UUID instance = UUID.fromString(String.valueOf(result.get("instanceId")));
+        UUID taskId = jdbc.queryForObject(
+                "SELECT id FROM wf_tasks WHERE instance_id = ?", UUID.class, instance);
+
+        // expire the timer; the breach rides the spine but the task stays OPEN
+        jdbc.update("UPDATE wf_tasks SET warn_at = now() - interval '1 second', "
+                + "due_at = now() - interval '1 second' WHERE instance_id = ?", instance);
+        slaScanner.scanOnce();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_tasks WHERE id = ?", String.class, taskId))
+                .isEqualTo("OPEN");
+        List<String> events = jdbc.queryForList(
+                "SELECT event_type FROM wf_event_outbox", String.class);
+        org.assertj.core.api.Assertions.assertThat(events).contains("sla.breach");
+        org.assertj.core.api.Assertions.assertThat(events).doesNotContain("task.escalated");
+
+        // and the approval still resolves — the record unwedges
+        mockMvc.perform(post("/api/v1/workflow/tasks/" + taskId + "/approve")
+                        .with(jwtFor(MANAGER)))
+                .andExpect(status().isOk());
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_tasks WHERE id = ?", String.class, taskId))
+                .isEqualTo("APPROVED");
+    }
+
     @TestConfiguration
     static class StubRoles {
 
@@ -171,7 +214,7 @@ class TaskApiTests extends PostgresTestBase {
         ROLES.clear();
         ROLES.put(CLERK.toString(), List.of("user"));
         ROLES.put(MANAGER.toString(), List.of("user", "Purch.manager"));
-        ROLES.put(SENIOR.toString(), List.of("user", "Purch.seniorManager", "builder"));
+        ROLES.put(SENIOR.toString(), List.of("user", "Purch.seniorManager", "Purch.manager", "builder"));
         ROLES.put(OUTSIDER.toString(), List.of("user"));
         TENANT_NAMES.clear();
         TENANT_NAMES.put(TENANT.toString(), "scratch-run");   // the harness's naming
@@ -304,6 +347,26 @@ class TaskApiTests extends PostgresTestBase {
                 .andExpect(jsonPath("$.status").value("OPEN"));
         mockMvc.perform(get("/api/v1/workflow/tasks").with(jwtFor(MANAGER)))
                 .andExpect(jsonPath("$.total").value(1));
+    }
+
+    @Test
+    @DisplayName("claim is a CAS: a second claimer 409s, a claimed task cannot be stolen")
+    void claimIsCasOnAssignee() throws Exception {
+        // Anti-regression (2026-08-31, fifteenth pass): the claim UPDATE matched any
+        // OPEN role task — concurrent claims both succeeded (last-writer-wins) and a
+        // later role holder could silently steal an assigned or delegated task.
+        var task = tasks.create(TENANT, "approval", "Purch.PurchaseOrder",
+                UUID.randomUUID(), null, "Purch.manager", null, null, CLERK, null);
+        mockMvc.perform(post("/api/v1/workflow/tasks/" + task.id() + "/claim")
+                        .with(jwtFor(MANAGER)))
+                .andExpect(status().isOk());
+        // a second holder of the same role cannot take it
+        mockMvc.perform(post("/api/v1/workflow/tasks/" + task.id() + "/claim")
+                        .with(jwtFor(SENIOR)))
+                .andExpect(status().isConflict());
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT assignee FROM wf_tasks WHERE id = ?", UUID.class, task.id()))
+                .isEqualTo(MANAGER);
     }
 
     @Test

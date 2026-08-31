@@ -32,7 +32,9 @@ public class AsyncExportClient {
     public AsyncExportClient(
             @Value("${novaforge.integration.url:http://localhost:8090}") String baseUrl,
             ServiceTokenClient serviceToken) {
-        this.integration = RestClient.builder().baseUrl(baseUrl).build();
+        this.integration = RestClient.builder().baseUrl(baseUrl)
+                        .requestFactory(bounded(baseUrl))
+                        .build();
         this.serviceToken = serviceToken;
     }
 
@@ -72,5 +74,19 @@ public class AsyncExportClient {
             throw new PlatformException(PlatformErrorCode.INTERNAL,
                     "integration service unreachable for the async export: " + e.getMessage(), null, e);
         }
+    }
+
+    /**
+     * East-west calls are bounded (the pattern the other internal clients already
+     * ride): a hung upstream must fail in seconds, not hold the calling thread —
+     * the job scanner runs jobs serially on one scheduler thread, so an unbounded
+     * read stalls every tenant's pipeline.
+     */
+    private static org.springframework.http.client.SimpleClientHttpRequestFactory bounded(String ignored) {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(2_000);
+        factory.setReadTimeout(60_000);   // the export renders the dataset inline
+        return factory;
     }
 }

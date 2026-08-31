@@ -119,8 +119,10 @@ function renderNode(node: PageNode, context: RendererContextValue, keyPrefix: st
                     filesBase: context.files.base,
                     bearerToken: undefined,
                     bearerTokenProvider: context.files.token,
-                    onUploaded: (attachmentId: string) => {
-                        if (node.bind) {
+                    onUploaded: (attachmentId: string, virusScan?: string) => {
+                        // a quarantined upload never binds: the record would persist
+                        // a reference to a file that can never be downloaded
+                        if (node.bind && virusScan !== "infected") {
                             context.setValue(node.bind, attachmentId);
                         }
                     },
