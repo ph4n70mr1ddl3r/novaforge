@@ -437,7 +437,11 @@ public class RecordEngine {
             return lowered;
         }
         java.time.LocalDate asOf = java.time.LocalDate.now(clock);
-        java.time.Instant asOfInstant = asOf.atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        // now() binds the live instant — the Java gates (SharingGate, the evaluator)
+        // evaluate now() live, and start-of-day truncation here made the same actor
+        // see a record by id but not in any list for the rest of the UTC day when a
+        // criterion compared now() against a time-of-day boundary
+        java.time.Instant asOfInstant = java.time.Instant.now(clock);
         var resolver = com.novaforge.metadata.ExpressionFields.resolver(handle.entity());
         List<String> alternatives = new ArrayList<>();
         List<Object> clauseParams = new ArrayList<>();
@@ -900,7 +904,9 @@ public class RecordEngine {
         QueryLowering lowering = new QueryLowering(periodHandle.entity());
         QueryLowering.Lowered count = lowering.count(periodHandle.entity().apiName(), tenantId,
                 query.filter());
-        Long countValue = records.countValue(count.sql(), count.params());
+        // FOR SHARE over the matched period rows: a status flip to closed cannot
+        // commit between this check and the dated write it guards
+        Long countValue = records.countValueForShare(count.sql(), count.params());
         return countValue == null ? 0 : countValue;
     }
 
@@ -967,7 +973,10 @@ public class RecordEngine {
                 continue;   // coercion reports malformed lookups with its own error
             }
             String parentKey = childHandle.appApiName() + "." + field.target();
-            records.find(tenantId, parentKey, parentId, false).ifPresent(parent ->
+            // FOR SHARE: the check and the write it guards commit against a parent
+            // that cannot transition to terminal in between (the check-then-write
+            // window a closing invoice and an inserting line could race through)
+            records.findForShare(tenantId, parentKey, parentId).ifPresent(parent ->
                     requireNotFrozen(app, new EntityHandle(childHandle.appId(),
                             childHandle.appApiName(), childHandle.version(), parentEntity.get(),
                             parentKey), parent.data()));

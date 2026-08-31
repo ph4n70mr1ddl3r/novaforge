@@ -10,11 +10,15 @@ import { CATALOG, type CatalogEntry } from "./catalog/schemas.ts";
 type AnyComponent = LazyExoticComponent<ComponentType<Record<string, unknown>>>;
 
 const IMPLEMENTATIONS: Readonly<Record<string, () => Promise<{ default: AnyComponent }>>> = {
-  "novaforge.chart-widget": () => import("./catalog/ChartWidget.tsx") as never,
-  "novaforge.kpi-tile": () => import("./catalog/KpiTile.tsx") as never,
-  "novaforge.report-table": () => import("./catalog/ReportTable.tsx") as never,
-  "novaforge.dashboard-grid": () => import("./catalog/DashboardGrid.tsx") as never,
-  "novaforge.file-upload": () => import("./catalog/FileUpload.tsx") as never,
+  // named-only exports must wrap in { default: … } — React lazy rejects a module
+  // namespace without a default, and the bare-import form resolved to undefined:
+  // these five widgets never rendered through the runtime renderer at all (found
+  // live when the fourteenth pass's upload-wiring pin first drove one)
+  "novaforge.chart-widget": async () => ({ default: (await import("./catalog/ChartWidget.tsx")).ChartWidget }) as never,
+  "novaforge.kpi-tile": async () => ({ default: (await import("./catalog/KpiTile.tsx")).KpiTile }) as never,
+  "novaforge.report-table": async () => ({ default: (await import("./catalog/ReportTable.tsx")).ReportTable }) as never,
+  "novaforge.dashboard-grid": async () => ({ default: (await import("./catalog/DashboardGrid.tsx")).DashboardGrid }) as never,
+  "novaforge.file-upload": async () => ({ default: (await import("./catalog/FileUpload.tsx")).FileUpload }) as never,
   "novaforge.field-input": async () => ({ default: (await import("./catalog/fields.tsx")).FieldInput }) as never,
   "novaforge.field-number": async () => ({ default: (await import("./catalog/fields.tsx")).FieldNumber }) as never,
   "novaforge.field-select": async () => ({ default: (await import("./catalog/fields.tsx")).FieldSelect }) as never,

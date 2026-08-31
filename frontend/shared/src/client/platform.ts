@@ -53,12 +53,23 @@ export interface TokenProvider {
 export type UnauthorizedRefresh = () => Promise<string | null>;
 
 export class PlatformClient {
+    /** The same-origin base the client speaks to (file uploads ride it too). */
+    readonly base: string;
+
     constructor(
-        private readonly base: string,
+        base: string,
         private readonly token: TokenProvider,
         private readonly fetchImpl: typeof fetch = fetch.bind(globalThis),
         private readonly onUnauthorized?: UnauthorizedRefresh,
-    ) {}
+    ) {
+        this.base = base;
+    }
+
+    /** A live bearer token for legs outside this client (the file-upload widget
+     *  addresses the File Service directly and needs the same token, refreshed). */
+    async bearer(): Promise<string> {
+        return this.token();
+    }
 
     private async request(
         method: string,

@@ -219,6 +219,10 @@ function EntityPage(props: EntityPageProps): ReactNode {
         record,
         errors,
         busy,
+        // the file-upload leg: same-origin base + the client's live token (the
+        // renderer threads both to novaforge.file-upload nodes and binds the
+        // uploaded attachment id back to the record field)
+        files: { base: client.base, token: () => client.bearer() },
         getValue: (path) => {
             const head = path.split(".")[0]!;
             return record?.[head];

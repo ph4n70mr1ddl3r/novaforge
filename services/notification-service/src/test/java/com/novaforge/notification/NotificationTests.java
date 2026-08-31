@@ -435,6 +435,56 @@ class NotificationTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("keyed replays do not re-email inbox-opted-out recipients (the marker)")
+    void keyedReplayNeverReEmailsInboxOptedOut() throws Exception {
+        // Anti-regression (2026-08-31, fourteenth pass): a keyed send to a recipient
+        // with inbox OFF produced no inbox row, so nothing recorded the email — every
+        // replay (a retried scheduler window) re-emailed them. The V2 marker row
+        // dedupes the email leg on the same key the inbox row always did.
+        mockMvc.perform(post("/api/v1/notifications/preferences").with(jwtFor(CLERK))
+                        .contentType("application/json")
+                        .content("""
+                                { "category": "job-completed", "inbox": false,
+                                  "email": true } """))
+                .andExpect(status().isOk());
+        // EMAILS is shared with the spine consumers' asynchronous fan-out — pin only
+        // this test's own sends by a unique subject sentinel
+        String sentinel = "Job done marker-" + java.util.UUID.randomUUID();
+        String body = MAPPER.writeValueAsString(Map.of(
+                "tenantId", TENANT.toString(),
+                "category", "job-completed",
+                "title", sentinel, "body", "summary",
+                "recipients", Map.of("users", List.of(CLERK.toString())),
+                "deliveryId", "job-marker-1"));
+        mockMvc.perform(post("/api/v1/notifications/internal/send")
+                        .with(serviceJwt()).contentType("application/json").content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.delivered").value(1));   // email only
+        mockMvc.perform(post("/api/v1/notifications/internal/send")
+                        .with(serviceJwt()).contentType("application/json").content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.delivered").value(0));   // the replay collapsed
+        org.assertj.core.api.Assertions.assertThat(
+                EMAILS.stream().filter(e -> e.contains(sentinel)).count()).isEqualTo(1);
+        Integer markers = jdbc.queryForObject(
+                "SELECT count(*) FROM nf_email_deliveries WHERE event_id = 'job-marker-1'",
+                Integer.class);
+        org.assertj.core.api.Assertions.assertThat(markers).isEqualTo(1);
+        // an unkeyed send still delivers (fresh content, no false dedupe)
+        String unkeyed = MAPPER.writeValueAsString(Map.of(
+                "tenantId", TENANT.toString(),
+                "category", "job-completed",
+                "title", sentinel + "-x", "body", "summary",
+                "recipients", Map.of("users", List.of(CLERK.toString()))));
+        mockMvc.perform(post("/api/v1/notifications/internal/send")
+                        .with(serviceJwt()).contentType("application/json").content(unkeyed))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.delivered").value(1));
+        org.assertj.core.api.Assertions.assertThat(
+                EMAILS.stream().filter(e -> e.contains(sentinel)).count()).isEqualTo(2);
+    }
+
+    @Test
     @DisplayName("internal/send: recipients that resolve to nobody reject audibly (§7)")
     void internalSendWithoutRecipientsRejects() throws Exception {
         String body = MAPPER.writeValueAsString(Map.of(

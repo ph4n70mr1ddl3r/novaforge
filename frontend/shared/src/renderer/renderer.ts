@@ -110,6 +110,22 @@ function renderNode(node: PageNode, context: RendererContextValue, keyPrefix: st
             nodeKey: node.key,
             readonly,
             required,
+            // the file-upload leg rides the renderer context (auth + base): the
+            // widget's own props never carried a token, and its uploaded attachment
+            // id binds back to the record field through the renderer's setValue —
+            // the save persists the reference instead of dropping it
+            ...(node.type === "novaforge.file-upload" && context.files
+                ? {
+                    filesBase: context.files.base,
+                    bearerToken: undefined,
+                    bearerTokenProvider: context.files.token,
+                    onUploaded: (attachmentId: string) => {
+                        if (node.bind) {
+                            context.setValue(node.bind, attachmentId);
+                        }
+                    },
+                }
+                : {}),
         },
         children.length > 0 ? children : undefined,
     );

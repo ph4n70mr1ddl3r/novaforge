@@ -1441,3 +1441,89 @@ M11/M12 remain deferred by decision.
 Frontend 154 vitest green (+5: the client retry pin, the three manager pins, the
 saved-page pin) with typecheck clean; backend untouched this pass — full serial
 `./mvnw verify` re-run green end to end as the turn's gate.
+
+## Fourteenth Pass — 2026-08-31 (the recorded-open mediums close: notification, sharing parity, row locks, composer, uploads)
+
+### H-14P1 — five catalog widgets never rendered through the runtime renderer at all
+
+The fourteenth pass's upload-wiring pin refused to render and exposed the real
+defect: five registry loaders used the bare-import lazy form
+(`() => import("…") as never`), which resolves to the module namespace — React
+`lazy` requires `{ default: Component }` and crashed with "Element type is
+invalid … resolves to: undefined". `chart-widget`, `kpi-tile`, `report-table`,
+`dashboard-grid`, and `file-upload` — every dashboard widget and the upload
+control — could never render in the runtime SPA (dashboard grids fell to the
+error boundary once that existed; before it, a white screen). All five loaders
+now wrap their named exports. Pinned transitively: the upload-wiring pin renders
+a real `novaforge.file-upload` node through the registry.
+
+### H-14P2 — FileUpload is wired through the renderer: token leg + bind-back
+
+The widget's upload path was unwirable in production — no token ever reached it
+through `renderNode` (its schema props were optional and nothing supplied them),
+and the uploaded attachment id stayed in component state, never binding to the
+record (the save wrote no file reference). The renderer context grows a `files`
+leg (`{ base, token }`); `renderNode` threads it to `file-upload` nodes along
+with an `onUploaded` that binds the id back through `context.setValue(bind, …)`;
+the widget accepts a live `bearerTokenProvider` (a frozen string would expire
+mid-upload — the provider rides the thirteenth pass's refresh machinery);
+`PlatformClient` exposes `bearer()` + its base; the runtime shell supplies the
+leg. Pinned end-to-end: a rendered upload node carries the context's live token
+on both authorized legs and `record.invoice` receives `att-1` on completion.
+
+### M-14P1 — the keyed-notification email leg dedupes on its own marker
+
+A keyed send to an inbox-opted-out recipient had no inbox row to collide on, so
+nothing recorded the email — every keyed replay (a retried scheduler window)
+re-emailed them. V4 adds `nf_email_deliveries (tenant, user, event_id)`; the
+email leg claims it with `ON CONFLICT DO NOTHING` and skips on collision —
+the same key semantics the inbox row always had. Pinned in
+`keyedReplayNeverReEmailsInboxOptedOut` (replay delivers 0, exactly one email
+and one marker; an unkeyed send still delivers).
+
+### M-14P2 — sharing `now()` parity
+
+The Java gates evaluate `now()` at the live instant while both SQL lowering
+surfaces bound it truncated to start-of-day UTC — an actor could see a record by
+id but not in any list for the rest of the UTC day when a criterion compared
+`now()` against a time-of-day boundary. Both lowerings (`applySharing`,
+`QueryLowering`) now bind `Instant.now(clock)`; `asOf` still shapes `today()`
+for bucketed group-bys. (The roll-up aggregate path binds live already.)
+
+### M-14P3 — period-lock and parent-freeze hold their rows
+
+Both checks were plain reads: a period flipping to closed (or a parent
+transitioning to terminal) between the check and the commit let the dated write
+land inside the lock. `RecordStore.findForShare` locks the parent row and
+`countValueForShare` wraps the count in a locking subselect (aggregates cannot
+carry `FOR SHARE` directly) — the check and the write it guards now serialize
+against the closing transaction. Both legs are exercised by every
+`FreezePeriodTests` run (the SQL validity is what needed pinning; the
+serialization is the mechanism).
+
+### M-14P4 — the composer edits locally and saves against a fresh fetch
+
+Every widget edit and keystroke PATCHed the whole dashboards branch immediately
+over the mount-time `app` snapshot: two rapid edits raced (the second payload
+built before the first save's reload reverted it), out-of-order HTTP applied the
+older list last, and another tab's dashboard was wiped by the stale whole-branch
+replace. Edits are local now (an edits map overlaid on the app prop, a dirty
+marker, an explicit Save button); the save applies the edits through a mutate
+callback the shell runs against a freshly fetched app, so only the edited
+dashboard's slot is replaced. Pinned in `reporting.test.tsx` (an edit leaves the
+browser; Save applies it; role-composition saves with the dashboard).
+
+### Recorded open after this pass
+
+None from the thirteenth pass's list. Standing, by decision or mechanism: M11/M12
+deferred (maintainability, no behavioral delta); the outbox `md_event_outbox`
+retention follows the shared pattern (verified in the ninth pass); the SPA
+logout action remains unwired in the UI (session clears on tab close — the
+storage contract). No known-open defect items remain on the books.
+
+### Verification (this pass)
+
+notification-service 13 green (+the marker pin), data-runtime api 26 / storage 12
+/ engine 22 green with the locking reads, frontend 155 vitest (+2: the
+upload-wiring pin, the composer local-edit pin) + typecheck clean. Full serial
+`./mvnw verify` green end to end.

@@ -158,6 +158,35 @@ public class RecordStore {
         return new PageResult(rows, total == null ? 0 : total);
     }
 
+    /**
+     * The parent-freeze check's locking read: FOR SHARE holds the parent row against
+     * a concurrent terminal transition until this write commits, closing the
+     * check-then-write window where a child inserted past a parent that froze
+     * mid-flight.
+     */
+    public Optional<StoredRecord> findForShare(UUID tenantId, String entityId, UUID id) {
+        return jdbc.query("""
+                        SELECT id, tenant_id, entity_id, version, created_at, updated_at, created_by, updated_by, deleted, data
+                          FROM rec_records
+                         WHERE id = ? AND tenant_id = ? AND entity_id = ? AND NOT deleted
+                         FOR SHARE""",
+                RecordStore::mapRow, id, tenantId, entityId).stream().findFirst();
+    }
+
+    /**
+     * The period-lock check's locking count: FOR SHARE holds every matched period
+     * row against a concurrent status flip to closed until this write commits — a
+     * dated write can no longer land inside a period that closed mid-flight.
+     * Aggregates cannot carry a locking clause directly, so the matched rows lock
+     * in a subselect and the count runs over it.
+     */
+    public Long countValueForShare(String sql, List<Object> params) {
+        String body = sql.replaceFirst("(?i)^SELECT count\\(\\*\\)\\s+", "");
+        return jdbc.queryForObject(
+                "SELECT count(*) FROM (SELECT 1 " + body + " FOR SHARE) locked",
+                Long.class, params.toArray());
+    }
+
     /** Scalar count for roll-ups. */
     public Long countValue(String sql, List<Object> params) {
         return jdbc.queryForObject(sql, Long.class, params.toArray());

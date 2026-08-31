@@ -7,6 +7,14 @@ import type { AppDefinition, DashboardDefinition } from "@novaforge/shared";
  * through the Metadata definition APIs (dashboards ride the app document); the
  * runtime renders the composed grid — a dashboard never widens what its viewer
  * may see (§8).
+ *
+ * Edits are LOCAL until the explicit Save (2026-08-31, fourteenth pass): every
+ * keystroke used to PATCH the whole dashboards branch immediately over the
+ * mount-time `app` snapshot — two rapid edits raced (the second payload built
+ * before the first save's reload reverted it), out-of-order HTTP applied the
+ * older list last, and another tab's dashboard was wiped by the stale
+ * whole-branch replace. The whole list is rebuilt from a FRESH fetch at save
+ * time, so only the edited dashboard's slot is replaced.
  */
 
 export function DashboardComposer({
@@ -14,32 +22,46 @@ export function DashboardComposer({
     saveDashboards,
 }: {
     app: AppDefinition;
-    saveDashboards: (dashboards: DashboardDefinition[]) => Promise<void>;
+    saveDashboards: (mutate: (current: DashboardDefinition[]) => DashboardDefinition[]) => Promise<void>;
 }): ReactNode {
     const [selectedId, setSelectedId] = useState<string | null>(app.dashboards[0]?.id ?? null);
-    const draft = app.dashboards.find((dashboard) => dashboard.id === selectedId) ?? null;
     const [flash, setFlash] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
+    // the working copy: seeded from the app prop, mutated locally, saved explicitly
+    const [edits, setEdits] = useState<Record<string, DashboardDefinition>>({});
+    const dashboards = app.dashboards.map((dashboard) => edits[dashboard.id] ?? dashboard);
+    const draft = dashboards.find((dashboard) => dashboard.id === selectedId) ?? null;
+    const dirty = Object.keys(edits).length > 0;
 
     const update = (patch: Partial<DashboardDefinition>): void => {
         if (!draft) return;
-        const next = app.dashboards.map((dashboard) =>
-            dashboard.id === draft.id ? { ...dashboard, ...patch } : dashboard,
-        );
-        void persist(next);
+        setEdits((current) => ({ ...current, [draft.id]: { ...draft, ...patch } }));
     };
 
-    const persist = async (dashboards: DashboardDefinition[]): Promise<void> => {
+    const persist = async (
+        mutate: (current: DashboardDefinition[]) => DashboardDefinition[],
+        thenSelect?: string,
+    ): Promise<void> => {
         setBusy(true);
         try {
-            await saveDashboards(dashboards);
+            await saveDashboards(mutate);
+            setEdits({});
+            if (thenSelect) {
+                setSelectedId(thenSelect);
+            }
             setFlash("Dashboard saved");
-                } catch (caught) {
+        } catch (caught) {
             setError(caught instanceof Error ? caught.message : String(caught));
         } finally {
             setBusy(false);
         }
+    };
+
+    const save = (): void => {
+        // apply the local edits onto whatever the server holds NOW: the mutate
+        // callback runs against the freshly fetched list inside saveDashboards
+        void persist((current) => current.map((dashboard) => edits[dashboard.id] ?? dashboard));
     };
 
     return (
@@ -59,8 +81,10 @@ export function DashboardComposer({
                     type="button"
                     onClick={() => {
                         const id = `dash${app.dashboards.length + 1}`;
-                        void persist([...app.dashboards, { id, label: id, widgets: [], roles: [] }]);
-                        setSelectedId(id);
+                        void persist(
+                            (current) => [...current, { id, label: id, widgets: [], roles: [] }],
+                            id,
+                        );
                     }}
                 >
                     New dashboard
@@ -68,6 +92,15 @@ export function DashboardComposer({
             </div>
             {flash ? <p role="status" aria-live="polite">{flash}</p> : null}
             {error ? <p role="alert">{error}</p> : null}
+            <button
+                type="button"
+                className="nf-action-primary"
+                disabled={!dirty || busy}
+                onClick={save}
+                data-testid="save-dashboards"
+            >
+                Save{dirty ? " •" : ""}
+            </button>
             {draft ? (
                 <>
                     <table className="nf-table">

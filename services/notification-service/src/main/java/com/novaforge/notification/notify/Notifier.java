@@ -107,6 +107,7 @@ public class Notifier {
             boolean emailOn = preference(tenantId, user, category, "email");
             String dedupeKey = deliveryId == null || deliveryId.isBlank()
                     ? UUID.randomUUID().toString() : deliveryId;
+            boolean keyed = deliveryId != null && !deliveryId.isBlank();
             if (inboxOn) {
                 int written = jdbc.update("""
                         INSERT INTO nf_notifications (id, tenant_id, user_id, category,
@@ -117,13 +118,26 @@ public class Notifier {
                 if (written > 0) {
                     delivered(tenantId, user, "inbox", category);
                     delivered++;
-                } else if (deliveryId != null && !deliveryId.isBlank()) {
+                } else if (keyed) {
                     // a keyed replay: the original send already landed this inbox row
                     // (and its email) — do not duplicate either leg
                     continue;
                 }
             }
             if (emailOn) {
+                if (keyed) {
+                    // the email leg dedupes on its own marker (V2): an inbox-off
+                    // recipient has no inbox row to collide on, so without this a
+                    // keyed replay re-emailed them every time
+                    int marked = jdbc.update("""
+                            INSERT INTO nf_email_deliveries (tenant_id, user_id, event_id)
+                            VALUES (?, ?, ?)
+                            ON CONFLICT DO NOTHING""",
+                            tenantId, user, dedupeKey);
+                    if (marked == 0) {
+                        continue;   // this keyed send already emailed them
+                    }
+                }
                 if (attachment == null) {
                     email.send(recipients.addressOf(user), title, body);
                 } else {

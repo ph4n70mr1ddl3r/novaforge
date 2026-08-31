@@ -90,22 +90,41 @@ describe("ReportBuilder (PHASE-5 T6)", () => {
 });
 
 describe("DashboardComposer (PHASE-5 T6)", () => {
-    it("composes widgets bound to report refs and saves", async () => {
-        const saveDashboards = vi.fn<(dashboards: DashboardDefinition[]) => Promise<void>>(async () => {});
+    it("composes widgets locally and saves on demand (no per-keystroke PATCH)", async () => {
+        // Anti-regression (2026-08-31, fourteenth pass): every widget edit used to
+        // PATCH the whole dashboards branch immediately over a stale snapshot —
+        // races reverted edits and cross-tab saves were wiped. Edits are local now
+        // and Save applies them to a freshly fetched list.
+        const saveDashboards = vi.fn<
+            (mutate: (current: DashboardDefinition[]) => DashboardDefinition[]) => Promise<void>
+        >(async (mutate) => {
+            captured = mutate([{ ...app.dashboards[0]! }]);
+        });
+        let captured: DashboardDefinition[] = [];
         render(createElement(DashboardComposer, { app, saveDashboards }));
         fireEvent.click(screen.getByRole("button", { name: "Add widget" }));
+        // the edit is local — nothing left the browser
+        expect(saveDashboards).not.toHaveBeenCalled();
+        expect((screen.getByTestId("save-dashboards") as HTMLButtonElement).disabled).toBe(false);
+        fireEvent.click(screen.getByTestId("save-dashboards"));
         await waitFor(() => expect(saveDashboards).toHaveBeenCalledTimes(1));
-        const saved = saveDashboards.mock.calls[0]![0][0] as DashboardDefinition;
+        const saved = captured[0] as DashboardDefinition;
         expect(saved.widgets).toHaveLength(2); // existing + the added kpi
         expect(saved.widgets[1]).toMatchObject({ widget: "kpi", reportRef: "arAging", span: 4 });
     });
 
-    it("edits role visibility composition", async () => {
-        const saveDashboards = vi.fn<(dashboards: DashboardDefinition[]) => Promise<void>>(async () => {});
+    it("edits role visibility composition (saved with the dashboard)", async () => {
+        let captured: DashboardDefinition[] = [];
+        const saveDashboards = vi.fn<
+            (mutate: (current: DashboardDefinition[]) => DashboardDefinition[]) => Promise<void>
+        >(async (mutate) => {
+            captured = mutate([{ ...app.dashboards[0]! }]);
+        });
         render(createElement(DashboardComposer, { app, saveDashboards }));
         fireEvent.click(screen.getByRole("checkbox", { name: "reporting" }));
-        await waitFor(() => expect(saveDashboards).toHaveBeenCalled());
-        const saved = saveDashboards.mock.calls[0]![0][0] as DashboardDefinition;
+        fireEvent.click(screen.getByTestId("save-dashboards"));
+        await waitFor(() => expect(saveDashboards).toHaveBeenCalledTimes(1));
+        const saved = captured[0] as DashboardDefinition;
         expect(saved.roles).toEqual(["controller"]);
     });
 });

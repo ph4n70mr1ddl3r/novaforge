@@ -183,8 +183,15 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                         {screen === "dashboards" ? (
                             <DashboardComposer
                                 app={app}
-                                saveDashboards={async (dashboards) => {
-                                    await client.patchApp(app.id ?? "", { dashboards } as Record<string, unknown>);
+                                saveDashboards={async (mutate) => {
+                                    // the mutation applies to a FRESH fetch: a stale
+                                    // mount-time snapshot must never replace another
+                                    // tab's concurrent dashboard save
+                                    const fresh = (await client.getApp(app.id ?? "")) as {
+                                        dashboards?: unknown[];
+                                    };
+                                    const next = mutate((fresh.dashboards ?? []) as Parameters<typeof mutate>[0]);
+                                    await client.patchApp(app.id ?? "", { dashboards: next } as Record<string, unknown>);
                                     await reload();
                                 }}
                             />

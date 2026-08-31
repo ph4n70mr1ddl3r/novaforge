@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
 import { fireEvent, render, waitFor } from "@testing-library/react";
 import axe from "axe-core";
 import { FileUpload } from "../src/catalog/FileUpload.tsx";
+import { PageRenderer } from "../src/renderer/renderer.ts";
 
 // jsdom has no fetch against a real File Service — the grant/upload/complete legs
 // are stubbed; the component's state machine (busy → attached | failed) is the test.
@@ -34,6 +36,99 @@ function stubFetch() {
   );
   return calls;
 }
+
+
+describe("renderer wiring (2026-08-31, fourteenth pass)", () => {
+    it("a novaforge.file-upload node receives the context's token leg and binds the id back to the record", async () => {
+        const calls: string[] = [];
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: string | URL, init?: RequestInit) => {
+                const url = String(input);
+                calls.push(`${(init?.headers as Record<string, string>)["Authorization"] ?? "-"} ${url}`);
+                if (url.endsWith("/api/v1/files/uploads")) {
+                    return new Response(JSON.stringify(grant), { status: 200 });
+                }
+                if (url.includes("/presigned/put")) {
+                    return new Response(null, { status: 200 });
+                }
+                if (url.endsWith("/api/v1/files/att-1/complete")) {
+                    return new Response(JSON.stringify(completion), { status: 200 });
+                }
+                return new Response("{}", { status: 404 });
+            }),
+        );
+        vi.stubGlobal("crypto", { subtle: { digest: async () => new ArrayBuffer(32) } });
+
+        const values: Record<string, unknown> = {};
+        const page = {
+            apiName: "p",
+            type: "form" as const,
+            entity: "E",
+            model: {
+                base: "auto" as const,
+                kind: "form" as const,
+                root: {
+                    type: "novaforge.file-upload",
+                    key: "u1",
+                    bind: "invoice",
+                    version: "1.0.0",
+                    props: { entity: "E" },
+                },
+                actions: [],
+            },
+        };
+        render(createElement(PageRenderer, {
+            page,
+            entity: {
+                apiName: "E",
+                label: "E",
+                displayField: undefined,
+                fields: [{ apiName: "invoice", type: "text" as const }],
+                relationships: [],
+                validations: [],
+                hooks: [],
+                indexes: [],
+            },
+            context: {
+                mode: "runtime",
+                clock: "2026-08-31T00:00:00.000Z",
+                user: { name: "u", roles: [] },
+                fields: { invoice: { apiName: "invoice", type: "text" } },
+                record: { invoice: null },
+                errors: {},
+                actions: {
+                    save: async () => {},
+                    cancel: async () => {},
+                    deleteRecord: async () => {},
+                    openPage: async () => {},
+                },
+                navigate: () => {},
+                getValue: (path: string) => values[path],
+                setValue: (path: string, value: unknown) => {
+                    values[path] = value;
+                },
+                files: { base: "", token: () => "live-token" },
+            },
+        }));
+
+        // the catalog component is lazy — wait for the suspension to resolve
+        let input = null as HTMLInputElement | null;
+        await waitFor(() => {
+            input = document.querySelector('input[type="file"]') as HTMLInputElement | null;
+            expect(input).not.toBeNull();
+        });
+        const uploadFile = new File(["hello"], "x.txt", { type: "text/plain" });
+        // jsdom's File lacks arrayBuffer in some versions — the component hashes it
+        uploadFile.arrayBuffer = async () => new TextEncoder().encode("hello").buffer as ArrayBuffer;
+        fireEvent.change(input!, { target: { files: [uploadFile] } });
+        await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(3));
+        // both authorized legs carried the context's live token
+        expect(calls.filter((call) => call.startsWith("Bearer live-token"))).toHaveLength(2);
+        // the completion bound the attachment id back to the record field
+        await waitFor(() => expect(values["invoice"]).toBe("att-1"));
+    });
+});
 
 declare module "vitest" {
   interface Assertion<T> {

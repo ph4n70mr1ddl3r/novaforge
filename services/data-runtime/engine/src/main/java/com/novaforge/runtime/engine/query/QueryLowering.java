@@ -151,7 +151,9 @@ public final class QueryLowering {
         java.time.LocalDate asOf = query.asOf() != null ? query.asOf()
                 : asOfOverride != null ? asOfOverride
                 : java.time.LocalDate.now(java.time.ZoneOffset.UTC);
-        java.time.Instant asOfInstant = asOf.atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        // live instant for now() — parity with the Java evaluator (the gates);
+        // asOf only shapes today() for bucketed group-bys
+        java.time.Instant asOfInstant = java.time.Instant.now();
         List<Object> params = new ArrayList<>();
         List<String> selects = new ArrayList<>();
         for (QueryModel.GroupBy group : query.groupBy()) {

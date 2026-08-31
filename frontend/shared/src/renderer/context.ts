@@ -63,6 +63,10 @@ export interface RendererContextValue {
     record: Record<string, unknown> | null;
     getValue(path: string): unknown;
     setValue(path: string, value: unknown): void;
+    /** The file-upload leg: the gateway base + a live bearer token — the catalog's
+     * upload widget calls the File Service directly and could never be wired in
+     * production without this (the token never reached it through renderNode). */
+    files?: { base: string; token: () => Promise<string> | string };
     /** Validation errors keyed by field apiName (server problem bodies map here). */
     errors: Record<string, string>;
     busy?: boolean;

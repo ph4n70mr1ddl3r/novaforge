@@ -13,6 +13,9 @@ export function FileUpload(props: {
   recordId?: string;
   filesBase?: string;
   bearerToken?: string;
+  /** The renderer-context form (2026-08-31): a live token provider beats a frozen
+   *  string — the upload outlives the access token's lifetime otherwise. */
+  bearerTokenProvider?: () => Promise<string> | string;
   onUploaded?: (attachmentId: string, virusScan: string) => void;
   onError?: (detail: string) => void;
 }): ReactNode {
@@ -26,11 +29,14 @@ export function FileUpload(props: {
     setFailed(null);
     try {
       const base = props.filesBase ?? "";
+      const token = props.bearerTokenProvider
+        ? await props.bearerTokenProvider()
+        : props.bearerToken;
       const grantResponse = await fetch(`${base}/api/v1/files/uploads`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(props.bearerToken ? { Authorization: `Bearer ${props.bearerToken}` } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           fileName: file.name,
@@ -53,11 +59,14 @@ export function FileUpload(props: {
         throw new Error(`object upload failed: HTTP ${put.status}`);
       }
       const checksum = await sha256(file);
+      const completionToken = props.bearerTokenProvider
+        ? await props.bearerTokenProvider()
+        : props.bearerToken;
       const completeResponse = await fetch(`${base}/api/v1/files/${grant.id}/complete`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(props.bearerToken ? { Authorization: `Bearer ${props.bearerToken}` } : {}),
+          ...(completionToken ? { Authorization: `Bearer ${completionToken}` } : {}),
         },
         body: JSON.stringify({ checksum }),
       });

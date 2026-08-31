@@ -2397,3 +2397,31 @@ green (the turn's gate). Remaining recorded open (CODE_REVIEW.md, thirteenth
 pass): the composer's local-draft redesign, FileUpload's renderer wiring, and the
 three backend mediums (keyed email replay for inbox-off recipients, sharing
 `now()` parity, period/freeze row locks).
+
+**Spec-review closeout (2026-08-31, fourteenth pass) — the recorded-open mediums
+close, and the upload pin found a five-widget render defect underneath.**
+
+- **Five catalog widgets never rendered at all** (H-14P1): chart-widget, kpi-tile,
+  report-table, dashboard-grid, file-upload used the bare-import lazy form that
+  React rejects ("resolves to: undefined") — found live when the upload-wiring pin
+  first drove one; all five loaders wrap their named exports now.
+- **FileUpload is wirable end to end** (H-14P2): the renderer context grows a
+  `files { base, token }` leg, `renderNode` threads it plus an `onUploaded` that
+  binds the attachment id back to the record field, the widget takes a live
+  token provider (riding the thirteenth pass's refresh), and the client exposes
+  `bearer()` + base. Pinned end-to-end through the real registry.
+- **The email leg dedupes on its own marker** (M-14P1, V4): keyed replays to
+  inbox-off recipients no longer re-email — pinned.
+- **Sharing `now()` parity** (M-14P2): both SQL lowerings bind the live instant;
+  the Java doors and the lists agree on time-of-day criteria.
+- **Period-lock and parent-freeze hold their rows** (M-14P3): FOR SHARE reads on
+  both checks — the check and the write serialize against the closing transition.
+- **The composer edits locally** (M-14P4): explicit Save applies the edits to a
+  freshly fetched app — no more per-keystroke whole-branch PATCHes over a stale
+  snapshot. Pinned.
+
+Verified: notification 13 (+1), data-runtime api 26 / storage 12 / engine 22,
+frontend 155 vitest (+2) + typecheck clean; full serial `./mvnw verify` green
+end to end. The recorded-open list is empty of defect items — what stands is
+the M11/M12 decision and the unwired logout action (the storage contract clears
+the session on tab close).
