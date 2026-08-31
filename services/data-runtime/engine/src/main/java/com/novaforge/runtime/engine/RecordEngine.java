@@ -169,16 +169,20 @@ public class RecordEngine {
         evaluateValidationRules(handle.entity(), merged, errors);
         reject(errors, "update " + entityApiName + "/" + id + " failed validation");
         String transition = transitionOf(app, handle, existing.data(), merged);
-        // guards before hooks — the create path's invariant: a write doomed by
-        // freeze or period must not fire its hooks' external side effects (connector
-        // deliveries, approval tasks) first. The rollback undoes the DB writes but
+        // The doom-guards run TWICE: before the hooks (a doomed write must not fire
+        // its hooks' external side effects — the rollback undoes the DB writes but
         // not the remote effects, and the connector's dedupe key
         // (tenant:entity:record:hook:step) would then swallow the retried write's
-        // call — the real integration effect silently never happens.
+        // call), and again AFTER them like enforceTransition — hooks and their
+        // formula re-evaluation mutate the map in place, and a hook-dated write
+        // into a closed period (or a hook re-pointed frozen parent) must land in
+        // the same rejection it would have met on arrival.
         requireParentsNotFrozen(tenantId, app, handle, merged);
         enforcePeriodLock(tenantId, app, handle, merged);
         runHooks(app, handle, tenantId, id, merged, "beforeSave", appSystemPrincipal(handle), actorId, transition);
         reCanonicalizeHookWrites(tenantId, app, handle, merged, id);
+        requireParentsNotFrozen(tenantId, app, handle, merged);
+        enforcePeriodLock(tenantId, app, handle, merged);
         enforceTransition(app, handle, existing.data(), merged);
 
         int newVersion = updateShaped(tenantId, actorId, handle, id, merged,
@@ -843,8 +847,9 @@ public class RecordEngine {
      * Period locking (PHASE-7 §3.2): a dated write resolves its period by date-range
      * lookup over the bound period entity (the resolved §8 pin — documents carry
      * dates, not period pointers); a date inside a {@code closedStatus} period rejects
-     * with {@code PERIOD_LOCKED}. Runs after the beforeSave hooks, like the
-     * state-machine check, so hook-dated writes ride the same gate. No period rows →
+     * with {@code PERIOD_LOCKED}. Runs both before the beforeSave hooks (a doomed
+     * write fires no external side effects) and after them like the state-machine
+     * check, so hook-dated writes ride the same gate. No period rows →
      * no locks (the absence of periods never blocks a tenant's writes); the period
      * entity is app metadata, its {@code CLOSED} status an authored value — the
      * platform reads the configuration, it never special-cases an app's enum.

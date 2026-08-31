@@ -274,7 +274,7 @@ function EntityPage(props: EntityPageProps): ReactNode {
                               record ?? {},
                               // one key per unsaved draft: a re-click or a raced
                               // retry of the same create collapses server-side
-                              createKeyRef.current ?? (createKeyRef.current = crypto.randomUUID()),
+                              createKeyRef.current ?? (createKeyRef.current = randomKey()),
                           );
                     createKeyRef.current = null;
                     setRecord(savedRecord);
@@ -396,4 +396,17 @@ function EntityPage(props: EntityPageProps): ReactNode {
             ) : null}
         </>
     );
+}
+
+/**
+ * An idempotency key for one unsaved draft: crypto.randomUUID exists only in
+ * secure contexts (HTTPS or localhost) — on a plain-HTTP origin (a LAN demo, a
+ * non-TLS ingress) it throws, and the create path it was added to would brick.
+ * The Math.random twin is only an idempotency key — no security rides on it.
+ */
+function randomKey(): string {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        return crypto.randomUUID();
+    }
+    return "idem-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
 }

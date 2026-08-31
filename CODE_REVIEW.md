@@ -1970,17 +1970,74 @@ this pass made between `spring.application` and its `name:` child — the
 services). Both repaired; every verification gate in this pass's record ran with
 an honest exit code.
 
+### The closing addendum — the recorded-open set empties
+
+- **`attachments.bind` consults the §9 record gate now**: both binding doors —
+  the upload's stored target tag (record-governed from the first moment) and the
+  completion's bind — verify the caller can READ the target record first, the
+  same gate every read of a bound attachment rides. An unreadable target
+  rejects FORBIDDEN with nothing planted; an unreachable runtime fails closed.
+  Pinned ×2 (the unreadable bind leaves the attachment unbound; the upload-tag
+  door rejects identically).
+- **The rate limiter's window is one atomic call**: INCR + first-hit PEXPIRE
+  ride a single Lua script — the two-call form left the minute key immortal
+  whenever anything failed between them (never over-blocking, but residue
+  forever). Pinned: one script call, zero separate expiry calls, PEXPIRE in the
+  script with the 60 s arg.
+- **`warn` reports the flipped count**: the scratch surface's `warned` answer
+  now counts what the pass emitted, not what it selected — the same semantics
+  the breach path reports.
+
+### The re-audit of the pass's own code — seven more close
+
+The prior passes' pattern held: the newest code was again the richest vein. A
+full adversarial sweep of everything `ba96b02` landed found seven defects, all
+fixed:
+
+1. **The guard reorder dropped the post-hooks leg** (MED-HIGH): moving the
+   freeze/period guards before the hooks — without keeping the after-hooks
+   re-check — let a beforeSave hook (or its formula re-evaluation) re-date a
+   record into a CLOSED period or re-point a frozen parent and commit. The
+   guards run TWICE now: pre-hook (no external side effects for a doomed write)
+   and post-hook (the landing state meets the same gate as the arrival state,
+   like the state-machine check). Pinned with a real hook-dated write into a
+   closed period rejecting PERIOD_LOCKED (4014) — the pin the original reorder
+   never had. The stale "runs after the hooks" javadoc corrected.
+2. **`crypto.randomUUID` bricked creates on plain-HTTP origins** (MED): the new
+   create idempotency key threw on any non-secure context (the platform's own
+   LAN demos) — caught by the flash, creation never succeeded. The key
+   generator falls back to a time+random twin (no security rides on it).
+3. **`markRead` bypassed the pass's own stale-response fence**: its inline
+   reload neither bumped nor checked the sequence — a markRead response could
+   clobber a newer page's rows. It routes through the fenced reload now.
+4. **A failed i18n load left Save armed over an emptied table**: one click
+   overwrote the locale's whole workspace with empty. Save fences on the
+   load-failure state (a save failure does not — that fence would stick).
+5. **The dashboard stale-note latched**: a single failed auto-refresh showed
+   "last successful run" forever, including after recovery. A successful
+   refresh retires it.
+6. **`JsonTextField` committed non-object JSON**: `5`, `[1,2]`, `"x"` parsed
+   fine and rode into job params and mapping fields as record shapes. Objects
+   only; anything else is keep-typing. Pinned.
+7. **The sharing-rule merge key wasn't unique**: same entity+type+roles with
+   different criteria collided — a concurrent tab's rule silently dropped on
+   save. The key carries the criteria/ownerField.
+
 ### Recorded open after this pass
 
-`attachments.bind` consults no record-read gate (LOW today — no
-list-by-record surface exists, ids unguessable; becomes an IDOR the moment one
-does — needs the runtime read gate threaded into the file service). The
-gateway rate limiter's INCR/EXPIRE is not atomic (a crash between the two leaks
-one minute-bucket key in Redis — residue only, never over-blocking).
-`SlaScanner.warn` reports the selected count, not the flipped count (cosmetic
-scratch-surface drift). Delegation read-scope remains the product decision;
-M11/M12 remain deferred; the sandbox process-isolation pools remain the growth
-path.
+None on the defect ledger. The deliberate decisions stand: delegation
+read-scope (product), M11/M12 (maintainability), the sandbox process-isolation
+pools (the recorded growth path), and the stuck-`running` job row after a pod
+death (pre-existing, bounded by the CAS, next operator action documented).
+
+### Verification (the closing addendum)
+
+Full serial `./mvnw verify` **BUILD SUCCESS, honest exit 0** — 23 modules, 486
+backend tests, zero failures (file-service 14 with the two bind-gate pins,
+gateway 23 with the atomic-window pin, data-runtime api with the hook-dated
+period-lock pin, workflow 39 with the flipped-count semantics, the whole of the
+eighteenth pass's suites re-run underneath). Frontend: typecheck clean + 163
+vitest (the JsonTextField scalar-guard pin added).
 
 ### Verification (this pass)
 

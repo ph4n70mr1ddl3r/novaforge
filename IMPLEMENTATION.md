@@ -2557,3 +2557,25 @@ Verified: full serial `./mvnw verify` green end to end; frontend workspace green
 Recorded open: the `attachments.bind` record gate (LOW, no listing surface
 yet), the rate-limiter key residue, the warn-count cosmetic — with the prior
 decisions unchanged.
+
+**The recorded-open set empties (2026-08-31, eighteenth-pass closeout) — plus a
+re-audit of the pass's own code.**
+
+- **The §9 record gate rides the binding doors**: both the upload's stored
+  target tag and the completion's bind verify the caller can read the target
+  record — an unreadable target rejects with nothing planted (fail-closed on an
+  unreachable runtime). Pinned ×2.
+- **The rate limiter's window is one atomic Lua call** (INCR + first-hit
+  PEXPIRE): the two-call form leaked immortal minute keys. Pinned.
+- **The re-audit of the new code found seven more**, all closed: the guard
+  reorder's missing post-hooks leg (hook-dated writes into closed periods
+  committed — the guards run pre- AND post-hook now, pinned with a real
+  hook-dated rejection); the crypto.randomUUID create-key bricking plain-HTTP
+  origins (fallback generator); markRead bypassing the stale-response fence;
+  the i18n failed-load Save wiping a locale (fenced on the load-failure state);
+  the dashboard stale-note latching past recovery; JsonTextField committing
+  non-object JSON; the sharing-rule merge key colliding across criteria.
+
+Verified: full serial `./mvnw verify` BUILD SUCCESS (honest exit 0; 23 modules,
+486 tests); frontend typecheck + 163 vitest. The defect ledger is empty — what
+remains recorded is decisions, not defects.

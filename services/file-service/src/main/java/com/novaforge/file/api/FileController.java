@@ -36,6 +36,11 @@ public class FileController {
     /** Opens the attachment + presigned PUT (the `file` field's upload path, §8). */
     @PostMapping("/uploads")
     public Map<String, Object> beginUpload(@RequestBody UploadRequest request) {
+        // a caller-supplied target must already be readable by THIS caller: the
+        // stored tag makes the attachment record-governed from the first moment
+        // (§9's access rule reads it back), and an ungated tag let any same-tenant
+        // user plant attachment metadata on records they cannot read
+        requireRecordReadable(request.entity(), request.recordId());
         var grant = attachments.beginUpload(RecordReadGate.tenant(), actor(), request.fileName(),
                 request.contentType(), request.size(), request.entity(), request.recordId());
         return Map.of(
@@ -55,6 +60,10 @@ public class FileController {
         var completion = attachments.complete(RecordReadGate.tenant(), actor(), id,
                 request == null ? null : request.checksum());
         if (request != null && request.entity() != null && request.recordId() != null) {
+            // the bind consults the same §9 record gate as every read: binding to a
+            // record the caller cannot read planted attachment metadata on it and
+            // stripped the uploader's own access in the same stroke
+            requireRecordReadable(request.entity(), request.recordId());
             attachments.bind(RecordReadGate.tenant(), id, request.entity(), request.recordId());
         }
         return Map.of(
@@ -87,6 +96,23 @@ public class FileController {
      * uploader's (or the service client's) alone. The metadata read used to skip this
      * — any same-tenant user holding an id learned which record carries which file.
      */
+    /**
+     * The §9 record gate for the BINDING doors: a target record this caller cannot
+     * read never accepts their attachment. Fail-closed on an unreachable runtime
+     * (canRead throws) — an outage must not open the planting window.
+     */
+    private void requireRecordReadable(String entity, UUID recordId) {
+        if (entity == null || recordId == null) {
+            return;
+        }
+        if (!recordGate.canRead(entity, recordId)) {
+            throw new com.novaforge.common.error.PlatformException(
+                    com.novaforge.common.error.PlatformErrorCode.FORBIDDEN,
+                    "binding rides the owning record's authorization (§9) — "
+                            + entity + "/" + recordId + " is not readable by this caller");
+        }
+    }
+
     private Map<String, Object> requireAccess(UUID id) {
         var metadata = attachments.metadata(RecordReadGate.tenant(), id).orElseThrow(() ->
                 new com.novaforge.common.error.PlatformException(

@@ -31,6 +31,19 @@ public class WebhookRateLimitFilter extends OncePerRequestFilter {
     /** The one prefix the limiter guards (§2: exactly one anonymous route). */
     public static final String PUBLIC_PREFIX = "/api/v1/webhooks/inbound";
 
+    /**
+     * One atomic round-trip: INCR, and PEXPIRE only on the window's first hit.
+     * Separate calls left the window key immortal whenever anything failed between
+     * them — each minute mints a fresh key, so it never over-blocks, but the
+     * residue accumulates in Redis forever (a slow, unbounded memory leak).
+     */
+    private static final org.springframework.data.redis.core.script.RedisScript<Long>
+            WINDOW_INCREMENT = org.springframework.data.redis.core.script.RedisScript.of(
+            "local count = redis.call('INCR', KEYS[1]) "
+                    + "if count == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end "
+                    + "return count",
+            Long.class);
+
     private final StringRedisTemplate redis;
     private final int requestsPerMinute;
 
@@ -57,10 +70,8 @@ public class WebhookRateLimitFilter extends OncePerRequestFilter {
         String key = "novaforge:rl:" + clientOf(request) + ":" + window();
         Long count;
         try {
-            count = redis.opsForValue().increment(key);
-            if (count != null && count == 1L) {
-                redis.expire(key, Duration.ofMinutes(1));
-            }
+            count = redis.execute(WINDOW_INCREMENT, java.util.List.of(key),
+                    String.valueOf(Duration.ofMinutes(1).toMillis()));
         } catch (Exception e) {
             // Redis unavailable: fail open — availability of the public route beats a
             // limiter outage, and the HMAC verification behind it still gates every call.

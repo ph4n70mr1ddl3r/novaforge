@@ -40,9 +40,15 @@ export function JsonTextField(props: {
                     return;
                 }
                 try {
-                    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+                    const parsed = JSON.parse(trimmed) as unknown;
+                    // objects only: a scalar or array parses fine but the model
+                    // fields these feed (job params, mapping templates) are record
+                    // shapes — commit nothing until it IS one
+                    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+                        return;
+                    }
                     lastEmitted.current = JSON.stringify(parsed);
-                    props.onParsed(parsed);
+                    props.onParsed(parsed as Record<string, unknown>);
                 } catch {
                     // keep typing — an incomplete literal doesn't commit yet
                 }

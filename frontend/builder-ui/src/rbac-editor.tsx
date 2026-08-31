@@ -225,7 +225,12 @@ export function RbacEditor({ app, onSave }: RbacEditorProps): ReactNode {
                                 draft.sharingRules,
                                 app.permissionSet.sharingRules,
                                 fresh.sharingRules,
-                                (rule) => `${rule.entity}:${rule.type}:${rule.roles?.join("+") ?? ""}`,
+                                // the rule's full identity: same entity+type+roles
+                                // with different criteria (or ownerField) are
+                                // DISTINCT rules — a shorter key silently dropped a
+                                // concurrent tab's rule on save
+                                (rule) => `${rule.entity}:${rule.type}:${rule.roles?.join("+") ?? ""}`
+                                    + `:${rule.criteria ?? rule.ownerField ?? ""}`,
                             ),
                         }));
                         setFlash("Permissions saved");

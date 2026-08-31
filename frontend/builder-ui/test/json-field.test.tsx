@@ -30,6 +30,26 @@ describe("JsonTextField", () => {
         expect(onParsed).toHaveBeenCalledWith({ hook: "nightly", x: 1 });
     });
 
+    it("commits objects only — a valid-JSON scalar or array never lands in the model", () => {
+        // Anti-regression (re-audit): JSON.parse happily returns 5 / [1,2] / "x" —
+        // cast blindly, the job-params and mapping fields silently carried
+        // non-record shapes their consumers spread and Object.keys over
+        const onParsed = vi.fn();
+        render(createElement(JsonTextField, {
+            "aria-label": "params",
+            placeholder: "{}",
+            value: { a: 1 },
+            onParsed,
+        }));
+        const input = screen.getByLabelText("params") as HTMLInputElement;
+        for (const scalar of ["5", "[1,2]", '"x"', "true"]) {
+            fireEvent.change(input, { target: { value: scalar } });
+            expect(onParsed).not.toHaveBeenCalled();
+        }
+        fireEvent.change(input, { target: { value: '{"a":2}' } });
+        expect(onParsed).toHaveBeenCalledWith({ a: 2 });
+    });
+
     it("empties the model when the text empties", () => {
         const onParsed = vi.fn();
         render(createElement(JsonTextField, {

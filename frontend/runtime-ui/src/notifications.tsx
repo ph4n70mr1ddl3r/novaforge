@@ -77,17 +77,15 @@ export function Notifications({ client }: { client: PlatformClient }): ReactNode
         setBusy(true);
         try {
             await client.markNotificationRead(id);
-            // reload owns the busy flag from here — this method's finally must not
-            // clear it while the reload is still in flight
-            await client.notifications(page, size).then((result) => {
-                setRows(result.rows);
-                setTotal(result.total);
-            });
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : String(caught));
-        } finally {
             setBusy(false);
+            return;
         }
+        // the fenced reload owns busy AND the stale-response guard from here —
+        // the inline fetch this replaced neither bumped nor checked the sequence,
+        // so a markRead response could clobber a newer page's rows
+        reload(page);
     };
 
     const toggle = async (category: string, channel: "inbox" | "email"): Promise<void> => {

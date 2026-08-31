@@ -6,7 +6,6 @@ import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
@@ -118,6 +117,25 @@ class WebhookRateLimitFilterTest {
         assertThat(redis.increments).isEqualTo(3);
     }
 
+    @Test
+    @DisplayName("the window increment is ONE atomic call — the expiry rides the same script, never a second round-trip")
+    void windowIncrementIsAtomic() throws Exception {
+        // Anti-regression (eighteenth pass, closing the recorded open): INCR and
+        // EXPIRE were two calls — a failure between them left the minute key
+        // immortal (a slow Redis memory leak; never over-blocking, but residue
+        // forever). The expiry now rides the same Lua script.
+        CountingRedis redis = new CountingRedis();
+        WebhookRateLimitFilter filter = new WebhookRateLimitFilter(redis, 60);
+        MockHttpServletRequest request = new MockHttpServletRequest("POST",
+                WebhookRateLimitFilter.PUBLIC_PREFIX + "/t/E/h");
+        request.setRemoteAddr("203.0.113.9");
+        filter.doFilter(request, new MockHttpServletResponse(), passing());
+        assertThat(redis.scriptCalls).isEqualTo(1);
+        assertThat(redis.separateExpiryCalls).isZero();
+        assertThat(redis.lastScript).contains("INCR").contains("PEXPIRE");
+        assertThat(redis.lastArgs).containsExactly("60000");
+    }
+
     private static FilterChain passing() {
         return (request, response) -> {
             // downstream reached (the filter chain continued)
@@ -127,24 +145,30 @@ class WebhookRateLimitFilterTest {
     /** A counting Redis template — no broker needed for the window mechanics. */
     static class CountingRedis extends StringRedisTemplate {
 
-        final ValueOperations<String, String> values =
-                org.mockito.Mockito.mock(ValueOperations.class);
         int increments;
+        int scriptCalls;
+        int separateExpiryCalls;
         boolean failing;
+        String lastScript;
+        Object[] lastArgs;
 
-        CountingRedis() {
-            org.mockito.Mockito.when(values.increment(org.mockito.ArgumentMatchers.any()))
-                    .thenAnswer(inv -> {
-                        if (failing) {
-                            throw new IllegalStateException("redis down");
-                        }
-                        return (long) ++increments;
-                    });
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> T execute(org.springframework.data.redis.core.script.RedisScript<T> script,
+                             java.util.List<String> keys, Object... args) {
+            if (failing) {
+                throw new IllegalStateException("redis down");
+            }
+            scriptCalls++;
+            lastScript = script.getScriptAsString();
+            lastArgs = args;
+            return (T) Long.valueOf(++increments);
         }
 
         @Override
-        public ValueOperations<String, String> opsForValue() {
-            return values;
+        public Boolean expire(java.lang.String key, java.time.Duration timeout) {
+            separateExpiryCalls++;
+            return true;
         }
     }
 }

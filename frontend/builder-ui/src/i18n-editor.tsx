@@ -109,6 +109,8 @@ export function I18nEditor({
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [loading, setLoading] = useState(true);
+    /** Set only by a FAILED LOAD: the entries table is empty-by-failure, and a Save would overwrite the whole workspace with it. */
+    const [loadFailed, setLoadFailed] = useState(false);
     const universe = useMemo(() => translatableUniverse(app), [app]);
     const missing = universe.filter((key) => !entries[key.key]);
 
@@ -118,6 +120,7 @@ export function I18nEditor({
         // locale's entries must be neither editable nor savable — a Save in that
         // window wrote German strings into the French workspace
         setLoading(true);
+        setLoadFailed(false);
         void loadWorkspace(locale)
             .then((workspace) => {
                 if (!cancelled) {
@@ -128,8 +131,11 @@ export function I18nEditor({
             .catch((caught: unknown) => {
                 if (!cancelled) {
                     // failed load: empty the table rather than leave the previous
-                    // locale's strings sitting under the new locale's header
+                    // locale's strings sitting under the new locale's header — and
+                    // fence the Save (a save now would overwrite the workspace with
+                    // the emptied table)
                     setEntries({});
+                    setLoadFailed(true);
                     setError(caught instanceof Error ? caught.message : String(caught));
                 }
             })
@@ -188,7 +194,8 @@ export function I18nEditor({
                 <button
                     type="button"
                     className="nf-action-primary"
-                    disabled={busy || loading}
+                    disabled={busy || loading || loadFailed}
+                    title={loadFailed ? "the workspace failed to load — reselect the locale to retry before saving (a save now would overwrite it with the emptied table)" : undefined}
                     onClick={async () => {
                         setBusy(true);
                         try {

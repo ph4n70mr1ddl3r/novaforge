@@ -293,6 +293,12 @@ export function RelatedList(props: LayoutProps & { relationship?: string; target
 
 export function RecordActions(props: { showEdit?: boolean; showDelete?: boolean }): ReactNode {
     const renderer = useRenderer();
+    // Record-context only: the L1 list default carries this node too (list children
+    // render now), but a list has no selected record — dead Edit/Delete buttons
+    // there navigated to a bare "new" form and no-opped respectively
+    if (!renderer.record?.id) {
+        return null;
+    }
     return (
         <div className="nf-record-actions" role="group" aria-label="Record actions">
             {props.showEdit !== false ? (

@@ -95,6 +95,7 @@ public class SlaScanner {
         List<Map<String, Object>> due = tenantId == null
                 ? jdbc.queryForList(sql, Timestamp.from(now))
                 : jdbc.queryForList(sql + " AND tenant_id = ?", Timestamp.from(now), tenantId);
+        int flipped = 0;
         for (Map<String, Object> task : due) {
             // conditional flip: a second replica reading the same due row must not
             // double-warn (the breach path guards the same way)
@@ -107,8 +108,13 @@ public class SlaScanner {
             emit(task, "sla.warn", null);
             counted("novaforge.sla.warn", appOf(task.get("entity_id")));
             LOG.info("sla warn: task {}", task.get("task_id"));
+            flipped++;
         }
-        return due.size();
+        // the FLIPPED count, not the selected count — a row another replica (or a
+        // resolution between query and flip) already claimed emits nothing and must
+        // not count (breach reports the same semantics; the scratch surface's
+        // `warned` answer used to over-report)
+        return flipped;
     }
 
     private int breach(Instant now, UUID tenantId) {

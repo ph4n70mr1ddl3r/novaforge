@@ -154,6 +154,10 @@ function WidgetCell({
             .then((result) => {
                 if (!cancelled) {
                     setRun(result as unknown as ReportRun);
+                    // a recovered refresh retires the stale-data note — the flag
+                    // used to latch forever, "last successful run" outliving the
+                    // recovery as active misinformation
+                    setFailed(false);
                 }
             })
             .catch(() => {
