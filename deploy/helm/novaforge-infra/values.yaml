@@ -57,3 +57,23 @@ resources:
     memory: 256Mi
   limits:
     memory: 1Gi
+
+
+# Cluster isolation (twenty-second pass): one token-less ServiceAccount per
+# component (templates/serviceaccount.yaml) — none of these images touches the
+# Kubernetes API, so an automounted token's only consumer is an attacker who
+# escaped the container and read the mounted credential. create=false only if
+# you pre-provision ServiceAccounts with the names the workload templates
+# reference.
+serviceAccount:
+  create: true
+
+# Cluster isolation (twenty-second pass): one default-deny per component
+# (templates/networkpolicy.yaml) — the components are the targets the eleven
+# service charts' egress carves paths to, so most allow nothing but DNS; the
+# exceptions (keycloak's realm store, the minio-init Job's bucket call,
+# freshclam's signature downloads) are commented inline. Disable only on
+# clusters whose CNI enforces no network policy — an unenforced policy is
+# silent false security.
+networkPolicy:
+  enabled: true

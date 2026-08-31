@@ -1,0 +1,106 @@
+{{- if .Values.networkPolicy.enabled }}
+# Cluster isolation (twenty-second pass): selecting these pods for BOTH
+# policyTypes makes them default-deny — a flow exists only where a rule below
+# names it, so the rest of the cluster (and the internet) stays unreachable
+# and a compromised pod cannot scout its next hop. The allow list is the env
+# wiring the chart already carries: every peer below is a host its values
+# name, so enforcing this breaks nothing the service actually dials.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-novaforge-notification-service
+  labels:
+  {{- include "novaforge-notification-service.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+    {{- include "novaforge-notification-service.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # anyone in this release (the instance label covers every chart deployed
+    # beside it) may call this service on its port
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: 8088
+  egress:
+    # DNS: every host below resolves through kube-dns (kube-system) — UDP 53
+    # for the common path, TCP 53 for truncated-answer fallback
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # keycloak: NOVAFORGE_AUTH_ISSUER — the JWKS fetch at boot; the resource
+    # server serves nothing until it can validate tokens against the issuer
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: novaforge-infra
+              component: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080
+    # tempo: NOVAFORGE_TEMPO_ENDPOINT — OTLP trace export
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: novaforge-infra
+              component: tempo
+      ports:
+        - protocol: TCP
+          port: 4318
+    # postgres: NOVAFORGE_POSTGRES_HOST — Flyway migrations and the
+    # outbox store's JDBC pool
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: novaforge-infra
+              component: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # kafka: NOVAFORGE_KAFKA — consumes notification events
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: novaforge-infra
+              component: kafka
+      ports:
+        - protocol: TCP
+          port: 9092
+    # data-runtime: NOVAFORGE_DATA_RUNTIME_URL — template data fetches
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: novaforge-data-runtime
+      ports:
+        - protocol: TCP
+          port: 8083
+    # metadata-service: NOVAFORGE_METADATA_URL — recipient/channel lookups
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: novaforge-metadata-service
+      ports:
+        - protocol: TCP
+          port: 8081
+{{- end }}

@@ -19,6 +19,13 @@ spec:
       labels:
       {{- include "novaforge-infra.selector" (dict "root" . "component" "minio") | nindent 8 }}
     spec:
+      # Cluster isolation (twenty-second pass): run on the component's own
+      # token-less ServiceAccount, never the namespace default — and repeat
+      # automountServiceAccountToken: false at the pod level because the
+      # pod-level field wins even if someone later flips the ServiceAccount
+      # itself back to automounting. Belt and braces.
+      serviceAccountName: {{ .Release.Name }}-novaforge-infra-minio
+      automountServiceAccountToken: false
       containers:
         - name: minio
           image: {{ .Values.minio.image }}
@@ -95,7 +102,15 @@ spec:
       labels:
       {{- include "novaforge-infra.selector" (dict "root" . "component" "minio-init") | nindent 8 }}
     spec:
-      restartPolicy: OnFailure
+      # Cluster isolation (twenty-second pass): run on the component's own
+      # token-less ServiceAccount, never the namespace default — and repeat
+      # automountServiceAccountToken: false at the pod level because the
+      # pod-level field wins even if someone later flips the ServiceAccount
+      # itself back to automounting. Belt and braces.
+      # The Job's pod gets the same posture as the daemons: a one-shot `mc`
+      # has even less business holding an API credential.
+      serviceAccountName: {{ .Release.Name }}-novaforge-infra-minio-init
+      automountServiceAccountToken: false
       containers:
         - name: mc
           image: {{ .Values.minio.mcImage }}
@@ -103,10 +118,10 @@ spec:
             - sh
             - -c
             - >-
-              mc alias set drprep http://novaforge-minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
-              && (mc version enable "drprep/$$NOVAFORGE_MINIO_BUCKET"
-              || (mc mb "drprep/$$NOVAFORGE_MINIO_BUCKET" && mc version enable "drprep/$$NOVAFORGE_MINIO_BUCKET"))
-              && mc version info "drprep/$$NOVAFORGE_MINIO_BUCKET""
+              mc alias set drprep http://novaforge-minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+              && (mc version enable "drprep/$NOVAFORGE_MINIO_BUCKET"
+              || (mc mb "drprep/$NOVAFORGE_MINIO_BUCKET" && mc version enable "drprep/$NOVAFORGE_MINIO_BUCKET"))
+              && mc version info "drprep/$NOVAFORGE_MINIO_BUCKET""
           env:
             - name: MINIO_ROOT_USER
               valueFrom:

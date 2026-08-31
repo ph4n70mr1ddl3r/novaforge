@@ -29,15 +29,24 @@ spec:
       labels:
       {{- include "novaforge-infra.selector" (dict "root" . "component" "postgres") | nindent 8 }}
     spec:
+      # Cluster isolation (twenty-second pass): run on the component's own
+      # token-less ServiceAccount, never the namespace default — and repeat
+      # automountServiceAccountToken: false at the pod level because the
+      # pod-level field wins even if someone later flips the ServiceAccount
+      # itself back to automounting. Belt and braces.
+      serviceAccountName: {{ .Release.Name }}-novaforge-infra-postgres
+      automountServiceAccountToken: false
       containers:
         - name: postgres
           image: {{ .Values.postgres.image }}
           env:
+            # the bootstrap superuser is the image default `postgres` — the compose
+            # stack's own shape. Feeding it the secret's owner-USER (novaforge)
+            # collided with the initdb script's CREATE USER novaforge: ON_ERROR_STOP
+            # aborted the whole init on "role already exists" and no service
+            # database was ever created. Only the password rides the secret.
             - name: POSTGRES_USER
-              valueFrom:
-                secretKeyRef:
-                  name: novaforge-db
-                  key: owner-user
+              value: postgres
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:

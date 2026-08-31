@@ -2669,3 +2669,24 @@ Verified: full serial `./mvnw verify` BUILD SUCCESS (honest exit 0; 499
 tests); the chart gate green across 12 charts with both failure modes
 bite-proven. Recorded open shrinks to pure posture: NetworkPolicy/SA, PDB/HPA,
 image tags/CI publish, SHA-pinned actions.
+
+**The twenty-second pass (2026-08-31) — the isolation posture lands and the
+infra chart's first boot is honest.**
+
+- The closeout re-audit caught two first-boot defects in the infra chart
+  before any cluster did: the bucket-init Job's compose-style `$$` escaping
+  (helm rendered it literally; the shell ate it as a PID) and the Postgres
+  bootstrap colliding with the initdb script's own `CREATE USER novaforge`
+  (ON_ERROR_STOP would have aborted every database creation).
+- Every chart now carries a dedicated token-automount-disabled
+  ServiceAccount per workload and a default-deny NetworkPolicy whose allows
+  are exactly its own env wiring — including the gateway's nine proxied
+  backends (the matrix gap the landing flagged) and clamav's 443-only
+  signature-download egress.
+- The chart gate enforces the contract from the render alone: named SAs,
+  automount off, default-deny both ways — bite-proven on the pre-landing
+  tree (19 pods and 12 charts failing) and green on the landed one.
+
+Verified: full serial `./mvnw verify` BUILD SUCCESS (honest exit 0; 499
+tests); the chart gate CLEAN across 12 charts including the new posture
+checks. Recorded open: PDB/HPA, image tags/CI publish, SHA-pinned actions.

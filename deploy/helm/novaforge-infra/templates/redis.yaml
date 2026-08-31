@@ -17,6 +17,13 @@ spec:
       labels:
       {{- include "novaforge-infra.selector" (dict "root" . "component" "redis") | nindent 8 }}
     spec:
+      # Cluster isolation (twenty-second pass): run on the component's own
+      # token-less ServiceAccount, never the namespace default — and repeat
+      # automountServiceAccountToken: false at the pod level because the
+      # pod-level field wins even if someone later flips the ServiceAccount
+      # itself back to automounting. Belt and braces.
+      serviceAccountName: {{ .Release.Name }}-novaforge-infra-redis
+      automountServiceAccountToken: false
       containers:
         - name: redis
           image: {{ .Values.redis.image }}

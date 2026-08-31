@@ -2411,3 +2411,67 @@ CI image publish (skaffold's gitCommit override is the working path), and
 actions on major-version tags rather than SHAs. The prior deliberate set
 stands (delegation read-scope, M11/M12, sandbox pools, stuck-running job row,
 the production-budget-duration observation limit).
+
+## Twenty-Second Pass — 2026-08-31 (the isolation posture lands; the closeout re-audit finds two first-boot defects in the infra chart)
+
+### The 2e95534 re-audit — two real defects, both in the infra chart's first boot
+
+- **The bucket-init Job rendered `$$MINIO_ROOT_USER`** — `$$` is
+  docker-compose interpolation escaping, meaningless in helm: the rendered
+  command carried it literally, the shell expanded `$$` as its PID, and the
+  Job would have authenticated to MinIO with garbage forever (backoffLimit 6,
+  then a never-ready bucket). Single `$` is what `sh -c` needs.
+- **The Postgres bootstrap collided with its own initdb script**: the chart fed
+  `POSTGRES_USER` from the secret's owner-user key (`novaforge`), but the init
+  script's very first statement is `CREATE USER novaforge` — with
+  ON_ERROR_STOP the "role already exists" abort aborted the whole init, and no
+  service database would ever have been created. The bootstrap superuser is
+  the image default `postgres` (the compose stack's own shape — it sets only
+  the password); only the password rides the secret.
+- Everything else held: the flattened Service names (nothing references the
+  release-prefixed workload names as DNS), the kafka advertised-listener
+  wiring (bootstrap via the Service DNS, controller on loopback), the
+  readOnly-rootfs choices, and the gate script's three original checks.
+
+### The isolation posture — dedicated ServiceAccounts + default-deny NetworkPolicies, all twelve charts
+
+Every chart now ships `serviceAccount.create` + `networkPolicy.enabled`
+(both default true): a dedicated, token-automount-disabled ServiceAccount per
+workload — pod-level `automountServiceAccountToken: false` as well (pod-level
+wins even if someone flips the SA) — and a default-deny NetworkPolicy
+(Ingress+Egress) whose explicit allows are exactly the chart's own env wiring:
+DNS (kube-dns UDP+TCP 53), Keycloak:8080 (the JWKS fetch), Tempo:4318 (OTLP),
+plus each chart's actual dependencies; infra components get their own
+(keycloak→postgres, minio-init→minio, everything else DNS-only); clamav's
+egress is `0.0.0.0/0` on 443 only — freshclam's signature downloads, which a
+plain default-deny would have silently broken. The gateway additionally
+allows ingress from anywhere on 8080 (the dev entry point; a staged
+environment narrows it) AND egress to all nine proxied backends — the one
+matrix gap the landing itself flagged (the gateway IS the front door; the
+prescribed matrix had omitted its own route table) — fixed before verify.
+
+### The chart gate learns the posture contract
+
+check-charts.sh now also verifies, from the rendered output alone: every
+workload pod (Deployment/StatefulSet/Job) names a ServiceAccount that the
+same render owns, with pod-level token automount off; every chart renders a
+default-deny (Ingress+Egress) NetworkPolicy. Bite-proven before the charts
+landed: the pre-agent tree failed the gate on all 19 pods and all 12 charts,
+exactly as the contract demands; the landed tree passes clean.
+
+### Verification (this pass)
+
+Full serial `./mvnw verify` **BUILD SUCCESS, honest exit 0** — 499 backend
+tests, zero failures (the chart work touches no Java; the suites re-ran as
+the honest current-tree check). The chart gate green across all 12 charts:
+lint, render, embedded-file drift, DNS consistency (16 hosts), and the new
+isolation posture (19 pods on named SAs, token automount off, 12 charts
+default-denying both ways).
+
+### Recorded open after this pass
+
+Pure posture remains: PDB/HPA (v1 ships replicaCount 1), immutable image tags
+with no CI image publish (skaffold's gitCommit override is the working path),
+actions on major-version tags rather than SHAs — plus the prior deliberate
+set (delegation read-scope, M11/M12, sandbox pools, the stuck-running job
+row, the production-budget-duration observation limit).

@@ -1,0 +1,112 @@
+{{- if .Values.networkPolicy.enabled }}
+# Cluster isolation (twenty-second pass): selecting these pods for BOTH
+# policyTypes makes them default-deny — a flow exists only where a rule below
+# names it, so the rest of the cluster (and the internet) stays unreachable
+# and a compromised pod cannot scout its next hop. The allow list is the env
+# wiring the chart already carries: every peer below is a host its values
+# name, so enforcing this breaks nothing the service actually dials.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-novaforge-gateway
+  labels:
+  {{- include "novaforge-gateway.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+    {{- include "novaforge-gateway.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # anyone in this release (the instance label covers every chart deployed
+    # beside it) may call this service on its port
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: 8080
+    # the dev entry point: kubectl port-forward and dev NodePort traffic arrive
+    # from off-cluster source IPs, which the same-release rule above never
+    # matches — without an any-source allow the front door rings no bell.
+    # A staged environment narrows this to its real ingress CIDRs.
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # DNS: every host below resolves through kube-dns (kube-system) — UDP 53
+    # for the common path, TCP 53 for truncated-answer fallback
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # keycloak: NOVAFORGE_AUTH_ISSUER — the JWKS fetch at boot; the resource
+    # server serves nothing until it can validate tokens against the issuer
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: novaforge-infra
+              component: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080
+    # tempo: NOVAFORGE_TEMPO_ENDPOINT — OTLP trace export
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: novaforge-infra
+              component: tempo
+      ports:
+        - protocol: TCP
+          port: 4318
+    # redis: NOVAFORGE_REDIS_HOST — the rate-limit/cache store behind
+    # the front door's per-IP and per-tenant limits
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: novaforge-infra
+              component: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # The proxied backends — the gateway IS the front door to all nine siblings
+    # (its route table env wiring names each NOVAFORGE_*_URL). A matrix that
+    # omitted these 502'd every route under a policy-enforcing CNI; the peer
+    # selector shape is the one every other chart's matrix rides.
+{{- range $peer := list
+      (dict "name" "novaforge-metadata-service"     "port" 8081 "why" "metadata routes")
+      (dict "name" "novaforge-data-runtime"         "port" 8083 "why" "runtime/admin routes")
+      (dict "name" "novaforge-audit-service"        "port" 8085 "why" "audit routes")
+      (dict "name" "novaforge-workflow-service"     "port" 8086 "why" "workflow routes")
+      (dict "name" "novaforge-scheduler-service"    "port" 8087 "why" "scheduler routes")
+      (dict "name" "novaforge-notification-service" "port" 8088 "why" "notification routes")
+      (dict "name" "novaforge-reporting-service"    "port" 8089 "why" "report routes")
+      (dict "name" "novaforge-integration-service"  "port" 8090 "why" "integration/webhook routes")
+      (dict "name" "novaforge-file-service"         "port" 8091 "why" "file routes") }}
+    # {{ $peer.why }}: {{ $peer.name }}:{{ $peer.port }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $.Release.Name }}
+              app.kubernetes.io/name: {{ $peer.name }}
+      ports:
+        - protocol: TCP
+          port: {{ $peer.port }}
+{{- end }}
+{{- end }}

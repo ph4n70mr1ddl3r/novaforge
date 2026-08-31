@@ -14,6 +14,13 @@ spec:
       labels:
       {{- include "novaforge-file-service.selectorLabels" . | nindent 8 }}
     spec:
+      # Cluster isolation (twenty-second pass): run on the chart's own
+      # token-less ServiceAccount, never the namespace default — and repeat
+      # automountServiceAccountToken: false at the pod level because the
+      # pod-level field wins even if someone later flips the ServiceAccount
+      # itself back to automounting. Belt and braces.
+      serviceAccountName: {{ .Release.Name }}-novaforge-file-service
+      automountServiceAccountToken: false
       containers:
         - name: novaforge-file-service
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

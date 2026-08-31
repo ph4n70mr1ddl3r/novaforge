@@ -1,0 +1,357 @@
+{{- if .Values.networkPolicy.enabled }}
+# Cluster isolation (twenty-second pass): one default-deny per component —
+# selecting a component's pods for BOTH policyTypes isolates it, and only the
+# rules named under it survive. These components are the TARGETS the eleven
+# service charts' egress carves paths to, so most need nothing but DNS; the
+# three exceptions (keycloak's realm store, the minio-init Job's bucket call,
+# freshclam's signature downloads) are called out inline. Peers are matched by
+# the release's instance label plus the target's name/component labels — the
+# same convention every chart's selectors already carry, so a peer renamed here
+# must be renamed there too.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: novaforge-postgres
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: postgres
+spec:
+  podSelector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "postgres") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # every database client in the release: the services' Flyway/JDBC pools
+    # (NOVAFORGE_POSTGRES_HOST) and keycloak's realm store below
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: 5432
+  egress:
+    # postgres is the target: it serves, it dials nothing but kube-dns
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: novaforge-kafka
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: kafka
+spec:
+  podSelector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "kafka") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # every producer and consumer in the release (NOVAFORGE_KAFKA points here)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: 9092
+  egress:
+    # single-node KRaft: the controller quorum is 1@localhost:9093, so even
+    # broker-to-broker traffic is loopback — the pod network carries nothing
+    # outbound but DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: novaforge-redis
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: redis
+spec:
+  podSelector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "redis") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # the cache/rate-limit clients in the release (gateway, data-runtime,
+    # reporting — NOVAFORGE_REDIS_HOST)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: 6379
+  egress:
+    # a cache answers; it asks nothing but kube-dns
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: novaforge-keycloak
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: keycloak
+spec:
+  podSelector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "keycloak") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # every service's JWKS fetch at boot (NOVAFORGE_AUTH_ISSUER) plus the dev
+    # admin console and realm endpoints
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # the realm's own store: KC_DB_URL is
+    # jdbc:postgresql://novaforge-postgres:5432/keycloak — realms, clients and
+    # sessions would silently vanish on restart without this path
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: novaforge-infra
+              component: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: novaforge-tempo
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: tempo
+spec:
+  podSelector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "tempo") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # OTLP from every service (NOVAFORGE_TEMPO_ENDPOINT)…
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: 4318
+        # …and the query/metrics port the Service exposes — dev tooling reads
+        # traces back through it
+        - protocol: TCP
+          port: 3200
+  egress:
+    # the trace sink: spans arrive, tempo dials nothing but kube-dns
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: novaforge-minio
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: minio
+spec:
+  podSelector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "minio") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # the object API (9000): the file service's attachment store and the
+    # minio-init Job's bucket bootstrap — the Job carries the same instance
+    # label, so one rule covers both; the console port (9001) is dev tooling
+    # behind its own login
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: 9000
+        - protocol: TCP
+          port: 9001
+  egress:
+    # object storage answers; it dials nothing but kube-dns
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# The bucket-init Job: NO ingress list on purpose — nothing dials a one-shot
+# Job's pod, so with policyTypes carrying Ingress its ingress is denied
+# outright rather than narrowed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: novaforge-minio-init
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: minio-init
+spec:
+  podSelector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "minio-init") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # the Job's whole purpose: `mc alias set http://novaforge-minio:9000`,
+    # then version-enable the attachment bucket before the file service asks
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: novaforge-infra
+              component: minio
+      ports:
+        - protocol: TCP
+          port: 9000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: novaforge-clamav
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: clamav
+spec:
+  podSelector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "clamav") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # the file service's §8 virus-scan gate (NOVAFORGE_CLAMAV_HOST) — its
+    # wiring is fail-closed, so a blocked clamd fails uploads rather than
+    # waving them through
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: 3310
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # THE ONE DELIBERATE HOLE IN THE STACK'S DEFAULT-DENY: freshclam downloads
+    # the signature database over HTTPS (database.clamav.net and mirrors), and
+    # it MUST — without this 443-only allow freshclam cannot update, the
+    # database goes stale, and the fail-closed scan gate starts failing every
+    # upload the moment signatures age out. Port 443 and nothing else; when
+    # this stages, narrow 0.0.0.0/0 to the ClamAV CDN ranges you actually see
+    # in freshclam's logs.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+{{- end }}

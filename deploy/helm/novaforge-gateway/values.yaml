@@ -57,3 +57,21 @@ env:
     value: "http://novaforge-file-service:8091"
   - name: NOVAFORGE_TEMPO_ENDPOINT
     value: "http://novaforge-tempo:4318/v1/traces"
+
+# Cluster isolation (twenty-second pass): the chart's pods run on a dedicated
+# ServiceAccount with the API token automount disabled — nothing in this
+# service touches the Kubernetes API (siblings and infra are plain pod
+# networking), so the automounted token has no consumer except an attacker: a
+# sandbox escape reads the mounted credential and trades it for API access.
+# create=false only if you pre-provision a ServiceAccount with the name the
+# deployment references.
+serviceAccount:
+  create: true
+
+# Cluster isolation (twenty-second pass): default-deny in BOTH directions —
+# each flow the service needs is an explicit allow in
+# templates/networkpolicy.yaml, and that allow list is exactly the env wiring
+# above (each allow carries its why). Disable only on clusters whose CNI
+# enforces no network policy — an unenforced policy is silent false security.
+networkPolicy:
+  enabled: true
