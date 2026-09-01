@@ -3107,6 +3107,51 @@ and then a full live-stack re-exercise at final HEAD.
     copy (only metadata's had ever been tested). `RedisTestBase` — dead test
     infrastructure referenced by nothing — is deleted.
 
+### The coverage audit's Tier-1 closeout (same pass, continued)
+
+The coverage audit named ~20 logic-bearing outbound REST adapters with zero
+execution anywhere — journey suites stub every port interface, so URL
+construction, token posture, and error mapping were CI-invisible per client.
+RestPublishedAppsTests-style contract tests (stub upstream on an ephemeral
+port) now pin the remainder, every one written against the real client:
+
+- **data-runtime/api**: RestScriptEngineClient (the CALLER's token relayed
+  verbatim, no-caller fails loudly instead of escalating, the scheduler's
+  distinct service-principal `/scheduled` leg, problem mapping),
+  RestConnectorPort (the envelope + dedupe-key omission, problem mapping,
+  unreachable → INTERNAL), RestMetadataClient (client-credentials grant cached
+  with the expiry buffer, bearer on every read, bundle parse), and
+  KeycloakUserProvisioner (idempotent-by-username with the platform-DB id,
+  tenant_id/platform_roles attributes, Verify-Profile fields, non-temporary
+  credential, non-convergence fails INTERNAL).
+- **metadata-service**: HttpEnvironmentProvisioner (adopt-before-create for a
+  crashed attempt including the credential-reset leg that un-wedges retries,
+  leftover-app retire-before-import, the import → publish order, service
+  client on admin legs vs the granted admin on metadata legs).
+- **scheduler**: RestFlowTarget (the recordless firing envelope) +
+  RestPublishedJobsSource (index → per-app bundles → parsed jobs; a broken
+  upstream fails the sync audibly, schedules never silently vanish).
+- **notification**: RestRuntimeAdminPort (role holders per tenant, the
+  tenant-scoped roles membership surface) + RestRuntimeRecordPort
+  (app-qualified entity split, process-keyed entities short-circuit, gone
+  record/dead runtime render empty tokens and the fan-out still delivers).
+- **workflow**: RestPublishedWorkflowSource (index fan-out, workflow parse) +
+  RestRecordFieldsSource (404 = gone-record skip as null, everything else
+  audible), RestRoleLookup (an outage answers NULL — unknown is treated as
+  held, the documented breach-path posture) + RestTenantLookup (30 s cache,
+  outage fails CLOSED), RestResumeClient (the verdict envelope with the
+  instance dedupe key), RestPublishedSlaSource (the bundle pinned by apiName
+  AND tenantId against a foreign same-named app indexed first).
+- **integration**: ReportingClient (runAsActor XOR runAsRole on the wire,
+  decoded bytes, content-less/rejected exports audible).
+- **script-engine**: DataRuntimeQueryClient (`$data.query` relays the caller's
+  token, no-token refuses, the system query rides the internal surface) +
+  IntegrationHttpProxy (`$http` as the sandbox's only egress, failures name
+  the connector and operation).
+
+47 new tests across 13 suites; every Tier-1 adapter from the audit now
+executes in CI with its cross-service contract pinned (reactor total 647).
+
 ### The live leg
 
 The golden journey at final HEAD first FAILED — and the failure was the pass
