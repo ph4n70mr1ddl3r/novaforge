@@ -35,7 +35,8 @@ import org.testcontainers.containers.wait.strategy.Wait;
  * transport rides the (faked) runtime write leg; the checkpoint/ledger mechanics
  * are the system under test.
  */
-@SpringBootTest(properties = {"novaforge.jobs.chunk-size=4"})
+@SpringBootTest(properties = {"novaforge.jobs.chunk-size=4",
+        "novaforge.jobs.export-max-rows=2"})
 class ImportResumeTests extends PostgresTestBase {
 
     static final UUID TENANT = UUID.fromString("11111111-1111-4111-8111-111111111111");
@@ -83,6 +84,11 @@ class ImportResumeTests extends PostgresTestBase {
     @Autowired
     JobRunner runner;
 
+    static final java.util.concurrent.atomic.AtomicInteger LIST_CALLS =
+            new java.util.concurrent.atomic.AtomicInteger();
+    static final java.util.concurrent.atomic.AtomicInteger UPLOADS =
+            new java.util.concurrent.atomic.AtomicInteger();
+
     @TestConfiguration
     static class Stubs {
 
@@ -112,6 +118,13 @@ class ImportResumeTests extends PostgresTestBase {
                 private int chunk = 0;
 
                 @Override
+                public ListPage list(UUID tenantId, String entity, String asRole,
+                                     Map<String, Object> query) {
+                    LIST_CALLS.incrementAndGet();
+                    // total 100 >> the 2-row ceiling: the FIRST page must trip it
+                    return new ListPage(List.of(), 100);
+                }
+
                 public List<Outcome> write(UUID tenantId, List<Map<String, Object>> items) {
                     if (failOnChunk == ++chunk) {
                         throw new com.novaforge.common.error.PlatformException(
@@ -140,6 +153,7 @@ class ImportResumeTests extends PostgresTestBase {
                 @Override
                 public UUID upload(UUID tenantId, String fileName, String contentType,
                                    byte[] content, UUID initiatedBy) {
+                    UPLOADS.incrementAndGet();
                     return UUID.randomUUID();
                 }
 
@@ -221,5 +235,25 @@ class ImportResumeTests extends PostgresTestBase {
         runner.scan();
         assertThat(APPLIED).isEmpty();
         assertThat(jobs.find(TENANT, jobId).orElseThrow().status()).isEqualTo("running");
+    }
+
+    @Test
+    @DisplayName("entity export: a total over the ceiling fails the job on the FIRST page — never an unbounded scan or upload")
+    void entityExportRowCeilingFailsTheJob() {
+        // Anti-regression (re-audit): no test drove an export job at all. The
+        // assembly is in-memory before the File Service upload — a lost ceiling
+        // is an OOM on the shared scheduler pool, and the failure must land on
+        // the FIRST page (total known immediately), never after the full scan.
+        LIST_CALLS.set(0);
+        UPLOADS.set(0);
+        UUID jobId = jobs.create(TENANT, JobStore.Kind.EXPORT_ENTITY, "Erp", "Payment",
+                null, null, null, null, UUID.randomUUID(), "payments.csv", "csv", ACTOR, null);
+        runner.scan();
+        JobStore.Job failed = jobs.find(TENANT, jobId).orElseThrow();
+        assertThat(failed.status()).isEqualTo("failed");
+        assertThat(failed.error()).contains("exceeds the ceiling");
+        // the ceiling tripped on the first page — one lookup, zero uploads
+        assertThat(LIST_CALLS.get()).isEqualTo(1);
+        assertThat(UPLOADS.get()).isZero();
     }
 }

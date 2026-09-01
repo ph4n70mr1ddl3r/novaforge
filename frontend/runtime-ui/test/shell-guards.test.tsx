@@ -100,6 +100,38 @@ function shell(fetchImpl: ReturnType<typeof vi.fn>) {
     });
 }
 
+describe("RuntimeShell role mapping (PHASE-2 §9)", () => {
+    it("maps app-scoped role assignments by suffix and ignores roles the app does not define", async () => {
+        // held: a role the app does not define + the app-defined arClerk. The
+        // suffix mapping must land on arClerk (the create grant applies — "New"
+        // renders); a regression to full-string matching or non-filtered roles
+        // either blanks the grant or admits the undefined role.
+        const fetchImpl = fetchImplFor();
+        const first = render(createElement(RuntimeShell, {
+            client: new PlatformClient("", () => "t", fetchImpl as unknown as typeof fetch),
+            published: { version: 3, app } as never,
+            user: { name: "demo", roles: ["erp.typer", "erp.arClerk"] },
+            versionKey: "v3",
+        }));
+        first.getByRole("button", { name: "Customers" }).click();
+        await waitFor(() => expect(first.getByText("1 record")).toBeTruthy());
+        expect(first.getByRole("button", { name: "New" })).toBeTruthy();
+        first.unmount();
+
+        // the same shell under a role the app never defines: the matrix grants
+        // nothing — the create action must NOT render
+        const second = render(createElement(RuntimeShell, {
+            client: new PlatformClient("", () => "t", fetchImpl as unknown as typeof fetch),
+            published: { version: 3, app } as never,
+            user: { name: "demo2", roles: ["erp.typer"] },
+            versionKey: "v3",
+        }));
+        // a role the app never defines maps to nothing: no entity nav, no grants
+        expect(second.queryByRole("button", { name: "Customers" })).toBeNull();
+        expect(second.queryByRole("button", { name: "New" })).toBeNull();
+    });
+});
+
 describe("RuntimeShell failure surfaces", () => {
     it("the list's create action — openPage('customerForm'), the golden journey's crash — renders the form", async () => {
         render(shell(fetchImplFor()));

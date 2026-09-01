@@ -232,6 +232,40 @@ class IntegrationGuardLegTests extends PostgresTestBase {
                 .path("outcomes").get(0).path("record").path("id").asString();
     }
 
+    @Test
+    @DisplayName("a raw runtime abort in one batch item is THAT item's verdict, never a request 500")
+    void batchRawFailureIsPerItemVerdict() throws Exception {
+        // Anti-regression (re-audit): PlatformException verdicts were pinned; the
+        // generic-RuntimeException leg (a null entity, a unique race, a deadlock)
+        // was not. A rethrow regression turns partially-committed batches into a
+        // request-level 500 with the committed items' verdicts lost.
+        Map<String, Object> broken = new java.util.LinkedHashMap<>();
+        broken.put("op", "create");
+        broken.put("entity", null);   // resolver NPEs — the raw-abort trigger
+        broken.put("record", Map.of("title", "doomed"));
+
+        Map<String, Object> envelope = Map.of(
+                "tenantId", TENANT.toString(),
+                "items", List.of(
+                        Map.of("op", "create", "entity", "Doc",
+                                "record", Map.of("title", "kept")),
+                        broken));
+
+        mockMvc.perform(post("/api/v1/hooks/integration/write").with(serviceJwt())
+                        .contentType("application/json")
+                        .content(MAPPER.writeValueAsString(envelope)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcomes[0].status").value("ok"))
+                .andExpect(jsonPath("$.outcomes[1].status").value("error"))
+                .andExpect(jsonPath("$.outcomes[1].code").value("5000"))
+                .andExpect(jsonPath("$.outcomes[1].detail").value(
+                        org.hamcrest.Matchers.containsString("item failed")));
+        // the committed item stayed committed
+        Integer kept = jdbc.queryForObject(
+                "SELECT count(*) FROM rec_doc WHERE data->>'title' = 'kept'", Integer.class);
+        org.assertj.core.api.Assertions.assertThat(kept).isEqualTo(1);
+    }
+
     /** One integration write item, asserted ok — returns the raw outcome envelope. */
     private MvcResult writeOk(Map<?, ?> item) throws Exception {
         return mockMvc.perform(post("/api/v1/hooks/integration/write").with(serviceJwt())

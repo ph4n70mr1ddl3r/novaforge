@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.novaforge.metadata.AppDefinition;
@@ -22,6 +23,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
@@ -87,6 +89,22 @@ class HookStepResultTests extends PostgresTestBase {
                   "relationships": [
                     { "apiName": "lines", "type": "child", "target": "JournalLine",
                       "cascadeDelete": true } ] },
+                { "apiName": "Echo",
+                  "displayField": "label",
+                  "fields": [ { "apiName": "label", "type": "text", "required": true } ],
+                  "hooks": [
+                    { "name": "echo", "trigger": "afterSave", "flow":
+                      { "id": "e1", "op": "createRecord",
+                        "params": { "entity": "Echo",
+                                    "template": { "label": "echo-${label}" } } } } ] },
+                { "apiName": "Looper",
+                  "displayField": "label",
+                  "fields": [ { "apiName": "label", "type": "text", "required": true } ],
+                  "hooks": [
+                    { "name": "loop", "trigger": "beforeSave", "flow":
+                      { "id": "l1", "op": "setField",
+                        "params": { "field": "label", "expression": "upper(label)" },
+                        "next": "l1" } } ] },
                 { "apiName": "JournalLine",
                   "fields": [
                     { "apiName": "entry", "type": "lookup", "target": "Journal",
@@ -106,6 +124,9 @@ class HookStepResultTests extends PostgresTestBase {
 
     @Autowired
     MockMvc mockMvc;
+
+    @Autowired
+    JdbcTemplate jdbc;
 
     @TestConfiguration
     static class StubMetadata {
@@ -205,5 +226,48 @@ class HookStepResultTests extends PostgresTestBase {
         assertThat(rows).contains("\"memo\":\"AR B-1001\"").contains("\"debit\":120");
         assertThat(rows).contains("\"memo\":\"Revenue\"").contains("\"credit\":120");
         assertThat(rows).doesNotContain("${total}").doesNotContain("${number}");
+    }
+
+    @Test
+    @DisplayName("runaway containment: a self-creating afterSave hook is bounded by MAX_DEPTH — the cascade ends, the seed survives")
+    void selfCreatingHookIsDepthBounded() throws Exception {
+        // Echo's afterSave createRecords its own entity: every created record
+        // re-fires the hook one level deeper. The depth guard ends the cascade —
+        // the seed commits (afterSave failures never block the write), the
+        // runaway attempt lands in the retry ledger, and the row count stays
+        // bounded instead of exhausting storage on an unbounded recursion.
+        mockMvc.perform(post("/api/v1/runtime/Echo").with(jwt()
+                        .jwt(token -> token.claim("tenant_id", TENANT.toString())
+                                .subject(ACTOR.toString()))
+                        .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api")))
+                        .contentType("application/json")
+                        .content("{\"label\":\"seed\"}"))
+                .andExpect(status().isOk());
+        // exactly the seed plus ONE nested echo: the hook dispatch's depth bound
+        // ends the self-creation cascade — a regression to an unbounded (or
+        // zero-echo) recursion explodes (or zeroes) this count
+        Integer rows = jdbc.queryForObject(
+                "SELECT count(*) FROM rec_echo", Integer.class);
+        assertThat(rows).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("runaway containment: a cyclic flow hits MAX_STEPS and aborts the write")
+    void cyclicFlowHitsMaxSteps() throws Exception {
+        // Looper's beforeSave step's `next` points back at itself: a compiled
+        // graph must be a DAG, and the executor's step budget is the backstop —
+        // VALIDATION_FAILED aborts the write, never an infinite loop.
+        mockMvc.perform(post("/api/v1/runtime/Looper").with(jwt()
+                        .jwt(token -> token.claim("tenant_id", TENANT.toString())
+                                .subject(ACTOR.toString()))
+                        .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api")))
+                        .contentType("application/json")
+                        .content("{\"label\":\"spin\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("hook exceeded 256 steps")));
+        Integer rows = jdbc.queryForObject(
+                "SELECT count(*) FROM rec_looper", Integer.class);
+        assertThat(rows).isZero();
     }
 }

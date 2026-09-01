@@ -80,6 +80,14 @@ class MaterializerTests extends PostgresTestBase {
                 "indexes": [ { "fields": ["entryDate"] }, { "fields": ["amount"] } ] } ] }
             """;
 
+    /** The isolation test's broken shape: its projection name is pre-occupied. */
+    private static final String BROKEN_APP_JSON = """
+            { "apiName": "Broken",
+              "entities": [ { "apiName": "Broken",
+                "displayField": "label",
+                "fields": [ { "apiName": "label", "type": "text" } ] } ] }
+            """;
+
     /** The type-change test's starting point: amount indexed (promoted) as decimal. */
     private static final String APP_JSON_AMOUNT_INDEXED_DECIMAL = """
             { "apiName": "Erp",
@@ -137,6 +145,50 @@ class MaterializerTests extends PostgresTestBase {
                 "SELECT count(*) FROM pg_policies WHERE tablename = 'rec_journal_entry'",
                 Integer.class);
         assertThat(policies).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("per-shape failure isolation: one app's broken shape never blocks a sibling's; the retry lands it")
+    void brokenShapeIsolatesAndRetries() {
+        // A foreign table occupying a projection name makes applyShape's CREATE
+        // fail — the "one app's bad DDL" stand-in. The doc'd contract (applyAll):
+        // the failure is logged and skipped, the sibling app's projection still
+        // materializes, and the next pass retries the broken shape idempotently.
+        jdbc.execute("CREATE TABLE rec_broken(id uuid primary key)");
+        AppDefinition healthy = DefinitionParser.parseApp(APP_JSON);
+        AppDefinition broken = DefinitionParser.parseApp(BROKEN_APP_JSON);
+
+        materializer.applyAll(java.util.List.of(healthy, broken));   // never throws
+
+        // the sibling's projection materialized fully (table + trigger + RLS)
+        Integer healthyTable = jdbc.queryForObject(
+                "SELECT count(*) FROM information_schema.tables WHERE table_name = 'rec_journal_entry'",
+                Integer.class);
+        assertThat(healthyTable).isEqualTo(1);
+        Integer triggers = jdbc.queryForObject(
+                "SELECT count(DISTINCT trigger_name) FROM information_schema.triggers "
+                        + "WHERE event_object_table = 'rec_records' "
+                        + "AND trigger_name = 'trg_rec_journal_entry'", Integer.class);
+        assertThat(triggers).isEqualTo(1);
+        Integer policies = jdbc.queryForObject(
+                "SELECT count(*) FROM pg_policies WHERE tablename = 'rec_journal_entry'",
+                Integer.class);
+        assertThat(policies).isEqualTo(1);
+        // the broken shape stayed skipped: rec_broken is still the foreign table
+        // (its name was never replaced by a managed projection)
+        Integer foreignLeft = jdbc.queryForObject(
+                "SELECT count(*) FROM information_schema.tables WHERE table_name = 'rec_broken'",
+                Integer.class);
+        assertThat(foreignLeft).isEqualTo(1);
+
+        // the next pass retries the broken shape: once the obstruction is gone the
+        // projection lands (idempotent reconcile, never a wedged pipeline)
+        jdbc.execute("DROP TABLE rec_broken");
+        materializer.applyAll(java.util.List.of(healthy, broken));
+        Integer brokenNow = jdbc.queryForObject(
+                "SELECT count(*) FROM information_schema.columns WHERE table_name = 'rec_broken' "
+                        + "AND column_name = 'tenant_id'", Integer.class);
+        assertThat(brokenNow).isEqualTo(1);   // the projection's own columns exist now
     }
 
     @Test
