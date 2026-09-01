@@ -25,7 +25,8 @@
         "+"
       ],
       "defaultClientScopes": [
-        "novaforge.api"
+        "novaforge.api",
+        "profile"
       ],
       "optionalClientScopes": [
         "offline_access"
@@ -34,7 +35,7 @@
     {
       "clientId": "novaforge-runtime",
       "name": "NovaForge Data Runtime (service)",
-      "description": "Service account for runtime\u2192metadata calls (client credentials)",
+      "description": "Service account for runtime→metadata calls (client credentials)",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -49,7 +50,7 @@
     {
       "clientId": "novaforge-pipeline",
       "name": "NovaForge CI pipeline (service)",
-      "description": "Headless suite runs + promotion for CI pipelines (PHASE-8 \u00a75): client-credentials caller granted the builder platform role; its service account carries the tenant attribute of the dev workspace it serves",
+      "description": "Headless suite runs + promotion for CI pipelines (PHASE-8 §5): client-credentials caller granted the builder platform role; its service account carries the tenant attribute of the dev workspace it serves",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -116,6 +117,33 @@
             "id.token.claim": "true",
             "access.token.claim": "true",
             "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "profile",
+      "description": "OpenID Connect built-in profile scope (the username the SPAs render); the realm file replaces Keycloak's built-in default scopes on import, so it is declared here explicitly",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "${profileScopeConsentText}"
+      },
+      "protocolMappers": [
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "username",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true"
           }
         }
       ]

@@ -30,6 +30,27 @@ for chart in deploy/helm/novaforge-*/Chart.yaml; do
 done
 echo "charts: lint + render ok ($(ls "$render_dir" | wc -l) charts)"
 
+# 1b) the umbrella chart — the composition an actual `helm upgrade` deploys
+# (skaffold's chartPath, the documented image.tag flow). The novaforge-* glob
+# above cannot match it; a broken umbrella (pin drift against a sibling chart,
+# wiring that only breaks when the subcharts render under one release) passed
+# CI and died at first real deploy. file:// dependencies vendor from the
+# CURRENT sibling trees, so dependency build doubles as the version-drift
+# check; the vendored copies are gate-local and cleaned up after.
+umbrella=deploy/helm/novaforge
+umbrella_ok=1
+"$HELM" dependency build "$umbrella" >/dev/null 2>&1 || {
+  fail "helm dependency build novaforge (umbrella pins vs sibling charts drifted?)"
+  umbrella_ok=0
+}
+if [ "$umbrella_ok" -eq 1 ]; then
+  "$HELM" lint "$umbrella" >/dev/null 2>&1 || fail "helm lint novaforge (umbrella)"
+  "$HELM" template gate "$umbrella" > "$render_dir/novaforge-umbrella.yaml" 2>/dev/null \
+    || fail "helm template novaforge (umbrella)"
+fi
+rm -rf "$umbrella/charts" "$umbrella/Chart.lock"
+[ "$umbrella_ok" -eq 1 ] && echo "umbrella chart: vendored, linted, rendered"
+
 # 2) the infra chart's embedded files are byte-mirrors of their sources
 cmp -s deploy/helm/novaforge-infra/files/postgres-init.sh \
        deploy/postgres-init/01-databases.sh \

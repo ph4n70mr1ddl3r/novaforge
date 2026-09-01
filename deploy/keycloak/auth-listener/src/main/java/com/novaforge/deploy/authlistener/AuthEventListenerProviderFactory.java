@@ -25,7 +25,24 @@ public class AuthEventListenerProviderFactory implements EventListenerProviderFa
 
     @Override
     public void init(Config.Scope config) {
-        String bootstrap = System.getenv().getOrDefault("NOVAFORGE_KAFKA_BOOTSTRAP", "kafka:29092");
+        this.producer = new KafkaProducer<>(producerProperties(bootstrap()));
+    }
+
+    static String bootstrap() {
+        return System.getenv().getOrDefault("NOVAFORGE_KAFKA_BOOTSTRAP", "kafka:29092");
+    }
+
+    /**
+     * The producer config. Kafka rejects a producer whose
+     * {@code delivery.timeout.ms < linger.ms + request.timeout.ms} at
+     * CONSTRUCTION time — and a constructor throwing here fails Keycloak's
+     * whole boot, not just the audit trail. The first live deployment
+     * (2026-09-02, twenty-ninth pass) died exactly this way: linger 1s + the
+     * default request timeout 30s exceeded the 30s delivery bound.
+     * request.timeout.ms is pinned explicitly so the invariant holds
+     * arithmetically.
+     */
+    static Properties producerProperties(String bootstrap) {
         Properties props = new Properties();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap);
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
@@ -33,8 +50,9 @@ public class AuthEventListenerProviderFactory implements EventListenerProviderFa
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
                 "org.apache.kafka.common.serialization.StringSerializer");
         props.put(ProducerConfig.LINGER_MS_CONFIG, String.valueOf(TimeUnit.SECONDS.toMillis(1)));
+        props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, String.valueOf(TimeUnit.SECONDS.toMillis(10)));
         props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, String.valueOf(TimeUnit.SECONDS.toMillis(30)));
-        this.producer = new KafkaProducer<>(props);
+        return props;
     }
 
     @Override

@@ -36,6 +36,30 @@ scrape_configs:
         labels:
           __path__: /var/log/novaforge/novaforge-audit-service.log
           service: audit-service
+      - targets: [localhost]
+        labels:
+          __path__: /var/log/novaforge/novaforge-workflow-service.log
+          service: workflow-service
+      - targets: [localhost]
+        labels:
+          __path__: /var/log/novaforge/novaforge-notification-service.log
+          service: notification-service
+      - targets: [localhost]
+        labels:
+          __path__: /var/log/novaforge/novaforge-scheduler-service.log
+          service: scheduler-service
+      - targets: [localhost]
+        labels:
+          __path__: /var/log/novaforge/novaforge-reporting-service.log
+          service: reporting-service
+      - targets: [localhost]
+        labels:
+          __path__: /var/log/novaforge/novaforge-integration-service.log
+          service: integration-service
+      - targets: [localhost]
+        labels:
+          __path__: /var/log/novaforge/novaforge-file-service.log
+          service: file-service
     pipeline_stages:
       - regex:
           expression: '\s(?P<level>[A-Z]+) \[[^,]+,(?P<trace>[^,]*),(?P<span>[^\]]*)\]'

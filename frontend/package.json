@@ -6,7 +6,7 @@
     "test": "pnpm -r --no-bail test",
     "build": "pnpm -r --no-bail build",
     "check": "pnpm -r --no-bail check",
-    "package": "pnpm -r --no-bail build && node scripts/check-bundle-base.mjs && node -e \"const fs=require('fs');fs.rmSync('dist',{recursive:true,force:true});fs.mkdirSync('dist/runtime',{recursive:true});fs.mkdirSync('dist/builder',{recursive:true});fs.cpSync('runtime-ui/dist','dist/runtime',{recursive:true});fs.cpSync('builder-ui/dist','dist/builder',{recursive:true});console.log('assembled dist/runtime + dist/builder — mount at /static for the gateway')\""
+    "package": "pnpm -r --no-bail build && node scripts/check-bundle-base.mjs && node -e \"const fs=require('fs');fs.rmSync('dist',{recursive:true,force:true});fs.mkdirSync('dist/runtime',{recursive:true});fs.mkdirSync('dist/builder',{recursive:true});fs.cpSync('runtime-ui/dist','dist/runtime',{recursive:true});fs.cpSync('builder-ui/dist','dist/builder',{recursive:true});const gw='../services/gateway/src/main/resources/static';for(const app of ['runtime','builder']){fs.rmSync(gw+'/'+app,{recursive:true,force:true});fs.cpSync('dist/'+app,gw+'/'+app,{recursive:true});}console.log('assembled dist/runtime + dist/builder (volume-mount path) AND refreshed the gateway-embedded static tree — the embedded bundles now ride the same gate as the packaged ones')\""
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

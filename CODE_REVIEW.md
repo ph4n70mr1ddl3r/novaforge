@@ -2979,3 +2979,160 @@ gateway jar rebuilt around them, asset requests verified prefixed and 200).
 ### Recorded open after this pass
 
 Empty.
+
+## Twenty-Ninth Pass — 2026-09-02 (the gates that didn't gate, the scripts nobody ran, and the auth spine's first live boot)
+
+### The method
+
+The recorded-open set has been empty since the twenty-eighth pass, so this pass
+audited the layers every prior pass consumed but never audited: the CI workflow
+logic itself, the ops/deploy scripts (zero automated coverage of their own), the
+test suite's *coverage of coverage* — production classes no test ever references —
+and then a full live-stack re-exercise at final HEAD.
+
+### The defects
+
+1. **The image-publish leg could never go green on a clean runner**
+   (`.github/workflows/build.yaml`). The per-module `jib:build` loop runs in a
+   single-module reactor (`-pl "$mod"`), so each invocation must resolve the
+   other internal `0.1.0-SNAPSHOT` artifacts from `~/.m2` — but the preceding
+   reactor pass ran `package`, which never writes there. The first image pushed;
+   the second iteration died resolving dependencies. `install` now.
+
+2. **The chart gate never gated the umbrella chart** (`deploy/helm/check-charts.sh`).
+   The `novaforge-*` glob cannot match `deploy/helm/novaforge` — the one chart an
+   actual `helm upgrade` deploys (skaffold's chartPath) rendered in CI zero times.
+   The gate now vendors its `file://` dependencies from the current sibling trees
+   (making pin-drift a gate failure — bite-proven by drifting a pin), lints,
+   renders it through the same DNS/isolation checks (13 charts, 30 pods), and
+   cleans the vendored copies up.
+
+3. **The backup sidecar's base-freshness predicate was inverted**
+   (`deploy/compose/backup/nightly-backup.sh`). `find -mmin +N` matches files
+   OLDER than N minutes; the `[ -z … ]` test therefore refreshed the physical
+   base only while its stamp was FRESH — a full `pg_basebackup` every 24 h
+   instead of every `NOVAFORGE_BACKUP_BASE_DAYS=7` days, and, far worse, the
+   base backup dying silently forever the moment a stamp aged past the cadence
+   (the one artifact PITR cannot recover without). Fixed to `-n`, and the
+   predicate is now pinned end-to-end in the new ops selftest.
+
+4. **Promtail shipped five of eleven services' logs**
+   (`deploy/compose/observability/promtail/promtail.yml`) — workflow,
+   notification, scheduler, reporting, integration and file-service logs never
+   reached Loki; the phase-4/6 services postdated the file and it was never
+   extended. All eleven now ship, and a contract in the ops selftest fails the
+   build the next time a service's log file goes unshipped.
+
+5. **The launchers reported success unconditionally**
+   (`deploy/scripts/start-live-stack.sh`, `relaunch-gateway.sh`): a missing jar
+   or a JVM that died on boot still produced "started pid N" and exit 0 — the
+   failure sat unread in a `.out` file. Both now preflight every jar before
+   anything boots (a partial stack masks boot-order defects), verify each JVM
+   survived its first seconds (with the boot log's tail on failure), and exit
+   non-zero. `start-live-stack.sh` additionally deploys the auth-listener
+   provider jar into the mounted providers dir (building it if absent) — the
+   realm names `novaforge-auth`, and a missing jar silences the whole `auth.*`
+   audit trail with zero visible errors. The launcher contract is pinned by the
+   ops selftest (missing jar → preflight failure with nothing started; dying
+   JVM → failed relaunch; staying-alive JVM → green), exercised with stubbed
+   executables — never a real JVM.
+
+6. **The bundle-base gate passed shells it should have failed**
+   (`frontend/scripts/check-bundle-base.mjs`): a RELATIVE base (`base: "./"` —
+   the obvious one-line "fix" someone reaches for) emits `./assets/...` URLs the
+   prefix regex never matched, and zero matches read as success. The contract is
+   now positive: the shell must carry a `type="module"` script, must reference
+   assets, and every asset URL must carry the hosting prefix — bite-proven all
+   three ways (bare base, relative base, asset-less shell). And the embedded
+   path is no longer hand-propagation: `pnpm package` now refreshes the
+   gateway-embedded static tree through the same gate, closing the ungated
+   artifact class the twenty-eighth pass documented.
+
+7. **The write path rejected every negative-offset datetime**
+   (`FieldCoercer`, flushed by its new unit suite — the class had zero direct
+   tests; journey suites only ride happy paths). The offset sniff looked for
+   `+` alone, so `2026-09-02T09:00:00-05:00` got `Z` appended to an already
+   offset text and failed parsing — every datetime write from a UTC-negative
+   client rejected as "invalid value". Explicit offsets now parse as-is; only
+   naive stamps fall back to UTC. The canonical form (ADR-001's
+   lexicographic=chronological invariant) is pinned.
+
+8. **The auth-listener's producer config killed Keycloak's boot — on its first
+   ever live deployment.** The provider jar had never actually been deployed to
+   the compose providers dir (the realm names `novaforge-auth`; the empty
+   directory meant the trail had been silently dead since PHASE-3). This pass's
+   launcher preflight deployed the jar for the first time — and Keycloak failed
+   to boot: Kafka rejects a producer whose `delivery.timeout.ms` is smaller than
+   `linger.ms + request.timeout.ms` *at construction*, and the constructor
+   throwing inside `init(...)` takes the whole server down. `request.timeout.ms`
+   is now pinned explicitly (10 s) so the 30 s delivery bound holds
+   arithmetically, the config construction is a testable function, and the
+   regression is pinned twice: the arithmetic invariant, plus a real
+   `KafkaProducer` construction against the pre-fix shape proving it throws.
+   With the fix live, `auth.login` events land in the durable audit trail —
+   the spine's auth family works end to end for the first time.
+
+9. **The realm's clients dropped the `profile` scope**
+   (`novaforge-realm.json`, both copies): `defaultClientScopes` on import
+   REPLACES the realm-default scope linkage, so tokens carried the tenant claims
+   but no `preferred_username` — every signed-in user rendered as the literal
+   fallback "user". And naming `profile` in `defaultClientScopes` alone links
+   nothing, because the realm file's explicit `clientScopes` list replaces
+   Keycloak's built-in defaults wholesale (found live: the scope was linked but
+   absent) — the scope is now declared with the standard username mapper, and
+   the live realm re-imported: the signed-in display name is the real username.
+
+10. **The DR runbook step the HBA init script promises did not exist**
+    (`deploy/postgres-init/02-replication-hba.sh` pointed at
+    `dr-restore-drill.md` for the pre-init-stack operator step; the runbook had
+    no such section). The operator procedure (append the replication line +
+    `pg_reload_conf()`) is now in the runbook, with the failure mode spelled out.
+
+11. **Coverage of coverage (the twenty-ninth sweep):** production logic that no
+    test ever executed, pinned now — the InternalDeliveryController (the one
+    controller URL family no suite hit: role expansion to `app.role`, the
+    runAsActor-vs-runAsRole scoping split, format/recipient validation, the
+    service-client gate), the outbound adapter contracts (RestApprovalClient —
+    URL, bearer token, payload keys, and remote problem-body mapping onto the
+    write path; NotifyClient — the job id as the send's idempotency key and the
+    outage-never-fails-the-job contract; DeliveryClient — the report-delivery
+    envelope and audible remote failures), OutboxEventPublisher's envelope
+    (eventId dedup key, recordless events omit recordId, the W3C traceparent
+    ride), RenderingView's redaction (script source and credentials strip while
+    hooks/connectors/webhooks survive — a silent regression there is a data
+    leak), RoleMatrix direct (fail-closed, `app.role`-scoped grants, field-access
+    precedence), the Keycloak SPI provider's own behavior (tenant resolution,
+    non-tenant logins skip, spine hiccup never fails login), and the claim→
+    TenantContext binding test ported to all nine services that carry their own
+    copy (only metadata's had ever been tested). `RedisTestBase` — dead test
+    infrastructure referenced by nothing — is deleted.
+
+### The live leg
+
+The golden journey at final HEAD first FAILED — and the failure was the pass
+paying for itself twice. The record save succeeded while the server-paged list
+answered zero rows: the projection-sync trigger's entity allowlist still named
+only the previous run's app, because the serving data-runtime was a long-lived
+JVM from an earlier session that had stopped consuming `metadata.published`
+(passes 21–28 each launched onto the same host without a full restart). The
+stack was bounced from final HEAD through the fixed launcher (11/11 alive,
+preflight and liveness honest); the materializer's boot catch-up reconciled all
+70 published apps, and the journey went green end to end — PKCE sign-in (with
+the real username now rendered), onboarding, three entities, RBAC, dev publish,
+the runtime shell, and a record created through the real renderer and verified
+in the server-paged list. The lesson is the launcher contract itself: a stack
+assembled across eleven sessions is not a stack anyone verified.
+
+### Verification (this pass)
+
+Full `./mvnw verify` green across the reactor — 600 backend tests, up from 530
+(70 new: the suites above, including the 27 TenantBindingFilter ports); the
+auth-listener module green at 13 tests (10 new). 80 new backend tests total. Frontend `pnpm check` +
+`pnpm -r test` green (206 tests). Chart gate CLEAN — now across all 13 charts
+including the umbrella (30 workload pods, DNS consistency intact). Ops selftest
+CLEAN (five contracts, bite-proven). Golden journey GREEN at final HEAD against
+the live stack, and the auth.* trail verified landing in the audit database.
+
+### Recorded open after this pass
+
+Empty.

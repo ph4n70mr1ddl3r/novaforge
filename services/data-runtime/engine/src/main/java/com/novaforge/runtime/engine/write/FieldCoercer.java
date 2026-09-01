@@ -191,9 +191,18 @@ public final class FieldCoercer {
                     if (!(value instanceof String stampText)) {
                         yield fail(name, "expected an ISO-8601 datetime string", value, errors);
                     }
-                    OffsetDateTime parsed = stampText.endsWith("Z") || stampText.contains("+")
-                            ? OffsetDateTime.parse(stampText)
-                            : OffsetDateTime.parse(stampText + "Z");
+                    // an explicit offset (Z, +hh:mm, AND -hh:mm) parses as-is; only a
+                    // naive stamp falls back to UTC. The old sniff looked for "+"
+                    // alone, so a negative offset got "Z" appended to an already
+                    // offset text and every write from a UTC-negative client
+                    // rejected as "invalid value" (flushed by the twenty-ninth
+                    // pass's FieldCoercerTests — the class had zero direct tests).
+                    OffsetDateTime parsed;
+                    try {
+                        parsed = OffsetDateTime.parse(stampText);
+                    } catch (DateTimeParseException noOffset) {
+                        parsed = OffsetDateTime.parse(stampText + "Z");
+                    }
                     // Fixed-width canonical form: lexicographic order == chronological
                     // order under the ADR-001 text-promotion rule.
                     yield CANONICAL_DATETIME.format(parsed.toInstant());

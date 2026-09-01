@@ -97,6 +97,26 @@ jobs:
       - name: Chart gate (lint, render, drift, DNS consistency)
         run: deploy/helm/check-charts.sh
 
+  ops-scripts:
+    # The deployment shell scripts' own regression suite (twenty-ninth pass):
+    # the backup sidecar's inverted base-freshness predicate and the launchers'
+    # unconditional "started pid N" lines were found by hand — the scripts had
+    # zero automated coverage. ops-selftest.sh exercises the real scripts with
+    # stubbed executables (no JVM, no containers, ~15 s).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Set up Temurin 21
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Ops-script selftest (backup predicate, launcher honesty, log shipping)
+        run: bash deploy/scripts/ops-selftest.sh
+
   clamav-on:
     # PHASE-6 §13 Q2 (resolved): one config-on job so the ClamAV scanning path stays
     # tested — the file-service suite runs with the gate on (the in-JVM clamd stand-in
@@ -172,9 +192,14 @@ jobs:
           services/integration-service ghcr.io/novaforge/novaforge-integration-service
           services/file-service ghcr.io/novaforge/novaforge-file-service"
           mods=$(echo "$pairs" | awk '{printf "%s%s", sep, $1; sep=","}')
-          # one reactor pass builds every module's artifact into the local repo;
-          # jib is goal-invoked per module after (no execution binding by design)
-          ./mvnw -B -ntp -pl "$mods" -am -DskipTests package
+          # one reactor pass INSTALLS every module's artifact into the local
+          # repo; jib is goal-invoked per module after (no execution binding by
+          # design). install, not package: each per-module jib invocation runs
+          # in a single-module reactor (-pl "$mod"), so its internal
+          # 0.1.0-SNAPSHOT dependencies can only resolve from ~/.m2 — package
+          # never writes there and the second iteration failed dependency
+          # resolution after having already pushed the first image.
+          ./mvnw -B -ntp -pl "$mods" -am -DskipTests install
           # here-string, NOT a pipe: a piped while runs in a subshell whose
           # status is only the last iteration's — a failed middle image would
           # vanish. The here-string keeps the loop in this shell, where set -e

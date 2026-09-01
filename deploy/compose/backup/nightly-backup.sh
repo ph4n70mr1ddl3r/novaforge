@@ -28,9 +28,13 @@ echo "[backup] postgres ready — dump every ${INTERVAL}s (keep ${KEEP}), base b
 while true; do
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 
-  # physical base backup for PITR — refresh when absent or older than BASE_DAYS
+  # physical base backup for PITR — refresh when absent or older than BASE_DAYS.
+  # find -mmin +N matches files OLDER than N minutes, so the refresh condition is
+  # NON-EMPTY on a stale stamp (the twenty-ninth pass: an inverted emptiness test
+  # here refreshed only while the stamp was fresh and let the base backup die
+  # silently forever the moment it aged past the cadence).
   if [ ! -f /backups/base/BACKUP_STAMP ] \
-     || [ -z "$(find /backups/base/BACKUP_STAMP -mmin +"$((BASE_DAYS * 24 * 60))" 2>/dev/null)" ]; then
+     || [ -n "$(find /backups/base/BACKUP_STAMP -mmin +"$((BASE_DAYS * 24 * 60))" 2>/dev/null)" ]; then
     echo "[backup] $(date -u) physical base backup -> /backups/base"
     rm -rf /backups/base.tmp
     if pg_basebackup -h postgres -U postgres -D /backups/base.tmp -Fp -Xs \

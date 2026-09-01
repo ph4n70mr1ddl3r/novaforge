@@ -68,6 +68,15 @@
       <version>3.27.7</version>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <!-- the provider suite mocks the Keycloak SPI session/realm/user graph
+           (twenty-ninth pass): the provider itself is pinned, not just the
+           envelope helper -->
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <version>5.20.0</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>

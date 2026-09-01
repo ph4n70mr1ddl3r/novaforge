@@ -23,6 +23,24 @@ D-1/D-2/D-3/D-5 findings):**
 | MinIO bucket versioning | the `minio-init` one-shot enables `versioning` on the file bucket at stack bring-up |
 | The DR targets | the compose `dr` profile (`--profile dr`): `dr-postgres` (:5435, WAL archive mounted read-only) + `dr-minio` (:9100/9101) |
 
+**Operator step for stacks initialized before the HBA init script:** the base
+backup's replication connection needs a `pg_hba.conf` entry the stock image does
+not generate. `deploy/postgres-init/02-replication-hba.sh` appends it at first
+init only — init scripts never re-run on an existing data volume. For any stack
+whose `postgres-data` volume predates that script, apply the same line by hand
+as the postgres superuser, then reload:
+
+```sql
+-- psql -h localhost -p 5434 -U postgres
+HOST ALL postgres 127.0.0.1/32 scram-sha-256  -- (already present; shown for orientation)
+HOST replication postgres all scram-sha-256
+SELECT pg_reload_conf();
+```
+
+Without it the sidecar's `pg_basebackup` fails with "no pg_hba.conf entry for
+replication connection" and no physical base ever appears — the PITR leg is
+unusable while the nightly logical dumps keep succeeding.
+
 ## The PITR restore (the runbook's §6 mechanism)
 
 ```bash
