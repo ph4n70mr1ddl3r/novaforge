@@ -72,12 +72,15 @@ class SharingTests extends PostgresTestBase {
                   { "role": "auditor", "entity": "Plain", "create": true, "read": true },
                   { "role": "clerk", "entity": "Review", "create": true, "read": true },
                   { "role": "manager", "entity": "Review", "create": true, "read": true },
-                  { "role": "auditor", "entity": "Review", "create": true, "read": true } ],
+                  { "role": "auditor", "entity": "Review", "create": true, "read": true },
+                  { "role": "auditor", "entity": "Dossier", "create": true, "read": true } ],
                 "sharingRules": [
                   { "entity": "Case", "type": "owner", "roles": ["manager"] },
                   { "entity": "Case", "type": "criteria", "roles": ["auditor"],
                     "criteria": "amount > 100" },
-                  { "entity": "Review", "type": "roleHierarchy", "roles": ["manager"] } ] },
+                  { "entity": "Review", "type": "roleHierarchy", "roles": ["manager"] },
+                  { "entity": "Dossier", "type": "criteria", "roles": ["auditor"],
+                    "criteria": "nosuchfn(amount) > 100" } ] },
               "entities": [
                 { "apiName": "Case",
                   "displayField": "subject",
@@ -90,7 +93,12 @@ class SharingTests extends PostgresTestBase {
                 { "apiName": "Review",
                   "displayField": "subject",
                   "fields": [
-                    { "apiName": "subject", "type": "text", "required": true } ] } ] }
+                    { "apiName": "subject", "type": "text", "required": true } ] },
+                { "apiName": "Dossier",
+                  "displayField": "subject",
+                  "fields": [
+                    { "apiName": "subject", "type": "text", "required": true },
+                    { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 } ] } ] }
             """;
 
     @Autowired
@@ -278,6 +286,39 @@ class SharingTests extends PostgresTestBase {
         MvcResult created = mockMvc.perform(post("/api/v1/runtime/Review").with(jwtFor(actor))
                         .contentType("application/json")
                         .content("{\"subject\":\"" + subject + "\"}"))
+                .andExpect(status().isOk()).andReturn();
+        return MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+    }
+
+    @Test
+    @DisplayName("a criterion that cannot evaluate/lowers fails CLOSED: row hidden, lists 403 — never widened")
+    void brokenCriteriaFailClosed() throws Exception {
+        // the Dossier rule names auditor with a criterion no evaluator knows
+        // (nosuchfn): the per-record predicate must treat the failure as
+        // not-visible, and the SQL lowering must refuse to drop the clause.
+        // The platform admin authors the row — the auditor owns nothing here, so
+        // the owner leg can never masquerade as the broken criterion passing.
+        String dossier = createDossierAsAdmin("b-1");
+
+        // point read: the broken criterion hides the record (fail closed, NOT visible)
+        mockMvc.perform(get("/api/v1/runtime/Dossier/" + dossier).with(jwtFor(AUDITOR)))
+                .andExpect(status().isNotFound());
+
+        // list: the criterion cannot lower — the restricted scope refuses the
+        // whole query (403) instead of silently widening to every row
+        mockMvc.perform(get("/api/v1/runtime/Dossier").with(jwtFor(AUDITOR)))
+                .andExpect(status().isForbidden());
+
+        // the platform admin (unrestricted) still sees the row intact
+        mockMvc.perform(get("/api/v1/runtime/Dossier/" + dossier).with(jwtFor(ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.subject").value("b-1"));
+    }
+
+    private String createDossierAsAdmin(String subject) throws Exception {
+        MvcResult created = mockMvc.perform(post("/api/v1/runtime/Dossier").with(jwtFor(ADMIN))
+                        .contentType("application/json")
+                        .content("{\"subject\":\"" + subject + "\",\"amount\":555}"))
                 .andExpect(status().isOk()).andReturn();
         return MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
     }

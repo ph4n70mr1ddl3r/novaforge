@@ -1,5 +1,7 @@
 package com.novaforge.notification;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -11,6 +13,7 @@ import com.novaforge.notification.notify.Notifier.EmailPort;
 import com.novaforge.notification.notify.RecipientResolver.RuntimeAdminPort;
 import com.novaforge.notification.notify.RuntimeRecordPort;
 import com.novaforge.testsupport.PostgresTestBase;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -67,6 +70,9 @@ class NotificationTests extends PostgresTestBase {
     /** When set, the record port fails — delivery degrades, never blocks (§8). */
     static volatile boolean failRecordFetch = false;
 
+    /** When set, the membership lookup fails — the fail-closed recipient gate. */
+    static volatile boolean failMembershipLookup = false;
+
     @Autowired
     MockMvc mockMvc;
 
@@ -115,6 +121,9 @@ class NotificationTests extends PostgresTestBase {
                 @Override
                 public List<String> rolesOfUser(UUID tenantId, UUID user) {
                     // the platform DB's tenant binding: role rows in the tenant or none
+                    if (failMembershipLookup) {
+                        throw new IllegalStateException("runtime unreachable");
+                    }
                     return TENANT.equals(tenantId)
                             && (user.equals(CLERK) || user.equals(MANAGER))
                                     ? List.of("user") : List.of();
@@ -177,6 +186,7 @@ class NotificationTests extends PostgresTestBase {
         ATTACHMENTS.clear();
         RECORD_FETCHES.clear();
         failRecordFetch = false;
+        failMembershipLookup = false;
     }
 
     @Test
@@ -675,5 +685,114 @@ class NotificationTests extends PostgresTestBase {
                 .jwt(token -> token.claim("azp", "novaforge-runtime")
                         .subject("service-account-novaforge-runtime"))
                 .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
+    }
+
+    @Test
+    @DisplayName("a failing membership lookup drops the recipient — fail closed, never a cross-tenant send")
+    void membershipLookupFailureDropsRecipient() throws Exception {
+        // The belongsTo gate's catch leg: the runtime being DOWN must behave like
+        // "not a member" (drop), not like "member" (deliver). The clean-path
+        // cross-tenant test above cannot catch a refactor that returns true on
+        // exception — exactly when an outage widens the gate.
+        failMembershipLookup = true;
+        String body = MAPPER.writeValueAsString(Map.of(
+                "tenantId", TENANT.toString(),
+                "category", "report-delivery",
+                "title", "Report", "body", "body",
+                "recipients", Map.of("users", List.of(CLERK.toString()))));
+        mockMvc.perform(post("/api/v1/notifications/internal/send")
+                        .with(serviceJwt()).contentType("application/json").content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("at least one resolved recipient")));
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM nf_notifications", Integer.class)).isZero();
+        org.assertj.core.api.Assertions.assertThat(EMAILS).isEmpty();
+    }
+
+    @Test
+    @DisplayName("internal/send deliveryId must be a short word-shaped key — hostile strings 400")
+    void deliveryIdShapeEnforced() throws Exception {
+        String hostile = MAPPER.writeValueAsString(Map.of(
+                "tenantId", TENANT.toString(),
+                "category", "report-delivery",
+                "title", "Report", "body", "body",
+                "recipients", Map.of("users", List.of(CLERK.toString())),
+                "deliveryId", "bad id!"));
+        mockMvc.perform(post("/api/v1/notifications/internal/send")
+                        .with(serviceJwt()).contentType("application/json").content(hostile))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("word-shaped")));
+        // oversized keys never reach the dedupe columns either
+        String oversized = MAPPER.writeValueAsString(Map.of(
+                "tenantId", TENANT.toString(),
+                "category", "report-delivery",
+                "title", "Report", "body", "body",
+                "recipients", Map.of("users", List.of(CLERK.toString())),
+                "deliveryId", "k".repeat(200)));
+        mockMvc.perform(post("/api/v1/notifications/internal/send")
+                        .with(serviceJwt()).contentType("application/json").content(oversized))
+                .andExpect(status().isBadRequest());
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM nf_notifications", Integer.class)).isZero();
+    }
+
+    @Test
+    @DisplayName("outbox relay publishes notification.delivered to novaforge.notification with event headers, then marks it")
+    void relayPublishesDeliveredEventsWithHeaders() throws Exception {
+        String eventId = UUID.randomUUID().toString();
+        String payload = """
+                { "event": "notification.delivered", "eventId": "%s",
+                  "tenantId": "%s", "category": "report-delivery",
+                  "occurredAt": "2026-09-01T00:00:00Z" }"""
+                .formatted(eventId, TENANT);
+        jdbc.update("""
+                INSERT INTO nf_event_outbox (id, tenant_id, event_type, payload)
+                VALUES (?, ?, 'notification.delivered', ?::jsonb)""",
+                UUID.randomUUID(), TENANT, payload);
+
+        outboxRelay.relay();
+
+        // the row rode the spine and was marked published
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM nf_event_outbox WHERE published_at IS NOT NULL",
+                Integer.class)).isEqualTo(1);
+
+        // the published record carries the topic derivation, tenant key, and headers —
+        // matched by OUR event id (earlier suites share the topic on this container)
+        try (var consumer = new org.apache.kafka.clients.consumer.KafkaConsumer<String, String>(
+                Map.of(org.apache.kafka.clients.consumer.ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG,
+                        KAFKA.getBootstrapServers(),
+                        org.apache.kafka.clients.consumer.ConsumerConfig.GROUP_ID_CONFIG,
+                        "relay-pin-" + UUID.randomUUID(),
+                        org.apache.kafka.clients.consumer.ConsumerConfig.AUTO_OFFSET_RESET_CONFIG,
+                        "earliest"),
+                new org.apache.kafka.common.serialization.StringDeserializer(),
+                new org.apache.kafka.common.serialization.StringDeserializer())) {
+            consumer.subscribe(List.of("novaforge.notification"));
+            org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record = null;
+            final var deadline = System.currentTimeMillis() + 20_000;
+            while (record == null && System.currentTimeMillis() < deadline) {
+                for (var candidate : consumer.poll(Duration.ofSeconds(1))) {
+                    if (candidate.value() != null && candidate.value().contains(eventId)) {
+                        record = candidate;
+                        break;
+                    }
+                }
+            }
+            org.assertj.core.api.Assertions.assertThat(record).as("our event on the spine").isNotNull();
+            org.assertj.core.api.Assertions.assertThat(record.key()).isEqualTo(TENANT.toString());
+            var headers = record.headers();
+            org.assertj.core.api.Assertions.assertThat(new String(
+                    headers.lastHeader("X-Event-Id").value(),
+                    java.nio.charset.StandardCharsets.UTF_8)).isEqualTo(eventId);
+            org.assertj.core.api.Assertions.assertThat(new String(
+                    headers.lastHeader("X-Event-Type").value(),
+                    java.nio.charset.StandardCharsets.UTF_8)).isEqualTo("notification.delivered");
+            org.assertj.core.api.Assertions.assertThat(new String(
+                    headers.lastHeader("X-Tenant-Id").value(),
+                    java.nio.charset.StandardCharsets.UTF_8)).isEqualTo(TENANT.toString());
+        }
     }
 }

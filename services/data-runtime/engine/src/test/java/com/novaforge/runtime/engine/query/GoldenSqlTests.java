@@ -61,11 +61,15 @@ class GoldenSqlTests {
                   "sort": [ { "field": "entryDate", "dir": "desc" } ],
                   "page": { "size": 50, "offset": 100 } }
                 """, entity);
-        Lowered lowered = lowering.list("JournalEntry", TENANT, query);
+        // the entity key rides QUALIFIED: the projection table is shared by every
+        // of the tenant's apps defining the same apiName, so the list scopes rows
+        // by entity_id (the Erp-corpus/app collision found live, twenty-sixth pass)
+        Lowered lowered = lowering.list("Erp.JournalEntry", TENANT, query);
 
         assertThat(lowered.sql()).isEqualTo(
                 "SELECT id, version, created_at, updated_at, created_by, updated_by, deleted, data "
                         + "FROM rec_journal_entry WHERE tenant_id = ? AND deleted = false "
+                        + "AND entity_id = ? "
                         + "AND (((data->>'status') = ?) AND (entry_date >= ?) "
                         + "AND ((data->>'memo') ILIKE ? ESCAPE '\\') "
                         + "AND ((CASE WHEN (data->>'amount')"
@@ -73,7 +77,8 @@ class GoldenSqlTests {
                         + " THEN (data->>'amount')::numeric END) > ?)) "
                         + "ORDER BY entry_date DESC, id LIMIT ? OFFSET ?");
         assertThat(lowered.params()).containsExactly(
-                TENANT, "POSTED", "2026-01-01", "%spike%", new BigDecimal("100.5"), 50, 100L);
+                TENANT, "Erp.JournalEntry", "POSTED", "2026-01-01", "%spike%",
+                new BigDecimal("100.5"), 50, 100L);
     }
 
     @Test
@@ -88,13 +93,15 @@ class GoldenSqlTests {
                           { "field": "status", "op": "ne", "value": "DRAFT" },
                           { "field": "reference", "op": "in", "value": ["JE-1", "JE-2"] } ] }
                         """), entity);
-        Lowered lowered = lowering.count("JournalEntry", TENANT, filter);
+        Lowered lowered = lowering.count("Erp.JournalEntry", TENANT, filter);
 
         assertThat(lowered.sql()).isEqualTo(
                 "SELECT count(*) FROM rec_journal_entry WHERE tenant_id = ? AND deleted = false "
+                        + "AND entity_id = ? "
                         + "AND (((data->>'memo') IS NULL) OR (((data->>'status') IS DISTINCT FROM ?)) "
                         + "OR ((reference = ? OR reference = ?)))");
-        assertThat(lowered.params()).containsExactly(TENANT, "DRAFT", "JE-1", "JE-2");
+        assertThat(lowered.params()).containsExactly(
+                TENANT, "Erp.JournalEntry", "DRAFT", "JE-1", "JE-2");
     }
 
     @Test
@@ -108,7 +115,7 @@ class GoldenSqlTests {
                     { "op": "sum", "field": "amount", "alias": "total" },
                     { "op": "max", "field": "amount" } ] }
                 """, entity);
-        Lowered lowered = lowering.aggregate("JournalEntry", TENANT, query);
+        Lowered lowered = lowering.aggregate("Erp.JournalEntry", TENANT, query);
 
         // GROUP BY addresses select ordinals since PHASE-5 §3 (a bucketed CASE in the
         // select list would rebind every parameter if repeated in the tail); the
@@ -123,7 +130,9 @@ class GoldenSqlTests {
                         + " ~ '^-?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?$'"
                         + " THEN (data->>'amount')::numeric END)) AS \"max_amount\" "
                         + "FROM rec_journal_entry WHERE tenant_id = ? AND deleted = false "
+                        + "AND entity_id = ? "
                         + "GROUP BY 1");
+        assertThat(lowered.params()).containsExactly(TENANT, "Erp.JournalEntry");
     }
 
     @Test

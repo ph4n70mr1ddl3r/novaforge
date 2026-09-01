@@ -96,12 +96,21 @@ for path in glob.glob(render_dir + "/*.yaml"):
         elif kind == "PodDisruptionBudget":
             budgets[chart] = budgets.get(chart, 0) + 1
         elif kind in ("Deployment", "StatefulSet", "Job", "CronJob", "ReplicaSet"):
-            template = (obj.get("spec") or {}).get("template")
+            # a CronJob nests its pod template under jobTemplate — spec.template on a
+            # CronJob is the job template, not the pod spec
+            if kind == "CronJob":
+                job_spec = ((obj.get("spec") or {}).get("jobTemplate") or {}).get("spec") or {}
+                template = job_spec.get("template")
+            else:
+                template = (obj.get("spec") or {}).get("template")
             ps = (template or {}).get("spec") if isinstance(template, dict) else None
             if isinstance(ps, dict):
+                # the flags ride the tuple: a post-phase check reading a leaked walk
+                # variable validates the LAST walked pod N times, not these pods
                 pods.append((chart, meta.get("name"),
                              ps.get("serviceAccountName"),
-                             ps.get("automountServiceAccountToken")))
+                             ps.get("automountServiceAccountToken"),
+                             ps.get("enableServiceLinks")))
                 if ps.get("enableServiceLinks") is not False:
                     print("CHART-GATE FAIL: %s/%s does not disable k8s service-link env injection" % (chart, meta.get("name")))
                     ok = False
@@ -109,6 +118,11 @@ for path in glob.glob(render_dir + "/*.yaml"):
                     # the API server rejects a Job without it — found the hard way
                     # when a live install refused exactly this (twenty-fourth pass)
                     print("CHART-GATE FAIL: %s/%s Job lacks a valid restartPolicy" % (chart, meta.get("name")))
+                    ok = False
+                if kind == "CronJob" and ps.get("restartPolicy") not in ("OnFailure", "Never"):
+                    # the same API contract one level down: the CronJob's pod template
+                    # (inside jobTemplate) requires it too
+                    print("CHART-GATE FAIL: %s/%s CronJob pod template lacks a valid restartPolicy" % (chart, meta.get("name")))
                     ok = False
         for env_name, value in walk(obj):
             m = re.match(r"https?://([a-z0-9.-]+)(?::\d+)?", value)
@@ -129,7 +143,7 @@ else:
 # names a rendered ServiceAccount with token automount off, and every chart
 # default-denies both ways. Collected first, validated after — a single-pass
 # check raced the glob's file order.
-for chart, workload, sa, automount in pods:
+for chart, workload, sa, automount, service_links in pods:
     if sa in (None, ""):
         print("CHART-GATE FAIL: %s/%s pod has no serviceAccountName" % (chart, workload))
         ok = False
@@ -139,7 +153,7 @@ for chart, workload, sa, automount in pods:
     if automount is not False:
         print("CHART-GATE FAIL: %s/%s does not disable token automount at the pod level" % (chart, workload))
         ok = False
-    if ps.get("enableServiceLinks") is not False:
+    if service_links is not False:
         # the EnableServiceLinks collision (found live on the kind cluster): any
         # Service whose name prefixes an env placeholder injects <NAME>_PORT as a
         # tcp:// URL and every such boot dies

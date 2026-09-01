@@ -522,6 +522,49 @@ class TaskApiTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("all-mode approval is unanimous: first vote suspends with siblings OPEN, the last resumes once (§4)")
+    void allModeRequiresEveryApproval() throws Exception {
+        var result = suspensions.request(TENANT, "Purch", "PurchaseOrder",
+                "Purch.PurchaseOrder", UUID.randomUUID(), "submit", "a1", "s2", null,
+                null, List.of(MANAGER.toString(), SENIOR.toString()), "all",
+                "PT2H", null, CLERK, null);
+        UUID instance = UUID.fromString(String.valueOf(result.get("instanceId")));
+        List<UUID> ids = jdbc.queryForList(
+                "SELECT id FROM wf_tasks WHERE instance_id = ? ORDER BY created_at",
+                UUID.class, instance);
+        assertThat(ids).hasSize(2);
+
+        // the FIRST approval is a vote, not a verdict: the instance stays
+        // SUSPENDED and the sibling stays OPEN. A first-wins regression here
+        // turns every unanimous approval into a single-approver approval — a
+        // financial control weakening with a green build.
+        mockMvc.perform(post("/api/v1/workflow/tasks/" + ids.get(0) + "/approve")
+                        .with(jwtFor(MANAGER)).contentType("application/json").content("{}"))
+                .andExpect(status().isOk());
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_suspended_flows WHERE id = ?", String.class, instance))
+                .isEqualTo("SUSPENDED");
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_tasks WHERE id = ?", String.class, ids.get(1)))
+                .isEqualTo("OPEN");
+        assertThat(RESUMES).isEmpty();
+
+        // the SECOND (final) approval resumes exactly once; the first voter's task
+        // is terminal-APPROVED (their vote counted) — the fence is the single
+        // resume below, never a second one on sibling cleanup
+        mockMvc.perform(post("/api/v1/workflow/tasks/" + ids.get(1) + "/approve")
+                        .with(jwtFor(SENIOR)).contentType("application/json").content("{}"))
+                .andExpect(status().isOk());
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_suspended_flows WHERE id = ?", String.class, instance))
+                .isEqualTo("RESUMED");
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM wf_tasks WHERE id = ?", String.class, ids.get(0)))
+                .isEqualTo("APPROVED");
+        assertThat(RESUMES).hasSize(1);
+    }
+
+    @Test
     @DisplayName("a failed resume rolls the whole resolution back — the approval stays open and retryable (§4)")
     void failedResumeRollsBackAndStaysOpen() throws Exception {
         UUID record = UUID.randomUUID();

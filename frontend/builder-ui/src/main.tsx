@@ -44,5 +44,9 @@ function Root(): ReactNode {
 }
 hydrateRoot(
     document.getElementById("root")!,
-    createElement(ErrorBoundary, { label: "The builder" }, Root()),
+    // Root is an ELEMENT, not a call: invoking Root() at module scope ran
+    // useState outside any render — React's dispatcher is null there and the
+    // whole SPA died at boot (found live by the golden journey's builder leg,
+    // masked since the twelfth pass by the never-rebuilt gitignored bundle)
+    createElement(ErrorBoundary, { label: "The builder" }, createElement(Root)),
 );

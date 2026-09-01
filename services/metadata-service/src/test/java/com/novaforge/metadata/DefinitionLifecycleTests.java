@@ -1399,4 +1399,34 @@ class DefinitionLifecycleTests extends PostgresTestBase {
         static final String TOPIC =
                 com.novaforge.metadata.events.MetadataPublishEventPublisher.TOPIC;
     }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("publish-outbox retention spares unpublished rows — delivery first, always")
+    void publishOutboxRetentionSparesUnpublished(
+            @org.springframework.beans.factory.annotation.Autowired
+            com.novaforge.metadata.events.MetadataOutboxRelay relay) {
+        UUID published = UUID.randomUUID();
+        UUID pending = UUID.randomUUID();
+        UUID appId = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO md_event_outbox (id, tenant_id, app_id, event_type, payload, published_at)
+                VALUES (?, ?::uuid, ?, 'metadata.published', '{}'::jsonb, now() - interval '30 days')""",
+                published, TENANT, appId);
+        jdbc.update("""
+                INSERT INTO md_event_outbox (id, tenant_id, app_id, event_type, payload)
+                VALUES (?, ?::uuid, ?, 'metadata.published', '{}'::jsonb)""",
+                pending, TENANT, appId);
+
+        relay.retain();
+
+        // the published row left; the undelivered one NEVER rides the delete —
+        // dropping the published_at IS NOT NULL predicate silently destroys the
+        // publish event's delivery guarantee (the fan-out never learns of it)
+        Integer pendingLeft = jdbc.queryForObject(
+                "SELECT count(*) FROM md_event_outbox WHERE id = ?", Integer.class, pending);
+        org.assertj.core.api.Assertions.assertThat(pendingLeft).isEqualTo(1);
+        Integer publishedLeft = jdbc.queryForObject(
+                "SELECT count(*) FROM md_event_outbox WHERE id = ?", Integer.class, published);
+        org.assertj.core.api.Assertions.assertThat(publishedLeft).isZero();
+    }
 }

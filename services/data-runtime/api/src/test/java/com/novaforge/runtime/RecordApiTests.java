@@ -144,6 +144,7 @@ class RecordApiTests extends PostgresTestBase {
                 { "apiName": "LedgerNote",
                   "fields": [
                     { "apiName": "note", "type": "text" },
+                    { "apiName": "loggedAt", "type": "datetime" },
                     { "apiName": "shouty", "type": "text",
                       "default": { "expression": "upper(note)" } },
                     { "apiName": "noteLength", "type": "int",
@@ -182,6 +183,9 @@ class RecordApiTests extends PostgresTestBase {
 
     @Autowired
     EntityResolver resolver;
+
+    @Autowired
+    com.novaforge.runtime.storage.outbox.OutboxStore outboxStore;
 
     static final List<String> PUBLISHED_APP_INDEX = new CopyOnWriteArrayList<>();
 
@@ -927,6 +931,43 @@ class RecordApiTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("Idempotency fence: an in-flight duplicate 409s; a failed create frees the key (§5)")
+    void idempotencyInFlightAndRelease() throws Exception {
+        String fence = "novaforge:idem:" + TENANT + ":" + ACTOR + ":key-race";
+        // InFlight: a PENDING marker someone else's in-flight request set — the
+        // duplicate must 409, never execute (the double-write/double-sequence-draw
+        // fence; check-then-act regressions pass the replay test above and break
+        // only here)
+        redis.opsForValue().set(fence, "__pending__", Duration.ofMinutes(10));
+        try {
+            mockMvc.perform(post("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
+                            .header("Idempotency-Key", "key-race")
+                            .contentType("application/json").content("{\"title\":\"racer\"}"))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.detail").value(
+                            org.hamcrest.Matchers.containsString("in flight")));
+            Integer racers = jdbc.queryForObject(
+                    "SELECT count(*) FROM rec_records WHERE entity_id='Erp.Ticket' "
+                            + "AND data->>'title' = 'racer' AND NOT deleted", Integer.class);
+            assertThat(racers).isZero();
+        } finally {
+            redis.delete(fence);
+        }
+
+        // Release: a create that fails AFTER the claim (validation) must free the
+        // fence — the immediate retry with the same key executes, not 409/410-wait
+        mockMvc.perform(post("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
+                        .header("Idempotency-Key", "key-retry")
+                        .contentType("application/json").content("{}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
+                        .header("Idempotency-Key", "key-retry")
+                        .contentType("application/json").content("{\"title\":\"retried-ok\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("retried-ok"));
+    }
+
+    @Test
     @DisplayName("RLS + scoping: a second tenant's reads fail closed to its own rows (§9 item 3)")
     void crossTenantFailsClosed() throws Exception {
         // second tenant sees none of the first tenant's rows
@@ -1145,5 +1186,118 @@ class RecordApiTests extends PostgresTestBase {
                 .andExpect(status().isOk()).andReturn();
         String reference = MAPPER.readTree(ok.getResponse().getContentAsString()).get("reference").asString();
         assertThat(reference).isEqualTo("JE-" + String.format("%06d", next + 1));
+    }
+
+    @Test
+    @DisplayName("includeDeleted reads are admin-only (PHASE-1 §5): clerk 403, admin sees the tombstone")
+    void includeDeletedIsAdminOnly() throws Exception {
+        // an explicit clerk (READ-granted on Ticket) and an explicit admin — no
+        // reliance on ambient role rows: the gate under test is requireAdmin itself
+        UUID clerkUser = UUID.randomUUID();
+        jdbc.update("INSERT INTO platform.users (id, username) VALUES (?, ?) ON CONFLICT DO NOTHING",
+                clerkUser, "clerk-del-" + clerkUser);
+        jdbc.update("INSERT INTO platform.role_assignments (tenant_id, user_id, role) "
+                        + "VALUES (?, ?, 'Erp.clerk') ON CONFLICT DO NOTHING", TENANT, clerkUser);
+        UUID adminUser = UUID.randomUUID();
+        jdbc.update("INSERT INTO platform.users (id, username) VALUES (?, ?) ON CONFLICT DO NOTHING",
+                adminUser, "admin-del-" + adminUser);
+        jdbc.update("INSERT INTO platform.role_assignments (tenant_id, user_id, role) "
+                        + "VALUES (?, ?, 'admin') ON CONFLICT DO NOTHING", TENANT, adminUser);
+        var adminJwt = jwt()
+                .jwt(token -> token.claim("tenant_id", TENANT.toString()).subject(adminUser.toString()))
+                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
+        var clerkJwt = jwt()
+                .jwt(token -> token.claim("tenant_id", TENANT.toString()).subject(clerkUser.toString()))
+                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
+
+        MvcResult created = mockMvc.perform(post("/api/v1/runtime/Ticket").with(adminJwt)
+                        .contentType("application/json").content("{\"title\":\"tombstone-me\"}"))
+                .andExpect(status().isOk()).andReturn();
+        String id = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+
+        // soft delete: the default read answers absent
+        mockMvc.perform(delete("/api/v1/runtime/Ticket/" + id).with(adminJwt).param("version", "1"))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/v1/runtime/Ticket/" + id).with(adminJwt))
+                .andExpect(status().isNotFound());
+
+        // the tombstone itself is admin-only: a READ-granted clerk gets FORBIDDEN
+        // (requireAdmin — removing it would expose deleted financials/PII to any
+        // reader, and every other suite stays green)
+        mockMvc.perform(get("/api/v1/runtime/Ticket/" + id).with(clerkJwt)
+                        .param("includeDeleted", "true"))
+                .andExpect(status().isForbidden());
+
+        // the admin reads the deleted row's content through the same door
+        mockMvc.perform(get("/api/v1/runtime/Ticket/" + id).with(adminJwt)
+                        .param("includeDeleted", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("tombstone-me"));
+    }
+
+    @Test
+    @DisplayName("datetime fields canonicalize to fixed-width UTC — offsets normalize, ordering stays lexicographic")
+    void datetimeCanonicalization() throws Exception {
+        // an offset-bearing stamp normalizes to UTC; a naive stamp means UTC;
+        // both re-render fixed-width (ADR-001 text promotion: the stored string's
+        // lexicographic order must BE chronological order for every filter, sort,
+        // and period lock that compares datetimes)
+        MvcResult created = mockMvc.perform(post("/api/v1/runtime/LedgerNote").with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"note\":\"dt\",\"loggedAt\":\"2026-08-21T12:00:00+02:00\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.loggedAt").value("2026-08-21T10:00:00.000Z"))
+                .andReturn();
+        String id = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+
+        mockMvc.perform(post("/api/v1/runtime/LedgerNote").with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"note\":\"dt\",\"loggedAt\":\"2026-08-21T09:00:00\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.loggedAt").value("2026-08-21T09:00:00.000Z"));
+
+        // the canonical form drives range filters: only the +02:00 row is after 09:30Z
+        String filter = java.net.URLEncoder.encode(
+                "{\"field\":\"loggedAt\",\"op\":\"gt\",\"value\":\"2026-08-21T09:30:00.000Z\"}",
+                java.nio.charset.StandardCharsets.UTF_8);
+        MvcResult listed = mockMvc.perform(get("/api/v1/runtime/LedgerNote").with(jwtFor(TENANT))
+                        .param("filter", filter))
+                .andExpect(status().isOk()).andReturn();
+        var rows = MAPPER.readTree(listed.getResponse().getContentAsString()).get("rows");
+        assertThat(rows.size()).isEqualTo(1);
+        assertThat(rows.get(0).get("id").asString()).isEqualTo(id);
+
+        // garbage is rejected, never stored raw
+        mockMvc.perform(post("/api/v1/runtime/LedgerNote").with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"note\":\"dt\",\"loggedAt\":\"not-a-stamp\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("outbox retention spares unpublished rows — delivery first, always")
+    void outboxRetentionSparesUnpublished() {
+        UUID published = UUID.randomUUID();
+        UUID pending = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO event_outbox (id, tenant_id, entity_id, record_id, event_type, payload, published_at)
+                VALUES (?, ?, 'Erp.Ticket', ?, 'record.created', '{}'::jsonb, now())""",
+                published, TENANT, UUID.randomUUID());
+        jdbc.update("""
+                INSERT INTO event_outbox (id, tenant_id, entity_id, record_id, event_type, payload)
+                VALUES (?, ?, 'Erp.Ticket', ?, 'record.created', '{}'::jsonb)""",
+                pending, TENANT, UUID.randomUUID());
+
+        // an aggressive window (0 days) drops every published row (the shared
+        // container carries other suites' rows — at least ours)…
+        assertThat(outboxStore.retainPublishedOlderThanDays(0)).isGreaterThanOrEqualTo(1);
+        // …and NEVER touches the undelivered one: dropping the published_at IS NOT
+        // NULL predicate silently destroys the spine's delivery guarantee
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM event_outbox WHERE id = ?", Integer.class, pending))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM event_outbox WHERE id = ?", Integer.class, published))
+                .isZero();
     }
 }

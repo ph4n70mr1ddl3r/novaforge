@@ -56,14 +56,15 @@ class BucketedAggregateSqlTests {
     void bucketedAgingLowers() {
         EntityDefinition entity = DefinitionParser.parse(ENTITY_JSON, EntityDefinition.class);
         QueryModel.AggregateQuery query = QueryParser.parseAggregate(AGING_QUERY, entity);
+        UUID tenant = UUID.randomUUID();
         QueryLowering.Lowered lowered = new QueryLowering(entity)
-                .aggregate("AgingAr", UUID.randomUUID(), query,
+                .aggregate("Ar.AgingAr", tenant, query,
                         LocalDate.of(2026, 8, 23));
 
         assertThat(lowered.sql()).isEqualTo(
                 "SELECT customer_name AS \"customer_name\", " + CASE_EXPR + " AS \"due_date\", "
                         + "sum(amount_outstanding) AS \"sum_amount_outstanding\" "
-                        + "FROM rec_aging_ar WHERE tenant_id = ? AND deleted = false "
+                        + "FROM rec_aging_ar WHERE tenant_id = ? AND deleted = false AND entity_id = ? "
                         + "GROUP BY 1, 2");
         // binds follow placeholder order: SELECT-list CASE first, tenant after
         String today = "2026-08-23";
@@ -72,8 +73,9 @@ class BucketedAggregateSqlTests {
                 today, new BigDecimal("0"), today, new BigDecimal("30"), "0-30",
                 today, new BigDecimal("30"), today, new BigDecimal("60"), "31-60",
                 today, new BigDecimal("60"), "60+",
-                lowered.params().get(16));
-        assertThat(lowered.params().get(16)).isInstanceOf(UUID.class);
+                tenant, "Ar.AgingAr");
+        assertThat(lowered.params().get(16)).isEqualTo(tenant);
+        assertThat(lowered.params().get(17)).isEqualTo("Ar.AgingAr");
     }
 
     @Test
@@ -84,12 +86,12 @@ class BucketedAggregateSqlTests {
                 "{\"groupBy\":[\"customerName\"],\"aggregates\":[{\"op\":\"count\"}]}",
                 entity);
         QueryLowering.Lowered lowered = new QueryLowering(entity)
-                .aggregate("AgingAr", UUID.randomUUID(), query, null);
+                .aggregate("Ar.AgingAr", UUID.randomUUID(), query, null);
         assertThat(lowered.sql()).isEqualTo(
                 "SELECT customer_name AS \"customer_name\", count(*) AS \"count\" "
-                        + "FROM rec_aging_ar WHERE tenant_id = ? AND deleted = false "
+                        + "FROM rec_aging_ar WHERE tenant_id = ? AND deleted = false AND entity_id = ? "
                         + "GROUP BY 1");
-        assertThat(lowered.params()).hasSize(1);
+        assertThat(lowered.params()).hasSize(2);
     }
 
     @Test
@@ -101,8 +103,9 @@ class BucketedAggregateSqlTests {
                         + "{\"label\":\"old\",\"expression\":\"today() - dueDate > 60\"}]}],"
                         + "\"aggregates\":[],\"asOf\":\"2026-01-15\"}",
                 entity);
+        UUID tenant = UUID.randomUUID();
         QueryLowering.Lowered lowered = new QueryLowering(entity)
-                .aggregate("AgingAr", UUID.randomUUID(), query,
+                .aggregate("Ar.AgingAr", tenant, query,
                         LocalDate.of(2026, 8, 23));   // override loses to the pinned date
         assertThat(lowered.params().subList(0, 2)).containsExactly(
                 "2026-01-15", new BigDecimal("60"));

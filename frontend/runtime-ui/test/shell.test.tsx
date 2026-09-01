@@ -73,13 +73,13 @@ const app: import("@novaforge/shared").AppDefinition = {
 function stubClient(lists: Record<string, unknown> = {}) {
     const fetchImpl = vi.fn(async (input: string | URL) => {
         const url = String(input);
-        if (url.includes("/runtime/Customer")) {
+        if (url.includes("/runtime/erp.Customer")) {
             return new Response(
                 JSON.stringify(lists.Customer ?? { rows: [{ id: "c-1", name: "Acme", region: "EU" }], total: 1 }),
                 { status: 200, headers: { "Content-Type": "application/json" } },
             );
         }
-        if (url.includes("/runtime/Order")) {
+        if (url.includes("/runtime/erp.Order")) {
             return new Response(
                 JSON.stringify(lists.Order ?? { rows: [], total: 0 }),
                 { status: 200, headers: { "Content-Type": "application/json" } },
@@ -125,23 +125,23 @@ describe("RuntimeShell", () => {
         // the create carried no idempotency key — a fast double-click landed two
         // POSTs and minted two records before the re-render disabled anything.
         let release: ((response: Response) => void) | undefined;
-        const posts: { key: string | null }[] = [];
+        const posts: { key: string | null; url: string }[] = [];
         const fetchImpl = vi.fn(async (input: string | URL, init?: RequestInit) => {
             const url = String(input);
             const method = (init?.method ?? "GET").toUpperCase();
-            if (url.includes("/runtime/Customer") && method === "POST") {
-                posts.push({ key: (init?.headers as Record<string, string>)?.["Idempotency-Key"] ?? null });
+            if (url.includes("/runtime/erp.Customer") && method === "POST") {
+                posts.push({ key: (init?.headers as Record<string, string>)?.["Idempotency-Key"] ?? null, url });
                 return new Promise<Response>((resolve) => {
                     release = resolve;
                 });
             }
-            if (url.includes("/runtime/Customer")) {
+            if (url.includes("/runtime/erp.Customer")) {
                 return new Response(
                     JSON.stringify({ rows: [{ id: "c-1", name: "Acme", region: "EU" }], total: 1 }),
                     { status: 200, headers: { "Content-Type": "application/json" } },
                 );
             }
-            if (url.includes("/runtime/Order")) {
+            if (url.includes("/runtime/erp.Order")) {
                 return new Response(JSON.stringify({ rows: [], total: 0 }), { status: 200 });
             }
             return new Response(JSON.stringify({ title: "not stubbed", status: 404 }), { status: 404 });
@@ -164,6 +164,10 @@ describe("RuntimeShell", () => {
         expect(posts).toHaveLength(1);
         // the create rode an idempotency key (the server-side ceiling on the race)
         expect(posts[0]!.key).toBeTruthy();
+        // the create addresses the entity APP-QUALIFIED (erp.Customer): a bare
+        // name 400s at the resolver the moment a second published app defines
+        // the same apiName in the tenant (the ERP-corpus collision, live)
+        expect(posts[0]!.url).toContain("/runtime/erp.Customer");
         // the create resolves cleanly — and the fence never let a second POST out
         release?.(new Response(JSON.stringify({ id: "c-2", name: "Acme" }), { status: 200 }));
         await act(async () => {
@@ -337,7 +341,7 @@ describe("RuntimeShell", () => {
         const fetchImpl = vi.fn(async (input: string | URL, init?: RequestInit) => {
             const url = String(input);
             const method = (init?.method ?? "GET").toUpperCase();
-            if (url.includes("/runtime/Order/o-1") && method === "PATCH") {
+            if (url.includes("/runtime/erp.Order/o-1") && method === "PATCH") {
                 patches.push({ method, url, body: JSON.parse(String(init?.body)) });
                 // the SERVER's record: new state, new version, and a marker a local
                 // guess could never produce
@@ -346,15 +350,15 @@ describe("RuntimeShell", () => {
                     { status: 200, headers: { "Content-Type": "application/json" } },
                 );
             }
-            if (url.includes("/runtime/Order/o-1")) {
+            if (url.includes("/runtime/erp.Order/o-1")) {
                 return new Response(JSON.stringify(record), {
                     status: 200, headers: { "Content-Type": "application/json" } });
             }
-            if (url.includes("/runtime/Order")) {
+            if (url.includes("/runtime/erp.Order")) {
                 return new Response(JSON.stringify({ rows: [record], total: 1 }), {
                     status: 200, headers: { "Content-Type": "application/json" } });
             }
-            if (url.includes("/runtime/Customer")) {
+            if (url.includes("/runtime/erp.Customer")) {
                 return new Response(
                     JSON.stringify({ rows: [{ id: "c-1", name: "Acme", region: "EU" }], total: 1 }),
                     { status: 200 },
@@ -381,7 +385,7 @@ describe("RuntimeShell", () => {
         // exactly ONE versioned PATCH carrying the state field and the record's version
         await waitFor(() => expect(patches).toHaveLength(1));
         expect(patches[0]!.method).toBe("PATCH");
-        expect(patches[0]!.url).toContain("/runtime/Order/o-1");
+        expect(patches[0]!.url).toContain("/runtime/erp.Order/o-1");
         expect(patches[0]!.body).toEqual({ version: 4, status: "POSTED" });
         // the SERVER's record lands (its marker, in the detail's readonly input),
         // and the POSTED-state record offers no further transitions — the group empties

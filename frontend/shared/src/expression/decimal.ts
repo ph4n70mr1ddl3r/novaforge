@@ -57,7 +57,7 @@ export class Decimal {
     }
 
     /** Rounds to ≤34 significant digits, HALF_EVEN. */
-    private rounded(): Decimal {
+    private rounded(inexactTail: boolean = false): Decimal {
         const digitsStr = this.digits.toString();
         if (digitsStr.length <= Decimal.PRECISION) return this;
         const keep = Decimal.PRECISION;
@@ -66,9 +66,13 @@ export class Decimal {
         const firstDropped = tail.charCodeAt(0) - 48;
         const lastKept = digitsStr.charCodeAt(keep - 1) - 48;
         const beyondHalf = BigInt(tail.slice(1)) > 0n;
-        // HALF_EVEN: ties (exactly half) round to even the kept last digit.
+        // HALF_EVEN: ties (exactly half) round to even the kept last digit. A tail
+        // the caller knows is cut off non-terminating (divide's remainder ≠ 0) is
+        // strictly MORE than half even when the kept digits read as an exact tie —
+        // BigDecimal's MathContext sees the full value and rounds up; so must we.
         const roundUp =
-            firstDropped > 5 || (firstDropped === 5 && (beyondHalf || lastKept % 2 === 1));
+            firstDropped > 5
+            || (firstDropped === 5 && (beyondHalf || inexactTail || lastKept % 2 === 1));
         const kept = roundUp ? head + 1n : head;
         const scale = this.scale - tail.length;
         return new Decimal(kept, scale, this.sign).stripTrailingZeros().normalized();
@@ -119,7 +123,9 @@ export class Decimal {
             remainder = shifted % other.digits;
             scale += 1;
         }
-        return new Decimal(quotient, scale, sign).rounded().stripTrailingZeros().normalized();
+        return new Decimal(quotient, scale, sign)
+            .rounded(remainder !== 0n)
+            .stripTrailingZeros().normalized();
     }
 
     /** Scales to `places` fractional digits, HALF_EVEN. */

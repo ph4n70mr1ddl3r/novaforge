@@ -143,8 +143,8 @@ test("golden journey: 3-entity app built via the builder, run in the runtime", a
     // module-grouped nav carries the three entities
     await expect(runtime.getByRole("button", { name: "Customer", exact: true })).toBeVisible({ timeout: 60_000 });
     await runtime.getByRole("button", { name: "Customer", exact: true }).click();
-    await expect(runtime.getByText(/\d+ records/)).toBeVisible();
-    const before = Number(await runtime.getByText(/\d+ records/).textContent().then((t) => /\d+/.exec(t ?? "")?.[0]));
+    await expect(runtime.getByText(/\d+ records?/)).toBeVisible();
+    const before = Number(await runtime.getByText(/\d+ records?/).textContent().then((t) => /\d+/.exec(t ?? "")?.[0]));
 
     // create a customer through the auto-generated form (the real renderer, L1 defaults)
     await runtime.getByRole("button", { name: /new|add/i }).click();
@@ -156,6 +156,6 @@ test("golden journey: 3-entity app built via the builder, run in the runtime", a
     await expect(runtime.getByText("Saved")).toBeVisible({ timeout: 60_000 });
     await runtime.getByRole("button", { name: "Customer", exact: true }).click();
     await expect(runtime.getByText("Acme E2E").first()).toBeVisible({ timeout: 60_000 });
-    const after = Number(await runtime.getByText(/\d+ records/).textContent().then((t) => /\d+/.exec(t ?? "")?.[0]));
+    const after = Number(await runtime.getByText(/\d+ records?/).textContent().then((t) => /\d+/.exec(t ?? "")?.[0]));
     expect(after).toBe(before + 1);
 });

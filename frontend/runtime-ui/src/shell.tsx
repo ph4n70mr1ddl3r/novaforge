@@ -64,19 +64,28 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
         () => new Map(app.entities.map((entity) => [entity.apiName, entity])),
         [app.entities],
     );
+    // The runtime API addresses entities APP-QUALIFIED (`App.Entity` — the
+    // resolver's disambiguation surface): a tenant running two published apps
+    // that collide on an entity apiName (the ERP corpus and a same-named demo
+    // app both defining Customer) 400s every bare-name write with "defined by
+    // multiple published apps — qualify the app" (found live at the golden
+    // journey). The engine pins the qualified form; the shell must send it.
+    const qualified = (entityApiName: string) => `${app.apiName}.${entityApiName}`;
 
+    const [flash, setFlash] = useState<string | null>(null);
     const data: RendererDataService = useMemo(
         () => ({
-            list: (request) => client.list(request),
+            list: (request) => client.list({ ...request, entity: qualified(request.entity) }),
             search: async (target, term, size) => {
                 const entity = entities.get(target);
                 const field = entity?.displayField ?? "id";
-                return client.search(target, term, field, size);
+                return client.search(qualified(target), term, field, size);
             },
             // lookup options label by the target's own display field — the widget
             // cannot see other entities' definitions through its own field map
             displayFieldOf: (target) => entities.get(target)?.displayField,
         }),
+        // qualified reads app.apiName — stable for the lifetime of a published shell
         [client, entities],
     );
 
@@ -166,6 +175,8 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
                         locale={locale}
                         data={data}
                         navigate={navigate}
+                        flash={flash}
+                        setFlash={setFlash}
                     />
                 )}
             </main>
@@ -182,6 +193,12 @@ interface EntityPageProps {
     filter?: QueryFilter;
     savedPages: Map<string, PageDefinition>;
     app: AppDefinition;
+    /** The save/action flash, lifted to the shell: a create navigates to the
+     * record's detail, and a page-local flash died with the page it reported
+     * for — the "Saved" confirmation was unobservable on every create (found
+     * live at the golden journey's final step). */
+    flash: string | null;
+    setFlash: (message: string | null) => void;
     role?: string;
     locale?: string;
     data: RendererDataService;
@@ -189,19 +206,20 @@ interface EntityPageProps {
 }
 
 function EntityPage(props: EntityPageProps): ReactNode {
-    const { client, entity, kind, id, filter, savedPages, app, role, locale, data, navigate } = props;
+    const { client, entity, kind, id, filter, savedPages, app, role, locale, data, navigate, flash, setFlash } = props;
+    // app-qualified runtime addresses (see RuntimeShell's note — the ambiguity guard)
+    const qualified = (entityApiName: string) => `${app.apiName}.${entityApiName}`;
     const saved = savedPages.get(`${entity.apiName}:${kind}`);
     const { page, stale } = resolvePage(saved, entity, { role, permissions: app.permissionSet, locale, kind });
     const [record, setRecord] = useState<Record<string, unknown> | null>(null);
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [busy, setBusy] = useState(false);
-    const [flash, setFlash] = useState<string | null>(null);
 
     const [loadError, setLoadError] = useState<string | null>(null);
 
     const load = async (recordId: string): Promise<void> => {
         try {
-            setRecord(await client.getRecord(entity.apiName, recordId));
+            setRecord(await client.getRecord(qualified(entity.apiName), recordId));
             setLoadError(null);
         } catch (caught) {
             // a failed detail load used to leave a silent empty form plus an
@@ -271,9 +289,9 @@ function EntityPage(props: EntityPageProps): ReactNode {
                 setErrors({});
                 try {
                     const savedRecord = record?.id
-                        ? await client.updateRecord(entity.apiName, String(record.id), Number(record.version ?? 1), record)
+                        ? await client.updateRecord(qualified(entity.apiName), String(record.id), Number(record.version ?? 1), record)
                         : await client.createRecord(
-                              entity.apiName,
+                              qualified(entity.apiName),
                               record ?? {},
                               // one key per unsaved draft: a re-click or a raced
                               // retry of the same create collapses server-side
@@ -305,7 +323,7 @@ function EntityPage(props: EntityPageProps): ReactNode {
             deleteRecord: async () => {
                 if (record?.id) {
                     try {
-                        await client.deleteRecord(entity.apiName, String(record.id), Number(record.version ?? 1));
+                        await client.deleteRecord(qualified(entity.apiName), String(record.id), Number(record.version ?? 1));
                         navigate(entity.apiName, "list");
                     } catch (error) {
                         // a 409 (stale version) or 403 on delete was a silent
@@ -335,7 +353,7 @@ function EntityPage(props: EntityPageProps): ReactNode {
                 }
                 setBusy(true);
                 try {
-                    const fresh = await client.runHook(entity.apiName, String(record.id), hook);
+                    const fresh = await client.runHook(qualified(entity.apiName), String(record.id), hook);
                     setRecord(fresh);
                     setFlash(`Ran ${hook}`);
                 } catch (error) {
@@ -399,7 +417,7 @@ function EntityPage(props: EntityPageProps): ReactNode {
                                 setBusy(true);
                                 void client
                                     .updateRecord(
-                                        entity.apiName,
+                                        qualified(entity.apiName),
                                         String(record.id),
                                         Number(record.version ?? 1),
                                         { [machine.stateField]: transition.to },

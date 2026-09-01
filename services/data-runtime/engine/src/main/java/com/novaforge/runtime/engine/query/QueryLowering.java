@@ -76,16 +76,33 @@ public final class QueryLowering {
     }
 
     public static String projectionTable(String entityApiName) {
-        return "rec_" + Snake.caseName(entityApiName);
+        // the bare name names the shared projection table — a qualified key's dot
+        // would snake into a wrong identifier (Erp.Customer -> rec_erp_customer)
+        int dot = entityApiName.lastIndexOf('.');
+        String bare = dot >= 0 ? entityApiName.substring(dot + 1) : entityApiName;
+        return "rec_" + Snake.caseName(bare);
+    }
+
+    /**
+     * The entity scope predicate: rows carry their QUALIFIED entity id, and the
+     * projection table is shared by every of the tenant's apps defining the same
+     * entity apiName — without this predicate a list/aggregate answers with the
+     * sibling apps' rows too (found live: a second published app defining Customer
+     * made the first app's list answer with both apps' records).
+     */
+    private static String entityScopeSql() {
+        return " AND entity_id = ?";
     }
 
     public Lowered list(String entityApiName, UUID tenantId, ListQuery query) {
         StringBuilder sql = new StringBuilder(
                 "SELECT id, version, created_at, updated_at, created_by, updated_by, deleted, data FROM ")
                 .append(projectionTable(entityApiName))
-                .append(" WHERE tenant_id = ? AND deleted = false");
+                .append(" WHERE tenant_id = ? AND deleted = false")
+                .append(entityScopeSql());
         List<Object> params = new ArrayList<>();
         params.add(tenantId);
+        params.add(entityApiName);
         if (query.filter() != null) {
             sql.append(" AND ").append(lowerFilter(query.filter(), params));
         }
@@ -117,9 +134,11 @@ public final class QueryLowering {
     public Lowered count(String entityApiName, UUID tenantId, Filter filter) {
         StringBuilder sql = new StringBuilder("SELECT count(*) FROM ")
                 .append(projectionTable(entityApiName))
-                .append(" WHERE tenant_id = ? AND deleted = false");
+                .append(" WHERE tenant_id = ? AND deleted = false")
+                .append(entityScopeSql());
         List<Object> params = new ArrayList<>();
         params.add(tenantId);
+        params.add(entityApiName);
         if (filter != null) {
             sql.append(" AND ").append(lowerFilter(filter, params));
         }
@@ -199,7 +218,9 @@ public final class QueryLowering {
         StringBuilder sql = new StringBuilder("SELECT ")
                 .append(String.join(", ", selects))
                 .append(" FROM ").append(projectionTable(entityApiName))
-                .append(" WHERE tenant_id = ? AND deleted = false");
+                .append(" WHERE tenant_id = ? AND deleted = false")
+                .append(entityScopeSql());
+        params.add(entityApiName);   // the entity scope, bound after the tenant
         if (query.filter() != null) {
             sql.append(" AND ").append(lowerFilter(query.filter(), params));
         }

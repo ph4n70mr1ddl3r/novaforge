@@ -2699,3 +2699,143 @@ at least once against a deliberate violation.
 Chart gate CLEAN across all 12 charts with all contracts genuinely armed;
 full serial `./mvnw verify` (below) as the honest current-tree check. The
 landings from the live-cluster pass hold everywhere the re-audit probed.
+
+## Twenty-Sixth Pass — 2026-09-01 (the coverage sweep becomes the live leg: four defects the golden journey flushed, forty-three pins land)
+
+### The method — three parallel coverage sweeps, then the live leg
+
+The recorded-open defect list has been empty since the eighteenth pass, so this
+pass attacked the anti-regression net itself: three parallel audits (core
+services; the data-runtime + platform libs; the frontend workspace) asked one
+question per production class — *which behavior branch does NO test pin anywhere
+in the repo?* Thirty-four unpinned behaviors came back, ranked by risk. The pass
+pinned the high-risk set (43 new tests) and re-ran the golden journey live —
+which flushed four more real defects, all fixed with their own pins.
+
+### The defects
+
+1. **The builder SPA died at boot — `Root()` invoked at module scope**
+   (`frontend/builder-ui/src/main.tsx`). The twelfth pass's ErrorBoundary wrap
+   changed `createElement(Root)` to `createElement(ErrorBoundary, …, Root())` —
+   *calling* the component function at module scope, where React's hook
+   dispatcher is null: "Cannot read properties of null (reading 'useState')", no
+   sign-in screen, no builder at all. Masked for four days because the built
+   bundle is gitignored and was never rebuilt; no test executed the entry. Fixed
+   (`createElement(Root)`), and pinned by `builder-ui/test/boot.test.tsx`, which
+   imports the REAL entry module against a jsdom `#root` and asserts the boot UI
+   renders — bite-proven (reverting the fix fails the test).
+
+2. **The runtime shell addressed entities bare — same-named apps collided**
+   (`frontend/runtime-ui/src/shell.tsx`). A tenant running two published apps
+   that define the same entity apiName (the ERP corpus defines `Customer`; the
+   journey's app too) 400s every bare-name write with "entity Customer is
+   defined by multiple published apps — qualify the app". The engine's
+   disambiguation surface is the app-qualified `App.Entity` form; reporting's
+   run path adopted it live months ago, the shell never did. Every runtime
+   client call now rides `qualified()` (list, search, get, create, update,
+   delete, runHook); the pin (`shell.test.tsx`) asserts the create URL carries
+   `erp.Customer`.
+
+3. **The engine's list/aggregate lowering had NO entity scope**
+   (`services/data-runtime/engine/.../query/QueryLowering.java`). The projection
+   table is per entity apiName and SHARED by every of the tenant's apps defining
+   it, but the lowered list/count/aggregate SQL filtered only `tenant_id` — a
+   list answered with the sibling apps' rows (the journey's fresh app listed 9
+   Customers from every app that ever defined one; aggregates summed across
+   apps; roll-ups and period counts counted them). Writes carry the qualified
+   `entity_id`; the lowering now scopes by it (table from the bare name,
+   predicate from the key), all 14 call sites pass `handle.entityKey()`, and the
+   SQL goldens pin the new canonical shape (`GoldenSqlTests`,
+   `BucketedAggregateSqlTests` updated with the qualified key in the parameter
+   vectors).
+
+4. **The audit service had no problem+json advice at all**
+   (`services/audit-service/.../api/ProblemAdvice.java`, new). Every
+   `PlatformException` from the audit read API rendered as a raw 500
+   ServletException — the limit bound (the surface's only thrower, "limit must
+   be 1..200") rejected a hostile `?limit=0` as a whitelabel 500 instead of the
+   platform's 400 problem+json (PHASE-0 §5.2). The advice is byte-shaped like
+   the notification service's.
+
+Plus two smaller landings: **the money twin's HALF_EVEN divide mis-rounded a cut
+tail** (`shared/src/expression/decimal.ts`) — the guard-digit loop stops at 36
+quotient digits with the remainder non-zero and `rounded()` then treated a `…50`
+tail as an exact tie; the non-zero remainder makes the true discarded fraction
+strictly more than half, so BigDecimal rounds UP where the twin rounded to even
+(verified against the JVM directly on an adversarial vector, then fixed by
+passing the inexact-tail fact into the rounding). And **the chart gate's own
+newest contract validated a leaked variable** (`deploy/helm/check-charts.sh`):
+the post-walk isolation loop read `ps.get("enableServiceLinks")` from the walk
+phase's leftover loop variable — the LAST walked pod, checked N times — the
+toothless-check class the twenty-fifth pass hunted, one generation later. The
+flags now ride the pods tuple; the walk learned the CronJob shape
+(`spec.jobTemplate.spec.template`) with the symmetric jobTemplate restartPolicy
+contract; all bite-proven both ways (stripped flag → gate fails; synthetic
+CronJob lacking four contracts → four failures; restored tree CLEAN).
+
+### The pins (43 new tests; backend 523, frontend 203)
+
+Backend — 24 (each pinned against the exact failure the sweep named):
+
+- **Security**: `TenantTaskDecoratorTest` (the async tenant fence's
+  clear-when-unbound branch on a real pool thread — a no-op regression leaks the
+  previous task's tenant through pooled RLS queries); `includeDeletedIsAdminOnly`
+  (a READ-granted clerk 403s on `?includeDeleted=true`; the admin reads the
+  tombstone); `brokenCriteriaFailClosed` (a criterion no evaluator knows hides
+  the row and 403s the list instead of widening); `SecretCipherTest` (dev-key
+  fail-closed boot, malformed keys, wrong-key GCM failure, fresh IV per write);
+  `membershipLookupFailureDropsRecipient` (fail-closed on lookup throw).
+- **Financial controls**: `allModeRequiresEveryApproval` ("all"-mode unanimity —
+  first vote suspends with siblings OPEN, the last resumes exactly once);
+  `cachedRunKeepsMoneyDecimal` (the cache read re-types money BigDecimal, never
+  Double); the decimal context pins in `shared/test/decimal.test.ts` (8 cases,
+  JVM parity).
+- **Delivery guarantees**: `outboxRetentionSparesUnpublished` on BOTH outboxes
+  (retention never deletes an undelivered row); `relayPublishesDeliveredEvents
+  WithHeaders` (topic derivation, tenant key, X-Event-* headers, published_at —
+  consumed off real Kafka).
+- **Fences and gates**: `idempotencyInFlightAndRelease` (in-flight duplicate
+  409s; a failed create frees the key); `approversExpressionResolvingToNothing
+  Rejects` (no approval nobody can act on); `upsertSecondEventUpdatesExisting
+  Record` (the upsert UPDATE leg carries the existing id+version — which also
+  exposed the webhook fake reading a dead filter shape, so the lookup leg had
+  never once matched); the boot pin above.
+- **Contracts**: `datetimeCanonicalization` (offset → fixed-width UTC, range
+  filters on the canonical form); `deliveryIdShapeEnforced`;
+  `readLimitBoundsReject`; `rotationMovesDefaultPartitionRowsIntoTheMonth` (the
+  move-and-attach path — the fresh-CREATE path was the only one pinned);
+  `SlaResolverCacheKeyTest` (the tenant-scoped 30 s cache key);
+  `EntityExportCsvCellTest` (the integration csvCell copy — only the reporting
+  twin was pinned); `publishOutboxRetentionSparesUnpublished`.
+
+Frontend — 19: the decimal pins; `client-error.test.ts` (gateway 502 HTML and
+empty proxy bodies keep the problem contract); `field-number.test.tsx` (blur
+canonicalization; a half-typed "12." never crashes the tree); `list-surface
+.test.tsx` (header clicks lower server-side sort with toggle/offset-reset/
+aria-sort; a failed fetch renders the alert, never the empty state);
+`renderer-slots.test.tsx` (expression readonly locks exactly while it holds; a
+throwing visibility binding renders conservatively visible); `shell-guards
+.test.tsx` (the lowercase-openPage navigation — the golden journey's historical
+crash — drives the real renderer; a failed detail load renders the
+Could-not-load alert).
+
+### Verification (this pass)
+
+Full `./mvnw verify` green across all 23 modules — 523 backend tests — against
+the Podman socket; frontend `pnpm check` + `pnpm -r test` green (203 tests, up
+from 183); chart gate CLEAN across all 12 charts with the repaired contracts
+bite-proven; and the golden journey GREEN at final HEAD against the live stack
+(real PKCE sign-in → onboarding → three entities → RBAC → dev publish → runtime
+shell → record created through the real renderer, verified in the server-paged
+list) — with the journey's own plural-count regex (`records?`) fixed on the way.
+
+### Recorded open after this pass
+
+The sweep's deliberate remainder (materializer per-shape failure isolation;
+runaway-hook MAX_STEPS/MAX_DEPTH bounds; the integration export row ceiling;
+the integration batch's SQL-failure per-item verdict; the builder auth module's
+byte-twin of the runtime client; the runtime role-suffix mapping). Plus one
+pre-existing wart observed, not introduced: `ApprovalFlowTests.resumeClaimFirst
+VerdictWins` fails under `-Dtest` isolation (passes in the full-module and CI
+mode) — an execution-context sensitivity worth its own look. Nothing else new
+recorded open.

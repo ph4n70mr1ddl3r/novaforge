@@ -148,9 +148,15 @@ class IntegrationWebhookTests extends PostgresTestBase {
 
                 @Override
                 public ListPage lookup(UUID tenantId, String entity, Map<String, Object> query) {
+                    // the canonical query-DSL leaf the processor sends (the bare
+                    // {field: value} map 400s at the real runtime — the leaf shape
+                    // is pinned engine-side); a fake reading anything else never
+                    // matches, and every upsert silently degrades to create
                     Map<?, ?> filter = (Map<?, ?>) query.get("filter");
-                    Object reference = filter.get("reference");
-                    Map<String, Object> found = STORED.get(String.valueOf(reference));
+                    Map<String, Object> found = null;
+                    if ("reference".equals(filter.get("field"))) {
+                        found = STORED.get(String.valueOf(filter.get("value")));
+                    }
                     return new ListPage(found == null ? List.of() : List.of(found),
                             found == null ? 0 : 1);
                 }
@@ -252,6 +258,46 @@ class IntegrationWebhookTests extends PostgresTestBase {
         // the delivery log records the settled application
         assertThat(deliveries.find(TENANT, DeliveryStore.KIND_WEBHOOK_INBOUND,
                 "wh_feed", "evt-1")).isPresent();
+    }
+
+    @Test
+    @DisplayName("upsert mode: a second event with the same key field UPDATEs the existing id+version")
+    void upsertSecondEventUpdatesExistingRecord() throws Exception {
+        // Every webhook POST in this suite used a distinct ref, so only the
+        // create leg ever executed — an always-create regression (a payment feed
+        // double-booking) or a lost version (optimistic-concurrency broken) passed
+        // the whole suite. Both upsert legs pin here.
+        signed(mockMvc, """
+                {"data": {"id": "evt-up-a", "ref": "pay-upsert", "amount": "10.00"}}""",
+                "hook-secret-one", null, null, status().isOk());
+        Map<String, Object> created = WRITE_CALLS.getLast();
+        assertThat(created.get("op")).isEqualTo("create");
+        // the stored row (what the upsert lookup will return) carries the id+version
+        String createdId = String.valueOf(STORED.get("pay-upsert").get("id"));
+        String createdVersion = String.valueOf(STORED.get("pay-upsert").get("version"));
+
+        // same key field (reference), new provider event id: the lookup must hit
+        // and the write must carry the EXISTING id and version as an update
+        signed(mockMvc, """
+                {"data": {"id": "evt-up-b", "ref": "pay-upsert", "amount": "20.00"}}""",
+                "hook-secret-one", null, null, status().isOk());
+        Map<String, Object> updated = WRITE_CALLS.getLast();
+        assertThat(updated.get("op")).isEqualTo("update");
+        assertThat(updated.get("id")).isEqualTo(createdId);
+        assertThat(String.valueOf(updated.get("version"))).isEqualTo(createdVersion);
+        assertThat(((Map<?, ?>) updated.get("record")).get("amount")).isEqualTo("20.00");
+
+        // and a rejected UPDATE surfaces the write path's verdict (never silent)
+        rejectReference = "pay-upsert";
+        try {
+            signed(mockMvc, """
+                    {"data": {"id": "evt-up-c", "ref": "pay-upsert", "amount": "30.00"}}""",
+                    "hook-secret-one", null, null, status().isBadRequest());
+        } finally {
+            rejectReference = null;
+        }
+        // still exactly one stored row for the reference — the rejected event did not create
+        assertThat(STORED.get("pay-upsert").get("amount")).isEqualTo("20.00");
     }
 
     @Test

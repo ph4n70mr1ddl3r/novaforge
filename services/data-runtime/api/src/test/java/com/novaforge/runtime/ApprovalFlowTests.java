@@ -382,6 +382,30 @@ class ApprovalFlowTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("an approvers expression resolving to nothing fails closed — the write aborts, no suspension")
+    void approversExpressionResolvingToNothingRejects() throws Exception {
+        String id = createOrder(100);
+        SUSPENSIONS.clear();
+
+        // the assign update with no approver value: the expression resolves to
+        // null — an approval nobody could act on must never suspend the flow
+        mockMvc.perform(patch("/api/v1/runtime/PurchaseOrder/" + id).with(jwtFor())
+                        .contentType("application/json")
+                        .content("{\"version\":1,\"label\":\"assign\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("approvers expression")));
+
+        // the beforeSave abort rolled the whole write back — label unchanged,
+        // state never left DRAFT, and no suspension reached the workflow service
+        mockMvc.perform(get("/api/v1/runtime/PurchaseOrder/" + id).with(jwtFor()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.label").value("po"))
+                .andExpect(jsonPath("$.status").value("DRAFT"));
+        org.assertj.core.api.Assertions.assertThat(SUSPENSIONS).isEmpty();
+    }
+
+    @Test
     @DisplayName("the resume surface is service-client only (§13)")
     void resumeGate() throws Exception {
         String id = createOrder(100);

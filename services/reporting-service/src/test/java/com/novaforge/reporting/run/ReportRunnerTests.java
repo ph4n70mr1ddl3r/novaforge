@@ -212,6 +212,46 @@ class ReportRunnerTests {
     }
 
     @Test
+    @DisplayName("a cached run keeps decimals decimal — the cache read re-types money as BigDecimal, never Double")
+    void cachedRunKeepsMoneyDecimal() {
+        cacheWorking();
+        rolesOf(CLERK_A, "ArDesk.clerk");
+        // the runtime leg answers money as a JSON number (the real lowering does):
+        // the fresh path shapes it BigDecimal, and the cache round-trip must too
+        JsonNode numericTotals = MAPPER.readTree("{\"rows\":[{\"sum_amount\":120.0000}]}");
+        when(runtime.queryAsCaller(eq("ArDesk.Invoice"), any(), any()))
+                .thenAnswer(inv -> {
+                    Map<String, Object> query = inv.getArgument(1, Map.class);
+                    executions.incrementAndGet();
+                    return query.containsKey("groupBy") ? grouped() : numericTotals;
+                });
+
+        Map<String, Object> fresh = runner.run(TENANT, CLERK_A, "ArDesk", "totalBook",
+                Map.of(), "token");
+        // decimal-exact value in a BigDecimal (the JSON parse normalizes scale;
+        // the money rule bars the binary float, not trailing zeros)
+        assertThat((java.math.BigDecimal) asBigDecimal(fresh)).isEqualByComparingTo("120");
+        int runsAfterFresh = executions.get();
+
+        // the cached hit: the JSON re-parse must carry USE_BIG_DECIMAL_FOR_FLOATS —
+        // a default re-parse types the money column Double and the cached total
+        // answers sub-cent-drifted where the fresh path answered BigDecimal. The
+        // round-trip normalizes scale; the pin is the exact VALUE in the exact
+        // TYPE — a Double fails the instance check first.
+        Map<String, Object> cached = runner.run(TENANT, CLERK_A, "ArDesk", "totalBook",
+                Map.of(), "token");
+        assertThat(executions.get()).isEqualTo(runsAfterFresh);   // served from cache
+        Object cachedTotal = asBigDecimal(cached);
+        assertThat(cachedTotal).isInstanceOf(java.math.BigDecimal.class);
+        assertThat((java.math.BigDecimal) cachedTotal).isEqualByComparingTo("120");
+    }
+
+    /** The run's totals aggregate (the pin asserts its concrete type). */
+    private static Object asBigDecimal(Map<String, Object> run) {
+        return ((Map<?, ?>) run.get("totals")).get("sum_amount");
+    }
+
+    @Test
     @DisplayName("§4: a Redis outage degrades to the uncached path — never a failed run")
     void redisOutageRunsUncached() {
         when(values.get(anyString())).thenThrow(new RedisConnectionFailureException("down"));

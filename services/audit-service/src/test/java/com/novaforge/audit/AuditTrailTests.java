@@ -130,6 +130,28 @@ class AuditTrailTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("read limit bounds: 0 and 201 reject 400, the 200 ceiling serves — no unbounded trail read")
+    void readLimitBoundsReject() throws Exception {
+        var adminJwt = jwt().jwt(token -> token.claim("tenant_id", TENANT.toString())
+                .subject(ACTOR.toString()))
+                .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"),
+                        new SimpleGrantedAuthority("ROLE_admin"));
+        mockMvc.perform(get("/api/v1/audit/records/" + UUID.randomUUID())
+                        .param("limit", "0").with(adminJwt))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("4000"));
+        mockMvc.perform(get("/api/v1/audit/records/" + UUID.randomUUID())
+                        .param("limit", "201").with(adminJwt))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/v1/audit/entities/Erp.Ticket")
+                        .param("limit", "201").with(adminJwt))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/v1/audit/entities/Erp.Ticket")
+                        .param("limit", "200").with(adminJwt))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("PHASE-3 §5: append-only enforced mechanically — the store role has no UPDATE/DELETE")
     void appendOnlyIsMechanical() throws Exception {
         UUID recordId = UUID.randomUUID();
@@ -323,6 +345,68 @@ class AuditTrailTests extends PostgresTestBase {
                         + "AND occurred_at >= date_trunc('month', now())",
                 Integer.class);
         assertThat(inMonthPartition).isGreaterThanOrEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("rotation MOVES in-range rows out of the default partition — the trail never loses a row")
+    void rotationMovesDefaultPartitionRowsIntoTheMonth() throws Exception {
+        // The move path (not the fresh-CREATE path) is what runs for any month
+        // whose default partition already holds rows — the live current month at
+        // rollout. Regression either wedges rotation forever (unbounded default
+        // growth) or deletes an in-range row from the append-only trail.
+        java.time.YearMonth next = java.time.YearMonth.now().plusMonths(1);
+        String nextName = "audit_events_y" + next.getYear() + "m"
+                + String.format("%02d", next.getMonthValue());
+        try (var connection = java.sql.DriverManager.getConnection(
+                jdbcUrl(), jdbcUsername(), jdbcPassword());   // the owner: DDL is owner-only
+             var statement = connection.createStatement()) {
+            rotation.rotate();   // guarantee the month partitions exist before surgery
+            statement.execute("ALTER TABLE audit_events DETACH PARTITION " + nextName);
+            statement.execute("DROP TABLE " + nextName);
+        }
+
+        // an event dated next month now lands in the default partition (nothing
+        // else claims the range) — exactly the rollout scenario
+        UUID recordId = UUID.randomUUID();
+        String futureStart = next.atDay(1).atTime(9, 0)
+                .atZone(java.time.ZoneOffset.UTC).toInstant().toString();
+        kafka.send(new ProducerRecord<>("novaforge.record", TENANT + ":" + recordId,
+                MAPPER.writeValueAsString(Map.of(
+                        "event", "record.updated",
+                        "eventId", UUID.randomUUID().toString(),
+                        "tenantId", TENANT.toString(),
+                        "entityId", "Erp.JournalEntry",
+                        "recordId", recordId.toString(),
+                        "actorId", ACTOR.toString(),
+                        "occurredAt", futureStart)))).get();
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(ownerCount("SELECT count(*) FROM audit_events_default "
+                        + "WHERE record_id = '" + recordId + "'::uuid")).isEqualTo(1));
+
+        // rotation must MOVE the row into the recreated partition — readable
+        // through the parent afterwards, never silently dropped
+        rotation.rotate();
+
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM pg_tables WHERE tablename = ?", Integer.class, nextName))
+                .isEqualTo(1);
+        // the default partition is empty of the row — the owner role reads it;
+        // the runtime role's grants cover only the parent
+        assertThat(ownerCount("SELECT count(*) FROM audit_events_default "
+                + "WHERE record_id = '" + recordId + "'::uuid")).isZero();
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(mockMvcPerform(recordId)).contains("record.updated"));
+    }
+
+    /** The default partition is owner-readable only (V2's grant shape). */
+    private int ownerCount(String sql) throws Exception {
+        try (var connection = java.sql.DriverManager.getConnection(
+                jdbcUrl(), jdbcUsername(), jdbcPassword());
+             var statement = connection.createStatement();
+             var rs = statement.executeQuery(sql)) {
+            rs.next();
+            return rs.getInt(1);
+        }
     }
 
     private String mockMvcPerform(UUID recordId) throws Exception {

@@ -79,7 +79,7 @@ function stubClient(options: {
                 { status: 200, headers: { "Content-Type": "application/json" } },
             );
         }
-        if (url.includes("/runtime/Customer")) {
+        if (url.includes("/runtime/erp.Customer")) {
             return new Response(
                 JSON.stringify(options.lists?.Customer ?? {
                     rows: [{ id: "c-1", name: "acme", region: "EU" }],
@@ -117,7 +117,7 @@ describe("dashboards (PHASE-5 §5)", () => {
         await waitFor(() => expect(screen.getByText("1 record (filtered)")).toBeTruthy());
         const listCall = fetchImpl.mock.calls
             .map(([url]) => String(url))
-            .filter((url) => url.includes("/runtime/Customer"))
+            .filter((url) => url.includes("/runtime/erp.Customer"))
             .pop()!;
         const filter = JSON.parse(new URL(listCall, "http://gateway").searchParams.get("filter")!);
         expect(filter).toEqual({

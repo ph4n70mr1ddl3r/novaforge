@@ -279,9 +279,9 @@ public class RecordEngine {
         QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
         requireFilterFieldsVisible(tenantId, actorId, handle, app, query.filter());
         QueryLowering lowering = new QueryLowering(handle.entity());
-        QueryLowering.Lowered countSql = lowering.count(handle.entity().apiName(), tenantId,
+        QueryLowering.Lowered countSql = lowering.count(handle.entityKey(), tenantId,
                 query.filter());
-        QueryLowering.Lowered listSql = lowering.list(handle.entity().apiName(), tenantId, query);
+        QueryLowering.Lowered listSql = lowering.list(handle.entityKey(), tenantId, query);
         // Sharing lowers into the pipeline exactly as the aggregate path does
         // (PHASE-5 §4): owners as created_by IN (…), criteria as compiled boolean
         // SQL — one OR over both. The old shape (owner set in SQL, criteria
@@ -324,7 +324,7 @@ public class RecordEngine {
             }
         }
         QueryLowering.Lowered lowered = new QueryLowering(handle.entity())
-                .aggregate(handle.entity().apiName(), tenantId, query,
+                .aggregate(handle.entityKey(), tenantId, query,
                         java.time.LocalDate.now(clock));
         lowered = applySharing(lowered, handle,
                 sharing.forActor(tenantId, actorId, handle.entity(), app));
@@ -371,7 +371,7 @@ public class RecordEngine {
             }
         }
         QueryLowering.Lowered lowered = new QueryLowering(handle.entity())
-                .aggregate(handle.entity().apiName(), tenantId, query,
+                .aggregate(handle.entityKey(), tenantId, query,
                         java.time.LocalDate.now(clock));
         lowered = applySharing(lowered, handle, sharing.forRole(tenantId, handle.entity(),
                 app, asRole));
@@ -744,9 +744,9 @@ public class RecordEngine {
         QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
         requireFilterFieldsVisibleForRole(app, handle, asRole, query.filter());
         QueryLowering lowering = new QueryLowering(handle.entity());
-        QueryLowering.Lowered countSql = lowering.count(handle.entity().apiName(), tenantId,
+        QueryLowering.Lowered countSql = lowering.count(handle.entityKey(), tenantId,
                 query.filter());
-        QueryLowering.Lowered listSql = lowering.list(handle.entity().apiName(), tenantId, query);
+        QueryLowering.Lowered listSql = lowering.list(handle.entityKey(), tenantId, query);
         // The export scope rides the same lowered sharing as user lists (the
         // 2025-08-27 review unified the two paths) — never the page-skewing
         // post-filter.
@@ -774,9 +774,9 @@ public class RecordEngine {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
         QueryLowering lowering = new QueryLowering(handle.entity());
-        QueryLowering.Lowered countSql = lowering.count(handle.entity().apiName(), tenantId,
+        QueryLowering.Lowered countSql = lowering.count(handle.entityKey(), tenantId,
                 query.filter());
-        QueryLowering.Lowered listSql = lowering.list(handle.entity().apiName(), tenantId, query);
+        QueryLowering.Lowered listSql = lowering.list(handle.entityKey(), tenantId, query);
         RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
                 listSql.sql(), listSql.params());
         return new QueryModel.QueryResult(
@@ -928,7 +928,7 @@ public class RecordEngine {
                 + "{\"field\":\"" + lock.status() + "\",\"op\":\"eq\",\"value\":\"" + statusValue + "\"}]}}";
         QueryModel.ListQuery query = QueryParser.parseList(queryJson, periodHandle.entity());
         QueryLowering lowering = new QueryLowering(periodHandle.entity());
-        QueryLowering.Lowered count = lowering.count(periodHandle.entity().apiName(), tenantId,
+        QueryLowering.Lowered count = lowering.count(periodHandle.entityKey(), tenantId,
                 query.filter());
         // FOR SHARE over the matched period rows: a status flip to closed cannot
         // commit between this check and the dated write it guards
@@ -1102,9 +1102,9 @@ public class RecordEngine {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
         QueryLowering lowering = new QueryLowering(handle.entity());
-        QueryLowering.Lowered countSql = lowering.count(handle.entity().apiName(), tenantId,
+        QueryLowering.Lowered countSql = lowering.count(handle.entityKey(), tenantId,
                 query.filter());
-        QueryLowering.Lowered listSql = lowering.list(handle.entity().apiName(), tenantId, query);
+        QueryLowering.Lowered listSql = lowering.list(handle.entityKey(), tenantId, query);
         RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
                 listSql.sql(), listSql.params());
         List<Map<String, Object>> rows = page.rows().stream()
@@ -1681,14 +1681,14 @@ public class RecordEngine {
             if (op.equals("COUNT")) {
                 QueryModel.ListQuery query = QueryParser.parseList(queryJson, childHandle.entity());
                 QueryLowering lowering = new QueryLowering(childHandle.entity());
-                QueryLowering.Lowered count = lowering.count(childHandle.entity().apiName(),
+                QueryLowering.Lowered count = lowering.count(childHandle.entityKey(),
                         tenantId, query.filter());
                 Long total = records.countValue(count.sql(), count.params());
                 return java.math.BigDecimal.valueOf(total == null ? 0 : total);
             }
             QueryModel.AggregateQuery query = QueryParser.parseAggregate(queryJson, childHandle.entity());
             QueryLowering.Lowered lowered = new QueryLowering(childHandle.entity())
-                    .aggregate(childHandle.entity().apiName(), tenantId, query);
+                    .aggregate(childHandle.entityKey(), tenantId, query);
             Object outcome = records.aggregateValue(lowered.sql(), lowered.params(),
                     query.aggregates().getFirst().op().name().toLowerCase()
                             + "_" + Snake.caseName(field));
@@ -2046,9 +2046,9 @@ public class RecordEngine {
                     + ",\"offset\":" + offset + "}}";
             QueryModel.ListQuery query = QueryParser.parseList(queryJson, childHandle.entity());
             QueryLowering lowering = new QueryLowering(childHandle.entity());
-            QueryLowering.Lowered countSql = lowering.count(childHandle.entity().apiName(), tenantId,
+            QueryLowering.Lowered countSql = lowering.count(childHandle.entityKey(), tenantId,
                     query.filter());
-            QueryLowering.Lowered listSql = lowering.list(childHandle.entity().apiName(), tenantId, query);
+            QueryLowering.Lowered listSql = lowering.list(childHandle.entityKey(), tenantId, query);
             RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
                     listSql.sql(), listSql.params());
             for (Map<String, Object> row : page.rows()) {
