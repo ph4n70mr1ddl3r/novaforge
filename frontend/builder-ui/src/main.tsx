@@ -1,5 +1,5 @@
 import { createElement, useState, useEffect, type ReactNode } from "react";
-import { hydrateRoot } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import { PlatformClient } from "@novaforge/shared";
 import { BuilderShell } from "./shell.tsx";
 import { login, restoreSession, sessionManager, type OidcConfig, type OidcSession } from "./auth.ts";
@@ -42,8 +42,11 @@ function Root(): ReactNode {
     const roles = Array.isArray(session.claims.platform_roles) ? (session.claims.platform_roles as string[]) : [];
     return createElement(BuilderShell, { client, role: roles[0] });
 }
-hydrateRoot(
-    document.getElementById("root")!,
+// createRoot, not hydrateRoot: the SPA is client-only — the gateway-served
+// index.html ships an EMPTY #root, so there is nothing to hydrate and React 19
+// throws a hydration mismatch on every boot, regenerating the whole tree (the
+// thrown error even escapes asynchronously and fails the test run under load).
+createRoot(document.getElementById("root")!).render(
     // Root is an ELEMENT, not a call: invoking Root() at module scope ran
     // useState outside any render — React's dispatcher is null there and the
     // whole SPA died at boot (found live by the golden journey's builder leg,

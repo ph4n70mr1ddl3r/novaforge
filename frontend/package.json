@@ -6,7 +6,7 @@
     "test": "pnpm -r --no-bail test",
     "build": "pnpm -r --no-bail build",
     "check": "pnpm -r --no-bail check",
-    "package": "pnpm -r --no-bail build && node -e \"const fs=require('fs');fs.rmSync('dist',{recursive:true,force:true});fs.mkdirSync('dist/runtime',{recursive:true});fs.mkdirSync('dist/builder',{recursive:true});fs.cpSync('runtime-ui/dist','dist/runtime',{recursive:true});fs.cpSync('builder-ui/dist','dist/builder',{recursive:true});console.log('assembled dist/runtime + dist/builder — mount at /static for the gateway')\""
+    "package": "pnpm -r --no-bail build && node scripts/check-bundle-base.mjs && node -e \"const fs=require('fs');fs.rmSync('dist',{recursive:true,force:true});fs.mkdirSync('dist/runtime',{recursive:true});fs.mkdirSync('dist/builder',{recursive:true});fs.cpSync('runtime-ui/dist','dist/runtime',{recursive:true});fs.cpSync('builder-ui/dist','dist/builder',{recursive:true});console.log('assembled dist/runtime + dist/builder — mount at /static for the gateway')\""
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

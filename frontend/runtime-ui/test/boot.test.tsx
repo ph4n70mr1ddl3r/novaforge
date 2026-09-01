@@ -3,25 +3,21 @@ import { screen, waitFor } from "@testing-library/react";
 import { act } from "react";
 
 /**
- * The builder entry's boot pin (the golden journey's live blocker, found by the
- * twenty-sixth pass): the entry invoked Root() — a component FUNCTION — at
- * module scope inside the hydrateRoot tree, so useState ran outside any render
- * where React's dispatcher is null and the entire SPA died before painting the
- * sign-in screen. Nothing caught it: the gitignored built bundle had not been
- * rebuilt since the regression landed, and no test executed the entry. This
- * test imports the REAL main.tsx against a jsdom #root and asserts the boot
- * UI renders — an entry that crashes at module scope fails here.
+ * The runtime entry's boot pin — the twin of the builder's (twenty-sixth pass),
+ * which found the builder entry dead at module scope with zero test execution;
+ * the runtime entry had the same hole until the twenty-eighth pass. This test
+ * imports the REAL main.tsx against a jsdom #root and asserts the boot UI
+ * renders — an entry that crashes at module scope fails here.
  *
- * The twenty-eighth pass added the error guard: the SPA is client-only (the
- * gateway-served index.html ships an EMPTY #root), so a boot through
- * hydrateRoot makes React 19 throw a hydration mismatch on every boot. The
- * thrown error escapes asynchronously — the whole suite failed under load even
- * with all tests passing — so the guard asserts the boot logs no hydration
- * error, making the createRoot contract deterministic instead of
- * load-timing-lucky.
+ * The same pass fixed the entry's mount API and pins it here: the SPA is
+ * client-only (the gateway-served index.html ships an EMPTY #root), so a boot
+ * through hydrateRoot makes React 19 throw a hydration mismatch on every boot;
+ * the thrown error escapes asynchronously and failed the whole suite under
+ * load. The guard asserts the boot logs no hydration error — the createRoot
+ * contract, deterministic instead of load-timing-lucky.
  */
 
-describe("builder entry boot", () => {
+describe("runtime entry boot", () => {
     afterEach(() => {
         vi.restoreAllMocks();
     });
@@ -43,7 +39,6 @@ describe("builder entry boot", () => {
         await waitFor(() => {
             const text = document.body.textContent ?? "";
             expect(text.length).toBeGreaterThan(0);
-            expect(text).toContain("NovaForge Builder");
         });
         // whichever session state restoreSession resolves to (no live realm here,
         // so the error or sign-in surface), the boot UI rendered — not a dead root
@@ -51,8 +46,8 @@ describe("builder entry boot", () => {
         expect(screen.queryByRole("button", { name: "Sign in" }) ?? screen.getByRole("alert"))
             .toBeTruthy();
         // a client-only SPA has nothing to hydrate: any hydration mismatch logged
-        // at boot means the entry reverted to hydrateRoot (or renders server HTML
-        // it was never given) — the tree-regeneration defect, deterministically
+        // at boot means the entry reverted to hydrateRoot — the tree-regeneration
+        // defect, deterministically
         const hydration = bootErrors.filter((args) =>
             args.some((a) => /hydrat|mismatch/i.test(String(a))),
         );

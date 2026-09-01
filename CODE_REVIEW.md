@@ -2904,3 +2904,78 @@ changed beyond the pass-26 landings; this pass added tests only).
 
 Empty. Every behavior the coverage sweeps flagged as risky is now pinned, and
 the remainder list is gone.
+
+## Twenty-Eighth Pass — 2026-09-02 (the frontend boots the fresh bundle: three live-leg defects, one ungated artifact, all pinned)
+
+### The method
+
+The recorded-open set has been empty since the twenty-seventh pass, so this pass
+re-ran the full baseline at HEAD and then hunted where the passes had never
+looked: the golden-journey spec itself, the sample-app artifacts (`apps/perf`
+had never been touched by any pass), the ops scripts (pitr-restore), the
+runbooks, and the loadtest drivers. The baseline caught the first defect before
+any hunt: **the frontend unit gate is red at HEAD** — `pnpm -r test` exits 1
+with all 205 tests passing.
+
+### The defects
+
+1. **Both SPA entries boot through `hydrateRoot` — with nothing to hydrate**
+   (`frontend/builder-ui/src/main.tsx`, `frontend/runtime-ui/src/main.tsx`).
+   The gateway-served `index.html` ships an EMPTY `#root` (no SSR anywhere —
+   the SPAs are client-only), so React 19 throws a hydration mismatch on every
+   boot: the tree regenerates client-side, the error is logged in every
+   browser console, and the thrown error escapes ASYNCHRONOUSLY — under load it
+   lands after the boot test's window, which failed the whole vitest run with
+   every test passing (the baseline's red, deterministic under CPU load;
+   masked on an idle machine by timing). Both entries now mount through
+   `createRoot`. The builder's boot pin gained a guard that captures
+   `console.error` during boot and fails on any hydration/mismatch signal —
+   the createRoot contract, deterministic instead of load-timing-lucky
+   (bite-proven: reverting one entry to `hydrateRoot` fails the test).
+
+2. **The runtime entry had ZERO test execution** — the twenty-sixth pass pinned
+   the builder's boot; the runtime's `main.tsx` was never imported by any test,
+   so the same class of boot death would have shipped silently again. New
+   `runtime-ui/test/boot.test.tsx` mounts the REAL entry module against a jsdom
+   `#root` and asserts the boot UI renders, with the same hydration guard.
+
+3. **`pnpm package` — the documented volume-mount path — emitted bundles that
+   cannot boot behind the gateway** (the live leg's blocker). Vite's default
+   `base: "/"` writes bare `/assets/...` URLs into the shell document, but the
+   SPAs deploy same-origin under `/builder/**` and `/runtime/**`
+   (PHASE-2 §13 Q5): the shell loads and every module request 401s — a blank
+   page. The gateway-embedded builds always rode the IMPLEMENTATION.md's
+   `vite --base=/builder/` + `/runtime/` flags; the package script never did.
+   Both build scripts now carry their prefix, and the package script runs a new
+   gate (`frontend/scripts/check-bundle-base.mjs`) that fails the package when
+   any shell asset URL escapes its hosting prefix — bite-proven both ways
+   (stripped `--base` → package fails naming the offending URLs; restored →
+   green).
+
+4. **The perf fixture was the only ungated app artifact** (`apps/perf/
+   perfhook-app.json` — never touched by any pass; the ERP and Purchasing
+   artifacts have been CI-gated since their phases). The recorded
+   ARCHITECTURE.md §9 numbers (write p95 < 150 ms with exactly one synchronous
+   beforeSave hook + one record validation; filtered list < 300 ms over the
+   status/dueDate indexes) are measured against exactly that shape — a silent
+   fixture edit re-baselines every recorded number while the load scripts keep
+   "passing". New `PerfAppArtifactTests` pins the save/compile-clean checks the
+   builder would run plus the measured shape itself (one beforeSave setField
+   hook, one record validation, the money field, the two single-column
+   indexes).
+
+### Verification (this pass)
+
+Full `./mvnw verify` green across the reactor — 530 backend tests, 0 failures
+(module-footed total, the two new pins included). Frontend `pnpm check` green;
+`pnpm -r test` green — 206 tests, up from 205 (shared 121, builder 63, runtime
+22). Chart gate CLEAN across all 12 charts. And the golden journey GREEN at
+final HEAD against the live stack — real PKCE sign-in → onboarding → three
+entities → RBAC → dev publish → runtime shell → record created through the real
+renderer, verified in the server-paged list — with the journey's builder and
+runtime legs riding the freshly built bundles this pass's fixes produced (the
+gateway jar rebuilt around them, asset requests verified prefixed and 200).
+
+### Recorded open after this pass
+
+Empty.

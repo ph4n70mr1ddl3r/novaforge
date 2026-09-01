@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build --base=/runtime/",
     "test": "vitest run",
     "check": "tsc --noEmit -p tsconfig.json"
   },

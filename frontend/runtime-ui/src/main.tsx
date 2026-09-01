@@ -1,4 +1,4 @@
-import { hydrateRoot } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import { createElement as h, useState, useEffect, type ReactNode } from "react";
 
 const { createElement } = { createElement: h };
@@ -91,7 +91,10 @@ function RuntimeBridge({ client, session }: { client: PlatformClient; session: O
 
 import { ErrorBoundary } from "@novaforge/shared";
 
-hydrateRoot(
-    document.getElementById("root")!,
+// createRoot, not hydrateRoot: the SPA is client-only — the gateway-served
+// index.html ships an EMPTY #root, so there is nothing to hydrate and React 19
+// throws a hydration mismatch on every boot, regenerating the whole tree (the
+// thrown error even escapes asynchronously and fails the test run under load).
+createRoot(document.getElementById("root")!).render(
     h(ErrorBoundary, { label: "NovaForge" }, h(Root)),
 );
