@@ -77,6 +77,8 @@ env:
     value: "http://novaforge-metadata-service:8081"
   - name: NOVAFORGE_WORKFLOW_URL
     value: "http://novaforge-workflow-service:8086"
+  - name: NOVAFORGE_SCRIPT_ENGINE_URL
+    value: "http://novaforge-script-engine:8084"
   - name: NOVAFORGE_AUTH_ISSUER
     value: "http://novaforge-keycloak:8080/realms/novaforge"
   - name: NOVAFORGE_TEMPO_ENDPOINT

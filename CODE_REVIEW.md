@@ -3181,3 +3181,83 @@ the live stack, and the auth.* trail verified landing in the audit database.
 ### Recorded open after this pass
 
 Empty.
+
+## Thirtieth Pass — 2026-09-02 (the wire the gate never checked: every in-cluster URL a service consumes vs the one its chart ships)
+
+### The method
+
+The recorded-open set has been empty since the twenty-eighth pass and the
+twenty-ninth closed the coverage tiers, so this pass audited the seam between
+the two wiring authorities rather than any one layer: the service
+`application.yaml`s (what each service can consume, `${NOVAFORGE_*URL:localhost...}`)
+against the chart `values.yaml` env lists (what each pod actually gets). The
+chart gate's DNS leg proves every env the charts SET resolves to a rendered
+Service — it says nothing about wiring a service consumes but its chart never
+ships. That direction was never checked by anything.
+
+### The defect
+
+**The data-runtime pod dials script hooks at itself.**
+`novaforge-data-runtime/values.yaml` set the in-cluster peers it needs —
+metadata, workflow — but never `NOVAFORGE_SCRIPT_ENGINE_URL`, which the
+data-runtime's `application.yaml` consumes with a `localhost:8084` default.
+In every cluster deploy the script-hook client (ADR-003's escape hatch, the
+caller-token-relaying `RestScriptEngineClient`) aimed at `localhost:8084`
+inside its own pod: nothing listens there (the data-runtime is 8083), so every
+script hook would fail, retry, and park. Two faces to the same root cause:
+
+1. **The env var** — now set to `http://novaforge-script-engine:8084`, the
+   Service the script-engine chart renders.
+2. **The egress NetworkPolicy** — the data-runtime's default-deny matrix is
+   derived from its env wiring ("the allow list is the env wiring the chart
+   already carries"), so the missing var meant the missing rule too: even with
+   the URL landed, a policy-enforcing CNI silently dropped the flow. The
+   script-engine→data-runtime leg was always fully wired on BOTH sides of that
+   pairing (env + policy); only the data-runtime's half was absent — the
+   asymmetry that made it visible.
+
+Why no live leg caught it: the compose stack carries infra only (the eleven
+services run as host JVMs beside it, where the localhost default is CORRECT),
+and the charts are exercised by render gates, not by an in-cluster script-hook
+journey. The gate's blind spot and the gap are the same shape.
+
+### The gate leg (bite-proven)
+
+`check-charts.sh` gains the inverse check: for every service chart, every
+`NOVAFORGE_*URL` its service's `application.yaml` names must appear in the
+chart's values env — consumed-but-unset fails with the variable and the
+localhost-fallback consequence. Bite-proven against the exact defect (the env
+line deleted → the gate fails naming `NOVAFORGE_SCRIPT_ENGINE_URL`; restored →
+CLEAN, with the DNS leg's host count rising 16→17 as the new peer resolves).
+The same sweep was run by hand across all eleven charts in both directions:
+every other chart's URL set matches its service's consumed set exactly, and
+every chart's egress matrix covers its env-referenced peers (the gateway's
+nine-peer matrix rides a templated list the static grep initially hid).
+
+### Also verified this pass (consistency/completeness sweep, no findings)
+
+- All 43 `NOVAFORGE_*` env vars any chart sets are consumed by at least one
+  service config (no typo'd variables silently falling back).
+- The per-service `TenantBindingFilter` copies (9) and `ProblemAdvice` copies
+  (10) are behaviorally identical modulo package/javadoc — no drifted copy.
+- Both Keycloak realm JSON copies byte-identical; skaffold's eleven artifacts
+  match the CI image names; gateway route table matches every service port;
+  every markdown link in the repo resolves (0 broken).
+- M11/M12 remain deferred by the standing decision — the revisit condition
+  ("after the defect trail goes quiet") is not met while live legs still flush
+  wiring defects like this one.
+
+### Verification (this pass)
+
+Full reactor `./mvnw verify`: **647 tests, 0 failures, 0 errors** (every suite
+executed this pass), the final module's complete lifecycle re-verified
+synchronously (BUILD SUCCESS), and the out-of-reactor auth-listener green at
+13 tests. Frontend `pnpm check` + `pnpm -r test` green (206 tests: shared 121,
+builder 63, runtime 22). Chart gate CLEAN across all 13 charts including the
+umbrella with the new URL-parity leg (30 workload pods, 17 env-referenced hosts
+all resolving, default-deny both ways, 29 disruption budgets). Ops selftest
+CLEAN (five contracts, bite-proven).
+
+### Recorded open after this pass
+
+Empty.

@@ -63,6 +63,38 @@ cmp -s deploy/helm/novaforge-infra/files/tempo.yml \
   || fail "files/tempo.yml drifted from deploy/compose/observability/tempo/tempo.yml"
 echo "infra embedded files: byte-identical to their compose-stack sources"
 
+# 2b) URL-env parity: every NOVAFORGE_*URL a service's application.yaml can
+# consume, its chart must set. The inverse of the DNS leg below — that check
+# proves every env the charts SET resolves; it says nothing about wiring a
+# service consumes but its chart never ships. That gap is not hypothetical:
+# the data-runtime dials script hooks at localhost:8084 in every cluster
+# deploy because its chart never set NOVAFORGE_SCRIPT_ENGINE_URL (thirtieth
+# pass) — and its default-deny egress policy is derived from the same env
+# list, so the missing var blocked the flow twice over. localhost defaults
+# only work where services run as host JVMs beside compose infra (the dev
+# launcher); the charts are the in-cluster wiring, and a peer URL left to its
+# localhost default silently aims the pod at itself.
+for chart in deploy/helm/novaforge-*/; do
+  name=$(basename "$chart")
+  [ "$name" = "novaforge-infra" ] && continue
+  [ "$name" = "novaforge" ] && continue
+  svc=${name#novaforge-}
+  res="services/$svc/src/main/resources/application.yaml"
+  # the data-runtime artifact lives under api/ (its four-module split)
+  [ -f "$res" ] || res="services/$svc/api/src/main/resources/application.yaml"
+  if [ ! -f "$res" ]; then
+    fail "URL parity: no application.yaml found for chart $name (expected $res)"
+    continue
+  fi
+  consumed=$(grep -oE 'NOVAFORGE_[A-Z0-9_]*URL' "$res" | sort -u)
+  set_vars=$(grep -oE 'NOVAFORGE_[A-Z0-9_]*URL' "$chart/values.yaml" | sort -u)
+  for var in $consumed; do
+    grep -qx "$var" <<< "$set_vars" \
+      || fail "URL parity: $name consumes $var (its application.yaml) but values.yaml never sets it — the peer URL falls back to localhost in-cluster"
+  done
+done
+[ "$status" -eq 0 ] && echo "url-env parity: every consumed NOVAFORGE_*URL is set by its service's chart"
+
 # 3) DNS consistency: every env-referenced host resolves to a rendered Service
 python3 - "$render_dir" <<'PY' || status=1
 import glob, os, re, sys, yaml

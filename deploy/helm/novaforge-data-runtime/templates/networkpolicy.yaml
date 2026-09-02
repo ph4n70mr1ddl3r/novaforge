@@ -109,4 +109,17 @@ spec:
       ports:
         - protocol: TCP
           port: 8086
+    # script-engine: NOVAFORGE_SCRIPT_ENGINE_URL — script hooks (ADR-003's
+    # escape hatch) execute there with the caller's token relayed; the
+    # script-engine's own policy names this pairing's other leg, but this
+    # rule was missing with the env var itself (found by the thirtieth pass's
+    # consumed-vs-set URL sweep: default-deny had the flow blocked even
+    # after the URL landed)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: novaforge-script-engine
+      ports:
+        - protocol: TCP
+          port: 8084
 {{- end }}
