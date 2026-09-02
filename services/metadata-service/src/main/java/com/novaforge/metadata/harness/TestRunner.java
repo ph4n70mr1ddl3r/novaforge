@@ -347,9 +347,16 @@ public class TestRunner {
         StringBuilder uri = new StringBuilder("/api/v1/runtime/").append(step.entity())
                 .append("?page=").append(url("{\"size\":200}"));
         if (filter != null) {
-            uri.append("&filter=").append(url(MAPPER.writeValueAsString(filter)));
+            uri.append("&filter=").append(url(MAPPER.writeValueAsString(lowerFilter(filter))));
         }
         JsonNode page = runtimeCall(HttpMethod.GET, uri.toString(), token, null);
+        // A problem body is never an empty page (found live 2026-09-03: an invalid
+        // filter shape rendered as {count: 0} and the step read green while every
+        // dependent ${Entity[n]} slot silently went empty) — surface it raw so
+        // expect: ok fails loudly, the runReport rule.
+        if (isProblem(page)) {
+            return page;
+        }
         List<String> ids = new ArrayList<>();
         for (JsonNode row : page.path("rows")) {
             remember(scope, step.entity(), row);
@@ -359,6 +366,36 @@ public class TestRunner {
             scope.putIfAbsent(step.entity() + "[0]", Map.of());
         }
         return queryResult(scope, page.path("total").asLong(), ids);
+    }
+
+    /**
+     * Authoring sugar for the generic branch (§12): a bare {@code {field: value}}
+     * map lowers to AND-joined {@code eq} leaves — the DSL's full shape stays
+     * available ({@code {field, op, value}} objects and and/or composites pass
+     * through verbatim). The authored suites read as templates, not as query JSON.
+     */
+    private static Object lowerFilter(Object filter) {
+        if (!(filter instanceof Map<?, ?> map) || map.isEmpty()) {
+            return filter;
+        }
+        // The DSL's own reserved keys ({field, op, value} leaves, and/or composites)
+        // pass through verbatim; anything else is sugar over field names
+        boolean sugar = true;
+        for (Object key : map.keySet()) {
+            if (!(key instanceof String field) || "and".equals(field) || "or".equals(field)
+                    || "field".equals(field) || "op".equals(field) || "value".equals(field)) {
+                sugar = false;
+                break;
+            }
+        }
+        if (!sugar) {
+            return filter;
+        }
+        List<Map<String, Object>> leaves = new ArrayList<>();
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            leaves.add(Map.of("field", entry.getKey(), "op", "eq", "value", entry.getValue()));
+        }
+        return Map.of("and", leaves);
     }
 
     /** The §12 result shape — {@code {count, ids}}, remembered as the next ${Query[n]}. */

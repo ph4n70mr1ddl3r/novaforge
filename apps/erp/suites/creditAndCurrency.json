@@ -244,6 +244,17 @@
           "expect": "ok"
         },
         {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
           "op": "resolveTask",
           "entity": "Task",
           "asRole": "accountingManager",

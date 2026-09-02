@@ -81,6 +81,7 @@ class TestRunnerJourneyTests {
     private static final AtomicReference<String> INBOX_METHOD = new AtomicReference<>();
     private static final AtomicReference<String> INBOX_QUERY = new AtomicReference<>();
     private static final AtomicReference<String> THING_FILTER = new AtomicReference<>();
+    private static final java.util.List<String> THING_FILTERS = new java.util.concurrent.CopyOnWriteArrayList<>();
     private static final AtomicReference<String> REPORT_METHOD = new AtomicReference<>();
     private static final AtomicReference<String> REPORT_BODY = new AtomicReference<>();
     private static final AtomicReference<String> WEBHOOK_PATH = new AtomicReference<>();
@@ -127,6 +128,7 @@ class TestRunnerJourneyTests {
                 for (String param : exchange.getRequestURI().getRawQuery().split("&")) {
                     if (param.startsWith("filter=")) {
                         THING_FILTER.set(URLDecoder.decode(param.substring(7), StandardCharsets.UTF_8));
+                        THING_FILTERS.add(THING_FILTER.get());
                     }
                 }
                 // the row carries a field the re-observed record lacks — the row-
@@ -257,6 +259,11 @@ class TestRunnerJourneyTests {
                                 Map.of("action", "approve", "comment", "go"), "ok"),
                         new Step("queryRecord", "Thing", "manager", null,
                                 Map.of("filter", thingFilter), "ok"),
+                        // the §12 sugar leg (found live 2026-09-03): a bare {field: value}
+                        // map lowers to AND-joined eq leaves — the authored ERP suites'
+                        // shape — while the full DSL passes through verbatim
+                        new Step("queryRecord", "Thing", "manager", null,
+                                Map.of("filter", Map.of("name", "t-1")), "ok"),
                         new Step("runReport", "arAging", "manager", null,
                                 Map.of("status", "POSTED", "asOf", "2026-08-23"), "ok"),
                         new Step("resolveTask", "Task", "manager", "${Task[0].id}",
@@ -285,7 +292,10 @@ class TestRunnerJourneyTests {
         assertTrue(INBOX_QUERY.get().contains("size=200"), INBOX_QUERY.get());
         // ${...} references in filters are interpolated before the query is sent
         assertEquals(MAPPER.readValue("{\"field\":\"name\",\"op\":\"eq\",\"value\":\"t-1\"}", Map.class),
-                MAPPER.readValue(THING_FILTER.get(), Map.class));
+                MAPPER.readValue(THING_FILTERS.getFirst(), Map.class));
+        // the sugar query lowered to the AND-joined eq leaf (§12's amendment)
+        assertEquals(MAPPER.readValue("{\"and\":[{\"field\":\"name\",\"op\":\"eq\",\"value\":\"t-1\"}]}", Map.class),
+                MAPPER.readValue(THING_FILTERS.getLast(), Map.class));
         // the report run rode POST with the app bound and the params carried
         // (PHASE-5 §9: the step's actor token, the candidate app's apiName)
         assertEquals("POST", REPORT_METHOD.get());
