@@ -104,6 +104,39 @@ public final class Expression {
         }
     }
 
+    /** The statically inferable value shapes of the Annex A lattice. */
+    public enum ValueType {
+        NUMERIC, TEXT, DATE, DATETIME, BOOLEAN, LIST, UNKNOWN;
+
+        /** Corpus/wire name ("numeric", "text", …); unknown names stay UNKNOWN. */
+        public static ValueType of(String name) {
+            return switch (name == null ? "" : name.toLowerCase(java.util.Locale.ROOT)) {
+                case "numeric" -> NUMERIC;
+                case "text" -> TEXT;
+                case "date" -> DATE;
+                case "datetime" -> DATETIME;
+                case "boolean" -> BOOLEAN;
+                case "list" -> LIST;
+                default -> UNKNOWN;
+            };
+        }
+    }
+
+    /**
+     * Static arithmetic/logical guard (PHASE-3 §2, the compile-check's type-aware
+     * leg): rejects the shapes Annex A forbids — {@code +}/{@code -} over statically
+     * text/boolean/list operands, {@code date + date}, {@code *}/{@code /} over any
+     * statically non-numeric operand, logical operators over statically non-boolean
+     * predicates, unknown methods, and wrong function arities — at save/publish,
+     * where the offending expression names itself, instead of at evaluation where
+     * the same defect used to surface as an opaque 500. Deliberately fail-open:
+     * bindings whose type the host cannot state statically (UNKNOWN) pass — the
+     * evaluator stays the authority where types are not known.
+     */
+    public void arithmeticCheck(java.util.function.Function<String, ValueType> bindingTypes) {
+        new ArithmeticGuard(bindingTypes).infer(root);
+    }
+
     // --- bindings ---
 
     /** Host-supplied values: field apiNames in record contexts + slot-specific names. */
@@ -158,6 +191,177 @@ public final class Expression {
     }
 
     // --- AST walkers ---
+
+    /**
+     * The static shape inferencer behind {@link #arithmeticCheck} — the evaluator's
+     * vocabulary walked for types instead of values, mirroring its messages.
+     */
+    private static final class ArithmeticGuard {
+
+        private final java.util.function.Function<String, ValueType> bindingTypes;
+
+        ArithmeticGuard(java.util.function.Function<String, ValueType> bindingTypes) {
+            this.bindingTypes = bindingTypes;
+        }
+
+        ValueType infer(Node node) {
+            return switch (node) {
+                case Node.Literal literal -> {
+                    Object value = literal.value();
+                    if (value == null) {
+                        yield ValueType.UNKNOWN;   // the null literal — only comparisons consume it
+                    }
+                    yield switch (value) {
+                        case BigDecimal ignored -> ValueType.NUMERIC;
+                        case String ignored -> ValueType.TEXT;
+                        case Boolean ignored -> ValueType.BOOLEAN;
+                        default -> ValueType.UNKNOWN;
+                    };
+                }
+                case Node.Reference reference -> {
+                    ValueType type = bindingTypes.apply(reference.path());
+                    yield type == null ? ValueType.UNKNOWN : type;
+                }
+                case Node.ListLiteral list -> {
+                    list.items().forEach(this::infer);
+                    yield ValueType.LIST;
+                }
+                case Node.Unary unary -> unary(unary);
+                case Node.Binary binary -> binary(binary);
+                case Node.Call call -> call(call);
+                case Node.Method method -> method(method);
+            };
+        }
+
+        private ValueType unary(Node.Unary unary) {
+            ValueType operand = infer(unary.operand());
+            if (unary.op().equals("!")) {
+                requireBoolean(operand, "logical operators require boolean predicates");
+                return ValueType.BOOLEAN;
+            }
+            // unary -
+            if (operand != ValueType.UNKNOWN && operand != ValueType.NUMERIC) {
+                throw new ExpressionException("unary - requires a numeric operand"
+                        + describe(operand));
+            }
+            return ValueType.NUMERIC;
+        }
+
+        private ValueType binary(Node.Binary binary) {
+            ValueType left = infer(binary.left());
+            ValueType right = infer(binary.right());
+            return switch (binary.op()) {
+                case "&&", "||" -> {
+                    requireBoolean(left, "logical operators require boolean predicates");
+                    requireBoolean(right, "logical operators require boolean predicates");
+                    yield ValueType.BOOLEAN;
+                }
+                case "==", "!=", "<", "<=", ">", ">=", "in" -> ValueType.BOOLEAN;
+                case "+", "-" -> additive(binary.op(), left, right);
+                case "*", "/" -> {
+                    requireNumeric(left, "multiplication/division requires numeric operands");
+                    requireNumeric(right, "multiplication/division requires numeric operands");
+                    yield ValueType.NUMERIC;
+                }
+                default -> throw new ExpressionException("unknown binary operator " + binary.op());
+            };
+        }
+
+        /**
+         * Annex A arithmetic, mirroring the evaluator exactly: numeric ± numeric;
+         * date ± integer (the date on the left — the runtime's own shape); date − date
+         * → days. Everything statically known outside that lattice rejects; UNKNOWN
+         * operands stay fail-open (the evaluator remains their authority).
+         */
+        private ValueType additive(String op, ValueType left, ValueType right) {
+            if (left == ValueType.DATE && right == ValueType.DATE) {
+                if (op.equals("+")) {
+                    throw new ExpressionException("date + date is not defined (Annex A)");
+                }
+                return ValueType.NUMERIC;   // date − date is the day count
+            }
+            if (left == ValueType.DATE && right == ValueType.NUMERIC) {
+                return ValueType.DATE;
+            }
+            if (left == ValueType.NUMERIC && right == ValueType.NUMERIC) {
+                return ValueType.NUMERIC;
+            }
+            if (left == ValueType.NUMERIC && right == ValueType.DATE) {
+                throw new ExpressionException("arithmetic requires numeric or date operands "
+                        + "(date arithmetic takes the date on the left, Annex A)");
+            }
+            if (nonArithmetic(left)) {
+                throw new ExpressionException("arithmetic requires numeric or date operands"
+                        + describe(left));
+            }
+            if (nonArithmetic(right)) {
+                throw new ExpressionException("arithmetic requires numeric or date operands"
+                        + describe(right));
+            }
+            return ValueType.UNKNOWN;   // an untyped slot stays evaluation's business
+        }
+
+        /** Known shapes the arithmetic lattice never admits. */
+        private static boolean nonArithmetic(ValueType type) {
+            return type != ValueType.UNKNOWN && type != ValueType.NUMERIC && type != ValueType.DATE;
+        }
+
+        private ValueType call(Node.Call call) {
+            return switch (call.name()) {
+                case "today" -> arity(call, 0, ValueType.DATE);
+                case "now" -> arity(call, 0, ValueType.DATETIME);
+                case "date" -> arity(call, 1, ValueType.DATE);
+                case "datetime" -> arity(call, 1, ValueType.DATETIME);
+                case "size" -> arity(call, 1, ValueType.NUMERIC);
+                case "abs" -> arity(call, 1, ValueType.NUMERIC);
+                case "length" -> arity(call, 1, ValueType.NUMERIC);
+                case "round" -> arity(call, 2, ValueType.NUMERIC);
+                case "min" -> arity(call, 2, ValueType.NUMERIC);
+                case "max" -> arity(call, 2, ValueType.NUMERIC);
+                case "upper" -> arity(call, 1, ValueType.TEXT);
+                case "lower" -> arity(call, 1, ValueType.TEXT);
+                case "trim" -> arity(call, 1, ValueType.TEXT);
+                case "contains" -> arity(call, 2, ValueType.BOOLEAN);
+                case "startsWith" -> arity(call, 2, ValueType.BOOLEAN);
+                default -> throw new ExpressionException("unknown function: " + call.name());
+            };
+        }
+
+        private ValueType arity(Node.Call call, int args, ValueType returns) {
+            if (call.args().size() != args) {
+                throw new ExpressionException(call.name() + "() takes "
+                        + (args == 1 ? "one" : String.valueOf(args)) + " argument"
+                        + (args == 1 ? "" : "s"));
+            }
+            call.args().forEach(this::infer);
+            return returns;
+        }
+
+        private ValueType method(Node.Method method) {
+            infer(method.target());
+            method.args().forEach(this::infer);
+            if (method.name().equals("size") && method.args().isEmpty()) {
+                return ValueType.NUMERIC;
+            }
+            throw new ExpressionException("unknown method: ." + method.name() + "()");
+        }
+
+        private void requireBoolean(ValueType type, String message) {
+            if (type != ValueType.UNKNOWN && type != ValueType.BOOLEAN) {
+                throw new ExpressionException(message + describe(type));
+            }
+        }
+
+        private void requireNumeric(ValueType type, String message) {
+            if (type != ValueType.UNKNOWN && type != ValueType.NUMERIC) {
+                throw new ExpressionException(message + describe(type));
+            }
+        }
+
+        private static String describe(ValueType type) {
+            return " (statically " + type.name().toLowerCase(java.util.Locale.ROOT) + ")";
+        }
+    }
 
     private static final class Collector {
         private final Set<String> references = new java.util.LinkedHashSet<>();

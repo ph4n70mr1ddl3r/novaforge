@@ -38,6 +38,12 @@ export interface CompilePolicy {
     allowClock: boolean;
 }
 
+/** The statically inferable value shapes of the Annex A lattice. */
+export type ValueType = "numeric" | "text" | "date" | "datetime" | "boolean" | "list" | "unknown";
+
+/** Binding shapes for {@link Expression.arithmeticCheck}: field/path → static shape. */
+export type BindingTypes = Readonly<Record<string, ValueType>>;
+
 export function recordContext(fieldNames: readonly string[], allowClock: boolean): CompilePolicy {
     return { bindings: fieldNames, allowClock };
 }
@@ -138,6 +144,178 @@ export class Expression {
                 );
             }
         }
+    }
+
+    /**
+     * Static arithmetic/logical guard (PHASE-3 §2, the compile-check's type-aware
+     * leg — the JVM engine's twin): rejects the shapes Annex A forbids — `+`/`-`
+     * over statically text/boolean/list operands, `date + date`, `*`//` over any
+     * statically non-numeric operand, logical operators over statically non-boolean
+     * predicates, unknown methods, and wrong function arities — at authoring time.
+     * Deliberately fail-open: bindings whose shape the host cannot state statically
+     * ("unknown") pass; the server-side evaluator stays the authority.
+     */
+    arithmeticCheck(bindingTypes: BindingTypes): void {
+        new ArithmeticGuard(bindingTypes).infer(this.root);
+    }
+}
+
+// --- static shape inference (the arithmeticCheck twin) ---
+
+class ArithmeticGuard {
+    constructor(private readonly bindingTypes: BindingTypes) {}
+
+    infer(node: Node): ValueType {
+        switch (node.kind) {
+            case "literal": {
+                const literal = node.value;
+                if (literal instanceof Decimal) return "numeric";
+                if (typeof literal === "string") return "text";
+                if (typeof literal === "boolean") return "boolean";
+                return "unknown";   // null propagates (functions stay total)
+            }
+            case "reference":
+                return this.bindingTypes[node.path] ?? "unknown";
+            case "list":
+                node.items.forEach((item) => this.infer(item));
+                return "list";
+            case "unary":
+                return this.unary(node);
+            case "binary":
+                return this.binary(node);
+            case "call":
+                return this.call(node);
+            case "method":
+                return this.method(node);
+        }
+    }
+
+    private unary(node: Extract<Node, { kind: "unary" }>): ValueType {
+        const operand = this.infer(node.operand);
+        if (node.op === "!") {
+            this.requireBoolean(operand, "logical operators require boolean predicates");
+            return "boolean";
+        }
+        if (operand !== "unknown" && operand !== "numeric") {
+            throw new ExpressionError(`unary - requires a numeric operand${this.describe(operand)}`);
+        }
+        return "numeric";
+    }
+
+    private binary(node: Extract<Node, { kind: "binary" }>): ValueType {
+        const left = this.infer(node.left);
+        const right = this.infer(node.right);
+        switch (node.op) {
+            case "&&":
+            case "||": {
+                this.requireBoolean(left, "logical operators require boolean predicates");
+                this.requireBoolean(right, "logical operators require boolean predicates");
+                return "boolean";
+            }
+            case "==":
+            case "!=":
+            case "<":
+            case "<=":
+            case ">":
+            case ">=":
+            case "in":
+                return "boolean";
+            case "+":
+            case "-":
+                return this.additive(node.op, left, right);
+            case "*":
+            case "/": {
+                this.requireNumeric(left, "multiplication/division requires numeric operands");
+                this.requireNumeric(right, "multiplication/division requires numeric operands");
+                return "numeric";
+            }
+            default:
+                throw new ExpressionError(`unknown binary operator ${node.op}`);
+        }
+    }
+
+    /** Annex A arithmetic, mirroring the evaluator: numeric ± numeric; date ± integer
+     *  (date on the left); date − date → days; everything statically known outside
+     *  that lattice rejects; unknown shapes stay fail-open. */
+    private additive(op: "+" | "-", left: ValueType, right: ValueType): ValueType {
+        if (left === "date" && right === "date") {
+            if (op === "+") throw new ExpressionError("date + date is not defined (Annex A)");
+            return "numeric";   // date − date is the day count
+        }
+        if (left === "date" && right === "numeric") return "date";
+        if (left === "numeric" && right === "numeric") return "numeric";
+        if (left === "numeric" && right === "date") {
+            throw new ExpressionError(
+                "arithmetic requires numeric or date operands (date arithmetic takes the date on the left, Annex A)",
+            );
+        }
+        if (this.nonArithmetic(left)) {
+            throw new ExpressionError(
+                `arithmetic requires numeric or date operands${this.describe(left)}`,
+            );
+        }
+        if (this.nonArithmetic(right)) {
+            throw new ExpressionError(
+                `arithmetic requires numeric or date operands${this.describe(right)}`,
+            );
+        }
+        return "unknown";   // an untyped slot stays evaluation's business
+    }
+
+    private call(node: Extract<Node, { kind: "call" }>): ValueType {
+        const shapes: Record<string, { args: number; returns: ValueType }> = {
+            today: { args: 0, returns: "date" },
+            now: { args: 0, returns: "datetime" },
+            date: { args: 1, returns: "date" },
+            datetime: { args: 1, returns: "datetime" },
+            size: { args: 1, returns: "numeric" },
+            abs: { args: 1, returns: "numeric" },
+            length: { args: 1, returns: "numeric" },
+            round: { args: 2, returns: "numeric" },
+            min: { args: 2, returns: "numeric" },
+            max: { args: 2, returns: "numeric" },
+            upper: { args: 1, returns: "text" },
+            lower: { args: 1, returns: "text" },
+            trim: { args: 1, returns: "text" },
+            contains: { args: 2, returns: "boolean" },
+            startsWith: { args: 2, returns: "boolean" },
+        };
+        const shape = shapes[node.name];
+        if (!shape) throw new ExpressionError(`unknown function: ${node.name}`);
+        if (node.args.length !== shape.args) {
+            const count = shape.args === 1 ? "one" : String(shape.args);
+            const plural = shape.args === 1 ? "" : "s";
+            throw new ExpressionError(`${node.name}() takes ${count} argument${plural}`);
+        }
+        node.args.forEach((arg) => this.infer(arg));
+        return shape.returns;
+    }
+
+    private method(node: Extract<Node, { kind: "method" }>): ValueType {
+        this.infer(node.target);
+        node.args.forEach((arg) => this.infer(arg));
+        if (node.name === "size" && node.args.length === 0) return "numeric";
+        throw new ExpressionError(`unknown method: .${node.name}()`);
+    }
+
+    private requireBoolean(type: ValueType, message: string): void {
+        if (type !== "unknown" && type !== "boolean") {
+            throw new ExpressionError(`${message}${this.describe(type)}`);
+        }
+    }
+
+    private requireNumeric(type: ValueType, message: string): void {
+        if (type !== "unknown" && type !== "numeric") {
+            throw new ExpressionError(`${message}${this.describe(type)}`);
+        }
+    }
+
+    private nonArithmetic(type: ValueType): boolean {
+        return type !== "unknown" && type !== "numeric" && type !== "date";
+    }
+
+    private describe(type: ValueType): string {
+        return ` (statically ${type})`;
     }
 }
 

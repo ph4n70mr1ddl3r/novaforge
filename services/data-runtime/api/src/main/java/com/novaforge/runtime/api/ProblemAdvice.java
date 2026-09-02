@@ -29,8 +29,13 @@ public class ProblemAdvice {
                 exception.detail().orElse(null));
     }
 
-    @ExceptionHandler({IllegalArgumentException.class, tools.jackson.databind.exc.MismatchedInputException.class})
+    @ExceptionHandler({IllegalArgumentException.class, tools.jackson.databind.exc.MismatchedInputException.class,
+            com.novaforge.expression.ExpressionException.class})
     public ResponseEntity<Map<String, Object>> badRequest(Exception exception) {
+        // Authored expressions that fail at evaluation (a slot the static
+        // compile-check could not type, PHASE-3 §2) are authoring feedback — a
+        // metadata defect rendered as 400 VALIDATION_FAILED naming the expression,
+        // never a bare 500 "unexpected error" on the first matching record.
         return problem(HttpStatus.BAD_REQUEST, PlatformErrorCode.VALIDATION_FAILED.code(),
                 PlatformErrorCode.VALIDATION_FAILED.name(), exception.getMessage(), null);
     }

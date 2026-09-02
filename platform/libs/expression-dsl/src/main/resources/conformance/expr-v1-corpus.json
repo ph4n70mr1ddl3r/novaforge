@@ -40,6 +40,20 @@
     { "name": "parse: unknown function rejected", "expr": "regexp(status, 'x')", "invalid": true },
     { "name": "parse: unterminated string", "expr": "status == 'OPEN", "invalid": true },
     { "name": "parse: template interpolation is not the scalar grammar", "expr": "${record.id} == 'x'", "invalid": true },
-    { "name": "eval: division by zero", "expr": "total / zero", "bindings": { "total": 10, "zero": 0 }, "invalid": true }
+    { "name": "eval: division by zero", "expr": "total / zero", "bindings": { "total": 10, "zero": 0 }, "invalid": true },
+    { "name": "static: text plus rejects (Annex A arithmetic)", "expr": "name + ' suffix'", "types": { "name": "text" }, "invalid": true },
+    { "name": "static: boolean arithmetic rejects", "expr": "flag + 1", "types": { "flag": "boolean" }, "invalid": true },
+    { "name": "static: date plus date rejects", "expr": "dueDate + shipDate", "types": { "dueDate": "date", "shipDate": "date" }, "invalid": true },
+    { "name": "static: numeric on the left of a date rejects", "expr": "days + dueDate", "types": { "days": "numeric", "dueDate": "date" }, "invalid": true },
+    { "name": "static: multiplication over text rejects", "expr": "label * 2", "types": { "label": "text" }, "invalid": true },
+    { "name": "static: unary minus over text rejects", "expr": "-label < 0", "types": { "label": "text" }, "invalid": true },
+    { "name": "static: logical over numeric rejects", "expr": "amount && flag", "types": { "amount": "numeric", "flag": "boolean" }, "invalid": true },
+    { "name": "static: unknown method rejects", "expr": "name.upper()", "types": { "name": "text" }, "invalid": true },
+    { "name": "static: wrong arity rejects", "expr": "round(x)", "types": { "x": "numeric" }, "invalid": true },
+    { "name": "static: numeric arithmetic passes and evaluates", "expr": "qty * 1.10", "types": { "qty": "numeric" }, "bindings": { "qty": 3 }, "expect": 3.3 },
+    { "name": "static: date arithmetic passes", "expr": "dueDate - 30", "types": { "dueDate": "date" }, "bindings": { "dueDate": { "$date": "2026-08-31" } }, "expect": { "$date": "2026-08-01" } },
+    { "name": "static: unknown-typed operand stays fail-open", "expr": "mystery + 1", "types": {}, "bindings": { "mystery": 2 }, "expect": 3 },
+    { "name": "static: text comparisons pass (no arithmetic involved)", "expr": "upper(status) == 'POSTED'", "types": { "status": "text" }, "bindings": { "status": "posted" }, "expect": true },
+    { "name": "static: null-aware comparison passes (the null literal is not typed)", "expr": "memo == null", "types": { "memo": "text" }, "bindings": {}, "expect": true }
   ]
 }

@@ -649,8 +649,12 @@ final class FlowCompiler {
         try {
             Set<String> fields = new HashSet<>();
             entity.fields().forEach(f -> fields.add(f.apiName()));
-            Expression.parse(source)
-                    .compileCheck(Expression.CompilePolicy.recordContext(fields, true));
+            Expression parsed = Expression.parse(source);
+            parsed.compileCheck(Expression.CompilePolicy.recordContext(fields, true));
+            // PHASE-3 §2's type-aware leg: Annex A arithmetic violations the static
+            // field types can name reject here, at save/publish — never as a
+            // runtime 500 on the first matching record.
+            parsed.arithmeticCheck(com.novaforge.metadata.ExpressionTypes.of(entity));
         } catch (ExpressionException e) {
             errors.add(new ProblemErrors.FieldError(where,
                     source + " — " + e.getMessage(), source));

@@ -191,7 +191,8 @@ public class DefinitionService {
         java.util.Set<String> fields = new java.util.LinkedHashSet<>();
         entity.fields().forEach(f -> fields.add(f.apiName()));
         entity.relationships().forEach(r -> fields.add(r.apiName()));
-        checkNodeSlots(page.apiName(), page.layout(), fields, errors);
+        checkNodeSlots(page.apiName(), page.layout(), fields,
+                com.novaforge.metadata.ExpressionTypes.of(entity), errors);
     }
 
     /**
@@ -201,14 +202,16 @@ public class DefinitionService {
      * compile-checks, whichever encoding authored it.
      */
     private static void checkNodeSlots(String pageApiName, Object node, java.util.Set<String> fields,
+                                       java.util.function.Function<String, Expression.ValueType> types,
                                        List<ProblemErrors.FieldError> errors) {
         if (node instanceof java.util.Map<?, ?> map) {
             for (String slot : java.util.List.of("visibility", "required", "readonly")) {
                 Object expression = map.get(slot);
                 if (expression instanceof String source && !source.isBlank()) {
                     try {
-                        Expression.parse(source)
-                                .compileCheck(Expression.CompilePolicy.recordContext(fields, true));
+                        Expression parsed = Expression.parse(source);
+                        parsed.compileCheck(Expression.CompilePolicy.recordContext(fields, true));
+                        parsed.arithmeticCheck(types);   // PHASE-3 §2's type-aware leg
                     } catch (ExpressionException e) {
                         errors.add(new ProblemErrors.FieldError(
                                 pageApiName + ".layout", source + " — " + e.getMessage(), source));
@@ -220,11 +223,11 @@ public class DefinitionService {
                 checkAction(pageApiName, map.get("action"), errors);
             }
             for (Object value : map.values()) {
-                checkNodeSlots(pageApiName, value, fields, errors);
+                checkNodeSlots(pageApiName, value, fields, types, errors);
             }
         } else if (node instanceof java.util.List<?> list) {
             for (Object child : list) {
-                checkNodeSlots(pageApiName, child, fields, errors);
+                checkNodeSlots(pageApiName, child, fields, types, errors);
             }
         }
     }
@@ -474,15 +477,19 @@ public class DefinitionService {
             java.util.Set<String> fields = new java.util.LinkedHashSet<>();
             entity.fields().forEach(f -> fields.add(f.apiName()));
             entity.relationships().forEach(r -> fields.add(r.apiName()));
-            checkNodeSlots(page.apiName(), page.layout(), fields, errors);
+            checkNodeSlots(page.apiName(), page.layout(), fields,
+                    com.novaforge.metadata.ExpressionTypes.of(entity), errors);
         });
     }
 
     private static void check(String source, EntityDefinition entity, java.util.Set<String> fields,
                               boolean allowClock, List<ProblemErrors.FieldError> errors) {
         try {
-            Expression.parse(source)
-                    .compileCheck(Expression.CompilePolicy.recordContext(fields, allowClock));
+            Expression parsed = Expression.parse(source);
+            parsed.compileCheck(Expression.CompilePolicy.recordContext(fields, allowClock));
+            // PHASE-3 §2's type-aware leg (the same guard every flow slot passes):
+            // statically-typed Annex A violations reject at save, never at evaluation
+            parsed.arithmeticCheck(com.novaforge.metadata.ExpressionTypes.of(entity));
         } catch (ExpressionException e) {
             errors.add(new ProblemErrors.FieldError(
                     entity.apiName() + ".expressions", source + " — " + e.getMessage(), source));

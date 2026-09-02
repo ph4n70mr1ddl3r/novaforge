@@ -88,6 +88,15 @@ class ExpressionConformanceTest {
             expression.compileCheck(new CompilePolicy(bindings,
                     policyNode.path("allowClock").asBoolean(true)));
         }
+        JsonNode typesNode = item.get("types");
+        if (typesNode != null) {
+            // The static arithmetic guard's corpus leg (PHASE-3 §2): binding shapes
+            // declared per case — the same declaration the TS twin runs against.
+            java.util.Map<String, Expression.ValueType> types = new java.util.HashMap<>();
+            typesNode.properties().forEach(entry ->
+                    types.put(entry.getKey(), Expression.ValueType.of(entry.getValue().asString())));
+            expression.arithmeticCheck(types::get);
+        }
         Map<String, Object> bindings = new LinkedHashMap<>();
         item.path("bindings").properties().forEach(entry ->
                 bindings.put(entry.getKey(), decode(entry.getValue())));

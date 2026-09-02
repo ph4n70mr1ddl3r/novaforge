@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { Decimal } from "../src/expression/decimal.ts";
-import { Expression } from "../src/expression/expression.ts";
+import { Expression, type ValueType } from "../src/expression/expression.ts";
 import { ExpressionError, isDate, isInstant } from "../src/expression/values.ts";
 
 /**
@@ -20,6 +20,8 @@ interface CorpusCase {
     expect?: unknown;
     invalid?: boolean;
     policy?: { bindings: string[]; allowClock?: boolean };
+    /** Static binding shapes for the arithmeticCheck leg (PHASE-3 §2). */
+    types?: Record<string, string>;
 }
 
 interface Corpus {
@@ -72,13 +74,19 @@ describe(`expr/v1 conformance corpus (${corpus.version}, ${corpus.cases.length} 
                 return;
             }
             if (testCase.invalid) {
-                // Invalid-after-parse: compile or evaluation must reject.
+                // Invalid-after-parse: compile, the static arithmetic guard, or
+                // evaluation must reject.
                 expect(() => {
                     if (testCase.policy) {
                         expression.compileCheck({
                             bindings: testCase.policy.bindings,
                             allowClock: testCase.policy.allowClock ?? true,
                         });
+                    }
+                    if (testCase.types) {
+                        // corpus shape names are the ValueType literals themselves
+                        // (a typo'd name stays fail-open — the same on the JVM side)
+                        expression.arithmeticCheck(testCase.types as Record<string, ValueType>);
                     }
                     expression.evaluate(bindings, testCase.clock ?? "2026-01-01T00:00:00Z");
                 }).toThrow();
@@ -90,6 +98,9 @@ describe(`expr/v1 conformance corpus (${corpus.version}, ${corpus.cases.length} 
                     bindings: testCase.policy.bindings,
                     allowClock: testCase.policy.allowClock ?? true,
                 });
+            }
+            if (testCase.types) {
+                expression.arithmeticCheck(testCase.types as Record<string, ValueType>);
             }
 
             const result = expression.evaluate(bindings, testCase.clock ?? "2026-01-01T00:00:00Z");

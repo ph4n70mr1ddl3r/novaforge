@@ -218,6 +218,81 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                 .andExpect(status().isBadRequest());
     }
 
+    @Test
+    @DisplayName("PHASE-3 §2 static guard: text/boolean arithmetic rejects at save; a hook PATCH replaces the nested flow")
+    void staticArithmeticGuardAndHookPatchReplacement() throws Exception {
+        // 1. a setField expression with text `+` operands (numeric-only per Annex A)
+        //    rejects at app save — the authored defect the 2026-08-28 §11 closeout
+        //    gap-logged (it surfaced as a runtime 500, never at the door)
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "apiName": "ArithBad", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "name", "type": "text" } ],
+                                  "hooks": [ { "name": "stamp", "trigger": "beforeSave",
+                                    "flow": { "id": "s1", "op": "setField",
+                                      "params": { "field": "name",
+                                                  "expression": "name + ' x'" } } } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString(
+                                "arithmetic requires numeric or date operands")));
+
+        // 2. the same guard on the validation-rule slot (the DefinitionService leg)
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "apiName": "ArithBadRule", "entities": [ {
+                                  "apiName": "Thing",
+                                  "fields": [ { "apiName": "flag", "type": "boolean" } ],
+                                  "validations": [ { "name": "noArith", "scope": "record",
+                                    "expression": "flag + 1 > 2",
+                                    "message": "never" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString(
+                                "arithmetic requires numeric or date operands")));
+
+        // 3. the Phase 3 §11 gap-log's second item, pinned closed: an entity PATCH
+        //    replacing a hook replaces the nested flow — published v2 carries the
+        //    new expression, not v1's
+        MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "apiName": "HookPatch", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "code", "type": "text" },
+                                               { "apiName": "stamp", "type": "text" } ],
+                                  "hooks": [ { "name": "stampIt", "trigger": "beforeSave",
+                                    "flow": { "id": "s1", "op": "setField",
+                                      "params": { "field": "stamp",
+                                                  "expression": "upper(code)" } } } ] } ] }
+                                """))
+                .andExpect(status().isOk()).andReturn();
+        String appId = MAPPER.readTree(created.getResponse().getContentAsString())
+                .get("id").asString();
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/publish").with(builderJwt()))
+                .andExpect(status().isOk());
+        mockMvc.perform(patch("/api/v1/metadata/apps/" + appId + "/entities/Thing")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "hooks": [ { "name": "stampIt", "trigger": "beforeSave",
+                                  "flow": { "id": "s1", "op": "setField",
+                                    "params": { "field": "stamp",
+                                                "expression": "lower(code)" } } } ] }
+                                """))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/publish").with(builderJwt()))
+                .andExpect(status().isOk());
+        MvcResult published = mockMvc.perform(get("/api/v1/metadata/apps/" + appId + "/published")
+                        .with(userJwt())).andReturn();
+        String flowExpression = MAPPER.readTree(published.getResponse().getContentAsString())
+                .get("app").get("entities").get(0).get("hooks").get(0)
+                .get("flow").get("params").get("expression").asString();
+        assertThat(flowExpression).isEqualTo("lower(code)");   // v2's flow, not v1's
+    }
+
     private static org.springframework.security.test.web.servlet.request
             .SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor builderJwt() {
         return jwt()
@@ -925,7 +1000,7 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                                     "hooks": [ { "name": "post", "trigger": "afterSave",
                                       "flow": { "id": "s1", "op": "setField",
                                           "params": { "field": "number",
-                                            "expression": "'x' + number" },
+                                            "expression": "upper(number)" },
                                         "next": "v1",
                                         "body": { "id": "v1", "op": "createRecord",
                                           "params": { "entity": "Voucher",

@@ -3,6 +3,7 @@ package com.novaforge.runtime;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -94,7 +95,16 @@ class IntegrationFlowTests extends PostgresTestBase {
                     { "name": "verify", "trigger": "beforeSave", "flow":
                       { "id": "v1", "op": "callConnector",
                         "params": { "connector": "con_bank", "operation": "listTransactions",
-                                    "template": { "limit": "1" } } } } ] } ],
+                                    "template": { "limit": "1" } } } } ] },
+                { "apiName": "Gremlin",
+                  "displayField": "label",
+                  "fields": [
+                    { "apiName": "label", "type": "text", "required": true },
+                    { "apiName": "tally", "type": "int" } ],
+                  "hooks": [
+                    { "name": "breakage", "trigger": "beforeSave", "flow":
+                      { "id": "b1", "op": "setField",
+                        "params": { "field": "tally", "expression": "label * 2" } } } ] } ],
               "stateMachines": [
                 { "id": "sm_pay", "entity": "Payment", "stateField": "status",
                   "initial": "DRAFT",
@@ -268,6 +278,25 @@ class IntegrationFlowTests extends PostgresTestBase {
         return jwt().jwt(token -> token.claim("azp", ServiceClientGate.CLIENT_ID)
                         .subject("service-account-novaforge-runtime"))
                 .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
+    }
+
+    @Test
+    @DisplayName("authored expression failing at evaluation renders 400 VALIDATION_FAILED, never a bare 500 (PHASE-3 §2)")
+    void authoredExpressionFailureRendersValidationFailed() throws Exception {
+        // label is text; label * 2 fails evaluation inside the beforeSave hook —
+        // the static compile-check would reject this app at save, but the write
+        // path's honesty is pinned here regardless of what let it through
+        mockMvc.perform(post("/api/v1/runtime/Gremlin").with(userJwt())
+                        .contentType("application/json")
+                        .content("{\"label\":\"x\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.code").value("4000"))
+                .andExpect(jsonPath("$.detail", org.hamcrest.Matchers.containsString("numeric")));
+        Integer created = jdbc.queryForObject(
+                "SELECT count(*) FROM " + table("Gremlin") + " WHERE data->>'label' = 'x'",
+                Integer.class);
+        assertThat(created).isZero();   // the before-hook aborted the transaction
     }
 
     @Test
