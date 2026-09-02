@@ -48,7 +48,11 @@
 
 ## Script ratio at exit review (§9 item 7)
 
-3 hooks authored: 2 declarative posting flows + 1 budgeted script (weighted-average
-issue costing). Logic surface otherwise declarative: 5 validations, 1 formula, 4
-roll-ups, 3 machines. **Script ratio ≤ 20% holds** (rule 3; the one script is §5's
-canonical escape-hatch case).
+4 hooks authored: 3 declarative posting flows + 1 budgeted script (weighted-average
+issue costing — §5's canonical escape-hatch case; the `Payment` scheduled hook joins
+the denominator, the thirty-first pass's honest recount). Logic surface otherwise
+declarative: 5 validations, 1 formula, 4 roll-ups, 3 machines. **The ≤ 20% budget is
+exceeded — 1 of 4 = 25% app-level, the Inventory module 1/1 — under G-2's reviewed
+exception** (the rule-3 primitive-candidate review that governs every exception);
+`scriptBudget` pins the true numbers and change-set review reports the per-module
+ratios (`scriptRatio.modules`).

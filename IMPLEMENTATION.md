@@ -253,7 +253,7 @@ nested paths, the checkPage verdict).
   pinned). Frontend totals: 96 shared + 42 builder + 11 runtime vitest + the E2E
   journey.
 
-## Phase 3 — Business Logic ◐ (spec: PHASE-3-BUSINESS-LOGIC.md)
+## Phase 3 — Business Logic ✅ (spec: PHASE-3-BUSINESS-LOGIC.md)
 
 **Implemented — §3 write-path evaluation** (the ARCHITECTURE §2.4 chain is now:
 resolve → authorize → defaults → formula/roll-up evaluation → validation rules →
@@ -429,6 +429,21 @@ error surfaced at runtime as 500 INTERNAL, never at save), and an app PATCH repl
 an entity's hook did not replace the nested `flow` (published v2 carried v1's
 expression; delete + re-import works around it).
 
+**Both §11 authoring findings closed — 2026-09-03** (the thirty-second pass, spec
+first: PHASE-3 §2 amended to pin the type-aware check and the 400 render). The
+compile-check is now static-type-aware: `Expression.arithmeticCheck` (mirrored in
+the TS twin, a `types` leg in the shared conformance corpus) rejects Annex A
+violations the entity's static field types can name — arithmetic over text/boolean
+operands, `date + date`, wrong-arity function calls, unknown methods — at
+save/publish across every expression slot (flows, machines, SLAs, sharing,
+workflows, reports, integrations, validations, formulas, defaults, page slots),
+fail-open where a binding's shape is not statically known; authored expressions
+that still fail at evaluation render `400 VALIDATION_FAILED` naming the expression,
+never a bare 500. And the hook-PATCH item was already fixed by the tenth/twelfth
+passes' presence-preserving PATCH rework (wholesale list replacement) — never
+pinned: `DefinitionLifecycleTests.staticArithmeticGuardAndHookPatchReplacement`
+pins both (the guard's two doors and published v2 carrying v2's flow, not v1's).
+
 **Spec-review closeout (2026-08-25, fourth pass) — §4's trace propagation and the
 §13 Q3 key never landed, and §5's read gate was missing.** Three findings:
 - **Kafka trace context (ARCHITECTURE.md §6 / §4's "trace context propagates in Kafka
@@ -566,7 +581,7 @@ carries it. Pinned by `TestRunnerJourneyTests.perCaseClockOverridesRunStart`
 (run-start default, advanced `today()`/`now()` under the override, malformed
 → red case with ISO-8601 guidance).
 
-## Phase 4 — Workflow & Approvals ◐ (spec: PHASE-4-WORKFLOW-APPROVALS.md)
+## Phase 4 — Workflow & Approvals ✅ (spec: PHASE-4-WORKFLOW-APPROVALS.md)
 
 **Implemented — T2+T3 state machines (§3):**
 - `StateMachineDefinition` (`{id, entity, stateField, initial, states, transitions}`
@@ -1100,14 +1115,15 @@ unchanged-green (147 vitest). The gateway's hermetic health test needs a local
 Redis on 6379 in dev environments (its rate-limit health indicator) — an
 environmental note this pass surfaced, not a regression.
 
-## Phase 5 — Reporting & Dashboards ◐ (spec: PHASE-5-REPORTING.md)
+## Phase 5 — Reporting & Dashboards ✅ (spec: PHASE-5-REPORTING.md)
 
 **Backend surfaces implemented (T1–T4, T7, T8); T5's catalog components landed with
 Phase 5 itself, and T6's report builder + dashboard composer now ride the Phase 2
 builder shell (`frontend/builder-ui`: the §3 guided form with live bucket-expression
 compile-checks through the shared TS engine, and the §5 widget grid with
 report-ref binding + role-visibility composition — both saving through the metadata
-app patch). The §12 performance validation + §1 exit demo still need the live stack.**
+app patch). The §12 performance validation + §1 exit demo ran live 2026-08-23
+(below — T1/§10 item 4 and the remainder closeout).**
 
 **Implemented — the expression SQL lowering (§3's compile surface):**
 - `ExpressionSql` (`expression-dsl`): the grammar's second execution surface — compiles
@@ -1335,7 +1351,7 @@ never landed:**
   `report: execute` default-deny with the admin/builder bypass, and the
   Redis-outage degradation to the uncached path are now all pinned at the runner.
 
-## Phase 6 — Integration Layer ◐ (spec: PHASE-6-INTEGRATION.md)
+## Phase 6 — Integration Layer ✅ (spec: PHASE-6-INTEGRATION.md)
 
 **Status:** T1–T10 closed. T1–T9 landed and suite-green (T3's builder leg included
 — the 2026-08-24 review closeout below); **T10 (the live exit walkthrough) ran
@@ -1441,7 +1457,7 @@ integrations screen ships a Jobs panel — per-run kind/status/progress counters
 and Resume on paused/failed imports (the checkpointed exactly-once leg). Pinned
 by the integrations vitest journey (counters render, resume fires, ledger opens).
 
-## Phase 7 — ERP Dogfood ◐ (spec: PHASE-7-ERP-DOGFOOD.md)
+## Phase 7 — ERP Dogfood ✅ (spec: PHASE-7-ERP-DOGFOOD.md)
 
 > **ERP corpus authored for the live run (2026-08-26):** the 14-entity corpus is
 > the full authored shape (AccountingPeriod, Account, JournalEntry/JournalLine,
@@ -1500,9 +1516,11 @@ by the integrations vitest journey (counters render, resume fires, ledger opens)
 > ("book invoice → auto journal → post → financial reports reconcile")
 > demonstrated on demand — **with the journal leg then riding G-1's clerk-side
 > workaround** (the arClerk booked the entry; the 2026-09-02 closeout below
-> re-authors the corpus onto the auto-journal, its live re-run pending). The
-> builder-UI authoring surface (G-7) closed when the Phase 2 shells landed. The
-> §9 suites remain the standing contract; re-running them is one driver command.
+> re-authors the corpus onto the auto-journal — **re-run GREEN 2026-09-03, see the
+> closeout below: all five suites, 12/12 cases, the §1 exit on the auto-journal,
+> un-qualified**). The builder-UI authoring surface (G-7) closed when the Phase 2
+> shells landed. The §9 suites remain the standing contract; re-running them is
+> one driver command.
 >
 > **Spec-review closeout (2026-08-24):** reviewing the artifact against §2/§4/§9
 > found and closed four gaps — §4's CLOSING-unless-close-journal gate had no
@@ -1840,7 +1858,33 @@ Verification: metadata-service module green (ErpAppArtifactTests 11,
   module total 67 across 10 classes). Recorded open after this pass: the live-stack
   re-run of the re-authored suites (`docs/loadtests/live-run-suites.py`).
 
-## Phase 8 — Lifecycle & Hardening ◐ (spec: PHASE-8-LIFECYCLE.md)
+**Live-stack re-run GREEN — 2026-09-03 (the recorded-open item closes; the §1 exit
+is un-qualified).** The full stack (compose infra incl. observability + all eleven
+services as host JVMs) ran all five re-authored suites through the driver — and
+the first attempts flushed five defects the corpus's CI gating could never see
+(all closed the same day, the full record in `CODE_REVIEW.md`'s thirty-second
+pass): the SSRF egress door (2026-08-31) rejecting the harness mock's loopback
+rewrite — and the execution-time re-check its javadoc claimed now actually lands;
+the script-execute service gate (also 2026-08-31) irreconcilable with §13 Q1's
+caller-token relay — every user-context script hook 403'd, masked by a fixture
+forging an impossible token (now the reconciled attestation shape, PHASE-3 §6
+amended first); the formula × roll-up evaluation order (the authored `totalBook`
+chain: children's formulas compute → their roll-ups land → the parent's formulas
+read them — plus formula results normalizing to the field's scale); the harness
+forwarding authored filters in a dialect the runtime rejects while masking the
+400 as an empty page (now §12 sugar lowering + problems surface raw); and the eur
+case resolving a task it never observed (re-authored to the reconciliation case's
+query-then-resolve shape). **Final run: reconciliation 2/2, controls 3/3,
+inventoryCosting 1/1, bankFeed 1/1, creditAndCurrency 4/4 — 12/12 cases GREEN**:
+book → AR approval → auto-journal with deep-resolved lines → GL approval →
+POSTED → trial balance and arAging reconcile decimal-exact; the EUR invoice posts
+its journal in USD book currency at the document rate (`totalBook == 110.0000`);
+dunning mirrors its aging bucket; the AP vendor subledger rides the GL; the
+bank-feed HMAC leg settles the invoice through the real inbound path. Phase 7's
+§1 exit — "book invoice → auto journal → post → financial reports reconcile" — is
+demonstrated live on the auto-journal, un-qualified.
+
+## Phase 8 — Lifecycle & Hardening ✅ (spec: PHASE-8-LIFECYCLE.md)
 
 > T1–T7 implemented and suite-green (the code surface: environments, the gate,
   rollback, change sets, artifacts, headless runs, templates, i18n). T8–T10 are the

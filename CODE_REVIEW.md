@@ -3361,3 +3361,90 @@ builder screen, and the ledgers changed.
   corpus is save/compile-gated in CI and its engine-path assumptions are
   code-verified, but the 2026-08-28 green walkthrough predates the re-authoring;
   the §1 exit claim stays qualified in IMPLEMENTATION.md until this lands.
+
+## Thirty-Second Pass — 2026-09-03 (the recorded-open item runs live and flushes five defects: the harness had not met three later hardenings)
+
+### The method
+
+The thirty-first pass left exactly one recorded-open item: the live-stack re-run of
+the re-authored ERP suites. The full stack was brought up (compose infra + all
+eleven services as host JVMs, observability included) and the five authored suites
+run through `docs/loadtests/live-run-suites.py` — repeatedly, because every fix
+flushed the next defect. Five confirmed, all closed this pass with pins; the final
+run is **all five suites GREEN, 12/12 cases** — the Phase 7 §1 exit claim is
+un-qualified.
+
+### The defects (all the same class: a later hardening never met the surfaces it broke)
+
+1. **The SSRF door vs the harness mock (live suites 500'd at candidate import since
+   2026-08-31).** The fifteenth pass's egress door rejects loopback connector
+   baseUrls; §10's harness mock rewrites every baseUrl to `127.0.0.1:<port>` before
+   the scratch publish. CI never saw it — the journey tests stub the publish path.
+   Closed: the door exempts loopback *literals* (pod-local in every supported prod
+   topology; `localhost`/RFC1918/link-local stay blocked), and the execution-time
+   re-check the door's javadoc always *claimed* finally lands in ConnectorExecutor
+   (refuses internal targets at dispatch, before any delivery opens;
+   `novaforge.connector.egress.allow-loopback` defaults true locally, the Helm chart
+   pins false). Pinned both layers.
+2. **The script-execute gate vs the caller relay (every user-context script hook
+   403'd since 2026-08-31).** The fifteenth pass gated `/execute` on the service
+   client while the runtime's relay forwards the calling *user's* token (§13 Q1) —
+   irreconcilable as coded, and the CI fixture forged an impossible token
+   (tenant_id AND azp on one JWT) that masked it. Closed with the reconciled shape
+   (PHASE-3 §6 amended first, per the SDD agreement): the user token stays primary,
+   the runtime attests with its service token in `X-NovaForge-Service-Attestation`
+   (JWKS-verified, fail-closed). Pinned: bare user 403, attested relay executes,
+   forged attestation 403.
+3. **The formula × roll-up ordering (the 31st pass's authored `totalBook` could
+   never have worked).** Parent formulas evaluated before inline children's
+   roll-ups landed (absent binding → 400), and inline children's own formula
+   fields never evaluated at all. Closed: `prepareInlineChildren` — children's
+   formulas compute, their roll-ups land, then the parent's formulas read them —
+   on every door including the flow-driven `createAsPrincipal`; formula results
+   normalize to the field's scale (1.1000 × 100.0000 = scale-8 money rejected on
+   every later hook write). Pinned by `FormulaRollupOrderingTests` (the ERP's
+   exact chain, decimal-exact).
+4. **The harness spoke a filter dialect the runtime never accepted, and masked the
+   rejection.** queryRecord forwarded bare `{field: value}` maps (the authored
+   suites' shape) against the `{field, op, value}` DSL — and read the 400 problem
+   body as an empty page, so the step read GREEN while dependent scope slots went
+   empty. Closed: bare maps lower to AND-joined eq leaves (full DSL passes
+   through), problem bodies surface raw (the runReport rule). Pinned in the
+   journey tests.
+5. **The eur case resolved a task it never observed.** `${Task[1].id}` without a
+   re-query after the SUBMITTED write — null id → 500, and the stale OPEN task
+   poisoned every later case's `${Task[0]}` (dunning approved the wrong task; the
+   AP journal's approval was never resolved). Re-authored to the reconciliation
+   case's query-then-resolve shape.
+
+Also closed this pass (the Phase 3 §11 closeout's two gap-logged authoring
+defects, found while re-verifying the guard rails): the publish compile-check is
+now type-aware (`Expression.arithmeticCheck`, mirrored in the TS twin, corpus
+`types` leg — 14 shared cases), so Annex A violations the static field types can
+name reject at save; authored expressions that still fail at evaluation render
+400 VALIDATION_FAILED, never a bare 500; and the entity-PATCH hook-replacement
+behavior is pinned (it was already correct, never pinned).
+
+### Spec changes (both before the code, per PHASE-4 §1's SDD agreement)
+
+- PHASE-3 §2 (the type-aware compile-check + the 400 render) and §6 (the execute
+  surface's reconciled auth shape) — commits `b9629ab`, `de25906`.
+- PHASE-6 §9 (the egress policy's two layers, both pinned) and §10 (the mock's
+  loopback shape rides the exemption) — commit `b9629ab`.
+
+### Verification (this pass)
+
+Full reactor `./mvnw verify` green end to end after the fixes (649+ tests; the
+final count in IMPLEMENTATION.md's closeout); frontend `pnpm check` + `pnpm -r
+test` green (the corpus's new types cases on both engines); chart gate CLEAN with
+the integration chart's new egress env. **Live: all five ERP suites GREEN, 12/12
+cases** (reconciliation 2, controls 3, inventoryCosting 1, bankFeed 1,
+creditAndCurrency 4) through the full stack — book → approval → auto-journal → GL
+approval → POSTED → trial balance/arAging reconcile decimal-exact, freeze and
+period locks enforced, weighted-average costing exact, the bank-feed HMAC leg, the
+EUR-at-rate posting in USD book currency, dunning mirroring its bucket, and the AP
+vendor subledger.
+
+### Recorded open after this pass
+
+Empty.

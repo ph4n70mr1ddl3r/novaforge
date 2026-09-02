@@ -187,10 +187,9 @@ service under `x-novaforge-service`, and an unavailable upstream degrades audibl
 
 ## Status
 
-**Phases 0–1 complete and verified live; Phases 2–7 partially implemented (all
-backend surfaces + the Phase 7 harvests and dogfood artifacts); Phase 8's code
-surface landed (environments, gated promotion, rollback, change sets, artifacts,
-headless runs, templates, i18n) with the operational drills as runbooks.** The platform core (gateway, Metadata
+**All nine phases complete — every phase's exit work implemented and verified
+live (the last to land: the 2026-09-03 live re-run of the re-authored ERP suites,
+all five GREEN, 12/12 cases).** The platform core (gateway, Metadata
 Service, Data Runtime — ADR-001 closed with measured numbers) shipped in Phases 0–1;
 since then: the expression DSL with server-side RBAC/field security and tenant
 onboarding (Phase 2 backend), the write-path evaluation chain, the Kafka event spine
@@ -226,7 +225,15 @@ dashboards, locale fallback), and the builder shell (entity builder, page builde
 with live preview + rebase, RBAC editors, tenant onboarding, report builder +
 dashboard composer, translation editor, change-set review/promotion) — pages are
 authorable metadata (`PUT …/pages/{apiName}`) with optimistic locking, served
-same-origin by the gateway. Java (329) + frontend (147) tests green under `./mvnw verify` +
-`pnpm -r test`. The main remaining surfaces: the later-phase full-stack exit demos
-(Phases 4/5/8 live exercises). Progress ledger:
+same-origin by the gateway. **All nine phases' exit work is now verified live**
+(including the 2026-09-03 re-run: all five ERP suites GREEN, 12/12 cases, the §1
+exit on the auto-journal — closing the thirty-second review pass's five defects a
+live leg alone could flush: the egress door × harness mock, the script-execute
+attestation reconciliation, the formula × roll-up evaluation order, the harness's
+filter dialect, the eur case's task sequencing). The latest counts: Java (655) +
+frontend (220: shared 135, builder 63, runtime 22) tests green under `./mvnw verify` +
+`pnpm -r test`. The recorded-open
+set is empty; the remaining surfaces are the deliberate v1 deferrals (PLAN.md §1)
+and the standing operational cadences (the pen pass and DR drill re-run quarterly
+per the runbooks). Progress ledger:
 [IMPLEMENTATION.md](IMPLEMENTATION.md).
