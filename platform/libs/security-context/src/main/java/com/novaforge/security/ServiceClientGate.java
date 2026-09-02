@@ -20,6 +20,14 @@ public final class ServiceClientGate {
     /** The Keycloak confidential service client (realm export under deploy/). */
     public static final String CLIENT_ID = "novaforge-runtime";
 
+    /**
+     * The header a relaying service signs with its service-client token beside a
+     * relayed user credential (PHASE-3 §6's reconciled execute-surface shape): the
+     * user token stays the primary (caller-context binds from it) while the
+     * attestation proves the platform's own relay put the call on the wire.
+     */
+    public static final String ATTESTATION_HEADER = "X-NovaForge-Service-Attestation";
+
     /** The committed development secret for that client — local bring-up only. It
      *  is never accepted where novaforge.auth.service-client.allow-default-secret
      *  is false (the auto-configuration fails boot on it there), because a bearer

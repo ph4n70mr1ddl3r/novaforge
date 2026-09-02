@@ -45,21 +45,35 @@ public class ScriptController {
 
     private final ScriptSandbox sandbox;
     private final ScriptMetrics metrics;
+    private final com.novaforge.script.security.ServiceAttestationGate attestations;
 
-    public ScriptController(ScriptSandbox sandbox, ScriptMetrics metrics) {
+    public ScriptController(ScriptSandbox sandbox, ScriptMetrics metrics,
+                            com.novaforge.script.security.ServiceAttestationGate attestations) {
         this.sandbox = sandbox;
         this.metrics = metrics;
+        this.attestations = attestations;
     }
 
     @PostMapping("/execute")
-    public ScriptSandbox.ScriptResult execute(@RequestBody ExecutionRequest request) {
+    public ScriptSandbox.ScriptResult execute(@RequestBody ExecutionRequest request,
+            @org.springframework.web.bind.annotation.RequestHeader(
+                    value = com.novaforge.script.security.ServiceAttestationGate.HEADER,
+                    required = false) String serviceAttestation) {
         // An internal surface (no gateway route — the Data Runtime relays hook
         // execution here), and the request carries an arbitrary script BODY plus a
         // sandbox opt-in: with the connector sandbox set, $http executes connector
         // operations under tenant credentials. The engine is the only legitimate
         // caller — user tokens reaching pod-network must not turn it into an
-        // egress primitive, so the trusted service client gates it like /scheduled.
-        com.novaforge.security.ServiceClientGate.require("script-execute");
+        // egress primitive. PHASE-3 §6's reconciled shape: the PRIMARY credential is
+        // either the service client itself or the relayed calling user (caller-
+        // context, §13 Q1) — and in the user case the runtime's service-client
+        // attestation must accompany it.
+        if (!ServiceClientGate.isServiceClient() && !attestations.attested(serviceAttestation)) {
+            throw new PlatformException(PlatformErrorCode.FORBIDDEN,
+                    "the script-execute surface requires the platform service client "
+                            + "(primary, or the Data Runtime's attestation beside the "
+                            + "relayed caller token)");
+        }
         validateAuthoring(request.app(), request.hook(), request.language(), request.script());
         if (request.trigger() == null || !HookRule.TRIGGERS.contains(request.trigger())) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,

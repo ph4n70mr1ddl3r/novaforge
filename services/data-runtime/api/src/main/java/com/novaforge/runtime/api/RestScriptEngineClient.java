@@ -132,12 +132,19 @@ public class RestScriptEngineClient implements ScriptClient {
         }
     }
 
-    /** Principal relay: the user token on this write request, verbatim. */
+    /**
+     * Principal relay (PHASE-3 §6's reconciled shape): the user token on this write
+     * request rides as the primary credential — scripts run caller-context (§13 Q1)
+     * — and the runtime ATTESTS beside it with its service-client token, the
+     * engine's pod-network gate demanding exactly that pairing.
+     */
     private void relayCaller(HttpHeaders headers) {
         if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes) {
             String authorization = attributes.getRequest().getHeader(HttpHeaders.AUTHORIZATION);
             if (authorization != null && !authorization.isBlank()) {
                 headers.set(HttpHeaders.AUTHORIZATION, authorization);
+                headers.set(com.novaforge.security.ServiceClientGate.ATTESTATION_HEADER,
+                        "Bearer " + serviceToken.token());
                 return;
             }
         }

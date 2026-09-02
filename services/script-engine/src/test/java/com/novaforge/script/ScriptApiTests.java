@@ -48,8 +48,30 @@ class ScriptApiTests {
     /** The scheduled leg's system queries the stub observed (PHASE-4 §7). */
     static final List<String> SYSTEM_QUERIES = new CopyOnWriteArrayList<>();
 
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    org.springframework.security.oauth2.jwt.JwtDecoder attestationDecoder;
+
+    @org.junit.jupiter.api.BeforeEach
+    void attestByDefault() {
+        // every engineJwt() call carries the attestation header; the default stub
+        // verifies it (individual tests override with thenThrow for the forged leg)
+        org.mockito.Mockito.when(attestationDecoder.decode("attested-token"))
+                .thenReturn(serviceAttestation());
+    }
+
+    /** The attestation the mock decoder verifies (azp = the platform service client). */
+    private static org.springframework.security.oauth2.jwt.Jwt serviceAttestation() {
+        return org.springframework.security.oauth2.jwt.Jwt.withTokenValue("attested-token")
+                .header("alg", "RS256")
+                .claim("azp", com.novaforge.security.ServiceClientGate.CLIENT_ID)
+                .subject("service-account-novaforge-runtime")
+                .issuedAt(java.time.Instant.now())
+                .expiresAt(java.time.Instant.now().plusSeconds(60))
+                .build();
+    }
+
     @Test
-    @DisplayName("execute is service-client gated — a user token cannot drive $http egress")
+    @DisplayName("execute is service-gated: a user token alone cannot drive $http egress (the fifteenth pass's pin, kept)")
     void executeRejectsUserTokens() throws Exception {
         mockMvc.perform(post("/api/v1/scripts/execute").with(userJwt())
                         .contentType("application/json")
@@ -57,6 +79,35 @@ class ScriptApiTests {
                                 { "app": "Erp", "hook": "h", "trigger": "beforeSave",
                                   "language": "js", "script": "({ ok: true })",
                                   "sandbox": "connector" }"""))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("the reconciled relay: a user token + the runtime's service attestation executes (the surface the fifteenth pass broke, pinned live 2026-09-03)")
+    void attestedUserTokenExecutes() throws Exception {
+        org.mockito.Mockito.when(attestationDecoder.decode("attested-token"))
+                .thenReturn(serviceAttestation());
+        mockMvc.perform(post("/api/v1/scripts/execute").with(engineJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "app": "Erp", "hook": "h", "trigger": "beforeSave",
+                                  "language": "js", "script": "({ ok: true })",
+                                  "record": {} }"""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.value.ok").value(true));
+    }
+
+    @Test
+    @DisplayName("a forged or unverifiable attestation is no attestation — fail closed")
+    void forgedAttestationRejects() throws Exception {
+        org.mockito.Mockito.when(attestationDecoder.decode("attested-token"))
+                .thenThrow(new org.springframework.security.oauth2.jwt.JwtException("unverifiable"));
+        mockMvc.perform(post("/api/v1/scripts/execute").with(engineJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "app": "Erp", "hook": "h", "trigger": "beforeSave",
+                                  "language": "js", "script": "({ ok: true })",
+                                  "record": {} }"""))
                 .andExpect(status().isForbidden());
     }
 
@@ -101,11 +152,20 @@ class ScriptApiTests {
 
     /** The runtime's relay leg: the service client's token with the tenant bound. */
     private static RequestPostProcessor engineJwt() {
-        return jwt()
-                .jwt(token -> token.claim("tenant_id", TENANT).subject(ACTOR)
-                        .claim("azp", com.novaforge.security.ServiceClientGate.CLIENT_ID)
-                        .claim("client_id", com.novaforge.security.ServiceClientGate.CLIENT_ID))
+        // PHASE-3 §6's reconciled shape (fixed 2026-09-03): the REAL runtime relay is
+        // a calling user's token as primary + the service-client attestation header —
+        // the old fixture forged an impossible token (tenant_id AND azp=novaforge-
+        // runtime on one JWT, a shape Keycloak never mints) and masked the surface's
+        // two-day outage (the fifteenth pass's gate vs the caller relay)
+        RequestPostProcessor caller = jwt()
+                .jwt(token -> token.claim("tenant_id", TENANT).subject(ACTOR))
                 .authorities(new SimpleGrantedAuthority("SCOPE_novaforge.api"));
+        return request -> {
+            caller.postProcessRequest(request);
+            request.addHeader(com.novaforge.security.ServiceClientGate.ATTESTATION_HEADER,
+                    "Bearer attested-token");
+            return request;
+        };
     }
 
     /** A plain user token (browser scope) — must NOT reach the execute surface. */
