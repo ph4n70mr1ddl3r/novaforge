@@ -389,7 +389,7 @@ public class MetadataStore {
         return jdbc.query("""
                 SELECT id, suite, content_hash, green, run_at, artifact FROM md_suite_runs
                  WHERE tenant_id = ? AND app_id = ? AND suite = ?
-                 ORDER BY run_at DESC""",
+                 ORDER BY run_at DESC, id DESC""",
                 (rs, i) -> new SuiteRunInfo(rs.getObject("id", UUID.class), rs.getString("suite"),
                         rs.getString("content_hash"), rs.getBoolean("green"),
                         rs.getTimestamp("run_at").toInstant(),
@@ -401,7 +401,7 @@ public class MetadataStore {
         return jdbc.query("""
                 SELECT id, suite, content_hash, green, run_at, artifact FROM md_suite_runs
                  WHERE tenant_id = ? AND app_id = ?
-                 ORDER BY run_at DESC""",
+                 ORDER BY run_at DESC, id DESC""",
                 (rs, i) -> new SuiteRunInfo(rs.getObject("id", UUID.class), rs.getString("suite"),
                         rs.getString("content_hash"), rs.getBoolean("green"),
                         rs.getTimestamp("run_at").toInstant(),

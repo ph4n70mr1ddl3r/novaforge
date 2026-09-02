@@ -817,4 +817,50 @@ class LifecycleTests extends PostgresTestBase {
         // §3: the re-bind list carries the union — the already-bound ref AND the new one
         assertThat(node.get("credentialRefs").toString()).contains("cred_bound", "cred_new");
     }
+
+    @Test
+    @DisplayName("PHASE-7 §9 item 7: change-set review reports the script ratio per module")
+    void changeSetReportsPerModuleScriptRatio() throws Exception {
+        // an app whose hooks split across modules (one module all-script, others
+        // all-declarative, one entity module-less) — §9 item 7's exit-review report
+        MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json")
+                        .content("""
+                                { "apiName": "Mod%s", "entities": [
+                                  { "apiName": "Ledger", "module": "GL",
+                                    "fields": [ { "apiName": "name", "type": "text" } ],
+                                    "hooks": [ { "name": "post", "trigger": "afterSave",
+                                      "flow": { "id": "p1", "op": "publishEvent",
+                                        "params": { "name": "ledger.posted" } } } ] },
+                                  { "apiName": "Move", "module": "Inventory",
+                                    "fields": [ { "apiName": "name", "type": "text" } ],
+                                    "hooks": [ { "name": "cost", "trigger": "beforeSave",
+                                      "script": { "language": "js",
+                                        "source": "(function () { return {}; })()" } } ] },
+                                  { "apiName": "Lone",
+                                    "fields": [ { "apiName": "name", "type": "text" } ],
+                                    "hooks": [ { "name": "side", "trigger": "afterSave",
+                                      "flow": { "id": "q1", "op": "publishEvent",
+                                        "params": { "name": "lone.posted" } } } ] } ] }
+                                """.formatted(UUID.randomUUID().toString().substring(0, 6))))
+                .andExpect(status().isOk()).andReturn();
+        String appId = MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+
+        MvcResult review = mockMvc.perform(
+                        get("/api/v1/metadata/apps/" + appId + "/changeset?env=dev").with(builderJwt()))
+                .andExpect(status().isOk()).andReturn();
+        var ratio = MAPPER.readTree(review.getResponse().getContentAsString()).get("scriptRatio");
+        // the app-level share: one script of three hooks
+        assertThat(ratio.get("draft").asDouble()).isEqualTo(1.0 / 3);
+        // the per-module report: GL declarative, Inventory all-script, the
+        // module-less entity buckets under its own apiName
+        assertThat(ratio.get("modules").get("GL").get("hooks").asInt()).isEqualTo(1);
+        assertThat(ratio.get("modules").get("GL").get("scripts").asInt()).isEqualTo(0);
+        assertThat(ratio.get("modules").get("GL").get("scriptShare").asDouble()).isEqualTo(0.0);
+        assertThat(ratio.get("modules").get("Inventory").get("hooks").asInt()).isEqualTo(1);
+        assertThat(ratio.get("modules").get("Inventory").get("scripts").asInt()).isEqualTo(1);
+        assertThat(ratio.get("modules").get("Inventory").get("scriptShare").asDouble()).isEqualTo(1.0);
+        assertThat(ratio.get("modules").get("Lone").get("hooks").asInt()).isEqualTo(1);
+        assertThat(ratio.get("modules").get("Lone").get("scriptShare").asDouble()).isEqualTo(0.0);
+    }
 }

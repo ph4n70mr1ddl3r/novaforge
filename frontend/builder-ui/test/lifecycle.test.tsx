@@ -30,7 +30,14 @@ const review = {
         permissionSetChanged: true,
     },
     suiteResults: [{ suite: "reconciliation", green: true, runAt: "2026-08-25T00:00:00Z" }],
-    scriptRatio: { draft: 0.33, published: 0.5 },
+    scriptRatio: {
+        draft: 0.33,
+        published: 0.5,
+        modules: {
+            GL: { hooks: 1, scripts: 0, scriptShare: 0 },
+            Inventory: { hooks: 1, scripts: 1, scriptShare: 1 },
+        },
+    },
     credentialRefs: ["bankFeedKey", "erpOidc"],
     resolvedGaps: [
         { id: "G-1", area: "P3 Business Logic", disposition: "closed", resolvedIn: "this change set" },
@@ -85,8 +92,9 @@ describe("Lifecycle change-set review (PHASE-8 §3)", () => {
         expect(screen.getAllByText("G-1").length).toBeGreaterThanOrEqual(1);
         // suite results hash-bound to the draft
         expect(screen.getByText(/reconciliation: green/)).toBeTruthy();
-        // the script-ratio pair
+        // the script-ratio pair + the §9-item-7 per-module report
         expect(screen.getByTestId("script-ratio").textContent).toContain("33%");
+        expect(screen.getByTestId("script-ratio").textContent).toContain("Inventory 100% (1/1)");
         // the re-bind union
         expect(screen.getByText("Credentials to re-bind in staging")).toBeTruthy();
         expect(screen.getByText("erpOidc")).toBeTruthy();

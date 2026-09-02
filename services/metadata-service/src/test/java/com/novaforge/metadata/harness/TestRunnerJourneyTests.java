@@ -129,7 +129,11 @@ class TestRunnerJourneyTests {
                         THING_FILTER.set(URLDecoder.decode(param.substring(7), StandardCharsets.UTF_8));
                     }
                 }
-                respond(exchange, 200, "{\"rows\":[{\"id\":\"r-1\",\"name\":\"t-1\"}],\"total\":1}");
+                // the row carries a field the re-observed record lacks — the row-
+                // remembering pin (§12's amendment) proves the LIST populated the
+                // slot, not the earlier re-observation
+                respond(exchange, 200, "{\"rows\":[{\"id\":\"r-1\",\"name\":\"t-1\","
+                        + "\"status\":\"POSTED\",\"priority\":\"high\"}],\"total\":1}");
                 return;
             }
             respond(exchange, 405, "{\"code\":\"4000\",\"detail\":\"unexpected "
@@ -261,6 +265,7 @@ class TestRunnerJourneyTests {
                                 Map.of("advance", "PT26H"), "ok")),
                         List.of("${Task[0].status} == 'APPROVED'",
                                 "${Thing[0].status} == 'POSTED'",
+                                "${Thing[0].priority} == 'high'",
                                 "${Query[0].count} == 1",
                                 "${Query[1].count} == 1",
                                 "${Report[0].rowCount} == 1",

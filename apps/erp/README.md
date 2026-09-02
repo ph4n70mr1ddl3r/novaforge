@@ -3,15 +3,18 @@
 The Phase 7 proving-ground artifact (PHASE-7 §2): a mini-ERP authored **entirely as
 metadata** — entities, relationships, state machines, posting flows, roles, sequences,
 reports, dashboard, scheduled delivery, integrations — with zero handwritten
-application code and exactly one budgeted escape-hatch script (§5, rule 3).
+application code and exactly one budgeted escape-hatch script (§5, rule 3 — the
+budget is exceeded, 1 script of 4 hooks = 25%, under G-2's reviewed exception;
+reported per module in change-set review, PHASE-7 §9 item 7).
 
 | File | What it is |
 |------|------------|
 | `erp-app.json` | The app definition (GL, AR, Inventory, Periods, Settings, Permissions, reports, dashboard, job, integrations, close-checklist workflow) |
-| `suites/reconciliation.json` | The §9 item 1/5 exit contract: book → approval → POSTED → trial balance nets zero, aging reconciles, SoD |
+| `suites/reconciliation.json` | The §9 item 1/5 exit contract: book → approval → **auto-journal** (`createRecord` from templates, G-1 adopted) → journal approval → POSTED → trial balance nets zero, aging reconciles, SoD |
 | `suites/controls.json` | §9 items 2–3: posting immutability (`RECORD_FROZEN`) + period locking (`PERIOD_LOCKED`, incl. §4's soft close — `CLOSING` blocks postings unless `closeJournal`) + reopen |
 | `suites/inventoryCosting.json` | §9 item 4: receipt → issue at weighted average, decimal-exact through the rounding chain |
 | `suites/bankFeed.json` | PHASE-6 T10 / §5 T8: webhook payment (real HMAC path) → settlement → aging reflects it, decimal-exact |
+| `suites/creditAndCurrency.json` | §9 item 6 + the AR/AP rows: credit-note allocation, EUR invoice at the document rate posting in USD book currency (the auto-journal's `totalBook` conversion), dunning mirroring its aging bucket, the AP vendor subledger |
 | `GAP-LOG.md` | The binding phase deliverable (§1 rule 2): every gap logged before any workaround, with dispositions — mirrored as `erp-app.json`'s `gapLog` branch (PHASE-8 §3's review surface) |
 
 ## Module map (§2)
@@ -24,9 +27,16 @@ application code and exactly one budgeted escape-hatch script (§5, rule 3).
   `requestApproval` (role `accountingManager`, SoD fail-closed) → `transitionState`
   to `POSTED`; rejection publishes `journal.rejected` on the spine.
 - **AR** — `Customer`, `Invoice` + lines (`amount = quantity × unitPrice` formula;
-  `total` roll-up; gapless `INV-` numbering; `DRAFT → SUBMITTED → POSTED`,
+  `total` roll-up; `totalBook = total × fxRate` — the document total in book
+  currency, what the auto-journal posts; `arAccount`/`revenueAccount` posting-account
+  lookups; gapless `INV-` numbering; `DRAFT → SUBMITTED → POSTED`,
   `freezeOnTerminal` binds the journal entry, not the invoice — settlement decrements
   `amountOutstanding` on POSTED invoices), `Payment` (the bank-feed webhook target).
+  Posting (§5's shape, G-1 adopted 2026-09-02): branch → `requestApproval` →
+  **`createRecord` JournalEntry** (deep-resolved lines: AR debit / revenue credit at
+  `totalBook`, `sourceInvoice` linking back) → `transitionState` to `POSTED`; the
+  auto-created journal then posts through its own GL approval. Rejection publishes
+  `invoice.rejected` and creates nothing.
 - **Inventory** — `Item` (roll-up maintained `qtyOnHand`/`inventoryValue` — the
   running weighted average is exactly `inventoryValue / qtyOnHand`), `StockLedger`
   (append-only movements, terminal `POSTED` + `freezeOnTerminal`). The **one budgeted
@@ -59,7 +69,7 @@ application code and exactly one budgeted escape-hatch script (§5, rule 3).
 TOKEN=<builder token>   # scratch tenant admin, or the dev workspace builder
 APP_ID=$(curl -s -X POST $MD/api/v1/metadata/apps -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d @apps/erp/erp-app.json | jq -r .id)
-for s in reconciliation controls inventoryCosting bankFeed; do
+for s in reconciliation controls inventoryCosting bankFeed creditAndCurrency; do
   curl -s -X PUT $MD/api/v1/metadata/apps/$APP_ID/test-suites/$s \
     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
     -d @apps/erp/suites/$s.json > /dev/null

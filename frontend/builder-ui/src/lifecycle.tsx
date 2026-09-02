@@ -18,7 +18,11 @@ interface ChangeSet {
     publishedVersion?: number | null;
     diff?: Record<string, { added?: string[]; modified?: string[]; removed?: string[] }>;
     suiteResults?: { suite: string; green: boolean | null; runAt?: string }[];
-    scriptRatio?: { draft: number; published: number };
+    scriptRatio?: {
+        draft: number;
+        published: number;
+        modules?: Record<string, { hooks: number; scripts: number; scriptShare: number }>;
+    };
     credentialRefs?: string[];
     resolvedGaps?: { id: string; area: string; disposition: string; resolvedIn?: string; proposed?: string }[];
     promotions?: { env: string; kind?: string; toVersion: number; overridden?: boolean; reason?: string; at?: string }[];
@@ -162,6 +166,11 @@ export function Lifecycle({ client, appId }: { client: PlatformClient; appId: st
                         <p data-testid="script-ratio">
                             Script ratio: draft {(changeset.scriptRatio.draft * 100).toFixed(0)}% —
                             published {(changeset.scriptRatio.published * 100).toFixed(0)}%
+                            {changeset.scriptRatio.modules
+                                ? ` — per module: ${Object.entries(changeset.scriptRatio.modules)
+                                      .map(([module, row]) => `${module} ${(row.scriptShare * 100).toFixed(0)}% (${row.scripts}/${row.hooks})`)
+                                      .join(" · ")}`
+                                : ""}
                         </p>
                     ) : null}
                     {changeset.credentialRefs?.length ? (

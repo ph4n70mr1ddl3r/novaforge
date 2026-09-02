@@ -38,6 +38,8 @@
           "asRole": "arClerk",
           "template": {
             "customer": "${Customer[0].id}",
+            "arAccount": "${Account[0].id}",
+            "revenueAccount": "${Account[1].id}",
             "invoiceDate": "2026-09-01",
             "dueDate": "2026-09-30",
             "amountOutstanding": "120.0000",

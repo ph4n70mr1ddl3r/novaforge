@@ -11,6 +11,7 @@ import com.novaforge.metadata.TestSuiteDefinition;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -194,7 +195,7 @@ class ErpAppArtifactTests {
     }
 
     @Test
-    @DisplayName("script budget: exactly one escape-hatch script (rule 3, ≤ 20%)")
+    @DisplayName("script budget: one escape-hatch script of four hooks — 25%, rule 3's ceiling exceeded, the G-2 exception governs")
     void scriptBudget() throws Exception {
         AppDefinition app = app();
         List<com.novaforge.metadata.HookRule> allHooks = app.entities().stream()
@@ -202,11 +203,78 @@ class ErpAppArtifactTests {
         long scripts = allHooks.stream().filter(hook -> hook.script() != null).count();
         long flows = allHooks.stream().filter(hook -> hook.flow() != null).count();
         assertThat(scripts).as("one budgeted script (§5 weighted-average costing)").isEqualTo(1);
-        assertThat(flows).as("the posting flows are declarative (no scripts expected, §5)").isGreaterThanOrEqualTo(2);
-        // rule 3's ceiling with margin: 1 script of 3 hooks ≈ 33% of *hooks* — but the
-        // module budget counts logic surface (flows + validations + formulas + rollups
-        // are declarative); the ratio reported at exit review is per module (§9 item 7)
-        assertThat(scripts).isEqualTo(1);
+        assertThat(flows).as("the posting/scheduled flows are declarative (§5)").isEqualTo(3);
+        // Rule 3's budget is defined over hooks (ADR-008 #5): 1 script of 4 = 25% —
+        // ABOVE the ≤ 20% ceiling, and the Inventory module sits at 1/1. The budget
+        // is not met; it is exceeded under the exception rule 3 itself prescribes
+        // (exceeding triggers a primitive-candidate review, never quiet growth) —
+        // G-2 is that review, and §9 item 7's per-module report rides change-set
+        // review (LifecycleService.scriptRatioByModule). Pinned here so the number
+        // can never again be recorded as "holds".
+        assertThat(allHooks).as("the denominator counted honestly (the Payment scheduled hook included)").hasSize(4);
+        assertThat((double) scripts / allHooks.size()).isEqualTo(0.25);
+        var inventory = app.entities().stream()
+                .filter(entity -> "Inventory".equals(entity.module()))
+                .flatMap(entity -> entity.hooks().stream()).toList();
+        assertThat(inventory).as("the Inventory module's hooks").hasSize(1);
+        assertThat(inventory.getFirst().script()).as("the Inventory module is 1/1 scripts").isNotNull();
+        assertThat(app.gapLog().stream().anyMatch(gap -> gap.id().equals("G-2")))
+                .as("the exception's primitive-candidate review is gap-logged")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("§5 posting shape: the invoice flow creates the journal (createRecord from templates — G-1 adopted)")
+    void postingFlowCreatesJournal() throws Exception {
+        AppDefinition app = app();
+        var invoice = app.entity("Invoice").orElseThrow();
+        // the posting accounts the auto-journal binds, and the book-currency formula
+        assertThat(invoice.field("arAccount")).as("the AR posting account lookup").isPresent();
+        assertThat(invoice.field("revenueAccount")).as("the revenue posting account lookup").isPresent();
+        assertThat(invoice.field("totalBook").orElseThrow().formula())
+                .as("book-currency total (document total × document rate)")
+                .isEqualTo("total * fxRate");
+        assertThat(app.entity("JournalEntry").orElseThrow().field("sourceInvoice"))
+                .as("the auto-journal's typed link back to its invoice")
+                .isPresent();
+        var hook = invoice.hooks().stream()
+                .filter(h -> "submitForPosting".equals(h.name())).findFirst().orElseThrow();
+        // collect every step definition (definitions nest through body chains)
+        Map<String, com.novaforge.metadata.FlowStep> byId = new java.util.LinkedHashMap<>();
+        java.util.ArrayDeque<com.novaforge.metadata.FlowStep> stack = new java.util.ArrayDeque<>();
+        stack.push(hook.flow());
+        while (!stack.isEmpty()) {
+            var step = stack.pop();
+            if (step == null) {
+                continue;
+            }
+            byId.put(step.id(), step);
+            if (step.body() != null) {
+                stack.push(step.body());
+            }
+        }
+        // §5's pinned order: branch → requestApproval → createRecord JournalEntry →
+        // transitionState POSTED (approval, then the journal from templates, then the
+        // state hop); the reject leg stays publishEvent-only
+        var approval = byId.get("a1");
+        assertThat(approval.op()).isEqualTo("requestApproval");
+        assertThat(approval.next()).isEqualTo("j1");
+        assertThat(approval.body().op()).isEqualTo("publishEvent");
+        assertThat(approval.body().next()).as("the reject leg ends at the event").isNull();
+        var journal = byId.get("j1");
+        assertThat(journal).as("the approval's continuation creates the journal").isNotNull();
+        assertThat(journal.op()).isEqualTo("createRecord");
+        assertThat(journal.param("entity")).isEqualTo("JournalEntry");
+        Map<?, ?> template = (Map<?, ?>) journal.params().get("template");
+        assertThat(String.valueOf(template.get("memo")))
+                .isEqualTo("Invoice ${number}");
+        assertThat(String.valueOf(template.get("sourceInvoice")))
+                .isEqualTo("${id}");
+        var lines = (List<?>) template.get("lines");
+        assertThat(lines).as("the AR/revenue pair, deep-resolved from the record").hasSize(2);
+        assertThat(journal.next()).isEqualTo("p1");
+        assertThat(byId.get("p1").op()).isEqualTo("transitionState");
+        assertThat(byId.get("p1").param("to")).isEqualTo("POSTED");
     }
 
     @Test

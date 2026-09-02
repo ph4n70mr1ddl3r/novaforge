@@ -4,6 +4,7 @@ import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
 import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.DefinitionParser;
+import com.novaforge.metadata.EntityDefinition;
 import com.novaforge.metadata.TranslationsDefinition;
 import com.novaforge.metadata.api.DefinitionService;
 import com.novaforge.metadata.events.MetadataPublishEventPublisher;
@@ -346,7 +347,8 @@ public class LifecycleService {
         review.put("suiteResults", suiteResults);
         review.put("scriptRatio", Map.of(
                 "draft", scriptRatio(draft),
-                "published", published == null ? 0 : scriptRatio(published)));
+                "published", published == null ? 0 : scriptRatio(published),
+                "modules", scriptRatioByModule(draft)));
         // §3: "any credential references stripped from the artifact ... listed for
         // re-binding in the target environment" — the union of what the target
         // currently binds and what the promoting draft references (a newly authored
@@ -476,6 +478,35 @@ public class LifecycleService {
             return 0.0;
         }
         return (double) hooks.stream().filter(hook -> hook.script() != null).count() / hooks.size();
+    }
+
+    /**
+     * The per-module breakdown (PHASE-7 §9 item 7: "script ratio reported per module
+     * at exit review (≤ 20%, rule 3)") — hooks grouped by the entities' {@code module}
+     * (the apiName when an entity carries none): each module reports its hook count,
+     * its script count, and the script share. ADR-008 #5's KPI, made reportable at
+     * the granularity rule 3 budgets — the change-set review is the exit surface.
+     */
+    static Map<String, Map<String, Object>> scriptRatioByModule(AppDefinition app) {
+        Map<String, Map<String, Object>> modules = new LinkedHashMap<>();
+        for (EntityDefinition entity : app.entities()) {
+            List<com.novaforge.metadata.HookRule> hooks = entity.hooks();
+            if (hooks.isEmpty()) {
+                continue;
+            }
+            long scripts = hooks.stream().filter(hook -> hook.script() != null).count();
+            String module = entity.module() == null || entity.module().isBlank()
+                    ? entity.apiName() : entity.module();
+            Map<String, Object> row = modules.computeIfAbsent(module, key -> new LinkedHashMap<>());
+            long hooksSoFar = ((Number) row.getOrDefault("hooks", 0)).longValue();
+            long scriptsSoFar = ((Number) row.getOrDefault("scripts", 0)).longValue();
+            row.put("hooks", hooksSoFar + hooks.size());
+            row.put("scripts", scriptsSoFar + scripts);
+        }
+        modules.values().forEach(row -> row.put("scriptShare",
+                (double) ((Number) row.get("scripts")).longValue()
+                        / ((Number) row.get("hooks")).longValue()));
+        return modules;
     }
 
     // --- the promotion artifact (§2): versioned ZIP, hashed + signed ---

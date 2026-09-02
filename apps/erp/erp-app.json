@@ -504,6 +504,12 @@
           "target": "JournalEntry"
         },
         {
+          "apiName": "sourceInvoice",
+          "type": "lookup",
+          "target": "Invoice",
+          "label": "Source invoice (auto-journal link)"
+        },
+        {
           "apiName": "status",
           "type": "enum",
           "values": [
@@ -700,6 +706,20 @@
           "required": true
         },
         {
+          "apiName": "arAccount",
+          "type": "lookup",
+          "target": "Account",
+          "required": true,
+          "label": "AR posting account"
+        },
+        {
+          "apiName": "revenueAccount",
+          "type": "lookup",
+          "target": "Account",
+          "required": true,
+          "label": "Revenue posting account"
+        },
+        {
           "apiName": "invoiceDate",
           "type": "date",
           "required": true
@@ -733,6 +753,12 @@
           "apiName": "total",
           "type": "money",
           "rollup": "SUM(lines.amount)"
+        },
+        {
+          "apiName": "totalBook",
+          "type": "money",
+          "formula": "total * fxRate",
+          "label": "Total (book currency)"
         },
         {
           "apiName": "amountOutstanding",
@@ -783,7 +809,7 @@
                 "approvers": "Erp.accountingManager",
                 "mode": "any"
               },
-              "next": "p1",
+              "next": "j1",
               "body": {
                 "id": "r1",
                 "op": "publishEvent",
@@ -795,10 +821,35 @@
                   }
                 },
                 "body": {
-                  "id": "p1",
-                  "op": "transitionState",
+                  "id": "j1",
+                  "op": "createRecord",
                   "params": {
-                    "to": "POSTED"
+                    "entity": "JournalEntry",
+                    "template": {
+                      "entryDate": "${invoiceDate}",
+                      "memo": "Invoice ${number}",
+                      "sourceInvoice": "${id}",
+                      "lines": [
+                        {
+                          "account": "${arAccount}",
+                          "debit": "${totalBook}",
+                          "memo": "AR"
+                        },
+                        {
+                          "account": "${revenueAccount}",
+                          "credit": "${totalBook}",
+                          "memo": "Revenue"
+                        }
+                      ]
+                    }
+                  },
+                  "next": "p1",
+                  "body": {
+                    "id": "p1",
+                    "op": "transitionState",
+                    "params": {
+                      "to": "POSTED"
+                    }
                   }
                 }
               }
@@ -1768,17 +1819,17 @@
       "id": "G-1",
       "area": "P3 Business Logic",
       "blocker": "Auto-journal from an invoice: createRecord cannot bind lines to the entry it just created — the created record's id is not captured into flow scope, and ${…} template resolution is top-level only, so an inline lines array inside a createRecord template passes through unresolved (§5's createRecord journal lines from templates is not expressible)",
-      "workaround": "The ar clerk books the invoice's journal as its own JournalEntry with inline lines (suite templates interpolate deeply, so the harness/API path works); the invoice flow posts the invoice itself",
+      "workaround": "Historical v1: the ar clerk booked the invoice's journal as its own JournalEntry (the workaround this entry logged before the harvest); adopted 2026-09-02 — the invoice posting flow now creates the journal itself (createRecord with deep-resolved lines), and the reconciliation/credit-currency suites assert the auto-created entry",
       "proposed": "createRecord captures the created id into step scope (${step.id}) + nested template resolution for children arrays",
       "priority": "high",
       "disposition": "closed",
-      "resolvedIn": "spec §3.3 (2026-08-26): ${record.<stepId>.<path…>} step results + deep template resolution"
+      "resolvedIn": "spec §3.3 (2026-08-26): ${record.<stepId>.<path…>} step results + deep template resolution; adopted by the corpus 2026-09-02"
     },
     {
       "id": "G-2",
       "area": "P3 Business Logic",
       "blocker": "Cross-record arithmetic in flows: updateRecord templates interpolate (${field}) but cannot compute over multiple records — the receipt-side weighted-average re-costing of Item.unitCost ((qtyOld×costOld + qtyNew×costNew) / (qtyOld + qtyNew)) is inexpressible declaratively",
-      "workaround": "Roll-up maintained inventoryValue/qtyOnHand keep the running average derivable; the one budgeted script costs issues from those roll-ups (§5's canonical escape-hatch case)",
+      "workaround": "Roll-up maintained inventoryValue/qtyOnHand keep the running average derivable; the one budgeted script costs issues from those roll-ups (§5's canonical escape-hatch case). Rule 3's ≤ 20% ceiling is exceeded at exit — 1 script of 4 hooks = 25% app-level, the Inventory module 1/1 — this entry is the §1-rule-3 primitive-candidate review that governs the exception (reported per module in change-set review)",
       "proposed": "expression-valued template slots (or a computeField primitive evaluated over queried bindings)",
       "priority": "high",
       "disposition": "backlog"
@@ -1815,8 +1866,8 @@
     {
       "id": "G-6",
       "area": "P3 hooks",
-      "blocker": "Once-only hook triggers: the afterSave posting flow re-suspends on every save of a SUBMITTED record (a memo edit re-requests approval)",
-      "workaround": "Guards read the state field, and the journeys save SUBMITTED exactly once; rejection leaves the record SUBMITTED (a resubmit re-suspends — acceptable, but noisy)",
+      "blocker": "Once-only hook triggers: the afterSave posting flow re-suspends on every save of a SUBMITTED record (a memo edit re-requests approval); with the auto-journal (2026-09-02) each resolution of a re-suspended posting approval also creates another draft JournalEntry",
+      "workaround": "Guards read the state field, and the journeys save SUBMITTED exactly once (exactly one journal per invoice); rejection leaves the record SUBMITTED (a resubmit re-suspends — acceptable, but noisy)",
       "proposed": "idempotency flag on requestApproval (suspend once per record+step)",
       "priority": "medium",
       "disposition": "backlog"

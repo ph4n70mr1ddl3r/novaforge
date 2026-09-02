@@ -313,7 +313,11 @@ public class TestRunner {
      * (v1 filter: {@code {status: <string>}}) and remembers each row as
      * {@code ${Task[n]}} for status/assignee assertions. Both branches cap the page
      * at 200 — {@code count} is the full total; {@code ids} and the remembered rows
-     * are the first page.
+     * are the first page. The first page's rows land in scope as
+     * {@code ${Entity[n]}} on every branch (the Task rule, generalized — §12's
+     * amendment): a flow-created record (an auto-journal) is observable the same
+     * way a human-created one is — id, version, promoted fields — remembered by id
+     * so a later re-observation updates the same slot.
      */
     private JsonNode queryRecord(Step step, String token, Map<String, Object> scope) {
         Object filter = step.template() == null ? null
@@ -348,7 +352,11 @@ public class TestRunner {
         JsonNode page = runtimeCall(HttpMethod.GET, uri.toString(), token, null);
         List<String> ids = new ArrayList<>();
         for (JsonNode row : page.path("rows")) {
+            remember(scope, step.entity(), row);
             ids.add(row.path("id").asString());
+        }
+        if (ids.isEmpty()) {
+            scope.putIfAbsent(step.entity() + "[0]", Map.of());
         }
         return queryResult(scope, page.path("total").asLong(), ids);
     }

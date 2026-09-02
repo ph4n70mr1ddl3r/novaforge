@@ -1484,8 +1484,9 @@ by the integrations vitest journey (counters render, resume fires, ledger opens)
 > (3 — store-path recompute on child writes/transition/delete, in-memory inline
 > filtering, system-field leaves e2e incl. malformed-value 400s); affected sweep
 > green (metadata-model 69 · storage 8 · engine 12 · api 77 · metadata-service
-> 46). The corpus keeps its authored workarounds — adopting the features is the
-> next dogfood iteration's authoring work.
+> 46). The corpus kept its authored workarounds at the time — adopting the
+> features became the next dogfood iteration's authoring work (done 2026-09-02,
+> below).
 >
 > The platform harvests (§3 + §4's soft close) are complete and suite-green; the
 > ERP app ships as authored metadata with its acceptance suites and the binding
@@ -1497,7 +1498,9 @@ by the integrations vitest journey (counters render, resume fires, ledger opens)
 > HMAC leg, credit-note allocation, EUR-at-date-rate posting in USD book currency,
 > dunning mirroring its aging bucket, and the AP vendor subledger — the §1 exit
 > ("book invoice → auto journal → post → financial reports reconcile")
-> demonstrated on demand. The
+> demonstrated on demand — **with the journal leg then riding G-1's clerk-side
+> workaround** (the arClerk booked the entry; the 2026-09-02 closeout below
+> re-authors the corpus onto the auto-journal, its live re-run pending). The
 > builder-UI authoring surface (G-7) closed when the Phase 2 shells landed. The
 > §9 suites remain the standing contract; re-running them is one driver command.
 >
@@ -1681,9 +1684,12 @@ by the integrations vitest journey (counters render, resume fires, ledger opens)
   durable-suspension resume leg; zero scripts on the posting path
 - the one budgeted script (`costMovement`, beforeSave on `StockLedger`) — §5's
   canonical escape-hatch case: issues cost at the running weighted average read
-  from the item's roll-ups, receipts stamp their extended value; script ratio ≤ 20%
-  holds (1 script of 3 hooks, the rest of the logic surface declarative — §9 item 7
-  reported in the gap log)
+  from the item's roll-ups, receipts stamp their extended value; **rule 3's
+  ≤ 20% ceiling is exceeded — 1 script of 4 hooks = 25% app-level, the Inventory
+  module 1/1** — under G-2's primitive-candidate review (rule 3's own remedy for
+  exceeding: never quiet growth). §9 item 7's per-module report ships in
+  change-set review (`scriptRatio.modules`); `ErpAppArtifactTests.scriptBudget`
+  pins the honest numbers so "holds" can never be recorded again
 - the acceptance-contract suites (`apps/erp/suites/`): `reconciliation` (§9 items
   1/5: book → approval → POSTED → trial balance nets zero → aging reconciles →
   TB debits == credits == 120.0000, aging outstanding == 120.0000; preparer cannot
@@ -1778,9 +1784,61 @@ end to end: spec sections first, their own commit, then the code):
 - **The gap log's dispositions move with the landing**: G-1 and G-4 are `closed`
   in both `apps/erp/GAP-LOG.md` and the `gapLog` metadata branch
   (`resolvedIn` names the spec section) — change-set review renders them among
-  the entries the next ERP version resolves. The ERP v1 corpus keeps its
-  authored workarounds (the historical record); adopting the features is the
-  next dogfood iteration's authoring work.
+  the entries the next ERP version resolves. The ERP v1 corpus kept its authored
+  workarounds as the historical record until 2026-09-02, when G-1's harvest was
+  adopted (the posting-flow closeout below); G-4's `$decimal` remains unadopted
+  by the corpus — the one script's arithmetic stays exactly representable (the
+  G-2 entry governs the exception).
+
+**Spec-review closeout (2026-09-02, thirty-first pass) — the implementation-vs-spec
+audit found the ledger claiming two things the artifact did not do; both close here.**
+
+- **The auto-journal is authored, not just shippable.** The §1 exit ("book invoice →
+  auto journal → post → financial reports reconcile", PLAN §5 / §9 item 1) and §5's
+  pinned posting shape ("branch → approval → `createRecord` journal lines from
+  templates → `transitionState` to `POSTED`") had shipped as platform capability
+  (§3.3) but the corpus still ran the G-1 clerk-side workaround — the reconciliation
+  suite's `arClerk` booked the journal by hand, and this file's walkthrough claim
+  glossed it. Closed: the `Invoice.submitForPosting` flow is §5 verbatim — approval,
+  then `createRecord JournalEntry` (deep-resolved lines: AR debit / revenue credit,
+  `memo` `Invoice ${number}`, `sourceInvoice` linking back), then the invoice's
+  `transitionState` — with three authored fields making it expressible: required
+  `arAccount`/`revenueAccount` posting-account lookups on `Invoice`, and
+  `totalBook` (`total * fxRate`, the document total in book currency — formulas
+  re-evaluate on the SUBMITTED write with the stored roll-up loaded, exactly when
+  the flow reads them). The auto-created journal posts through its own GL approval
+  (SoD intact: preparer clerk, approver manager, poster system principal). Suites:
+  `reconciliation` book-to-post and the `creditAndCurrency` EUR case observe the
+  auto journal (one `queryRecord` on `sourceInvoice`), submit + approve it, and pin
+  `totalDebit == totalBook`, `Query.count == 1`, and (EUR) `JournalEntry.currency ==
+  'USD'` — the book-currency pin; `bankFeed`/`credit-note`/`dunning` creates carry
+  the posting accounts. `ErpAppArtifactTests.postingFlowCreatesJournal` pins the
+  authored shape. **Live re-certification pending**: the suites are re-authored and
+  save/compile-gated in CI, but `live-run-suites.py` has not re-run against the
+  stack since (recorded open, below).
+- **The harness observes flow-created records.** PHASE-4 §12 amended (its own
+  commit, per the SDD rule) then landed: `queryRecord`'s first page lands in scope
+  as `${Entity[n]}` on every branch — the Task branch's remembering rule,
+  generalized — remembered by id so re-observation updates in place. Without it no
+  suite could address the auto-journal. Pinned by `TestRunnerJourneyTests` (the
+  stub's list row carries a field the re-observed record lacks).
+- **The script budget is recorded honestly (rule 3, §9 item 7).** "≤ 20% holds (1
+  script of 3 hooks)" was arithmetically false under the rule's own definition — 1
+  of 4 hooks = 25% (the `Payment` scheduled hook was dropped from the count), the
+  Inventory module 1/1. Now: `ErpAppArtifactTests.scriptBudget` pins the true
+  numbers and the G-2 exception; GAP-LOG G-2's "within budget" disposition is
+  corrected; §9 item 7's per-module report ships in change-set review
+  (`scriptRatio.modules` — hooks/scripts/scriptShare per `module`, entities without
+  one bucketing under their apiName; `LifecycleTests.changeSetReportsPerModuleScriptRatio`).
+- Also this pass: `md_suite_runs` ordering gains an `id DESC` tiebreaker (the gate's
+  latest-run pick is deterministic for same-instant runs), `apps/erp/README.md`'s
+  loading loop registers the fifth suite (`creditAndCurrency` was missing), and the
+  suite file table maps all five.
+
+Verification: metadata-service module green (ErpAppArtifactTests 11,
+  TestRunnerJourneyTests 3, LifecycleTests 14 — incl. the four new/rewritten pins;
+  module total 67 across 10 classes). Recorded open after this pass: the live-stack
+  re-run of the re-authored suites (`docs/loadtests/live-run-suites.py`).
 
 ## Phase 8 — Lifecycle & Hardening ◐ (spec: PHASE-8-LIFECYCLE.md)
 
@@ -1825,7 +1883,9 @@ end to end: spec sections first, their own commit, then the code):
 **Implemented — T2 change sets (§3):** `GET …/changeset?env=` renders the per-
 definition diff (entities/state machines/reports/suites/translations by apiName:
   added/modified/removed; permissionSet changed flag) plus the review attachments:
-  suite results hash-bound to the exact draft under review, the script-ratio delta,
+  suite results hash-bound to the exact draft under review, the script-ratio delta
+  (app-level and per module — §9 item 7's exit-review report,
+  `scriptRatio.modules`, rendered in the builder's review screen; landed 2026-09-02),
   the credential references the target environment must re-bind (material never
   rides the artifact), and the full promotion history with overrides visible
 

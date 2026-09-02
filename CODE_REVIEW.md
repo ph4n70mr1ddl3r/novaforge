@@ -3261,3 +3261,103 @@ CLEAN (five contracts, bite-proven).
 ### Recorded open after this pass
 
 Empty.
+
+## Thirty-First Pass — 2026-09-02 (the audit's two findings close: the auto-journal the ledger claimed, the budget the ledger miscounted)
+
+### The method
+
+An independent implementation-vs-specification audit (all nine phase specs sampled
+against the code, not the ledger): extract each spec's pinned semantics, verify in
+the source, and check the ledger's claims against what the artifact actually does.
+The audit verified a deep sample conformant — the P0 version matrix, P1 gapless
+sequences/RLS/caps, the P3 primitive set and sandbox budgets, P4's SLA precedence/
+SoD/escalation/state-machine pins, P5's export cap and actor-scoped reports, P6's
+HMAC/AES-GCM/checkpoint machinery, P8's gate/override/rollback/artifact mechanics —
+and found two substantive discrepancies, both in Phase 7's exit claims, plus two
+nits. This pass implements the recommendations; the audit's full table lives in the
+session record, the closeout in `IMPLEMENTATION.md` (Phase 7, 2026-09-02).
+
+### Finding 1 — the "auto journal" was the G-1 workaround wearing the exit's clothes
+
+PHASE-7 §9 item 1 pins "book invoice → journal **auto-created** and balanced →
+approval → POSTED"; §5 pins the posting shape "branch → approval → `createRecord`
+journal lines from templates → `transitionState` to POSTED". The platform feature
+shipped (§3.3, suite-pinned) — but the corpus never adopted it: the Invoice flow
+only approved + transitioned, the reconciliation suite's `arClerk` booked the
+journal by hand, and `IMPLEMENTATION.md` claimed the §1 exit "demonstrated on
+demand" without qualification.
+
+Closed by adopting the harvest (the better half of the recommendation's either/or):
+the `Invoice.submitForPosting` flow is §5 verbatim — approval, then
+`createRecord JournalEntry` with deep-resolved lines (AR debit / revenue credit at
+`totalBook`, `memo` `Invoice ${number}`, `sourceInvoice` linking back), then the
+invoice's `transitionState`; the auto journal posts through its own GL approval
+(SoD intact — preparer/approver/poster pairwise distinct). Three authored fields
+carry it: required `arAccount`/`revenueAccount` posting-account lookups and
+`totalBook` (`total * fxRate` — the document total in book currency; formulas
+re-evaluate on the SUBMITTED write with the stored roll-up loaded, exactly when the
+flow reads them — code-verified against `RecordEngine`'s create-vs-update ordering
+before authoring). EUR invoices post their journal in USD book currency at the
+document rate — the multi-currency pin, now asserted (`JournalEntry.currency ==
+'USD'`, `totalDebit == totalBook == 110.0000`).
+
+The suites could not have observed the auto-created record: `queryRecord`'s generic
+branch remembered only `{count, ids}`. PHASE-4 §12 was amended first (its own
+commit, per the SDD working agreement): the first page's rows land in scope as
+`${Entity[n]}` on every branch — the Task branch's rule, generalized. Pinned by
+`TestRunnerJourneyTests` (the stub's list row carries a field the re-observed
+record lacks, so the pin proves the list populated the slot).
+
+Suites re-authored: `reconciliation` book-to-post and the `creditAndCurrency` EUR
+case now observe the auto journal (`queryRecord` on `sourceInvoice`, `Query.count ==
+1`), submit and approve it through the real inbox, and reconcile from there;
+`bankFeed`/`credit-note`/`dunning` creates carry the posting accounts.
+`ErpAppArtifactTests.postingFlowCreatesJournal` pins the authored shape (approval →
+createRecord → transitionState, the reject leg event-only). G-1's disposition and
+GAP-LOG row record the adoption; G-6's row records the new blast radius of the
+once-only limitation (a re-approved memo edit would create a second draft journal —
+the journeys save SUBMITTED exactly once; the idempotency flag remains the fix).
+
+### Finding 2 — "script ratio ≤ 20% holds (1 script of 3 hooks)" was false twice
+
+Rule 3 (§1) and §9 item 7 define the budget over hooks (ADR-008 #5): the app is at
+1 script of **4** hooks = 25% (the ledger's count dropped the `Payment` scheduled
+hook), and by its own "1 of 3" arithmetic 33% — both above 20%; the Inventory
+module is 1/1. The spec's remedy for exceeding — a primitive-candidate review, never
+quiet growth — *was* followed (G-2), but the ledger recorded the budget as met, and
+G-2's disposition said "within budget". Now: `scriptBudget` pins the honest numbers
+(denominator 4, share 0.25, Inventory 1/1, the G-2 exception gap-logged); the
+GAP-LOG/json dispositions say *exceeded under the reviewed exception*; and §9 item
+7's per-module report ships — `scriptRatio.modules` in change-set review
+(hooks/scripts/scriptShare per `module`, module-less entities bucketing under their
+apiName; `LifecycleTests.changeSetReportsPerModuleScriptRatio`), rendered in the
+builder's review screen (`lifecycle.test.tsx` re-pinned).
+
+### The nits
+
+`md_suite_runs` gains an `id DESC` tiebreaker (same-instant runs order
+deterministically for the gate's latest-first pick); `apps/erp/README.md`'s loading
+loop registers the fifth suite (`creditAndCurrency` was absent) and the file table
+maps all five with the auto-journal shape. The audit's third nit (audit-partition
+rotation's string-built DDL and unpooled owner datasource) was judged safe as
+written — internally derived date bounds, twice-daily cadence — and left.
+
+### Verification (this pass)
+
+Spec-first commit (PHASE-4 §12), then the code/corpus commit. Backend:
+metadata-service module green — 67 tests across 10 classes, 0 failures, 0 errors
+(ErpAppArtifactTests 11 incl. the new posting-shape pin and the rewritten budget
+pin; TestRunnerJourneyTests 3 incl. the row-remembering pin; LifecycleTests 14
+incl. the per-module report; DefinitionLifecycleTests 17 — the TestRunner and
+gate-path changes regress-checked). Frontend: `lifecycle.test.tsx` 6/6 (the
+per-module rendering). `pnpm check`/full workspaces and the wider reactor were not
+re-run this pass — no file outside metadata-service, its tests, `apps/erp`, the
+builder screen, and the ledgers changed.
+
+### Recorded open after this pass
+
+- The live-stack re-run of the re-authored ERP suites
+  (`docs/loadtests/live-run-suites.py` against the compose stack + services) — the
+  corpus is save/compile-gated in CI and its engine-path assumptions are
+  code-verified, but the 2026-08-28 green walkthrough predates the re-authoring;
+  the §1 exit claim stays qualified in IMPLEMENTATION.md until this lands.
