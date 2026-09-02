@@ -199,6 +199,18 @@ dunning — ADR-008's known limit) have no outlet.
   Runtime query API under the *calling user's* authorization — ARCHITECTURE.md §5
   item 4), `$log`. Scripts are versioned artifacts on the same review/promotion path
   as definitions (ADR-008 #4) and attach to the same triggers as flows.
+- **The execute surface's auth shape (both pins hold at once):** scripts run
+  caller-context (§13 Q1 — the runtime relays the calling user's token as the
+  request's primary credential, the engine's tenant/actor context and `$data`
+  relay bind from it), AND the surface stays service-gated against pod-network
+  callers (a user token alone must never drive `$http` egress). The reconciliation:
+  the Data Runtime **attests** — it adds its own service-client token in the
+  `X-NovaForge-Service-Attestation` header beside the relayed user credential; the
+  engine admits the call when the primary credential IS the service client (the
+  scheduled shape) or a verifiable service attestation accompanies any user
+  credential. The attestation is verified against the issuer's JWKS like any other
+  token — forged or absent attestations reject `FORBIDDEN`, and the runtime remains
+  the only component that can put a user's hook execution on the wire.
 - Deferred with demand: warm context pools (the p95 < 20 ms *warm* target of
   ARCHITECTURE.md §9 applies once they land), `$http` inside the connector sandbox
   (Phase 6), pool tuning.
