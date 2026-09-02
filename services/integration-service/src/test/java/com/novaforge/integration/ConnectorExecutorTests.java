@@ -7,6 +7,7 @@ import com.novaforge.common.error.PlatformException;
 import com.novaforge.integration.clients.PublishedIntegrations;
 import com.novaforge.integration.connector.ConnectorExecutor;
 import com.novaforge.integration.secrets.SecretStore;
+import com.novaforge.integration.store.DeliveryStore;
 import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.DefinitionParser;
 import com.novaforge.testsupport.PostgresTestBase;
@@ -107,7 +108,13 @@ class ConnectorExecutorTests extends PostgresTestBase {
     ConnectorExecutor connectors;
 
     @Autowired
+    PublishedIntegrations publishedIntegrations;
+
+    @Autowired
     SecretStore secrets;
+
+    @Autowired
+    DeliveryStore deliveryStore;
 
     private static HttpServer provider;
 
@@ -263,6 +270,30 @@ class ConnectorExecutorTests extends PostgresTestBase {
         // the credential rode the API-key header; the template resolved into the query
         assertThat(lastAuthorization).isEqualTo("Bearer sk-test-123");
         assertThat(lastQuery).contains("limit=50");
+    }
+
+    @Test
+    @Order(9)
+    @DisplayName("execution-time egress re-check (PHASE-6 §9 layer 2): a strict executor refuses loopback dispatch before any delivery")
+    void strictEgressRefusesLoopbackDispatch() {
+        // the staged/production posture (the charts' allowLoopback=false): the
+        // provider stub binds 127.0.0.1, so the strict executor must refuse the
+        // dispatch — no provider hit, no delivery opened (a policy verdict, not
+        // a failed delivery)
+        ConnectorExecutor strict = new ConnectorExecutor(publishedIntegrations, secrets,
+                deliveryStore, 10000, 4, 200, 2000, false);
+        int before = HITS.get();
+        assertThatThrownBy(() -> strict.execute(TENANT, "Erp", "con_stripe_tx",
+                "listTransactions", Map.of("limit", "5"), "egress-strict-1"))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("internal-network target")
+                .hasMessageContaining("con_stripe_tx");
+        assertThat(HITS.get()).isEqualTo(before);   // nothing dispatched
+        // …while the default local posture (allow-loopback=true — the harness mock's
+        // shape) dispatches to the same loopback provider
+        var allowed = connectors.execute(TENANT, "Erp", "con_stripe_tx", "listTransactions",
+                Map.of("limit", "5"), "egress-strict-2");
+        assertThat(allowed.status()).isEqualTo(200);
     }
 
     @Test

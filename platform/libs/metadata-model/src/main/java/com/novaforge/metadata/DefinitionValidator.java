@@ -1346,10 +1346,17 @@ public final class DefinitionValidator {
     }
 
     /**
-     * The egress policy leg: loopback, link-local (169.254.0.0/16 — the cloud
-     * metadata range), and RFC1918 private hosts are not connector targets. Literal
-     * IPs checked directly; a hostname resolving only publicly can still be rebinding
-     * — the execution-time re-check is the durable layer, this is the publish door.
+     * The egress policy leg (PHASE-6 §9, layer 1 — the authoring door): link-local
+     * (169.254.0.0/16 — the cloud metadata range), RFC1918 private hosts, and the
+     * internal host suffixes are not connector targets. Literal IPs checked
+     * directly; a hostname resolving only publicly can still be rebinding — the
+     * execution-time re-check in the Integration Service is the durable layer,
+     * this is the publish door. **Loopback literals are exempt** (§9): in every
+     * supported production topology loopback is the connector's own pod, and
+     * §10's harness mock connector binds exactly there — the runner rewrites
+     * every baseUrl to {@code 127.0.0.1:<port>} before the candidate publishes.
+     * The {@code localhost} *hostname* stays blocked (a name is not the mock's
+     * literal shape); private/link-local/metadata targets stay blocked always.
      */
     static boolean targetsInternalNetwork(String baseUrl) {
         try {
@@ -1374,7 +1381,10 @@ public final class DefinitionValidator {
             }
             java.net.InetAddress[] addresses = java.net.InetAddress.getAllByName(host);
             for (java.net.InetAddress address : addresses) {
-                if (address.isLoopbackAddress() || address.isLinkLocalAddress()
+                if (address.isLoopbackAddress()) {
+                    continue;   // the §9 door exemption (§10's harness mock shape)
+                }
+                if (address.isLinkLocalAddress()
                         || address.isSiteLocalAddress() || address.isAnyLocalAddress()) {
                     return true;
                 }

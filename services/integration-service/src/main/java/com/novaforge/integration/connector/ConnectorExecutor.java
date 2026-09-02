@@ -62,16 +62,26 @@ public class ConnectorExecutor {
     private final RetryRegistry retries;
     /** One shared client for every connector call and token grant — pooled connections, never rebuilt per call. */
     private final RestClient restClient;
+    /**
+     * The §9 execution-time egress posture (layer 2, the durable one): loopback
+     * dispatch is allowed only where the suite runner's mock connector is
+     * loopback-reachable by design — the local/host-JVM stack. The Helm charts pin
+     * this false: staged and production clusters refuse loopback dispatch, and
+     * suite runs are a dev-workspace activity that never executes there.
+     */
+    private final boolean egressAllowLoopback;
     public ConnectorExecutor(PublishedIntegrations definitions, SecretStore secrets,
                              DeliveryStore deliveries,
                              @Value("${novaforge.connector.timeout-ms:10000}") long timeoutMs,
                              @Value("${novaforge.connector.attempts:4}") int attempts,
                              @Value("${novaforge.connector.backoff-initial-ms:200}") long backoffInitial,
-                             @Value("${novaforge.connector.backoff-max-ms:2000}") long backoffMax) {
+                             @Value("${novaforge.connector.backoff-max-ms:2000}") long backoffMax,
+                             @Value("${novaforge.connector.egress.allow-loopback:true}") boolean egressAllowLoopback) {
         this.definitions = definitions;
         this.secrets = secrets;
         this.deliveries = deliveries;
         this.timeout = Duration.ofMillis(timeoutMs);
+        this.egressAllowLoopback = egressAllowLoopback;
         this.breakers = CircuitBreakerRegistry.ofDefaults();
         io.github.resilience4j.retry.RetryConfig config = io.github.resilience4j.retry.RetryConfig
                 .custom()
@@ -101,6 +111,7 @@ public class ConnectorExecutor {
                 .flatMap(app -> app.connector(connectorId))
                 .orElseThrow(() -> new PlatformException(PlatformErrorCode.NOT_FOUND,
                         "connector " + connectorId + " is not published in app " + appApiName));
+        egressRefuses(connector);
         ConnectorDefinition.Operation operation = connector.operation(operationName)
                 .orElseThrow(() -> new PlatformException(PlatformErrorCode.NOT_FOUND,
                         "connector " + connectorId + " has no operation " + operationName));
@@ -155,6 +166,46 @@ public class ConnectorExecutor {
             throw new PlatformException(PlatformErrorCode.INTERNAL,
                     "connector " + connectorId + "." + operationName + " failed terminally "
                             + "after bounded retries: " + error, null, e);
+        }
+    }
+
+    /**
+     * The §9 execution-time egress re-check — the durable layer the authoring door
+     * only previews: the *dispatched* URL's host is resolved here, so a DNS name
+     * that rebinding flipped to an internal address since publish cannot pass.
+     * Refusal happens before the delivery is opened (a refused target never parks
+     * in the DLQ as a provider failure — it is a policy verdict, not a delivery).
+     */
+    private void egressRefuses(ConnectorDefinition connector) {
+        String host;
+        try {
+            host = new java.net.URI(connector.baseUrl()).getHost();
+        } catch (java.net.URISyntaxException e) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "connector " + connector.id() + " baseUrl is not a URI");
+        }
+        if (host == null) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "connector " + connector.id() + " baseUrl carries no host");
+        }
+        java.net.InetAddress[] addresses;
+        try {
+            addresses = java.net.InetAddress.getAllByName(host);
+        } catch (java.net.UnknownHostException e) {
+            // the HTTP call itself would fail the same resolve — let dispatch own it
+            return;
+        }
+        for (java.net.InetAddress address : addresses) {
+            boolean loopback = address.isLoopbackAddress();
+            if (loopback && egressAllowLoopback) {
+                continue;
+            }
+            if (loopback || address.isLinkLocalAddress() || address.isSiteLocalAddress()
+                    || address.isAnyLocalAddress()) {
+                throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                        "connector " + connector.id() + " refuses internal-network target "
+                                + host + " at dispatch (PHASE-6 §9 egress policy)");
+            }
         }
     }
 

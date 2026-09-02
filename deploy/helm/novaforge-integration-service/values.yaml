@@ -49,6 +49,12 @@ auth:
   # compose stack's own local bring-up posture. Consumed by the deployment
   # template: values env lists are pure data, no templating here.
   allowDefaultSecret: false
+connector:
+  # PHASE-6 §9 layer 2: production refuses loopback connector dispatch at
+  # execution; only the local/host-JVM stack (the harness mock's posture)
+  # overrides this to true.
+  egress:
+    allowLoopback: false
 env:
   - name: NOVAFORGE_SERVICE_CLIENT_SECRET
     valueFrom:

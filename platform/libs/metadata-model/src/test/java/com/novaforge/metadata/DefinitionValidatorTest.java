@@ -607,8 +607,11 @@ class DefinitionValidatorTest {
                 INTEGRATIONS_APP.replace("\"kind\": \"api_key\", \"header\": \"Authorization\"",
                         "\"kind\": \"basic\""))),
                 "basic credentials")).isTrue();
-        // SSRF: connector baseUrls must not target loopback/link-local/private
-        // (the calls run from the integration pod and return the body to the caller)
+        // SSRF: connector baseUrls must not target link-local/private/internal hosts
+        // (the calls run from the integration pod and return the body to the caller).
+        // Loopback LITERALS are exempt (PHASE-6 §9's door — the §10 harness mock
+        // binds exactly there; loopback is the connector's own pod in every
+        // supported production topology); the localhost HOSTNAME stays blocked.
         assertThat(mentions(validate(withIntegrations(baseApp(),
                 INTEGRATIONS_APP.replace("\"baseUrl\": \"https://api.stripe.com/v1\"",
                         "\"baseUrl\": \"http://169.254.169.254/latest\""))),
@@ -617,6 +620,15 @@ class DefinitionValidatorTest {
                 INTEGRATIONS_APP.replace("\"baseUrl\": \"https://api.stripe.com/v1\"",
                         "\"baseUrl\": \"http://localhost:8080\""))),
                 "SSRF")).isTrue();
+        assertThat(mentions(validate(withIntegrations(baseApp(),
+                INTEGRATIONS_APP.replace("\"baseUrl\": \"https://api.stripe.com/v1\"",
+                        "\"baseUrl\": \"http://10.1.2.3/v1\""))),
+                "SSRF")).isTrue();
+        // …while the loopback literal (the harness mock's exact shape) passes the door
+        assertThat(mentions(validate(withIntegrations(baseApp(),
+                INTEGRATIONS_APP.replace("\"baseUrl\": \"https://api.stripe.com/v1\"",
+                        "\"baseUrl\": \"http://127.0.0.1:42341/bankFeed\""))),
+                "SSRF")).isFalse();
         // webhook direction shape: outbound needs url+events, inbound entity+mapping
         assertThat(mentions(validate(withIntegrations(baseApp(),
                 INTEGRATIONS_APP.replace("\"events\": \"event == 'record.created' "

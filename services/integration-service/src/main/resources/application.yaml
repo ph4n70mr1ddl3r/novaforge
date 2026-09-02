@@ -91,6 +91,12 @@ novaforge:
     attempts: 4
     backoff-initial-ms: 200
     backoff-max-ms: 2000
+    # §9's execution-time egress posture: true only where the suite runner's mock
+    # connector is loopback-reachable by design (the local/host-JVM stack); the
+    # Helm charts pin it false — staged and production clusters refuse loopback
+    # dispatch (PHASE-6 §9 layer 2).
+    egress:
+      allow-loopback: ${NOVAFORGE_CONNECTOR_EGRESS_ALLOW_LOOPBACK:true}
   webhook:
     # §5's pinned scheme: ±5 minutes rejects replay.
     timestamp-window-seconds: 300

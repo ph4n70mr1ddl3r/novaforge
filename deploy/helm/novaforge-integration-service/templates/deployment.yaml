@@ -44,6 +44,10 @@ spec:
             # (values env lists are pure data — the templating lives here)
             - name: NOVAFORGE_AUTH_ALLOW_DEFAULT_SECRET
               value: {{ .Values.auth.allowDefaultSecret | default false | quote }}
+            # PHASE-6 §9 layer 2: staged/production clusters refuse loopback connector
+            # dispatch (the local stack's true is the harness mock's posture, not ours)
+            - name: NOVAFORGE_CONNECTOR_EGRESS_ALLOW_LOOPBACK
+              value: {{ .Values.connector.egress.allowLoopback | default false | quote }}
           {{- toYaml .Values.env | nindent 12 }}
           # Startup grace (nineteenth pass): a Boot fat jar — Flyway, the JWKS fetch,
           # Kafka listeners — sharing a kind node with ten sibling JVMs can exceed
