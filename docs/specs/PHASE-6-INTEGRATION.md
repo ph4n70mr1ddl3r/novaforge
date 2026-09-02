@@ -161,6 +161,32 @@ here.
   reference; the secret material sits in the secrets store, encrypted at rest
   AES-GCM with keys in KMS/Vault (ARCHITECTURE.md §5 item 6 — locally, a
   compose-provided data key). Exports/redactions strip references.
+- **Connector egress policy (two layers, both pinned):**
+  1. **The authoring door** — save/publish validation rejects a connector
+     `baseUrl` targeting internal networks: link-local (169.254.0.0/16, the cloud
+     metadata range), RFC1918 private hosts, and the internal host suffixes
+     (`localhost`, `.internal`, `.svc`, `.cluster.local`). Literal IPs check
+     directly; a DNS name is never resolved at the door (a name that fails to
+     resolve is normal at publish time — rebinding through real DNS is the
+     execution layer's job). **Loopback literals (`127.0.0.0/8`, `::1`) are exempt
+     at the door**: in every supported production topology (the Helm charts,
+     default-deny NetworkPolicy) loopback is the connector's own pod — nothing
+     else lives there — while §10's harness-provided mock connector (an in-process
+     stub the suite runner binds on loopback before the candidate publishes)
+     requires exactly that shape; a door that blocked loopback would break every
+     offline `callConnector` suite journey. Private/link-local/metadata targets
+     stay blocked at the door unconditionally — the harness never rewrites to
+     them.
+  2. **The execution-time re-check (the durable layer)** — the Integration
+     Service re-resolves the request URL's host before every connector dispatch
+     and refuses internal-network targets (loopback, link-local, RFC1918,
+     any-local) with `VALIDATION_FAILED` problem+json naming the connector — DNS
+     rebinding cannot pass a door that checked a different address. One explicit,
+     deployment-postured exemption: `novaforge.connector.egress.allow-loopback`
+     (default **true** for the local/host-JVM stack, where the suite runner's mock
+     connector is loopback-reachable by design; the Helm charts pin it **false** —
+     staged and production clusters refuse loopback dispatch, and suite runs are
+     a dev-workspace activity that never executes there).
 - HMAC secret rotation: two active secrets per hook during rotation windows.
 - Audit: dispatches, deliveries, DLQ moves, imports/exports, file uploads
   (metadata, not bytes), quarantine events.
@@ -172,6 +198,10 @@ here.
   `ok` or `error(SIGNATURE_INVALID)` for deliberately-mangled signatures.
 - Suites can bind a `ConnectorDefinition` to a mock base URL (harness-provided
   stub server in the scratch environment) — the bank-feed journey runs offline.
+  The stub binds loopback (`127.0.0.1`) in the runner's JVM and every connector's
+  `baseUrl` is rewritten to it before the candidate publishes — the §9 egress
+  door's loopback exemption exists for exactly this rewrite (all-JVM local stack:
+  loopback reaches the runner's stub from every service).
 
 ## 11. Testing Standards
 

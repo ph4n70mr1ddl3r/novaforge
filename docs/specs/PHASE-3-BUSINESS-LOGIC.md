@@ -68,6 +68,18 @@ and headless CI runs (Phase 8 — ADR-010 #5); report targets (Phase 5).
   paths are relationships — then store the compiled artifact with the version. The
   runtime executes compiled graphs; it never re-parses per request (ADR-008 #1,
   p95 < 150 ms write target).
+- **The compile-check is static-type-aware where types are known (Annex A
+  arithmetic):** every expression slot that compile-checks against an entity's
+  fields also guards the arithmetic lattice — `+`/`-` over statically text or
+  boolean operands, `date + date`, and `*`//` over any statically non-numeric
+  operand reject at save/publish with the offending expression, as do unknown
+  function names, unknown methods, and wrong arities (the runtime's own
+  vocabulary, checked before the artifact can publish). The guard is deliberately
+  fail-open where a binding's type is not statically known (an untyped slot stays
+  evaluation's business); the *runtime* remains the authority — and an authored
+  expression that still fails at evaluation (a slot the static pass could not
+  type) renders `400 VALIDATION_FAILED` problem+json naming the expression,
+  never a bare 500: a metadata defect is authoring feedback, not a server fault.
 - **Failure policy** (ARCHITECTURE.md §2.5), uniform for flows and scripts:
   `beforeSave`/`beforeDelete` failure aborts the transaction; `afterSave`/
   `afterDelete` failures retry via the spine with idempotent consumers.
