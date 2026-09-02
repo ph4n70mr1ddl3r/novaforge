@@ -112,6 +112,14 @@ public class RecordEngine {
         Map<String, Object> canonical = FieldCoercer.canonicalize(handle.entity(), fields,
                 externalChecks(tenantId, handle, app), null, errors);
         FieldCoercer.checkRequired(handle.entity(), canonical, errors);
+        // Inline children land their roll-ups BEFORE formulas and validations read
+        // them (PHASE-3 §3's chain — "formula/roll-up evaluation" is one step), and
+        // each child's own formula fields are computed first so the aggregates are
+        // over real values (the ERP's totalBook = total × fxRate over
+        // total = SUM(lines.amount) with lines.amount = quantity × unitPrice —
+        // found live 2026-09-03: the create 400'd with total never computed)
+        prepareInlineChildren(tenantId, app, handle, children, errors);
+        evaluateRollupsFromChildren(app, handle, children, canonical);
         evaluateFormulas(handle.entity(), canonical);
         evaluateValidationRules(handle.entity(), canonical, errors);
         reject(errors, "create " + entityApiName + " failed validation");
@@ -171,6 +179,14 @@ public class RecordEngine {
                 externalChecks(tenantId, handle, app), id, errors);
         canonical.forEach(merged::put);
         FieldCoercer.checkRequired(handle.entity(), merged, errors);
+        // Same ordering rule as the create door: when the body replaces inline
+        // children, their own formulas compute and their roll-ups land BEFORE
+        // formulas/validations read them (the stored value is otherwise stale at
+        // formula time); the body-less case keeps the stored roll-ups untouched
+        if (!children.isEmpty()) {
+            prepareInlineChildren(tenantId, app, handle, children, errors);
+            evaluateRollupsFromChildren(app, handle, children, merged);
+        }
         evaluateFormulas(handle.entity(), merged);
         evaluateValidationRules(handle.entity(), merged, errors);
         reject(errors, "update " + entityApiName + "/" + id + " failed validation");
@@ -621,6 +637,10 @@ public class RecordEngine {
         Map<String, Object> canonical = FieldCoercer.canonicalize(handle.entity(), fields,
                 externalChecks(tenantId, handle, app), null, errors);
         FieldCoercer.checkRequired(handle.entity(), canonical, errors);
+        // the same ordering rule as the user create door (children's formulas, then
+        // their roll-ups, then the parent's formulas — one evaluation family)
+        prepareInlineChildren(tenantId, app, handle, children, errors);
+        evaluateRollupsFromChildren(app, handle, children, canonical);
         evaluateFormulas(handle.entity(), canonical);
         evaluateValidationRules(handle.entity(), canonical, errors);
         reject(errors, "integration create " + entityApiName + " failed validation");
@@ -681,6 +701,12 @@ public class RecordEngine {
                 externalChecks(tenantId, handle, app), id, errors);
         canonical.forEach(merged::put);
         FieldCoercer.checkRequired(handle.entity(), merged, errors);
+        // the same ordering rule as the user update door (replaced children compute
+        // their formulas and land their roll-ups before the parent's formulas read them)
+        if (!children.isEmpty()) {
+            prepareInlineChildren(tenantId, app, handle, children, errors);
+            evaluateRollupsFromChildren(app, handle, children, merged);
+        }
         evaluateFormulas(handle.entity(), merged);
         evaluateValidationRules(handle.entity(), merged, errors);
         reject(errors, "integration update " + entityApiName + "/" + id + " failed validation");
@@ -1283,6 +1309,10 @@ public class RecordEngine {
         Map<String, Object> canonical = FieldCoercer.canonicalize(handle.entity(), fields,
                 externalChecks(tenantId, handle, app), null, errors);
         FieldCoercer.checkRequired(handle.entity(), canonical, errors);
+        // the user doors' ordering rule (one evaluation family): children's own
+        // formulas compute, their roll-ups land, THEN the parent's formulas read them
+        prepareInlineChildren(tenantId, app, handle, children, errors);
+        evaluateRollupsFromChildren(app, handle, children, canonical);
         evaluateFormulas(handle.entity(), canonical);
         evaluateValidationRules(handle.entity(), canonical, errors);
         reject(errors, "hook create " + entityApiName + " failed validation");
@@ -1290,10 +1320,6 @@ public class RecordEngine {
         requireParentsNotFrozen(tenantId, app, handle, canonical);
         enforceCreateState(app, handle, canonical);
         enforcePeriodLock(tenantId, app, handle, canonical);
-        // roll-ups aggregate the in-memory child set before the insert (PHASE-3 §3) —
-        // the same semantics as the user path, now load-bearing for flow-created
-        // parents with deep-resolved inline children (§3.3, the G-1 harvest)
-        evaluateRollupsFromChildren(app, handle, children, canonical);
         persistWithChildren(tenantId, systemPrincipal, app, handle, id, canonical, children, errors);
         events.publish(event("record.created", tenantId, handle.entityKey(), id, systemPrincipal));
         // flow-created standalone rows feed parent roll-ups like any write (§3)
@@ -1805,6 +1831,10 @@ public class RecordEngine {
     /**
      * Formula fields: own-record expressions evaluated at write time and stored, never
      * computed on read; implicitly readonly (Phase 1 rule rejects app writes).
+     * Results land at the field's authored scale (the roll-up rule, found live
+     * 2026-09-03 on the EUR invoice: 1.1000 × 100.0000 = 110.00000000 — a scale-8
+     * money the coercer rejects on every later hook write of the same record;
+     * HALF_EVEN per the money rule, ARCHITECTURE.md §4).
      */
     private void evaluateFormulas(EntityDefinition entity, Map<String, Object> data) {
         for (FieldDefinition field : entity.fields()) {
@@ -1812,7 +1842,7 @@ public class RecordEngine {
                 continue;
             }
             Object value = evaluate(entity, field.formula(), data);
-            data.put(field.apiName(), canonicalizeValue(value));
+            data.put(field.apiName(), normalizeRollupScale(field, value));
         }
     }
 
@@ -1838,11 +1868,6 @@ public class RecordEngine {
         Expression expression = Expression.parse(source);
         Object outcome = expression.evaluate(Expression.Bindings.of(data), clock);
         return outcome;
-    }
-
-    /** Storage-canonical BigDecimal for numeric expression outcomes. */
-    private static Object canonicalizeValue(Object value) {
-        return value instanceof java.math.BigDecimal decimal ? decimal : value;
     }
 
     private final java.time.Clock clock = java.time.Clock.systemUTC();
@@ -1876,6 +1901,33 @@ public class RecordEngine {
                 // clock functions are compile-rejected here (a stored value goes stale).
                 fields.put(field.apiName(), evaluate(entity, expression.expression(), fields));
             }
+        }
+    }
+
+    /**
+     * Inline children prepared for the parent's evaluation family (PHASE-3 §3's
+     * one-step chain): each child row canonicalized with ITS OWN formula fields
+     * computed, so the parent's roll-ups aggregate computed values and its formulas
+     * read real aggregates (the ERP chain — lines.amount = quantity × unitPrice
+     * feeding Invoice.total = SUM(lines.amount) feeding totalBook = total × fxRate
+     * — found live 2026-09-03). The parent binding is not yet known here, so the
+     * required check stays with the persist/replace passes that add it — this pass
+     * computes, it does not gate.
+     */
+    private void prepareInlineChildren(UUID tenantId, AppDefinition app, EntityHandle parent,
+                                       Map<String, List<Map<String, Object>>> children,
+                                       List<ProblemErrors.FieldError> errors) {
+        for (Map.Entry<String, List<Map<String, Object>>> entry : children.entrySet()) {
+            EntityHandle childHandle = childHandle(tenantId, app, parent, entry.getKey());
+            List<Map<String, Object>> prepared = new ArrayList<>();
+            for (Map<String, Object> childBody : entry.getValue()) {
+                Map<String, Object> canonicalChild = FieldCoercer.canonicalize(
+                        childHandle.entity(), childBody,
+                        externalChecks(tenantId, childHandle, app), null, errors);
+                evaluateFormulas(childHandle.entity(), canonicalChild);
+                prepared.add(canonicalChild);
+            }
+            children.put(entry.getKey(), prepared);
         }
     }
 
