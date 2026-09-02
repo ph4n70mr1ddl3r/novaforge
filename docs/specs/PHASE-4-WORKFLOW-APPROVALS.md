@@ -299,8 +299,11 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
 ## 12. Test-Harness Growth (ADR-010 #5's Phase 4 vocabulary)
 
 - **New step ops:** `queryRecord` `{ entity, filter, asRole }` → `{ count, ids }`
-  (needed for sharing-rule visibility assertions); `resolveTask`
-  `{ match | taskId, action: approve | reject, asRole, comment? }`.
+  (needed for sharing-rule visibility assertions); the first page's rows land in
+  scope as `${Entity[n]}` — the Task branch's remembering rule, generalized to
+  every entity (a later growth, adopted for PHASE-7 §9 item 1's auto-journal
+  assertions) so flow-created records are observable like human-created ones;
+  `resolveTask` `{ match | taskId, action: approve | reject, asRole, comment? }`.
 - **New assertion surface:** task references `${Task[n].status}`,
   `${Task[n].assignee}`; `requestApproval` inside a flow under test creates real
   tasks in the scratch tenant; resolution goes through the same inbox API synthetic
