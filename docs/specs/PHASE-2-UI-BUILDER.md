@@ -46,6 +46,19 @@ demands them).
 | A11y | WCAG 2.2 AA; axe automated checks in CI | builder and generated UI |
 | E2E | Playwright | per-component + golden journeys |
 
+*(Amended 2026-09-04, the spec-sync: the Lists/Forms/Builder-canvas rows record the
+stack decision as made; the shipped v1 implementation deviates, and the deviation
+is the recorded decision — IMPLEMENTATION.md Phase 2, "Deviations (honest)" — not
+an omission. Server-side paging/sort/filter rides the shared `ListLayout` against
+the Data Runtime query DSL (TanStack Table + TanStack Virtual join with
+widget-authoring demand); forms ride the catalog's controlled widgets under the
+same JSON-Schema validation — the §13 Q1 binder's validation half (the
+react-hook-form swap joins with the same demand); the builder canvas is a
+structural tree editor with palette, props-schema property panel, and the
+runtime-renderer preview (React-Flow + agnostic-dnd join when flow-graph
+authoring needs a free-form graph). The rows stay as decided for the historical
+record.)*
+
 Repo placement (per ARCHITECTURE.md §7): `frontend/runtime-ui` (renderer + shell)
 and `frontend/builder-ui` (design-time), sharing a `frontend/shared` package
 (page-model types, expression runtime, component registry). pnpm workspace.
@@ -198,6 +211,9 @@ flow from field metadata into form defaults. Role changes re-resolve defaults
 - **Page builder**: React-Flow canvas, agnostic-dnd palette from the catalog,
   property panel auto-generated from the component's props JSON Schema, live preview
   = the real runtime renderer in preview mode (no separate preview implementation).
+  *(Amended 2026-09-04, the spec-sync: the canvas ships as the structural tree
+  editor of §2's amendment — the palette, the props-schema property panel, and the
+  runtime-renderer preview are as pinned.)*
 - Undo/redo: command pattern producing overlay diffs; page definitions are small so
   full-document snapshots with structural sharing are acceptable v1.
 - Simultaneous edit protection: optimistic locking on page definitions (409 →
@@ -286,7 +302,10 @@ Phase 5 landing are scope decisions, unchanged.
 
 - **Q1 — Form layer: DECIDED — react-hook-form + a thin JSON Schema binder**
   (control, size); Uniforms' opinionated themes are not worth ceding widget mapping
-  already owned via the L1 rules.
+  already owned via the L1 rules. *(Amended 2026-09-04, the spec-sync: the shipped
+  form layer is the decision's validation half over the catalog's controlled
+  widgets — the widget mapping stays ours via the L1 rules exactly as decided; the
+  react-hook-form swap joins with widget-authoring demand. See §2's amendment.)*
 - **Q2 — Overlay format: DECIDED — custom structural deltas** (readable diffs in
   change-set reviews); RFC 6902 JSON Patch is kept as the export/interchange
   format.

@@ -276,7 +276,17 @@ before implementation.
   rejects dated-into-`CLOSING` writes unless it is set (app metadata, no platform
   special-casing); `CLOSED` activates `PeriodLock` (§3.2).
 - Reopen is an audited `CLOSED → OPEN` transition that resolves only through its
-  own Phase 4 approval flow (no back door). `PeriodLock` deactivates as its
+  own Phase 4 approval flow (no back door). *(Amended 2026-09-04, the spec-sync —
+  the G-10 deviation, now recorded where the pin lives: guards evaluate the
+  record's post-merge state, so a guard cannot distinguish the reopen from the
+  initial create, and SoD would bar the creating controller from approving it —
+  the approval-gated reopen is inexpressible without G-10's versioned feature
+  (transition-scoped hooks / prior-state bindings). The corpus ships the reopen
+  edge as the listed, audited machine transition an
+  `accountingManager`/`controller` write drives — `sm_period` carries the guardless
+  `CLOSED → OPEN` edge, and the `controls` suite pins the reopened period admitting
+  new dated writes; the approval-gated form joins when G-10 lands.)*
+  `PeriodLock` deactivates as its
   activation condition ceases to hold — the status is no longer `CLOSED` (§3.2) —
   and nothing is ever un-frozen: corrections inside a reopened period are still
   reversal entries (append-only, §2 GL; `freezeOnTerminal` binds the journal

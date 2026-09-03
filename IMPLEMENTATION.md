@@ -206,7 +206,9 @@ nested paths, the checkPage verdict).
   The page-builder canvas is a structural tree editor with
   palette/canvas/property-panel/preview rather than a free-form React-Flow graph
   (form trees are the v1 page shape; §2's React-Flow pin joins when flow-graph
-  authoring — Phase 3's designer — needs it).
+  authoring — Phase 3's designer — needs it). *(Synced 2026-09-04: the same
+  amendment now lives where the SDD agreement reads it — PHASE-2 §2's stack-table
+  note, §8's page-builder bullet, and §13 Q1.)*
 
 **Playwright landed + the live exit demo ran (2026-08-28) — the deviation closed.**
   `@playwright/test` rides the frontend workspace (`pnpm exec playwright test`,
