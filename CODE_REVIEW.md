@@ -3549,3 +3549,63 @@ its budget. Suite now green twice consecutively (60/60).
 ### Recorded open after this pass
 
 Empty.
+
+## Thirty-Fourth Pass — 2026-09-03 (the spec-vs-implementation re-review: report run params could invert a saved filter's operator — the §4 tighten pin did not hold)
+
+A fresh pass over the phase specs against the tree, pin by pin (the frontend
+and catalog surfaces, the gateway's public-route limiter, the file/HMAC window
+pins, the scheduler misfire policy, the freeze/period-lock write-path
+enforcement, the runAsRole save-time rule, and the Phase 1 caps all verified
+exact). One genuine gap found:
+
+### C-34P1 — report run params could replace a saved filter's OPERATOR (MEDIUM, PHASE-5 §4)
+
+§4 pins: "saved filters are the defaults; callers may tighten, never loosen".
+`ReportCompiler.mergeFilters` merged an override by REPLACING the whole saved
+leaf — operator included — so a caller could POST `params: {"status": {"op":
+"neq", "value": "POSTED"}}` at `POST /api/v1/reports/{id}/run` and run the
+A/R aging over exactly the rows the report author excluded (or widen `gt` to
+`gte` with a sentinel value). Sharing-rule row filters still bounded the
+dataset (the runtime enforces them on every query), so this is a report-
+integrity defect, not a cross-actor leak — but the report author's saved
+filters were advisory when the spec makes them binding. The javadoc even
+stated the correct rule ("override a field's value, add fields") while the
+code did more; the existing `paramOverridesMerge` test only exercised value
+replacement and shaped overrides on NEW fields, so the hole rode between the
+assertions.
+
+**Fixed:** a param naming a saved filter's field overrides that filter's VALUE
+only — the saved operator stands; a shaped override whose op differs from the
+saved op rejects `400 VALIDATION_FAILED` naming the field (loud authoring
+feedback, the house style — never a silent no-op that runs the saved query
+anyway). New-field params keep the shaped `{op, value}` / bare-eq append
+forms. No authored caller relied on op replacement (the ERP suites pass empty
+params; the runtime-ui passes widget params through untouched).
+**Pinned:** `ReportCompilerTests.savedFilterOperatorIsImmutable` (the `eq` →
+`neq` flip rejects, naming the field and both operators),
+`.sameOperatorShapedOverrideReplacesValueOnly` (a same-op shaped override is
+still a value override), `.unsavedFieldOverridesNeverDropSavedFilters` (an
+appended param never drops the saved leaf). Bite-proven: with the pre-fix
+merge restored, `savedFilterOperatorIsImmutable` fails exactly as the defect
+reads (the `neq` flip sails through and compiles the inverted envelope).
+The pass also fixed the `filtersOf` test helper's single-leaf gap (a
+one-filter report's envelope is the leaf itself, not an and-composite — the
+helper returned null there; latent, exposed by the new same-op test).
+
+### Verification (this pass)
+
+- reporting-service: 47/47 green (`./mvnw -pl services/reporting-service test`)
+  — the 8 `ReportCompilerTests` include the three new anti-regressions.
+- No other module touched: `ReportCompiler`'s merge is private static, the
+  service has no dependents (the harness's `runReport` rides the run API over
+  HTTP, not the compiler), and the authored ERP content is unaffected
+  (verified: no suite or schedule passes params at all).
+- Environmental note for the next pass: this workspace's sdkman `current` is
+  Corretto 11 and the apt `java-21-openjdk-amd64` is a JRE (no javac) —
+  building needs `JAVA_HOME=$HOME/.sdkman/candidates/java/21.0.6-tem`. The
+  misleading symptom (a module-specific "release version 21 not supported")
+  cost real time; recorded here so the next pass skips the detour.
+
+### Recorded open after this pass
+
+Empty.

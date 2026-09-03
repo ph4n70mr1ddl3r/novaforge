@@ -92,9 +92,14 @@ public final class ReportCompiler {
     }
 
     /**
-     * Param overrides merge over saved filters: a param naming a filtered field
-     * replaces that filter's value (tighten), a param naming a new field appends.
-     * Anything else in params is ignored except {@code asOf}, which is not a filter.
+     * Param overrides merge over saved filters — the §4 tighten pin, mechanically:
+     * a param naming a saved filter's field overrides that filter's VALUE (the saved
+     * operator stands — an override op that differed would invert or drop the
+     * author's constraint, which is loosening, and is rejected), a param naming a
+     * new field appends a filter ({@code eq} by default, or the shaped
+     * {@code {op, value}} form), and anything else in params is ignored except
+     * {@code asOf}, which is not a filter. The actor's sharing-rule row filters
+     * apply regardless — the runtime enforces them on every query.
      */
     private static List<Map<String, Object>> mergeFilters(ReportDefinition report,
                                                           Map<String, Object> params) {
@@ -122,23 +127,40 @@ public final class ReportCompiler {
                 op = String.valueOf(shaped.get("op"));
                 value = shaped.get("value");
             }
+            int savedAt = -1;
+            for (int i = 0; i < filters.size(); i++) {
+                if (filters.get(i).get("field").equals(field)) {
+                    savedAt = i;
+                    break;
+                }
+            }
+            if (savedAt >= 0) {
+                // tighten only (§4): the saved operator stands — a differing override
+                // op would invert the constraint (eq → neq) or widen it (gt → gte),
+                // which is exactly the loosening the spec forbids
+                @SuppressWarnings("unchecked")
+                Map<String, Object> savedLeaf = (Map<String, Object>) filters.get(savedAt);
+                if (!savedLeaf.get("op").equals(op)) {
+                    throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                            "report run param '" + field + "' may override the saved "
+                                    + "filter's value only — its operator '"
+                                    + savedLeaf.get("op") + "' is the definition's and "
+                                    + "cannot become '" + op + "'");
+                }
+                if (value == null) {
+                    savedLeaf.remove("value");
+                } else {
+                    savedLeaf.put("value", value);
+                }
+                continue;
+            }
             Map<String, Object> leaf = new LinkedHashMap<>();
             leaf.put("field", field);
             leaf.put("op", op);
             if (value != null) {
                 leaf.put("value", value);
             }
-            boolean replaced = false;
-            for (int i = 0; i < filters.size(); i++) {
-                if (filters.get(i).get("field").equals(field)) {
-                    filters.set(i, leaf);
-                    replaced = true;
-                    break;
-                }
-            }
-            if (!replaced) {
-                filters.add(leaf);
-            }
+            filters.add(leaf);
         }
         return filters;
     }

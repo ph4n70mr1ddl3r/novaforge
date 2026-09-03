@@ -1229,7 +1229,9 @@ app patch). The §12 performance validation + §1 exit demo ran live 2026-08-23
   run with no reporting-side reimplementation; response `{columns, rows, totals,
   chart}` with the ECharts-shaped projection
 - `ReportCompiler`: filters merge (params tighten — a param naming a filtered field
-  replaces its value, a new field appends), buckets/aggregates compile to the
+  replaces its VALUE, the saved operator stands — a differing override op is a 400,
+  the §4 loosening hole the thirty-fourth pass closed; a new field appends),
+  buckets/aggregates compile to the
   envelope, the un-grouped totals twin stays a valid envelope for every legal shape;
   `asOf` rides through
 - result cache: keyed (tenant, app, report, version, actor, **evaluation date**,
@@ -1241,7 +1243,9 @@ app patch). The §12 performance validation + §1 exit demo ran live 2026-08-23
   streams under the run's exact authorization, money columns locale-formatted with
   the configured currency, totals row closing the file, **10k-row sync cap**
   rejecting with async-export (File Service, Phase 6) guidance
-- suites: `ReportCompilerTests` (5), `ReportExporterTests` (4 — quoting, money,
+- suites: `ReportCompilerTests` (8 — the merge, the operator-immutability tighten
+  pin, the same-op value override, and the no-drop-of-saved-leaves pin added by the
+  thirty-fourth pass), `ReportExporterTests` (4 — quoting, money,
   cap-with-guidance, CSV/XLSX parity parsed cell-for-cell)
 
 **Implemented — T7 scheduled delivery (§7):**
