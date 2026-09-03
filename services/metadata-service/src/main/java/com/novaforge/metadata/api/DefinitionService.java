@@ -43,7 +43,7 @@ public class DefinitionService {
 
     public AppDefinition createApp(UUID tenantId, UUID actorId, AppDefinition draft) {
         ProblemErrors errors = DefinitionValidator.validate(draft);
-        compileCheckExpressions(draft, errors);
+        compileCheckExpressions(draft, errors, false);
         FlowCompiler.compile(draft);
         if (!errors.isEmpty()) {
             throw validationFailure("app definition failed save validation", errors);
@@ -83,7 +83,7 @@ public class DefinitionService {
         entities.add(entity);
         AppDefinition candidate = withEntities(current, entities);
         ProblemErrors errors = DefinitionValidator.validate(candidate);
-        compileCheckExpressions(candidate, errors);
+        compileCheckExpressions(candidate, errors, false);
         if (!errors.isEmpty()) {
             throw validationFailure("entity definition failed save validation", errors);
         }
@@ -173,13 +173,18 @@ public class DefinitionService {
      * Page slot contract (PHASE-2 §4/§7): the entity must exist, every
      * visibility/required/readonly binding in the layout tree compiles against the
      * entity's field apiNames (UI bindings are UX sugar, but they must at least
-     * parse and resolve), and the §4 bind rules hold: where the bound name repeats
+     * parse and resolve), the §4 bind rules hold — where the bound name repeats
      * in widget config ({@code props.field}/{@code props.relationship}) a mismatch
      * rejects, a binding-taking component carries a bind, and a bind resolves to a
-     * field or relationship on the page's entity — the same rules the TS twin
-     * enforces in the builder, mirrored here so the metadata store can never hold
-     * a page whose binding disagrees with its widget config no matter which
-     * client authored it.
+     * field or relationship on the page's entity — and the §4 catalog contract
+     * holds: the component id is known, its version pin matches the catalog, and
+     * the props validate against the component's props JSON Schema. All are the
+     * same rules the TS twin enforces in the builder, mirrored here so the
+     * metadata store can never hold a page no catalog component renders per
+     * contract no matter which client authored it. Save mode resolves a missing
+     * version pin to the catalog's current stable (the twin's save rule); publish
+     * mode rejects it — §4: "a missing {@code version} resolves to the catalog's
+     * current stable but is rejected at publish".
      */
     @SuppressWarnings("unchecked")
     private static void validatePageSlots(AppDefinition.PageDefinition page, AppDefinition app,
@@ -198,7 +203,7 @@ public class DefinitionService {
         entity.fields().forEach(f -> fields.add(f.apiName()));
         entity.relationships().forEach(r -> fields.add(r.apiName()));
         checkNodeSlots(page.apiName(), page.layout(), fields,
-                com.novaforge.metadata.ExpressionTypes.of(entity), errors);
+                com.novaforge.metadata.ExpressionTypes.of(entity), errors, false);
     }
 
     /**
@@ -207,13 +212,16 @@ public class DefinitionService {
      * — every visibility/required/readonly string anywhere in the document
      * compile-checks, whichever encoding authored it, and every component node
      * (any map carrying a catalog {@code type} — a resolved-tree node, or the node
-     * inside an {@code insertNode} delta) passes the §4 bind checks.
+     * inside an {@code insertNode} delta) passes the §4 bind checks and the §4
+     * catalog contract. {@code publish} switches the version-pin rule: save
+     * resolves a missing pin, publish rejects it.
      */
     private static void checkNodeSlots(String pageApiName, Object node, java.util.Set<String> fields,
                                        java.util.function.Function<String, Expression.ValueType> types,
-                                       List<ProblemErrors.FieldError> errors) {
+                                       List<ProblemErrors.FieldError> errors, boolean publish) {
         if (node instanceof java.util.Map<?, ?> map) {
             checkNodeBinds(pageApiName, map, fields, errors);
+            checkNodeCatalog(pageApiName, map, publish, errors);
             for (String slot : java.util.List.of("visibility", "required", "readonly")) {
                 Object expression = map.get(slot);
                 if (expression instanceof String source && !source.isBlank()) {
@@ -232,12 +240,52 @@ public class DefinitionService {
                 checkAction(pageApiName, map.get("action"), errors);
             }
             for (Object value : map.values()) {
-                checkNodeSlots(pageApiName, value, fields, types, errors);
+                checkNodeSlots(pageApiName, value, fields, types, errors, publish);
             }
         } else if (node instanceof java.util.List<?> list) {
             for (Object child : list) {
-                checkNodeSlots(pageApiName, child, fields, types, errors);
+                checkNodeSlots(pageApiName, child, fields, types, errors, publish);
             }
+        }
+    }
+
+    /**
+     * The §4 catalog contract, node-local (the document carries id, version pin,
+     * and props; the catalog itself is the platform manifest the twin pins in
+     * lockstep): an unknown component id rejects; a version pin that disagrees
+     * with the catalog rejects; a missing pin rejects at publish (save resolves
+     * it to the current stable — the twin's save rule, the resolver's rendering
+     * rule); and the props validate against the component's props JSON Schema.
+     * Unknown ids skip the version/props checks exactly as the twin's walk does —
+     * there is nothing to pin or validate against.
+     */
+    private static void checkNodeCatalog(String pageApiName, java.util.Map<?, ?> map,
+                                         boolean publish, List<ProblemErrors.FieldError> errors) {
+        if (!(map.get("type") instanceof String type) || !type.startsWith("novaforge.")) {
+            return;
+        }
+        ComponentCatalog.Entry entry = ComponentCatalog.find(type);
+        if (entry == null) {
+            errors.add(new ProblemErrors.FieldError(pageApiName + ".layout",
+                    "unknown component '" + type + "'", type));
+            return;
+        }
+        Object version = map.get("version");
+        if (version == null) {
+            if (publish) {
+                errors.add(new ProblemErrors.FieldError(pageApiName + ".layout",
+                        "missing pinned version (publish requires " + type + "@"
+                                + entry.version() + ")", type));
+            }
+        } else if (!entry.version().equals(String.valueOf(version))) {
+            errors.add(new ProblemErrors.FieldError(pageApiName + ".layout",
+                    "unknown version " + type + "@" + version + " (catalog serves "
+                            + entry.version() + ")", String.valueOf(version)));
+        }
+        for (ComponentCatalog.SchemaIssue issue : ComponentCatalog.validateProps(
+                map.get("props"), entry.schema(), "props")) {
+            errors.add(new ProblemErrors.FieldError(pageApiName + ".layout",
+                    issue.path() + ": " + issue.message(), issue.path()));
         }
     }
 
@@ -444,7 +492,7 @@ public class DefinitionService {
                                              boolean acknowledgeDataImpact) {
         AppDefinition draft = store.requireApp(tenantId, appId);
         ProblemErrors errors = DefinitionValidator.validate(draft);
-        compileCheckExpressions(draft, errors);
+        compileCheckExpressions(draft, errors, true);
         if (!errors.isEmpty()) {
             throw validationFailure("publish rejected: drafts fail validation", errors);
         }
@@ -497,11 +545,13 @@ public class DefinitionService {
      * read the clock; formula fields may not (PHASE-3 §3 — determinism of stored
      * values). Slots stay inert until Phase 3 activates write-path evaluation.
      */
-    /** Expression compile-check — package-private so the artifact tests ride the exact save-path check. */
-    static void compileCheckExpressions(AppDefinition app, ProblemErrors errors) {
+    /** Expression compile-check — package-private so the artifact tests ride the exact save-path check.
+     *  {@code publish} switches the §4 version-pin rule the page walk enforces: save resolves a
+     *  missing pin to the catalog's current stable, publish rejects it. */
+    static void compileCheckExpressions(AppDefinition app, ProblemErrors errors, boolean publish) {
         List<ProblemErrors.FieldError> found = new ArrayList<>(errors.errors());
         for (AppDefinition.PageDefinition page : app.pages()) {
-            compileCheckPage(page, app, found);
+            compileCheckPage(page, app, found, publish);
         }
         for (EntityDefinition entity : app.entities()) {
             java.util.Set<String> fields = new java.util.LinkedHashSet<>();
@@ -525,9 +575,10 @@ public class DefinitionService {
         }
     }
 
-    /** The page slot compile-check from putPage, run app-wide at publish (§7). */
+    /** The page slot compile-check from putPage, run app-wide at publish (§7) —
+     *  publish mode: the §4 version pin is required, not resolved. */
     private static void compileCheckPage(AppDefinition.PageDefinition page, AppDefinition app,
-                                         List<ProblemErrors.FieldError> errors) {
+                                         List<ProblemErrors.FieldError> errors, boolean publish) {
         if (page.entity() == null || !(page.layout() instanceof java.util.Map<?, ?>)) {
             return;
         }
@@ -536,7 +587,7 @@ public class DefinitionService {
             entity.fields().forEach(f -> fields.add(f.apiName()));
             entity.relationships().forEach(r -> fields.add(r.apiName()));
             checkNodeSlots(page.apiName(), page.layout(), fields,
-                    com.novaforge.metadata.ExpressionTypes.of(entity), errors);
+                    com.novaforge.metadata.ExpressionTypes.of(entity), errors, publish);
         });
     }
 

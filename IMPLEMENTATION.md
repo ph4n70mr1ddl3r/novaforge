@@ -2926,3 +2926,22 @@ Verified: `BindStepTests` 2/2, `DefinitionLifecycleTests` 18/18 (the four new
 compiling through the flow compiler), the hook-machinery suites untouched
 (HookStepResult/ManualHook/HookRetry/IntegrationFlow/FreezePeriod — 21 green),
 `WebhookRateLimitFilterTest` 6/6 (both outage postures bite).
+
+**Spec-review closeout (2026-09-03, thirty-seventh pass) — the page gate's
+catalog half lands server-side:** PHASE-2 §4's page contract (props validate
+against the component's JSON Schema at save and publish; a missing version pin
+resolves to the catalog's current stable at save but rejects at publish;
+unknown components reject) was enforced only by the builder's TS twin — the
+API path could store and publish pages no catalog component renders per
+contract (unknown ids, stale pins, contract-violating props), the runtime's
+safe fallback masking each as silently-wrong UI. The canonical catalog
+manifest is now a JVM classpath resource
+(`component-catalog.json`, 22 entries) with `ComponentCatalog` implementing
+the twin's schema subset message-for-message; `checkNodeCatalog` joins the
+node walk beside the 35th pass's `checkNodeBinds`, with the walk's new
+save/publish mode switching the version-pin rule. The TS catalog pins itself
+against the manifest with a lockstep suite (the expr/v1 corpus pattern), so
+the two engines cannot drift. Pinned by four new `pageDefinitionLifecycle`
+legs (unknown component, stale pin, props violation, the save-resolves /
+publish-rejects pin pair) — bite-proven by disconnecting the check. Verified:
+metadata-service 68/68, `pnpm -r test` 223/223, full `./mvnw verify` green.

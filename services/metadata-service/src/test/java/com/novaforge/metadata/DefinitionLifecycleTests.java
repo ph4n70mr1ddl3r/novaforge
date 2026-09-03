@@ -1414,7 +1414,10 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors[0].message").value(
                         "bind 'ghost.reference' resolves to no field or relationship"));
-        // the agreeing shape saves — the rules bind authoring, not the widget contract
+        // the agreeing shape saves — the rules bind authoring, not the widget contract.
+        // It also pins the save-mode version-pin rule below: goodBind's node carries
+        // no version and still saves — a missing pin resolves to the catalog's
+        // current stable at save (the twin's rule; publish rejects it, further down)
         mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/goodBind")
                         .with(builderJwt()).contentType("application/json")
                         .content("""
@@ -1426,6 +1429,62 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                                 """))
                 .andExpect(status().isOk());
         mockMvc.perform(delete("/api/v1/metadata/apps/" + appId + "/pages/goodBind")
+                        .with(builderJwt()))
+                .andExpect(status().isOk());
+
+        // the §4 catalog contract, server-side (mirroring the TS twin): an unknown
+        // component id rejects; a version pin that disagrees with the catalog
+        // rejects; the props validate against the component's props JSON Schema —
+        // whichever client authored the page, the store can no longer hold a page
+        // no catalog component renders per contract
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/ghostWidget")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "ghostWidget", "type": "form", "entity": "Order",
+                                  "layout": { "root": { "type": "novaforge.ghost-widget",
+                                    "props": {} } } }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        "unknown component 'novaforge.ghost-widget'"));
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/stalePin")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "stalePin", "type": "form", "entity": "Order",
+                                  "layout": { "root": { "type": "novaforge.form-layout",
+                                    "version": "0.9.0", "props": { "columns": 2 } } } }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        "unknown version novaforge.form-layout@0.9.0 (catalog serves 1.0.0)"));
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/badProps")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "badProps", "type": "form", "entity": "Order",
+                                  "layout": { "root": { "type": "novaforge.form-layout",
+                                    "version": "1.0.0", "props": { "columns": "two" } } } }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        "props.columns: expected integer, got string"));
+
+        // the pin rule's two modes: a versionless node SAVES (resolution to the
+        // current stable is the save/render rule) but PUBLISH rejects it — §4's
+        // "missing version resolves to the catalog's current stable but is rejected
+        // at publish", enforced on the API path, not only in the builder
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/pinless")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "pinless", "type": "form", "entity": "Order",
+                                  "layout": { "root": { "type": "novaforge.field-input",
+                                    "props": { "field": "reference" }, "bind": "reference" } } }
+                                """))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/metadata/apps/" + appId + "/publish").with(builderJwt()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        "missing pinned version (publish requires novaforge.field-input@1.0.0)"));
+        mockMvc.perform(delete("/api/v1/metadata/apps/" + appId + "/pages/pinless")
                         .with(builderJwt()))
                 .andExpect(status().isOk());
 

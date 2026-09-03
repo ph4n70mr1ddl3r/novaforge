@@ -68,7 +68,7 @@ class ErpAppArtifactTests {
     void compileClean() throws Exception {
         // The exact publish path: expression compile-check + the FlowCompiler's
         // reference/type checks over every hook, state machine, report, integration.
-        DefinitionService.compileCheckExpressions(app(), new ProblemErrors(List.of(), List.of()));
+        DefinitionService.compileCheckExpressions(app(), new ProblemErrors(List.of(), List.of()), false);
         FlowCompiler.compile(app());
     }
 

@@ -47,7 +47,7 @@ class PurchasingAppArtifactTests {
     @Test
     @DisplayName("the app compiles: expressions, the submit flow, the machine, the SLA match")
     void compileClean() throws Exception {
-        DefinitionService.compileCheckExpressions(app(), new ProblemErrors(List.of(), List.of()));
+        DefinitionService.compileCheckExpressions(app(), new ProblemErrors(List.of(), List.of()), false);
         FlowCompiler.compile(app());
     }
 

@@ -1,0 +1,329 @@
+[
+  {
+    "id": "novaforge.chart-widget",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": ["reportRef", "chart"],
+      "properties": {
+        "reportRef": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "title": { "type": "string" },
+        "kind": { "enum": ["bar", "line"] },
+        "height": { "type": "integer", "minimum": 80, "maximum": 1200 },
+        "chart": {
+          "type": "object",
+          "required": ["xAxis", "series"],
+          "properties": {
+            "xAxis": {
+              "type": "object",
+              "required": ["data"],
+              "properties": { "data": { "type": "array" } }
+            },
+            "series": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "data"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "data": { "type": "array" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "id": "novaforge.kpi-tile",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": ["reportRef", "totals", "metric"],
+      "properties": {
+        "reportRef": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "totals": { "type": "object", "additionalProperties": { "type": "number" } },
+        "metric": { "type": "string", "minLength": 1 },
+        "label": { "type": "string" },
+        "currency": { "type": "string", "minLength": 1, "maxLength": 3 }
+      }
+    }
+  },
+  {
+    "id": "novaforge.report-table",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": ["reportRef", "run"],
+      "properties": {
+        "reportRef": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "title": { "type": "string" },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+        "run": {
+          "type": "object",
+          "required": ["columns", "rows", "totals", "chart"],
+          "properties": {
+            "columns": { "type": "array", "items": { "type": "string" } },
+            "rows": { "type": "array", "items": { "type": "object" } },
+            "totals": { "type": "object", "additionalProperties": { "type": "number" } },
+            "chart": { "type": "object" }
+          }
+        }
+      }
+    }
+  },
+  {
+    "id": "novaforge.dashboard-grid",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "children": { "type": "array", "items": { "type": "object" } }
+      }
+    }
+  },
+  {
+    "id": "novaforge.file-upload",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "entity": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*$" },
+        "recordId": { "type": "string", "format": "uuid" },
+        "filesBase": { "type": "string" }
+      }
+    }
+  },
+  {
+    "id": "novaforge.app-shell",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "brand": { "type": "string" },
+        "variant": { "enum": ["runtime", "builder"] }
+      }
+    }
+  },
+  {
+    "id": "novaforge.nav-list",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": { "title": { "type": "string" } }
+    }
+  },
+  {
+    "id": "novaforge.form-layout",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "columns": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "section": { "type": ["string", "null"] }
+      }
+    }
+  },
+  {
+    "id": "novaforge.list-layout",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "pageSize": { "type": "integer", "minimum": 1, "maximum": 200 },
+        "sortable": { "type": "boolean" },
+        "columns": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  {
+    "id": "novaforge.record-header",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "displayField": { "type": "string" }
+      }
+    }
+  },
+  {
+    "id": "novaforge.field-input",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": ["field"],
+      "properties": {
+        "field": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "label": { "type": "string" },
+        "inputType": { "enum": ["text", "email", "tel", "url"] },
+        "multiline": { "type": "boolean" },
+        "placeholder": { "type": "string", "maxLength": 200 }
+      }
+    }
+  },
+  {
+    "id": "novaforge.field-number",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": ["field"],
+      "properties": {
+        "field": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "label": { "type": "string" },
+        "currency": { "type": "string", "minLength": 1, "maxLength": 3 },
+        "scale": { "type": "integer", "minimum": 0, "maximum": 12 }
+      }
+    }
+  },
+  {
+    "id": "novaforge.field-select",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": ["field"],
+      "properties": {
+        "field": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "label": { "type": "string" },
+        "options": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      }
+    }
+  },
+  {
+    "id": "novaforge.field-switch",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": ["field"],
+      "properties": {
+        "field": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "label": { "type": "string" }
+      }
+    }
+  },
+  {
+    "id": "novaforge.field-date",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": ["field"],
+      "properties": {
+        "field": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "label": { "type": "string" },
+        "mode": { "enum": ["date", "datetime", "time"] }
+      }
+    }
+  },
+  {
+    "id": "novaforge.field-lookup",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": ["field", "target"],
+      "properties": {
+        "field": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "label": { "type": "string" },
+        "target": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*$" },
+        "minChars": { "type": "integer", "minimum": 1, "maximum": 10 }
+      }
+    }
+  },
+  {
+    "id": "novaforge.field-multi-lookup",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": ["field", "target"],
+      "properties": {
+        "field": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "label": { "type": "string" },
+        "target": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*$" }
+      }
+    }
+  },
+  {
+    "id": "novaforge.field-rich-text",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": ["field"],
+      "properties": {
+        "field": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "label": { "type": "string" }
+      }
+    }
+  },
+  {
+    "id": "novaforge.field-json",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": ["field"],
+      "properties": {
+        "field": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "label": { "type": "string" }
+      }
+    }
+  },
+  {
+    "id": "novaforge.related-list",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": ["relationship"],
+      "properties": {
+        "relationship": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "target": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*$" },
+        "pageSize": { "type": "integer", "minimum": 1, "maximum": 200 },
+        "columns": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  {
+    "id": "novaforge.record-actions",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "showEdit": { "type": "boolean" },
+        "showDelete": { "type": "boolean" }
+      }
+    }
+  },
+  {
+    "id": "novaforge.empty-state",
+    "version": "1.0.0",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "message": { "type": "string" },
+        "hint": { "type": "string" }
+      }
+    }
+  }
+]

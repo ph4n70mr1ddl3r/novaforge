@@ -43,7 +43,7 @@ class PerfAppArtifactTests {
                 .isTrue();
         // the hook expression (upper(name)) and the validation expression
         // (amount >= 0) must keep compiling against the expression engine
-        DefinitionService.compileCheckExpressions(app, new ProblemErrors(List.of(), List.of()));
+        DefinitionService.compileCheckExpressions(app, new ProblemErrors(List.of(), List.of()), false);
         FlowCompiler.compile(app);
     }
 

@@ -3771,3 +3771,81 @@ compliant ratio.
 ### Recorded open after this pass
 
 Empty.
+
+## Thirty-Seventh Pass — 2026-09-03 (the page gate's catalog half lands server-side: unknown components, version pins, and props schemas can no longer be stored or published over the API path)
+
+### C-37P1 — `PUT /pages` still accepted pages no catalog component renders per contract: unknown ids, stale/missing version pins, and contract-violating props rode the API path past the builder's gate
+
+PHASE-2 §4 pins the page contract "at save and publish time": props validate
+against the component's props JSON Schema; a node's `version` pins the catalog
+component — "a missing `version` resolves to the catalog's current stable but
+is rejected at publish"; unknown components are build errors in the builder.
+The TS twin (`frontend/shared/src/pagemodel/validate.ts` + the catalog
+manifest) enforces all of it client-side, and the 35th pass mirrored the *bind*
+rules server-side for exactly the reason that applies here verbatim: the
+builder path was guarded; the API path was not. `PUT
+/api/v1/metadata/apps/{id}/pages/{apiName}` accepted a page whose node named no
+catalog component, pinned `novaforge.form-layout@0.9.0` against a catalog
+serving 1.0.0, or carried props the component's schema rejects (`columns:
+"two"`) — and publish carried each into the served bundle, where the renderer's
+safe fallback masked the defect: the runtime degrades to fallback UI, so the
+page that could never pass the builder renders as *silently wrong*, whichever
+client authored it. The action-ladder check's recorded principle — the store
+must never hold metadata no runtime dispatches — extends to the widget
+contract: the store must not hold a page no catalog component renders per
+contract.
+
+**Fixed (V-C37P1):** the catalog grew a server-side half. The canonical
+manifest — 22 entries with ids, pinned versions, and draft-2020-12 props
+schemas — is a classpath resource
+(`services/metadata-service/src/main/resources/catalog/component-catalog.json`)
+loaded by `ComponentCatalog`, whose `validateProps` implements the focused
+schema subset the twin's `validateSchema` implements, message for message
+(type incl. unions, enum, string length/pattern, number bounds,
+minItems/items, properties/required/additionalProperties; the twin's
+`=== undefined` required-test preserved). `checkNodeCatalog` joins the
+encoding-agnostic node walk in `DefinitionService` beside `checkNodeBinds`:
+every component node passes the same three rules the twin applies — unknown id
+rejects; a pin disagreeing with the catalog rejects; props validate against
+the component's schema. The walk gains a mode: save (putPage, createApp,
+putEntity, the artifact tests) resolves a missing pin to the current stable —
+the twin's save rule, and `goodBind`'s versionless positive control now pins
+it — while publish (`publish()` → `compileCheckExpressions(publish=true)`)
+rejects it: §4's "rejected at publish" enforced on the API path. Unknown ids
+skip version/props checks exactly as the twin's walk does; bind checks still
+run first, so every first-error assertion from the 35th pass holds unchanged.
+
+**Lockstep:** the manifest is canonical; the TS catalog pins itself against it
+(`frontend/shared/test/catalog-lockstep.test.ts`, the expr/v1 corpus pattern —
+ids in the same order, versions, lifecycle, deprecation, and each schema
+deep-equal; 3 tests). Drift on either side fails a suite instead of forking
+the contract. `format: "uuid"` is declared by both sides and validated by
+neither — the twin's subset never implemented it, and the lockstep suite
+freezes exactly that shape.
+
+**Pinned:** `pageDefinitionLifecycle` grew four legs — `novaforge.ghost-widget`
+rejects (`unknown component '…'`), `form-layout@0.9.0` rejects (`unknown
+version … (catalog serves 1.0.0)`), `columns: "two"` rejects (`props.columns:
+expected integer, got string`), and the two-mode pin: a versionless node saves
+(resolution is the save rule) then publish rejects with `missing pinned
+version (publish requires novaforge.field-input@1.0.0)`. Bite-proven: with
+`checkNodeCatalog` disconnected, the ghost-widget PUT returns 200 and the test
+fails exactly as the defect reads. The ERP, purchasing, and perf artifacts
+carry zero pages (verified in the 35th pass; re-verified by their suites
+compiling green through the save-path walk), so the new gate binds nothing
+that exists while binding everything a client might yet author.
+
+### Verification (this pass)
+
+- `DefinitionLifecycleTests` 18/18 green (the four new §4 catalog legs + the
+  two-mode pin, riding the same suite as the bind legs they mirror).
+- `ErpAppArtifactTests` / `PurchasingAppArtifactTests` /
+  `PerfAppArtifactTests` green through the updated save-path signature.
+- `frontend/shared` 138/138 (the 3 new lockstep tests), `builder-ui` 63,
+  `runtime-ui` 22 — `pnpm -r test` green.
+- Full `./mvnw verify` BUILD SUCCESS against the real Postgres + Kafka
+  containers.
+
+### Recorded open after this pass
+
+Empty.
