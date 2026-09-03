@@ -162,6 +162,14 @@ TOKEN=$(curl -s -X POST http://localhost:8082/realms/novaforge/protocol/openid-c
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 ```
 
+**Full cluster stack (kind-on-Podman):** `deploy/kind/smoke.sh` is the repeatable
+cold-boot pass — kind cluster (reused if present), jib images loaded, the
+`novaforge-infra` chart, the eleven service charts via the umbrella, every pod
+waited Ready, and the serving proof (gateway health 200; a JWKS-gated route 401
+through a port-forward). `--skip-build` reuses daemon images; `--teardown` deletes
+the cluster afterwards. The chart gate (`deploy/helm/check-charts.sh`, wired into
+CI) proves the renders; the smoke proves the boots.
+
 **Frontend workspace:** `corepack enable && (cd frontend && pnpm install && pnpm -r test)` —
 strict `tsc` via `pnpm -r check`; the expr/v1 conformance corpus (shared with the JVM
 engine) and the catalog gallery's axe checks gate CI's `frontend`

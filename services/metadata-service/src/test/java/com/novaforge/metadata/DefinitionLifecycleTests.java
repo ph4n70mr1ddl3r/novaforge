@@ -768,6 +768,86 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                 .andExpect(jsonPath("$.errors[0].message").value(
                         org.hamcrest.Matchers.containsString("existing field")));
 
+        // §3.7 (the G-2 harvest): bind to a non-lookup field rejects
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "BindTextApp", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "name", "type": "text" } ],
+                                  "hooks": [ { "name": "x", "trigger": "beforeSave",
+                                    "flow": { "id": "b", "op": "bind",
+                                      "params": { "lookup": "name" } } } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("lookup field")));
+
+        // §3.7: bind to an unknown field rejects
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "BindGhostApp", "entities": [ { "apiName": "Thing",
+                                  "fields": [ { "apiName": "name", "type": "text" } ],
+                                  "hooks": [ { "name": "x", "trigger": "beforeSave",
+                                    "flow": { "id": "b", "op": "bind",
+                                      "params": { "lookup": "ghost" } } } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("existing field")));
+
+        // §3.7: a bound dot-path statically types against the TARGET's fields — text
+        // under arithmetic rejects at save with the offending expression named
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "BindTypeApp", "entities": [
+                                  { "apiName": "Part",
+                                    "displayField": "sku",
+                                    "fields": [ { "apiName": "sku", "type": "text" },
+                                                 { "apiName": "qtyOnHand", "type": "decimal",
+                                                   "precision": 18, "scale": 6 } ] },
+                                  { "apiName": "Movement",
+                                    "displayField": "qty",
+                                    "fields": [ { "apiName": "part", "type": "lookup",
+                                                  "target": "Part" },
+                                                 { "apiName": "qty", "type": "decimal",
+                                                   "precision": 18, "scale": 6 } ],
+                                    "hooks": [ { "name": "cost", "trigger": "beforeSave",
+                                      "flow": { "id": "b", "op": "bind",
+                                        "params": { "lookup": "part" },
+                                        "next": "c",
+                                        "body": { "id": "c", "op": "setField",
+                                          "params": { "field": "qty",
+                                            "expression": "part.sku * 2 + qty" } } } } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        org.hamcrest.Matchers.containsString("part.sku")));
+
+        // §3.7 positive control: the typed dot-path compiles and the app saves
+        mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "BindOkApp", "entities": [
+                                  { "apiName": "Part",
+                                    "displayField": "sku",
+                                    "fields": [ { "apiName": "sku", "type": "text" },
+                                                 { "apiName": "qtyOnHand", "type": "decimal",
+                                                   "precision": 18, "scale": 6 } ] },
+                                  { "apiName": "Movement",
+                                    "displayField": "qty",
+                                    "fields": [ { "apiName": "part", "type": "lookup",
+                                                  "target": "Part" },
+                                                 { "apiName": "qty", "type": "decimal",
+                                                   "precision": 18, "scale": 6 },
+                                                 { "apiName": "unitCost", "type": "money" } ],
+                                    "hooks": [ { "name": "cost", "trigger": "beforeSave",
+                                      "flow": { "id": "b", "op": "bind",
+                                        "params": { "lookup": "part" },
+                                        "next": "c",
+                                        "body": { "id": "c", "op": "setField",
+                                          "params": { "field": "unitCost",
+                                            "expression": "part.qtyOnHand / (part.qtyOnHand - qty)" } } } } ] } ] }
+                                """))
+                .andExpect(status().isOk());
+
         // transitionState compiles against a bound machine (Phase 4 activation, §3)
         mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
                         .contentType("application/json").content("""

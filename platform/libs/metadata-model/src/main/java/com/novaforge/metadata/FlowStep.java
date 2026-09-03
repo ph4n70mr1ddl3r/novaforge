@@ -15,6 +15,14 @@ import java.util.Map;
  * (compile-checked, activation in a later phase): {@code requestApproval} (Phase 4
  * T5 — the durable-suspension leg), {@code callConnector} (Phase 6). Additions are
  * versioned platform features, never per-app code.</p>
+ *
+ * <p>{@code bind} is the first such addition (the G-2 harvest, PHASE-7 §3.7,
+ * 2026-09-03): a flow step binds a lookup target's canonical field view into
+ * expression scope under the lookup field's apiName — later steps address
+ * {@code item.<field>} dot-paths (the cross-record arithmetic the dogfood logged
+ * as inexpressible). The compile check statically types {@code <lookup>.<field>}
+ * against the target entity; a reference on a path that skips the bind (or before
+ * it) resolves empty at run time — §3.3's pre-suspension fail-open.</p>
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record FlowStep(
@@ -30,10 +38,11 @@ public record FlowStep(
         params = params == null ? Map.of() : Map.copyOf(params);
     }
 
-    /** The v1 primitive set (ADR-008 #2's closed list). */
+    /** The v1 primitive set (ADR-008 #2's closed list) plus its versioned growth
+     *  ({@code bind} — the G-2 harvest, PHASE-7 §3.7). */
     public static final java.util.Set<String> OPS = java.util.Set.of(
             "setField", "createRecord", "updateRecord", "publishEvent", "branch",
-            "iterate", "requestApproval", "transitionState", "callConnector");
+            "iterate", "requestApproval", "transitionState", "callConnector", "bind");
 
     /** Ops whose execution arrives with a later phase (grammar-fixed now). */
     public static final java.util.Set<String> DEFERRED_OPS = java.util.Set.of(

@@ -23,7 +23,8 @@ import tools.jackson.databind.json.JsonMapper;
  * save-clean, compile-clean (flows, machines, expressions, integrations), and every
  * suite must pass suite save-validation — the exact checks the Metadata Service would
  * run were the app authored through the builder. Zero handwritten application code;
- * the one budgeted script (§5, rule 3) is counted here too.
+ * the hook corpus is fully declarative (the §3.7 bind primitive took the costing
+ * leg on 2026-09-03) and is counted here too.
  */
 class ErpAppArtifactTests {
 
@@ -195,31 +196,34 @@ class ErpAppArtifactTests {
     }
 
     @Test
-    @DisplayName("script budget: one escape-hatch script of four hooks — 25%, rule 3's ceiling exceeded, the G-2 exception governs")
+    @DisplayName("script budget: zero scripts of four hooks — rule 3's ≤ 20% ceiling holds (the G-2 harvest demoted the costing script)")
     void scriptBudget() throws Exception {
         AppDefinition app = app();
         List<com.novaforge.metadata.HookRule> allHooks = app.entities().stream()
                 .flatMap(entity -> entity.hooks().stream()).toList();
         long scripts = allHooks.stream().filter(hook -> hook.script() != null).count();
         long flows = allHooks.stream().filter(hook -> hook.flow() != null).count();
-        assertThat(scripts).as("one budgeted script (§5 weighted-average costing)").isEqualTo(1);
-        assertThat(flows).as("the posting/scheduled flows are declarative (§5)").isEqualTo(3);
-        // Rule 3's budget is defined over hooks (ADR-008 #5): 1 script of 4 = 25% —
-        // ABOVE the ≤ 20% ceiling, and the Inventory module sits at 1/1. The budget
-        // is not met; it is exceeded under the exception rule 3 itself prescribes
-        // (exceeding triggers a primitive-candidate review, never quiet growth) —
-        // G-2 is that review, and §9 item 7's per-module report rides change-set
-        // review (LifecycleService.scriptRatioByModule). Pinned here so the number
-        // can never again be recorded as "holds".
+        assertThat(scripts).as("no escape-hatch scripts remain (§3.7's bind primitive took the "
+                + "costing leg declaratively — 2026-09-03)").isZero();
+        assertThat(flows).as("every hook is a declarative flow (§5)").isEqualTo(4);
+        // Rule 3's budget is defined over hooks (ADR-008 #5): 0 of 4 = 0% — the ≤ 20%
+        // ceiling HOLDS. The exit state was 1/4 = 25%, exceeded under G-2's reviewed
+        // exception (the primitive-candidate review rule 3 prescribes); the G-2
+        // harvest (§3.7: the bind primitive + the declarative costing flow) resolved
+        // it, and the per-module report rides change-set review
+        // (LifecycleService.scriptRatioByModule). Pinned here so the ratio can never
+        // quietly grow back.
         assertThat(allHooks).as("the denominator counted honestly (the Payment scheduled hook included)").hasSize(4);
-        assertThat((double) scripts / allHooks.size()).isEqualTo(0.25);
+        assertThat((double) scripts / allHooks.size()).isLessThanOrEqualTo(0.20);
         var inventory = app.entities().stream()
                 .filter(entity -> "Inventory".equals(entity.module()))
                 .flatMap(entity -> entity.hooks().stream()).toList();
         assertThat(inventory).as("the Inventory module's hooks").hasSize(1);
-        assertThat(inventory.getFirst().script()).as("the Inventory module is 1/1 scripts").isNotNull();
-        assertThat(app.gapLog().stream().anyMatch(gap -> gap.id().equals("G-2")))
-                .as("the exception's primitive-candidate review is gap-logged")
+        assertThat(inventory.getFirst().flow()).as("the Inventory module's costing is declarative (§3.7)").isNotNull();
+        assertThat(inventory.getFirst().script()).as("the Inventory module carries no script").isNull();
+        assertThat(app.gapLog().stream().anyMatch(gap -> gap.id().equals("G-2")
+                && gap.disposition() != null && gap.disposition().startsWith("closed")))
+                .as("the resolved exception stays visible in the gap log (the §8 discipline)")
                 .isTrue();
     }
 

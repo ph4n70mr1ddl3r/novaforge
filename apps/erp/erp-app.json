@@ -1,7 +1,7 @@
 {
   "apiName": "Erp",
   "label": "NovaForge ERP (dogfood)",
-  "description": "The Phase 7 proving-ground app: GL, AR, inventory with weighted-average costing, period close — authored entirely as metadata (PHASE-7 §2). Zero handwritten application code; one budgeted script (§5).",
+  "description": "The Phase 7 proving-ground app: GL, AR, inventory with weighted-average costing, period close — authored entirely as metadata (PHASE-7 §2). Zero handwritten application code (PHASE-7 §5: costing runs declaratively on the §3.7 bind primitive since 2026-09-03).",
   "settings": {
     "sequences": [
       {
@@ -1409,9 +1409,64 @@
         {
           "name": "costMovement",
           "trigger": "beforeSave",
-          "script": {
-            "language": "js",
-            "source": "(function () { if ($record.status !== 'POSTED') { return {}; } if ($record.movementType === 'ISSUE' && $record.unitCost == null) { var page = $data.query('Item', '{}'); var item = null; for (var i = 0; i < page.rows.length; i++) { if (page.rows[i].id === $record.item) { item = page.rows[i]; break; } } if (item == null || item.inventoryValue == null || item.qtyOnHand == null) { return {}; } var preQty = item.qtyOnHand - $record.qty; if (!(preQty > 0)) { return {}; } var avg = item.inventoryValue / preQty; return { unitCost: avg, value: $record.qty * avg }; } if ($record.movementType === 'RECEIPT' && $record.unitCost != null && $record.value == null) { return { value: $record.qty * $record.unitCost }; } return {}; })()"
+          "flow": {
+            "id": "route",
+            "op": "branch",
+            "params": {
+              "guard": "status == 'POSTED' && movementType == 'ISSUE' && unitCost == null"
+            },
+            "onTrue": "fetch",
+            "onFalse": "receipt",
+            "body": {
+              "id": "fetch",
+              "op": "bind",
+              "params": {
+                "lookup": "item"
+              },
+              "next": "avgGuard",
+              "body": {
+                "id": "avgGuard",
+                "op": "branch",
+                "params": {
+                  "guard": "item.qtyOnHand != null && item.inventoryValue != null && (item.qtyOnHand - qty) > 0"
+                },
+                "onTrue": "issueUnitCost",
+                "body": {
+                  "id": "issueUnitCost",
+                  "op": "setField",
+                  "params": {
+                    "field": "unitCost",
+                    "expression": "item.inventoryValue / (item.qtyOnHand - qty)"
+                  },
+                  "next": "issueValue",
+                  "body": {
+                    "id": "issueValue",
+                    "op": "setField",
+                    "params": {
+                      "field": "value",
+                      "expression": "qty * unitCost"
+                    },
+                    "next": "receipt",
+                    "body": {
+                      "id": "receipt",
+                      "op": "branch",
+                      "params": {
+                        "guard": "movementType == 'RECEIPT' && unitCost != null && value == null"
+                      },
+                      "onTrue": "receiptValue",
+                      "body": {
+                        "id": "receiptValue",
+                        "op": "setField",
+                        "params": {
+                          "field": "value",
+                          "expression": "qty * unitCost"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       ],
@@ -1829,10 +1884,11 @@
       "id": "G-2",
       "area": "P3 Business Logic",
       "blocker": "Cross-record arithmetic in flows: updateRecord templates interpolate (${field}) but cannot compute over multiple records — the receipt-side weighted-average re-costing of Item.unitCost ((qtyOld×costOld + qtyNew×costNew) / (qtyOld + qtyNew)) is inexpressible declaratively",
-      "workaround": "Roll-up maintained inventoryValue/qtyOnHand keep the running average derivable; the one budgeted script costs issues from those roll-ups (§5's canonical escape-hatch case). Rule 3's ≤ 20% ceiling is exceeded at exit — 1 script of 4 hooks = 25% app-level, the Inventory module 1/1 — this entry is the §1-rule-3 primitive-candidate review that governs the exception (reported per module in change-set review)",
+      "workaround": "Roll-up maintained inventoryValue/qtyOnHand keep the running average derivable; historically the one budgeted script costed issues from those roll-ups (§5's canonical escape-hatch case). Rule 3's ≤ 20% ceiling was exceeded at exit — 1 script of 4 hooks = 25% — under this entry's reviewed exception. Adopted 2026-09-03: the costing hook is the §3.7 declarative flow, the script is gone (0 of 4 hooks — the ceiling holds), and the inventoryCosting suite pins the identical numbers",
       "proposed": "expression-valued template slots (or a computeField primitive evaluated over queried bindings)",
       "priority": "high",
-      "disposition": "backlog"
+      "disposition": "closed",
+      "resolvedIn": "spec §3.7 (2026-09-03): the bind primitive — a flow step binds a lookup target's canonical view into expression scope (item.<field> dot-paths, statically typed at compile against the target); adopted by the corpus 2026-09-03 — the costing hook is the declarative flow, the script is gone (script ratio 0/4), the inventoryCosting suite pins the identical numbers"
     },
     {
       "id": "G-3",

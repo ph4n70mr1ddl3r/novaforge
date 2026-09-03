@@ -1292,6 +1292,23 @@ public class RecordEngine {
                         return row;
                     }).toList();
         }
+
+        @Override
+        public Map<String, Object> record(UUID tenantId, String appApiName,
+                                          String entityApiName, String recordId) {
+            // The §3.7 bind read: the same store, the same transaction — the read
+            // observes exactly the committed state a caller's query would (plus this
+            // transaction's own earlier writes), so a bound roll-up view is the state
+            // the enclosing hook's guards reason over. Absent → the empty view.
+            EntityHandle target = resolver.resolve(tenantId, entityApiName);
+            return records.find(tenantId, target.entityKey(), UUID.fromString(recordId), false)
+                    .map(stored -> {
+                        Map<String, Object> view = new LinkedHashMap<>(stored.data());
+                        view.put("id", stored.id().toString());
+                        return view;
+                    })
+                    .orElse(Map.of());
+        }
     }
 
     /** Nested create as the system principal: full write path, matrix bypassed (§13 Q1). */

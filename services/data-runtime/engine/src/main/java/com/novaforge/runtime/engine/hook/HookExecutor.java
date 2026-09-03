@@ -86,6 +86,16 @@ public class HookExecutor {
         List<Map<String, Object>> children(UUID tenantId, String appApiName,
                                            String parentEntityApiName, String relationship,
                                            UUID parentRecordId);
+
+        /**
+         * One record's canonical field view by id (the §3.7 bind read): the
+         * in-transaction store read — the same observable state a caller's query
+         * would see, without leaving the enclosing write. An absent record binds
+         * the empty view; the graph's guards treat it as null (the script's
+         * {@code item == null → no-op} shape).
+         */
+        Map<String, Object> record(UUID tenantId, String appApiName,
+                                   String entityApiName, String recordId);
     }
 
     /** Result of a trigger run: aborted (before-hooks) or recorded retries (after). */
@@ -352,6 +362,16 @@ public class HookExecutor {
                 String field = step.param("field");
                 Object value = context.evaluate(step.param("expression"));
                 context.data.put(field, value);
+                return byName(context, step.next());
+            }
+            case "bind" -> {
+                // §3.7 (the G-2 harvest): the lookup target's canonical view binds
+                // under the lookup field's apiName for the graph's remaining slots —
+                // later steps address item.<field> dot-paths. An absent/unresolvable
+                // target binds the empty view (guards see null — the fail-open the
+                // compile check documents). Runtime re-checks what the compiler
+                // pinned: the field exists and is a lookup.
+                context.bind(step.param("lookup"));
                 return byName(context, step.next());
             }
             case "branch" -> {
@@ -649,6 +669,44 @@ public class HookExecutor {
             return com.novaforge.expression.Expression.parse(expression)
                     .evaluate(com.novaforge.expression.Expression.Bindings.of(bindings),
                             java.time.Clock.systemUTC());
+        }
+
+        /**
+         * §3.7 (the G-2 harvest): binds one lookup field's target record into the
+         * graph's expression scope under the lookup field's apiName — later steps
+         * read it as dot-paths ({@code item.qtyOnHand}), which the shared
+         * {@code Bindings.of} resolver walks through the nested view. In-transaction
+         * read (the sink): the same observable state the caller's query surface
+         * serves, without leaving the enclosing write.
+         */
+        void bind(String lookupField) {
+            FieldDefinition field = lookupField == null ? null
+                    : handle.entity().field(lookupField).orElse(null);
+            if (field == null || field.type() != com.novaforge.metadata.FieldType.LOOKUP) {
+                throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                        "bind step names a lookup field of " + handle.entity().apiName()
+                                + ": " + lookupField + " — the publish compiler rejected such graphs");
+            }
+            Object raw = data.get(lookupField);
+            Map<String, Object> view = java.util.Map.of();
+            if (raw != null && !String.valueOf(raw).isBlank()) {
+                String id = String.valueOf(raw);
+                try {
+                    UUID.fromString(id);
+                } catch (IllegalArgumentException e) {
+                    // a malformed id binds empty (guards see null), like any
+                    // unresolvable reference — never an opaque 500; store failures
+                    // below propagate (a beforeSave abort, an afterSave retry)
+                    LOG.warn("bind {} target id is not a record id: {}", lookupField, id);
+                    overlay.put(lookupField, view);
+                    return;
+                }
+                view = sink.record(tenantId, handle.appApiName(), field.target(), id);
+            }
+            if (view == null) {
+                view = java.util.Map.of();
+            }
+            overlay.put(lookupField, view);
         }
 
         Object resolveTemplateValue(String path) {

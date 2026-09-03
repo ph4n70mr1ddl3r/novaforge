@@ -1441,7 +1441,7 @@ rotation semantics the suites pin, restored to a compiling tree.
 - `postWebhook { hookId, body, headers? }`: the runner provisions the scratch tenant's hook secret through the builder surface and signs the §5 scheme itself, so suites exercise the real HMAC path — header overrides cover the deliberately-mangled/stale legs (`expect: error(SIGNATURE_INVALID)`); the applied record lands in scope as `${Entity[n]}` for assertions
 - the harness-provided mock connector: an in-process stub server binds every connector's baseUrl before the candidate publishes (hit counts + last path ride the run artifact) — the bank-feed journey runs offline; `runReport` joins `Step.OPS` (the Phase 5 gap this phase's growth surfaced — the runner knew the op, the save validator didn't)
 
-**Suites (§11):** `IntegrationWebhookTests` (7 — the full HMAC matrix incl. rotation + replay, idempotent application, outbound sign/filter/retry-to-DLQ/replay-exactly-once, poison DLQ with the write path's own verdict), `ConnectorExecutorTests` (4 — mock journey w/ credential + template legs, dedupe-collapse, terminal-failure DLQ, unknown-operation rejection), `ImportResumeTests` (kill/resume exactly-once), `IntegrationFlowTests` (+4 in the runtime — before-hook abort, after-hook spine retry, mock connector journey, and the integration write path firing validations/state machines/hooks with per-item field-scoped verdicts), `FileServiceTests` (5 — checksum verify/mismatch+delete, pinned presign expiry, EICAR quarantine + blocked download + outboxed event, internal upload leg), `ScriptApiTests` +$http gating, `AsyncExportHandoffTests` (202 + job link), `WebhookRateLimitFilterTest` (window enforcement, scoping, fail-open), `TestRunnerJourneyTests` +webhook journey (provisioning shape + signature equality over the raw body), frontend gallery/registry/FileUpload (+2, 20 total)
+**Suites (§11):** `IntegrationWebhookTests` (7 — the full HMAC matrix incl. rotation + replay, idempotent application, outbound sign/filter/retry-to-DLQ/replay-exactly-once, poison DLQ with the write path's own verdict), `ConnectorExecutorTests` (4 — mock journey w/ credential + template legs, dedupe-collapse, terminal-failure DLQ, unknown-operation rejection), `ImportResumeTests` (kill/resume exactly-once), `IntegrationFlowTests` (+4 in the runtime — before-hook abort, after-hook spine retry, mock connector journey, and the integration write path firing validations/state machines/hooks with per-item field-scoped verdicts), `FileServiceTests` (5 — checksum verify/mismatch+delete, pinned presign expiry, EICAR quarantine + blocked download + outboxed event, internal upload leg), `ScriptApiTests` +$http gating, `AsyncExportHandoffTests` (202 + job link), `WebhookRateLimitFilterTest` (window enforcement, scoping, outage fail-closed — the fail-open opt-out rides its own leg), `TestRunnerJourneyTests` +webhook journey (provisioning shape + signature equality over the raw body), frontend gallery/registry/FileUpload (+2, 20 total)
 
 **Spec-review closeout (2026-08-24) — the builder's integrations surface had never
 landed.** T3's acceptance pins "connector authorable in the builder" and §3's
@@ -1729,14 +1729,15 @@ by the integrations vitest journey (counters render, resume fires, ledger opens)
   `accountingManager`, SoD fail-closed; rejection publishes `journal.rejected`/
   `invoice.rejected` on the spine) → `transitionState` to POSTED through the
   durable-suspension resume leg; zero scripts on the posting path
-- the one budgeted script (`costMovement`, beforeSave on `StockLedger`) — §5's
-  canonical escape-hatch case: issues cost at the running weighted average read
-  from the item's roll-ups, receipts stamp their extended value; **rule 3's
-  ≤ 20% ceiling is exceeded — 1 script of 4 hooks = 25% app-level, the Inventory
-  module 1/1** — under G-2's primitive-candidate review (rule 3's own remedy for
-  exceeding: never quiet growth). §9 item 7's per-module report ships in
+- the costing hook (`costMovement`, beforeSave on `StockLedger`) is declarative
+  since 2026-09-03 — the §3.7 `bind` harvest (below): issues cost at the running
+  weighted average read from the bound item's roll-up view, receipts stamp their
+  extended value; **rule 3's ≤ 20% ceiling holds — 0 scripts of 4 hooks = 0%**.
+  The exit state was 1 script of 4 = 25% (Inventory 1/1) under G-2's
+  primitive-candidate review (rule 3's own remedy for exceeding: never quiet
+  growth); the harvest resolved it. §9 item 7's per-module report ships in
   change-set review (`scriptRatio.modules`); `ErpAppArtifactTests.scriptBudget`
-  pins the honest numbers so "holds" can never be recorded again
+  pins the compliant numbers so the ratio can never quietly grow back
 - the acceptance-contract suites (`apps/erp/suites/`): `reconciliation` (§9 items
   1/5: book → approval → POSTED → trial balance nets zero → aging reconciles →
   TB debits == credits == 120.0000, aging outstanding == 120.0000; preparer cannot
@@ -2878,3 +2879,50 @@ bite-proven at least once.
 
 Verified: chart gate CLEAN with all contracts armed; full serial
 `./mvnw verify` BUILD SUCCESS (honest exit 0).
+
+
+**The twenty-sixth pass (2026-09-03) — the review's findings close: the G-2 harvest
+lands (the corpus's last script goes declarative), the public-route limiter's
+outage posture is pinned fail-closed, and the cluster smoke becomes a script.**
+
+- **§3.7 `bind` (the G-2 harvest, spec-first per the SDD rule):** the flow-IR
+  grammar grows one step — `{ op: bind, params: { lookup } }` binds a lookup
+  target's canonical view into the graph's expression scope, so later steps read
+  `item.<field>` dot-paths (the cross-record arithmetic G-2 logged as
+  inexpressible). Compile: the bound names join every slot's binding set and the
+  static arithmetic guard types `<lookup>.<field>` against the *target* entity's
+  fields (`part.sku * 2` rejects at save naming the expression); references
+  ahead of their bind resolve empty at run time (§3.3's fail-open). Runtime:
+  the sink's in-transaction store read, empty view on absent/unresolvable.
+  Pinned by `BindStepTests` (the ERP costing shape end to end: receipt stamps
+  value; the posted issue prices 50 / (6 − (−4)) = 5.0000, value −20.0000, the
+  Item nets 6 / 30.0000 — the suite's exact numbers; plus the no-receipt guard
+  no-op) and four new `flowCompilerRejections` legs (non-lookup bind, unknown
+  field, typed-arithmetic rejection naming `part.sku`, the positive control).
+- **The script-ratio gap closes:** the ERP's `costMovement` re-authored as the
+  declarative bind flow — the script is demoted out and **rule 3's ≤ 20%
+  ceiling holds: 0 of 4 hooks**. The exit state (1/4 = 25% under G-2's reviewed
+  exception) stays visible in the gap log's history;
+  `ErpAppArtifactTests.scriptBudget` re-pins the compliant numbers (with the
+  inventory module asserted script-free), `GAP-LOG.md`/G-2 records the
+  resolution, and PHASE-7 §5 names the costing leg declarative.
+- **The public-route rate limiter fails closed** (the review's observation, now
+  a pinned decision): a limiter-backend outage renders 503 problem+json on the
+  anonymous inbound-webhook prefix — the one route where a throttler outage
+  must not open the gate — with the prior fail-open surviving as an explicit
+  deployment choice (`novaforge.webhook.rate-limit-fail-open:true`). The
+  rewrite also exposed that the old outage test's path (`inbound` + `t/E/h`,
+  no slash) was not a public route at all — it passed vacuously; the new legs
+  ride genuinely public paths. ARCHITECTURE.md §2.1 records the decision.
+- **`deploy/kind/smoke.sh`** — the live-cluster leg becomes repeatable: kind
+  cluster (idempotent create/reuse), jib images built and kind-loaded, the
+  infra chart waited out, the eleven service charts via the umbrella, every pod
+  Ready, and the serving proof (gateway health 200; a gated route 401 through
+  the port-forward). Every leg fails loudly with evidence; `--skip-build`
+  reuses daemon images, `--teardown` deletes the cluster. README documents it.
+
+Verified: `BindStepTests` 2/2, `DefinitionLifecycleTests` 18/18 (the four new
+§3.7 legs), `ErpAppArtifactTests` 11/11 (the re-pinned budget + the artifact
+compiling through the flow compiler), the hook-machinery suites untouched
+(HookStepResult/ManualHook/HookRetry/IntegrationFlow/FreezePeriod — 21 green),
+`WebhookRateLimitFilterTest` 6/6 (both outage postures bite).

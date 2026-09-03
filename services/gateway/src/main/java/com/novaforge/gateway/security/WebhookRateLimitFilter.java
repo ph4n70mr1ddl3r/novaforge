@@ -21,6 +21,16 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * rate-limited from its first day, Redis-backed, fixed-window per remote address.
  * Authenticated routes carry no per-user limits in v1 (ARCHITECTURE.md §2.1: a
  * stated decision, not an omission).
+ *
+ * <p>Backend-outage posture (pinned 2026-09-03, closing the recorded observation):
+ * <b>fail closed</b> — a limiter outage renders 503 on this one anonymous route
+ * rather than waving it through. The route is unauthenticated by design, so a
+ * limiter outage is exactly when throttling matters most (an attacker needs no
+ * credentials to exploit the gap); senders replay per the delivery log, and the
+ * HMAC verification behind the route never depended on the limiter. The prior
+ * fail-open behavior remains available as an explicit deployment choice
+ * ({@code novaforge.webhook.rate-limit-fail-open:true}) — a decision, not a
+ * default.</p>
  */
 @Component
 @Order(-10)
@@ -46,12 +56,16 @@ public class WebhookRateLimitFilter extends OncePerRequestFilter {
 
     private final StringRedisTemplate redis;
     private final int requestsPerMinute;
+    private final boolean failOpen;
 
     public WebhookRateLimitFilter(StringRedisTemplate redis,
                                   @Value("${novaforge.webhook.rate-limit-per-minute:60}")
-                                  int requestsPerMinute) {
+                                  int requestsPerMinute,
+                                  @Value("${novaforge.webhook.rate-limit-fail-open:false}")
+                                  boolean failOpen) {
         this.redis = redis;
         this.requestsPerMinute = requestsPerMinute;
+        this.failOpen = failOpen;
     }
 
     @Override
@@ -73,10 +87,23 @@ public class WebhookRateLimitFilter extends OncePerRequestFilter {
             count = redis.execute(WINDOW_INCREMENT, java.util.List.of(key),
                     String.valueOf(Duration.ofMinutes(1).toMillis()));
         } catch (Exception e) {
-            // Redis unavailable: fail open — availability of the public route beats a
-            // limiter outage, and the HMAC verification behind it still gates every call.
-            LOG.warn("rate limiter backend unavailable — failing open: {}", e.getMessage());
-            count = null;
+            if (failOpen) {
+                // the explicit deployment opt-out: availability of the public route
+                // beats a limiter outage; the HMAC verification still gates every call
+                LOG.warn("rate limiter backend unavailable — failing open: {}", e.getMessage());
+                filterChain.doFilter(request, response);
+                return;
+            }
+            // fail closed (the default): an unauthenticated route is exactly where a
+            // limiter outage must not open the gate — 503, senders replay per the
+            // delivery log
+            LOG.warn("rate limiter backend unavailable — failing closed (503): {}", e.getMessage());
+            response.setStatus(503);
+            response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
+            response.getWriter().write("{\"title\":\"Service Unavailable\",\"status\":503,"
+                    + "\"detail\":\"rate limiter backend unavailable — the public webhook "
+                    + "route is temporarily closed; retry\"}");
+            return;
         }
         if (count != null && count > requestsPerMinute) {
             LOG.warn("rate limit exceeded for {} ({} > {}/min)", request.getRemoteAddr(), count,

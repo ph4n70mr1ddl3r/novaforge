@@ -3717,3 +3717,57 @@ worst case — a genuinely dead executor still fails loudly inside the budget.
 ### Recorded open after this pass
 
 Empty.
+
+## Thirty-Sixth Pass — 2026-09-03 (the review's two observations close: the public-route limiter's outage posture pinned fail-closed, and a vacuous outage test exposed; plus the G-2 harvest that empties the script-ratio exception)
+
+### The observation: the anonymous route's limiter failed open on a Redis outage
+
+`WebhookRateLimitFilter` caught every backend exception and let the request
+through — availability of the public route beating a limiter outage, on the
+reasoning that the HMAC verification behind it still gates every call. The
+reasoning inverted the risk: the route is unauthenticated *by design*, so a
+limiter outage is exactly when throttling matters most (an attacker needs no
+credentials to exploit the gap), and the HMAC gate protects integrity, not
+availability. The posture is now pinned **fail closed** — a backend outage
+renders 503 problem+json and the chain never continues — with the prior
+fail-open surviving as an explicit deployment choice
+(`novaforge.webhook.rate-limit-fail-open:true`, default false). ARCHITECTURE.md
+§2.1 records the decision.
+
+### The defect the fix exposed: the outage test never tested the outage
+
+`scopingAndFailOpen`'s outage leg posted to `PUBLIC_PREFIX + "t/E/h"` — no
+slash after the prefix — which the filter's own route match
+(`uri.equals(PREFIX) || uri.startsWith(PREFIX + "/")`) does not classify as
+public at all. The request skipped the limiter entirely, hit the passing chain,
+and asserted 200: the fail-open path was never exercised — the test passed
+vacuously for its entire life. The rewritten `scopingAndFailClosed` rides a
+genuinely public path and additionally asserts the chain never continued (the
+503 body names the outage); the opt-out posture gets its own leg
+(`failOpenRemainsAnOptOut`) so both behaviors are pinned explicitly.
+
+### The G-2 harvest: the script-ratio exception empties (spec §3.7)
+
+The independent review's one unmet binding number — the ERP's 25% script ratio
+against rule 3's ≤ 20% ceiling — closes by the mechanism the spec itself
+prescribes: the gap-log's primitive-candidate review became the §3.7 `bind`
+primitive (spec section written first, per the SDD agreement), the corpus's
+`costMovement` script re-authored as the declarative flow, and the ceiling now
+holds at 0 of 4 hooks. The runtime leg (`RecordEngine` sink read + `HookExecutor`
+bind) and the compile leg (`FlowCompiler`: target-typed dot-paths, non-lookup/
+unknown-field rejections) are pinned by `BindStepTests` (2) and four new
+`flowCompilerRejections` legs; `ErpAppArtifactTests.scriptBudget` re-pins the
+compliant ratio.
+
+### Verification (this pass)
+
+- `WebhookRateLimitFilterTest` 6/6 — both outage postures bite on genuinely
+  public paths; the vacuous leg is gone.
+- `BindStepTests` 2/2; `DefinitionLifecycleTests` 18/18; `ErpAppArtifactTests`
+  11/11; the hook-machinery suites (HookStepResult/ManualHook/HookRetry/
+  IntegrationFlow/FreezePeriod) 21 green — the grammar growth changed no
+  existing meaning.
+
+### Recorded open after this pass
+
+Empty.

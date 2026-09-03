@@ -1,6 +1,6 @@
 {
   "apiName": "inventoryCosting",
-  "label": "Weighted-average costing through the budgeted script (PHASE-7 §9 item 4, §11 Q1)",
+  "label": "Weighted-average costing through the §3.7 declarative bind flow (PHASE-7 §9 item 4, §11 Q1)",
   "cases": [
     {
       "name": "receipt-then-issue-at-average",

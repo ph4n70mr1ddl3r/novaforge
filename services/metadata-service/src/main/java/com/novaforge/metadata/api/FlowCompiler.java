@@ -8,6 +8,8 @@ import com.novaforge.expression.ExpressionException;
 import com.novaforge.expression.ExpressionSql;
 import com.novaforge.metadata.AppDefinition;
 import com.novaforge.metadata.EntityDefinition;
+import com.novaforge.metadata.FieldDefinition;
+import com.novaforge.metadata.FieldType;
 import com.novaforge.metadata.FlowStep;
 import com.novaforge.metadata.HookRule;
 import com.novaforge.metadata.ScriptDefinition;
@@ -19,7 +21,8 @@ import java.util.Set;
 
 /**
  * The publish-time flow compiler (PHASE-3 §2, ADR-008's Metadata-Service role):
- * reference/type-checks every step — ops are the closed v1 set, the graph is a DAG,
+ * reference/type-checks every step — ops are the closed v1 set plus its versioned
+ * growth (§3.7's {@code bind}), the graph is a DAG,
  * setField fields and guard expressions resolve and compile (the Phase 2 JVM engine),
  * record templates address fields that exist on their target entity, iterate paths are
  * relationships — so the runtime executes checked graphs and never re-parses per
@@ -28,6 +31,16 @@ import java.util.Set;
 final class FlowCompiler {
 
     private final Map<String, FlowStep> stepsById = new HashMap<>();
+
+    /**
+     * The graph's {@code bind} steps (the G-2 harvest, PHASE-7 §3.7): lookup field
+     * apiName → the target entity definition (resolved within the app). Every
+     * expression slot of the graph compiles with the bound names in its binding set
+     * and statically types {@code <lookup>.<field>} against the target — a reference
+     * on a path that skips the bind still compiles (the §3.3 fail-open: it resolves
+     * empty at run time) but its dot-paths type-check against the target's fields.
+     */
+    private final Map<String, EntityDefinition> boundLookups = new HashMap<>();
 
     private FlowCompiler() {
     }
@@ -247,9 +260,32 @@ final class FlowCompiler {
             return;
         }
         indexSteps(hook.flow(), scope, entity, errors);
+        collectBinds(hook.flow(), app, entity, errors);
         Set<String> visited = new HashSet<>();
         Set<String> stack = new HashSet<>();
         checkStep(hook.flow(), app, entity, scope, errors, visited, stack);
+    }
+
+    /**
+     * Walks the graph's body chain collecting valid {@code bind} steps (§3.7): the
+     * lookup must resolve to a LOOKUP field whose target resolves within the app —
+     * invalid binds are reported by {@link #checkStepShape}; only valid ones join
+     * the expression slots' binding set here.
+     */
+    private void collectBinds(FlowStep step, AppDefinition app, EntityDefinition entity,
+                              java.util.List<ProblemErrors.FieldError> errors) {
+        while (step != null) {
+            if ("bind".equals(step.op())) {
+                String lookup = step.param("lookup");
+                var field = lookup == null ? java.util.Optional.<FieldDefinition>empty()
+                        : entity.field(lookup);
+                if (field.isPresent() && field.get().type() == FieldType.LOOKUP
+                        && field.get().target() != null) {
+                    app.entity(field.get().target()).ifPresent(target -> boundLookups.put(lookup, target));
+                }
+            }
+            step = step.body();
+        }
     }
 
     /**
@@ -336,6 +372,28 @@ final class FlowCompiler {
                             "setField targets an existing field: " + field, field));
                 }
                 checkExpression(step.param("expression"), where, entity, errors);
+            }
+            case "bind" -> {
+                // §3.7 (the G-2 harvest): the bound name must be a LOOKUP field whose
+                // target resolves within the app — the runtime binds the target's
+                // canonical view under the lookup field's apiName for the graph's
+                // expression slots (dot-paths like item.qtyOnHand).
+                String lookup = step.param("lookup");
+                var field = lookup == null ? java.util.Optional.<FieldDefinition>empty()
+                        : entity.field(lookup);
+                if (field.isEmpty()) {
+                    errors.add(new ProblemErrors.FieldError(where,
+                            "bind names an existing field: " + lookup, lookup));
+                } else if (field.get().type() != FieldType.LOOKUP) {
+                    errors.add(new ProblemErrors.FieldError(where,
+                            "bind binds a lookup field's target: " + lookup + " is a "
+                                    + field.get().type(), lookup));
+                } else if (field.get().target() == null
+                        || app.entity(field.get().target()).isEmpty()) {
+                    errors.add(new ProblemErrors.FieldError(where,
+                            "bind target must resolve within the app: " + field.get().target(),
+                            field.get().target()));
+                }
             }
             case "branch" -> {
                 checkExpression(step.param("guard"), where, entity, errors);
@@ -633,7 +691,7 @@ final class FlowCompiler {
     private static boolean isTerminal(FlowStep step) {
         return switch (step.op()) {
             case "requestApproval", "transitionState", "callConnector", "setField",
-                    "createRecord", "updateRecord", "publishEvent" -> step.next() == null;
+                    "createRecord", "updateRecord", "publishEvent", "bind" -> step.next() == null;
             case "iterate" -> false;   // body ends the path; next still required after
             default -> false;
         };
@@ -649,16 +707,45 @@ final class FlowCompiler {
         try {
             Set<String> fields = new HashSet<>();
             entity.fields().forEach(f -> fields.add(f.apiName()));
+            // §3.7: the graph's bound lookup names join every slot's binding set — a
+            // reference ahead of its bind (or on a path that skips it) compiles and
+            // resolves empty at run time (§3.3's fail-open), while its dot-paths
+            // statically type-check against the bound target's fields.
+            fields.addAll(boundLookups.keySet());
             Expression parsed = Expression.parse(source);
             parsed.compileCheck(Expression.CompilePolicy.recordContext(fields, true));
             // PHASE-3 §2's type-aware leg: Annex A arithmetic violations the static
             // field types can name reject here, at save/publish — never as a
-            // runtime 500 on the first matching record.
-            parsed.arithmeticCheck(com.novaforge.metadata.ExpressionTypes.of(entity));
+            // runtime 500 on the first matching record. Bound dot-paths type against
+            // the lookup target's fields (the typed win the harvest carries).
+            parsed.arithmeticCheck(boundTypes(entity));
         } catch (ExpressionException e) {
             errors.add(new ProblemErrors.FieldError(where,
                     source + " — " + e.getMessage(), source));
         }
+    }
+
+    /**
+     * The §3.7 arithmetic-shape resolver: the record's own static types, overlaid
+     * with the bound lookups' dot-paths typed against each target entity's fields
+     * ({@code item.qtyOnHand} → the Item field's shape; bare {@code item} → TEXT,
+     * the id the record carries). Unknown sub-fields stay UNKNOWN — fail-open, the
+     * evaluator remains their authority.
+     */
+    private java.util.function.Function<String, Expression.ValueType> boundTypes(
+            EntityDefinition entity) {
+        var own = com.novaforge.metadata.ExpressionTypes.of(entity);
+        return path -> {
+            int dot = path.indexOf('.');
+            if (dot > 0) {
+                var target = boundLookups.get(path.substring(0, dot));
+                if (target != null) {
+                    return com.novaforge.metadata.ExpressionTypes.of(target)
+                            .apply(path.substring(dot + 1));
+                }
+            }
+            return own.apply(path);
+        };
     }
 
     private FlowStep byId(String id) {

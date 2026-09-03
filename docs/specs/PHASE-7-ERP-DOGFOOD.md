@@ -194,6 +194,44 @@ scanned pages client-side to match identity (the logged workaround). Triaged
   ride the same parser), so §3.5's conditions may address child identity and
   version too.
 
+### 3.7 `bind` — Lookup Targets in Flow Expression Scope (the G-2 harvest, 2026-09-03)
+
+Logged at the dogfood (G-2): flow expressions bind the record's own fields
+only — the weighted-average costing needed the parent `Item`'s roll-up values
+(`inventoryValue / (qtyOnHand − qty)`), which no primitive could read, so the
+corpus carried the plan's one budgeted script and the ≤ 20% ratio ceiling was
+exceeded at exit (1 of 4 hooks) under G-2's reviewed exception (§1 rule 3).
+Triaged *accept-as-platform-feature* per §8; this section is the feature's spec
+before implementation.
+
+- **The grammar grows one step: `bind`.** Params: `{ lookup }` — a LOOKUP field
+  of the hook's entity (compile-checked: the field exists, is a lookup, and its
+  target resolves within the app). At execution the step resolves the lookup's
+  target record through the store — the same in-transaction read a caller's
+  query would serve — and binds the target's canonical field view (the
+  generated `id` included) into the graph's expression scope under the lookup
+  field's apiName; later steps address it as dot-paths (`item.qtyOnHand`),
+  which the shared `Bindings` resolver walks through the nested view. An
+  absent, malformed, or unresolvable target binds the empty view — guards see
+  null, the no-op shape the script's `item == null` check returned.
+- **Compile semantics:** the graph's bound names join every expression slot's
+  binding set, and the static arithmetic guard types `<lookup>.<field>`
+  against the *target* entity's fields — `part.sku * 2` rejects at save with
+  the offending expression named (the typed win the harvest carries); a bare
+  bound name types as the id (text); unknown sub-fields stay UNKNOWN —
+  fail-open, the evaluator remains their authority. A reference on a path that
+  skips its bind (or precedes it) compiles and resolves empty at run time —
+  §3.3's pre-suspension fail-open, unchanged.
+- **Nothing existing changes meaning**: graphs without `bind` behave
+  byte-for-byte as before (pinned by regression); the primitive is a versioned
+  grammar growth per ADR-008 #2.
+- **Adopted by the corpus** (2026-09-03): the ERP's costing hook re-authored as
+  the declarative `bind` flow — receipt stamps `value = qty × unitCost`; a
+  posted issue binds the Item and prices `unitCost = inventoryValue /
+  (qtyOnHand − qty)`, `value = qty × unitCost` — the exact numbers the script
+  produced (the `inventoryCosting` suite pins them unchanged), the script is
+  demoted out, and the script-ratio ceiling holds (0 of 4 hooks).
+
 ## 4. Period Close Mechanics
 
 - Close checklist = a Phase 4 workflow whose tasks are the close steps; owners are
@@ -217,9 +255,11 @@ scanned pages client-side to match identity (the logged workaround). Triaged
 - Posting = a flow on `Invoice`/`JournalEntry` submit: branch → approval (Phase 4,
   SoD: preparer, approver, and poster are pairwise distinct) → `createRecord` journal lines from templates →
   `transitionState` to POSTED. No scripts expected on this path.
-- Weighted-average costing = an `iterate` flow over receipt lots with rounding
-  chains — the canonical ADR-008 escape-hatch case; one script, counted, reviewed
-  against the budget (rule 3).
+- Weighted-average costing = the §3.7 declarative `bind` flow (adopted
+  2026-09-03, the G-2 harvest): the issue binds the Item's roll-up view and
+  prices at `inventoryValue / (qtyOnHand − qty)` — historically §5's canonical
+  escape-hatch case (one budgeted script), now declarative; the script-ratio
+  ceiling holds (§9 item 7).
 - Dunning = scheduled reports (Phase 5 scheduler target) + letter generation; the
   schedule logic is expressions over aging buckets.
 - Bank feed = the Phase 6 exit connector driven by a scheduled flow (a
