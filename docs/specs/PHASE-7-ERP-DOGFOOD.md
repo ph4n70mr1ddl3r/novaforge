@@ -82,9 +82,35 @@ the state field.) This is what makes the journal append-only in fact, not conven
 
 Activated when an `AccountingPeriod` record reaches `CLOSED` (§4's state machine — the
 period is an app entity, §2, not a Settings row); the Data Runtime write path rejects
-dated-into-closed-period writes with the new code `PERIOD_LOCKED("4014", 400)`. How a
-write's period is resolved (date-range lookup vs `periodId` reference) is spec'd in the
-feature's harvest section per §8 before implementation.
+dated-into-closed-period writes with the new code `PERIOD_LOCKED("4014", 400)`.
+
+- **Resolution — pinned (the resolved §8 harvest decision, landed 2026-08-24):** a
+  dated write resolves its period by **date-range lookup** over the bound period
+  entity — documents carry dates, not period pointers, so no `periodId` reference
+  exists to re-point or go stale. The binding `{entity, dateField, fromField,
+  toField, statusField, closedStatus}` names the range and status columns (defaults
+  `startDate`/`endDate`/`status`/`CLOSED`); the lock resolves as
+  `from ≤ date ≤ to AND status = closedStatus` over the period entity's own records.
+- **Gate mechanics — pinned:** an undated write resolves no period (the
+  field-required rules own the date's presence — the lock never reports a missing
+  date), a malformed date fails open to field coercion's own error, and no matching
+  period rows means no lock — the absence of periods never blocks a tenant's writes.
+  The gate runs twice on every write path (user, integration principal, the
+  hook-nested engine): before the `beforeSave` hooks — a write doomed by the lock
+  must not fire its hooks' external side effects — and again after them, so a hook
+  re-dating the landing record into a closed period meets the rejection it would
+  have met on arrival. Updates gate on the **merged** record state: a PATCH touching
+  any field of a record already dated into a closed period rejects, its stored date
+  riding into the gate unchanged — the lock binds the document's date, not the
+  patch body's). The check takes `FOR SHARE` row locks on the matched period rows,
+  so a period cannot flip to `closedStatus` between the check and the dated write it
+  guards — the check-then-write window a concurrent close could otherwise race
+  through.
+- The closed leg is absolute; §4's soft close (`restrictedStatus` + `exemptField`)
+  rides the same lookup and exempts only the merged record's `exemptField = true`.
+  Reopen (§4's audited `CLOSED → OPEN`) deactivates the lock — the lookup reads the
+  period's status at write time, so a reopened period admits new dated writes while
+  nothing is ever un-frozen.
 
 Both land behind the same publish/compile machinery as every other definition, with
 harness vocabulary to assert them (§9).

@@ -1685,11 +1685,14 @@ by the integrations vitest journey (counters render, resume fires, ledger opens)
 - both features flag-gated per definition (attributes absent → zero behavior
   change; §10 T3's "features flag-gated" satisfied by authoring, not deployment
   flags — an unupgraded app never sees the codes)
-- suites: `FreezePeriodTests` (5 — §9 items 2/3 over the real Postgres write path:
+- suites: `FreezePeriodTests` (7 — §9 items 2/3 over the real Postgres write path:
   posted-document immutability incl. inline arrays + delete, child writes naming
   the frozen parent (create/update/delete), reversal-entries-post, closed-period
-  rejection + boundary dates + reopen deactivation, and §4's soft close — CLOSING
-  blocks a normal posting, `closeJournal: true` posts, CLOSED stays absolute) +
+  rejection + boundary dates + reopen deactivation, §4's soft close — CLOSING
+  blocks a normal posting, `closeJournal: true` posts, CLOSED stays absolute —
+  and the §3.2 resolution pins: a non-date PATCH on a record dated into a closed
+  period rejects (the gate reads the merged record state, bite-proven), an
+  undated write resolves no period and defers to the required rule) +
   nine `DefinitionValidatorTest` rules (machine-bound freeze, terminal-state
   presence, period entity resolution, dateField typing, range-field typing,
   closedStatus ∈ enum, restrictedStatus shape/distinctness, exemptField typing,

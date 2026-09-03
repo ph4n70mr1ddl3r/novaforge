@@ -3849,3 +3849,65 @@ that exists while binding everything a client might yet author.
 ### Recorded open after this pass
 
 Empty.
+
+## Thirty-Eighth Pass — 2026-09-03 (the harvest pin that never landed: §3.2's period-resolution promise is honored, the two unpinned legs join it in court)
+
+### C-38P1 — PHASE-7 §3.2 promised its period-resolution pin "before implementation"; the implementation shipped and every record cites a spec section that was never written
+
+§3.2 has read, since its drafting: "How a write's period is resolved (date-range
+lookup vs `periodId` reference) is spec'd in the feature's harvest section per §8
+before implementation." The SDD agreement (PHASE-4 §1, applied corpus-wide) makes
+that sentence a binding forward promise — every accepted harvest "becomes a versioned
+platform feature with its own spec section here before implementation" (§8), and the
+G-1/G-4/G-15/G-5/G-2 harvests all honored it (§§3.3–3.7). The PeriodLock harvest did
+not: `RecordEngine.enforcePeriodLock` resolved the decision as date-range lookup and
+its javadoc cites "the resolved §8 pin — documents carry dates, not period pointers";
+IMPLEMENTATION.md Phase 7 repeats the phrase; the ERP gap log records the disposition
+— but the spec section itself still carried the dangling future tense. Three records
+citing a pin that exists nowhere is precisely the phantom-citation defect class the
+thirty-second pass closed elsewhere (README §2.5's empty forwarding section): a
+reviewer walking §3.2 finds a promise, not a contract, and the corpus's only source
+of truth for the resolution mechanics is a code comment.
+
+**Fixed (V-C38P1):** §3.2 now carries the resolution pin, written spec-first as the
+SDD rule requires and matching the shipped implementation exactly (the
+spec-after-code amendment pattern of the §6 execute-surface and egress-policy pins):
+date-range lookup over the bound period entity — documents carry dates, not period
+pointers — with the binding's column names and their defaults
+(`startDate`/`endDate`/`status`/`CLOSED`) stated; undated writes resolve no period
+(the field-required rules own presence), a malformed date fails open to coercion's
+own error, and no matching period rows means no lock; the gate runs twice on every
+write path (before the `beforeSave` hooks — a doomed write fires no external side
+effects — and after them, so a hook re-dating the landing record meets the same
+rejection); updates gate on the **merged** record state, so a PATCH touching any
+field of a record already dated into a closed period rejects with its stored date
+riding into the gate unchanged; the check takes `FOR SHARE` row locks on the matched
+period rows, closing the check-then-write window a concurrent close could race
+through; the closed leg stays absolute, §4's soft close rides the same lookup, and
+reopen deactivates the lock because the lookup reads status at write time.
+
+**Pinned (V-C38P2):** two legs of the freshly-written pin had no test of their own —
+`FreezePeriodTests` grew them beside their siblings (7 tests now):
+
+- `periodGateReadsTheMergedRecordsDate` — close a period around a stored entry's
+  date, then PATCH a *non-date* field: 4014 (the stored date rides into the gate),
+  with an open-period twin proving the rejection is the closed period, not the patch
+  shape. Bite-proven: with the update door's gate pointed at the patch body instead
+  of the merged state, the closed-period PATCH returns 200 and the test fails
+  exactly as the defect reads (`Status expected:<400> but was:<200>`).
+- `undatedWritesResolveNoPeriod` — a create carrying no `entryDate` against a
+  closed-covered binding renders the required rule's 4000 naming `entryDate`,
+  never 4014 and never a 500 from the lock staring at a null date.
+
+### Verification (this pass)
+
+- `FreezePeriodTests` 7/7 green (the five prior legs unchanged, the two new §3.2
+  resolution pins green with the shipped engine); the bite run reproduced the defect
+  (1/7 failing exactly at the new leg) before the restore.
+- `HookDatedPeriodLockTests` 1/1, `IntegrationGuardLegTests` 3/3 — the gate's other
+  consumers unchanged by the spec amendment (spec + tests only; no production code
+  moved in this pass).
+
+### Recorded open after this pass
+
+Empty.

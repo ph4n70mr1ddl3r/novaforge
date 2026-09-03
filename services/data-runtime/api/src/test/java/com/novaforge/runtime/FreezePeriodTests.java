@@ -302,6 +302,45 @@ class FreezePeriodTests extends PostgresTestBase {
                 .andExpect(jsonPath("$.code").value("4014"));
     }
 
+    @Test
+    @DisplayName("§3.2 resolution: the gate reads the merged record's date — a non-date PATCH into a closed period rejects, its open twin lands")
+    void periodGateReadsTheMergedRecordsDate() throws Exception {
+        String closed = createPeriod("2026-05-closed", "2026-05-01", "2026-05-31");
+        String inside = createEntry("le-merged", "2026-05-20");
+        closePeriod(closed);
+        // a PATCH touching a NON-date field rides the stored date into the gate → 4014:
+        // the update door gates on the merged record state, never just the patch body
+        // (a gate that read only the request's date fields would wave this through)
+        mockMvc.perform(patch("/api/v1/runtime/LedgerEntry/" + inside).with(jwtFor())
+                        .contentType("application/json")
+                        .content("{\"version\":1,\"label\":\"retouched\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("4014"));
+        // the open-period twin with the same body shape lands — the rejection is the
+        // closed period, not the patch shape
+        String outside = createEntry("le-merged-open", "2026-06-05");
+        mockMvc.perform(patch("/api/v1/runtime/LedgerEntry/" + outside).with(jwtFor())
+                        .contentType("application/json")
+                        .content("{\"version\":1,\"label\":\"retouched\"}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("§3.2 resolution: an undated write resolves no period — the required rule owns the absence, never the lock")
+    void undatedWritesResolveNoPeriod() throws Exception {
+        String closed = createPeriod("2026-04-closed", "2026-04-01", "2026-04-30");
+        closePeriod(closed);
+        // no entryDate: the gate resolves no period and stays silent — the
+        // field-required rule reports the absence (4000 naming entryDate), never 4014
+        // and never a 500 from the lock staring at a null date
+        mockMvc.perform(post("/api/v1/runtime/LedgerEntry").with(jwtFor())
+                        .contentType("application/json")
+                        .content("{\"label\":\"no-date\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("4000"))
+                .andExpect(jsonPath("$.errors[?(@.field=='entryDate')]").isNotEmpty());
+    }
+
     // --- helpers ---
 
     private String createEntry(String label, String date) throws Exception {
