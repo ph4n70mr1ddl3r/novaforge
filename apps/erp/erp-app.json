@@ -1300,12 +1300,12 @@
           "type": "decimal",
           "precision": 18,
           "scale": 6,
-          "rollup": "SUM(movements.qty)"
+          "rollup": "SUM(movements.qty WHERE status = 'POSTED')"
         },
         {
           "apiName": "inventoryValue",
           "type": "money",
-          "rollup": "SUM(movements.value)"
+          "rollup": "SUM(movements.value WHERE status = 'POSTED')"
         }
       ],
       "relationships": [
@@ -1428,7 +1428,7 @@
                 "id": "avgGuard",
                 "op": "branch",
                 "params": {
-                  "guard": "item.qtyOnHand != null && item.inventoryValue != null && (item.qtyOnHand - qty) > 0"
+                  "guard": "item.qtyOnHand != null && item.inventoryValue != null && item.qtyOnHand > 0"
                 },
                 "onTrue": "issueUnitCost",
                 "body": {
@@ -1436,7 +1436,7 @@
                   "op": "setField",
                   "params": {
                     "field": "unitCost",
-                    "expression": "item.inventoryValue / (item.qtyOnHand - qty)"
+                    "expression": "item.inventoryValue / item.qtyOnHand"
                   },
                   "next": "issueValue",
                   "body": {
@@ -2023,11 +2023,11 @@
       "id": "G-15",
       "area": "P1 Data Modeling",
       "blocker": "Roll-ups cannot filter by child state: qtyOnHand/inventoryValue must sum only POSTED movements, but SUM(movements.qty) aggregates every child row from its create - the machine pins DRAFT at create, so a movement's qty counts before it is posted and the costing script (at the POSTED update) reads an Item that already includes the issue's own qty",
-      "workaround": "The costMovement script discounts the row's own quantity (preQty = qtyOnHand - $record.qty) before dividing - correct for the machine-bound post-at-update shape; found live running the suites",
+      "workaround": "The costMovement flow discounts the row's own quantity ((qtyOnHand - qty) before dividing) - correct only while the roll-ups aggregate every row; found live running the suites. Adopted 2026-09-04 (the 42nd pass): the Item roll-ups carry the shipped WHERE clause, the manual discount is retired - the roll-up itself now excludes DRAFT rows, so the divisor is the plain bound view",
       "proposed": "conditional roll-ups (SUM(movements.qty WHERE status = 'POSTED')) or a stampOnTransition-scoped roll-up recompute",
       "priority": "high",
       "disposition": "closed",
-      "resolvedIn": "spec §3.5 (2026-08-27): conditional roll-ups — SUM(rel.field WHERE status = 'POSTED'), both aggregation paths filter identically"
+      "resolvedIn": "spec §3.5 (2026-08-27): conditional roll-ups — SUM(rel.field WHERE status = 'POSTED'), both aggregation paths filter identically; adopted by the corpus 2026-09-04 (the 42nd pass) — Item.qtyOnHand/inventoryValue carry the WHERE clause and the flow's manual row discount is retired (the divisor is the plain bound view; the pinned costing numbers are unchanged)"
     }
   ]
 }

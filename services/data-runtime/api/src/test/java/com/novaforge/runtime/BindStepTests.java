@@ -41,9 +41,16 @@ import tools.jackson.databind.json.JsonMapper;
  * later steps address {@code item.<field>} dot-paths — so the weighted-average
  * costing the dogfood logged as inexpressible (G-2's cross-record arithmetic) runs
  * as a declarative flow: receipt stamps its value; posting an issue prices it at
- * {@code inventoryValue / (qtyOnHand - qty)} off the bound Item's roll-up view.
- * The dot-paths type-check against the target entity at publish (the compiler's
+ * {@code inventoryValue / qtyOnHand} off the bound Item's roll-up view. The
+ * dot-paths type-check against the target entity at publish (the compiler's
  * rejection matrix rides DefinitionLifecycleTests).
+ *
+ * <p>The G-15 adoption rides the same shape (the 42nd pass): the Item's roll-ups
+ * carry the shipped WHERE clause — {@code SUM(movements.qty WHERE status =
+ * 'POSTED')} — so DRAFT movements never count into stock, and the flow's manual
+ * row discount ({@code qtyOnHand - qty}, the unconditional-roll-up workaround)
+ * is retired: the divisor is the plain bound view. The pinned numbers are
+ * unchanged — 50 / 10 = 5.0000 either way — and the corpus's suite keeps them.</p>
  */
 @SpringBootTest(properties = {"novaforge.events.relay-interval-ms=3600000"})
 @AutoConfigureMockMvc
@@ -83,12 +90,12 @@ class BindStepTests extends PostgresTestBase {
      "type": "decimal",
      "precision": 18,
      "scale": 6,
-     "rollup": "SUM(movements.qty)"
+     "rollup": "SUM(movements.qty WHERE status = 'POSTED')"
     },
     {
      "apiName": "inventoryValue",
      "type": "money",
-     "rollup": "SUM(movements.value)"
+     "rollup": "SUM(movements.value WHERE status = 'POSTED')"
     }
    ],
    "relationships": [
@@ -179,7 +186,7 @@ class BindStepTests extends PostgresTestBase {
         "id": "avgGuard",
         "op": "branch",
         "params": {
-         "guard": "item.qtyOnHand != null && item.inventoryValue != null && (item.qtyOnHand - qty) > 0"
+         "guard": "item.qtyOnHand != null && item.inventoryValue != null && item.qtyOnHand > 0"
         },
         "onTrue": "issueUnitCost",
         "body": {
@@ -187,7 +194,7 @@ class BindStepTests extends PostgresTestBase {
          "op": "setField",
          "params": {
           "field": "unitCost",
-          "expression": "item.inventoryValue / (item.qtyOnHand - qty)"
+          "expression": "item.inventoryValue / item.qtyOnHand"
          },
          "next": "issueValue",
          "body": {
@@ -314,13 +321,21 @@ class BindStepTests extends PostgresTestBase {
                 + "\"movementDate\":\"2026-09-01\",\"qty\":\"10\",\"unitCost\":\"5.0000\","
                 + "\"status\":\"POSTED\"}");
 
-        // issue −4 as DRAFT (the unfiltered roll-ups count it: qtyOnHand 6), then
-        // post it: the bind leg reads the bound Item (qtyOnHand 6, inventoryValue
-        // 50) and prices 50 / (6 − (−4)) = 5.0000 — the exact numbers the ERP
-        // corpus's suite pins, now without the script
+        // issue −4 as DRAFT: the WHERE-conditioned roll-ups do NOT count it — the
+        // Item still reads 10 on hand / 50.0000 (the §3.5 defect dead; the
+        // unconditional roll-ups served 6 here) — then post it: the bind leg reads
+        // the bound Item (qtyOnHand 10, inventoryValue 50) and prices 50 / 10 =
+        // 5.0000 — the exact numbers the ERP corpus's suite pins, the manual row
+        // discount retired because the roll-up itself excludes the DRAFT row
         MvcResult draft = create("StockLedger", "{\"item\":\"" + itemId + "\","
                 + "\"movementType\":\"ISSUE\",\"movementDate\":\"2026-09-02\",\"qty\":\"-4\","
                 + "\"status\":\"DRAFT\"}");
+        var afterDraft = rowBySku("W-1");
+        assertThat(new BigDecimal(afterDraft.get("qtyOnHand").asString()))
+                .as("a DRAFT issue never moves the WHERE-conditioned roll-up (§3.5)")
+                .isEqualByComparingTo("10");
+        assertThat(new BigDecimal(afterDraft.get("inventoryValue").asString()))
+                .isEqualByComparingTo("50.0000");
         String issueId = MAPPER.readTree(draft.getResponse().getContentAsString())
                 .get("id").asString();
         String version = MAPPER.readTree(draft.getResponse().getContentAsString())
@@ -354,6 +369,51 @@ class BindStepTests extends PostgresTestBase {
                 .isEqualByComparingTo("6");
         assertThat(new BigDecimal(refreshed.get("inventoryValue").asString()))
                 .isEqualByComparingTo("30.0000");
+    }
+
+    @Test
+    @DisplayName("a DRAFT receipt never counts into stock — the G-15 defect the WHERE clause kills (§3.5 adoption)")
+    void draftMovementsNeverCountIntoStock() throws Exception {
+        create("Item", "{\"sku\":\"W-3\"}");
+        String itemId = rowBySku("W-3").get("id").asString();
+
+        // a priced receipt parks in DRAFT: the unconditional roll-ups counted it at
+        // create (the logged defect — stock reported for goods not yet posted); the
+        // WHERE-conditioned roll-ups leave the Item at zero until the machine posts
+        create("StockLedger", "{\"item\":\"" + itemId + "\",\"movementType\":\"RECEIPT\","
+                + "\"movementDate\":\"2026-09-01\",\"qty\":\"10\",\"unitCost\":\"5.0000\","
+                + "\"status\":\"DRAFT\"}");
+        var draft = rowBySku("W-3");
+        assertThat(new BigDecimal(draft.get("qtyOnHand").asString()))
+                .as("a DRAFT receipt never moves qtyOnHand (§3.5)")
+                .isEqualByComparingTo("0");
+        assertThat(new BigDecimal(draft.get("inventoryValue").asString()))
+                .isEqualByComparingTo("0.0000");
+
+        // the movement's own transition is what moves the parent: post it
+        var created = MAPPER.readTree(mockMvc.perform(get("/api/v1/runtime/StockLedger")
+                        .with(jwtFor())
+                        .param("filter", java.net.URLEncoder.encode(
+                                "{\"field\":\"item\",\"op\":\"eq\",\"value\":\"" + itemId + "\"}",
+                                java.nio.charset.StandardCharsets.UTF_8)))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString())
+                .get("rows").get(0);
+        mockMvc.perform(patch("/api/v1/runtime/StockLedger/" + created.get("id").asString())
+                        .with(jwtFor())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":" + created.get("version").asString()
+                                + ",\"status\":\"POSTED\"}"))
+                .andExpect(status().isOk());
+
+        // a DRAFT issue on top of the posted receipt still does not count
+        create("StockLedger", "{\"item\":\"" + itemId + "\",\"movementType\":\"ISSUE\","
+                + "\"movementDate\":\"2026-09-02\",\"qty\":\"-4\",\"status\":\"DRAFT\"}");
+        var after = rowBySku("W-3");
+        assertThat(new BigDecimal(after.get("qtyOnHand").asString()))
+                .as("only the POSTED receipt counts; the DRAFT issue stays out (§3.5)")
+                .isEqualByComparingTo("10");
+        assertThat(new BigDecimal(after.get("inventoryValue").asString()))
+                .isEqualByComparingTo("50.0000");
     }
 
     @Test

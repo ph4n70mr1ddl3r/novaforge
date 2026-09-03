@@ -103,6 +103,55 @@ class ErpAppArtifactTests {
     }
 
     @Test
+    @DisplayName("the §3.5 conditional roll-ups are adopted: Item stock counts only POSTED movements")
+    void conditionalRollupsAdopted() throws Exception {
+        AppDefinition app = app();
+        // G-15's closure is true only while the corpus uses it: the Item's roll-ups
+        // must carry the shipped WHERE clause (DRAFT movements never count into
+        // stock), and the costing flow's divisor is then the plain bound view — the
+        // manual row discount (qtyOnHand - qty) the unconditional roll-ups forced
+        // is retired. Pinned so the harvest cannot quietly un-adopt.
+        var qtyOnHand = app.entity("Item").orElseThrow().field("qtyOnHand").orElseThrow();
+        assertThat(qtyOnHand.rollup())
+                .as("Item.qtyOnHand sums POSTED movements only (§3.5)")
+                .isEqualTo("SUM(movements.qty WHERE status = 'POSTED')");
+        var inventoryValue = app.entity("Item").orElseThrow().field("inventoryValue").orElseThrow();
+        assertThat(inventoryValue.rollup())
+                .as("Item.inventoryValue sums POSTED movements only (§3.5)")
+                .isEqualTo("SUM(movements.value WHERE status = 'POSTED')");
+        var costMovement = app.entity("StockLedger").orElseThrow().hooks().stream()
+                .filter(hook -> "costMovement".equals(hook.name())).findFirst().orElseThrow()
+                .flow();
+        // the graph nests along body chains (branch ids resolve into them)
+        java.util.ArrayDeque<com.novaforge.metadata.FlowStep> stack = new java.util.ArrayDeque<>();
+        stack.push(costMovement);
+        String guard = null;
+        String divisor = null;
+        while (!stack.isEmpty()) {
+            com.novaforge.metadata.FlowStep step = stack.pop();
+            if (step == null) {
+                continue;
+            }
+            if ("branch".equals(step.op()) && "avgGuard".equals(step.id())) {
+                guard = String.valueOf(step.param("guard"));
+            }
+            if ("setField".equals(step.op()) && "unitCost".equals(step.param("field"))) {
+                divisor = String.valueOf(step.param("expression"));
+            }
+            if (step.body() != null) {
+                stack.push(step.body());
+            }
+        }
+        assertThat(guard)
+                .as("the costing guard reads the plain POSTED-only view — no row discount")
+                .isEqualTo("item.qtyOnHand != null && item.inventoryValue != null "
+                        + "&& item.qtyOnHand > 0");
+        assertThat(divisor)
+                .as("the costing divisor is the plain bound view — no manual row discount")
+                .isEqualTo("item.inventoryValue / item.qtyOnHand");
+    }
+
+    @Test
     @DisplayName("the §2 AR/AP + Settings scope rows are authored (credit notes, letters, vendor, rates)")
     void arApSettingsScopeAuthored() throws Exception {
         AppDefinition app = app();

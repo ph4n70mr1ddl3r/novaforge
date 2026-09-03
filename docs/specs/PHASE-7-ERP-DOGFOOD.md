@@ -257,6 +257,12 @@ before implementation.
   (qtyOnHand − qty)`, `value = qty × unitCost` — the exact numbers the script
   produced (the `inventoryCosting` suite pins them unchanged), the script is
   demoted out, and the script-ratio ceiling holds (0 of 4 hooks).
+  *(Amended 2026-09-04, the forty-second pass: with §3.5's conditional roll-ups
+  adopted by the corpus — `SUM(movements.qty WHERE status = 'POSTED')` — the
+  divisor drops the manual row discount, the roll-up itself excluding DRAFT
+  rows: `unitCost = inventoryValue / qtyOnHand`. The pinned costing numbers are
+  unchanged — the discount and the WHERE clause were two carrying the same
+  exclusion.)*
 
 ## 4. Period Close Mechanics
 
@@ -285,7 +291,8 @@ before implementation.
   2026-09-03, the G-2 harvest): the issue binds the Item's roll-up view and
   prices at `inventoryValue / (qtyOnHand − qty)` — historically §5's canonical
   escape-hatch case (one budgeted script), now declarative; the script-ratio
-  ceiling holds (§9 item 7).
+  ceiling holds (§9 item 7). *(Post-§3.5 adoption, 2026-09-04: the divisor is
+  the plain `inventoryValue / qtyOnHand` — see §3.7's amendment.)*
 - Dunning = scheduled reports (Phase 5 scheduler target) + letter generation; the
   schedule logic is expressions over aging buckets.
 - Bank feed = the Phase 6 exit connector driven by a scheduled flow (a

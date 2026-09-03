@@ -3027,3 +3027,50 @@ the one artifact no test had ever opened:
 Verified: `check-observability.sh` green (11 rows × 3 panels, 3 boards, no
 collisions) after the three bite-proofs restore; `git diff` scoped to the board
 JSON, the gate script, the workflow step, and this ledger entry.
+
+**Spec-review closeout (2026-09-04, forty-second pass) — the G-15 harvest's
+missing half lands: PHASE-7 §3.5's conditional roll-ups, shipped as a platform
+feature since 2026-08-27, are finally adopted by the ERP corpus they were
+harvested from.** The sweep walked every spec pin whose subject was an
+*artifact* rather than a service and found the corpus still living the defect
+the harvest closed: `Item.qtyOnHand`/`inventoryValue` carried the unconditional
+`SUM(movements.qty)`/`SUM(movements.value)` — aggregating every child row from
+its create, so a DRAFT movement counted into stock the machine had not posted —
+and the declarative costing flow compensated with the manual row discount
+(`inventoryValue / (qtyOnHand − qty)`), the exact workaround G-15 logged. The
+platform feature was real and tested (`RollupExpression`, both aggregation
+paths, `ConditionalRollupTests`); nothing in the artifact used it:
+- **The corpus adopts the WHERE clause** (`erp-app.json`): the Item's roll-ups
+  are `SUM(movements.qty WHERE status = 'POSTED')` and
+  `SUM(movements.value WHERE status = 'POSTED')`; the `costMovement` flow's
+  guard reads the plain POSTED-only view (`item.qtyOnHand > 0`) and the divisor
+  drops the discount (`item.inventoryValue / item.qtyOnHand`). The arithmetic
+  is invariant — the discount and the WHERE clause were two mechanisms carrying
+  the same exclusion — so the `inventoryCosting` suite's pinned numbers
+  (5.0000 / 6 / 30.0000) hold unchanged. A side benefit: an issue against zero
+  stock now fails the guard open (the script's historical no-op) where the
+  discounted divisor silently priced it at 0.
+- **The gate**: a new `ErpAppArtifactTests.conditionalRollupsAdopted` leg pins
+  both roll-up texts and walks the `costMovement` graph for the discount-free
+  guard and divisor — the harvest cannot quietly un-adopt. Bite-proven by
+  reverting one roll-up in the artifact (the leg fails naming the missing WHERE
+  clause) and restoring.
+- **The execution twin moves with it**: `BindStepTests`' inline APP_JSON (the
+  corpus's exact shape) adopts the same WHERE-clause roll-ups and flow, and its
+  journeys gain the §3.5 behavior pins: the weighted-average journey now
+  asserts mid-flight that a DRAFT issue leaves the Item at 10/50.0000 (the
+  unconditional roll-ups served 6 — the misbehavior, dead), and a new
+  `draftMovementsNeverCountIntoStock` leg pins a DRAFT receipt never moving
+  qtyOnHand/inventoryValue (0/0.0000), its own POSTED transition moving them
+  (10/50.0000), and a DRAFT issue on top still excluded. Bite-proven by
+  reverting the twin's roll-up strings with the new assertions in place — both
+  legs fail on the DRAFT-counted values.
+- **The paper trail syncs** (the gap-log keep-in-sync rule): G-15's row in
+  `GAP-LOG.md` and the `gapLog` branch record the 2026-09-04 corpus adoption;
+  PHASE-7 §3.7/§5 carry dated amendments (the divisor is now the plain bound
+  view; the ledger's historical entries stay as written).
+
+Verified: `ErpAppArtifactTests` 12/12 (save-clean, compile-clean, the new gate
+green after its bite-proof restore); `BindStepTests` 3/3 + `ConditionalRollupTests`
+3/3 against Postgres; `RollupExpressionTests` 5/5; `git diff` scoped to the ERP
+artifact, its gap log, the spec amendments, the two test files, and this entry.
