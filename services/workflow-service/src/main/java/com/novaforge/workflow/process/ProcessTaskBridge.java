@@ -180,7 +180,8 @@ public class ProcessTaskBridge implements FlowableEventListener {
                 recordId, assignee, role, timers.dueAt(), timers.warnAt(), createdBy,
                 null, null, escalateTo, notifyOn);
         registry.linkTask(inboxTask.id(), task.getId(), task.getProcessInstanceId(),
-                deployment.get().workflowId(), task.getTaskDefinitionKey());
+                deployment.get().workflowId(), deployment.get().app(),
+                task.getTaskDefinitionKey());
         LOG.debug("bridged engine task {} to inbox task {} (workflow {})", task.getId(),
                 inboxTask.id(), deployment.get().workflowId());
     }

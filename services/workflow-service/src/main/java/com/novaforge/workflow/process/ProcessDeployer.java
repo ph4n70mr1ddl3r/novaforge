@@ -172,13 +172,15 @@ public class ProcessDeployer {
         return null;   // gate passed
     }
 
-    /** Definitions that left the published app: cancel owned tasks, cascade the engine. */
+    /** Definitions that left the published app: cancel owned tasks, cascade the engine.
+     *  Task cancellation is app-qualified (V8): workflow ids are app-scoped, so
+     *  only this row's app's own same-keyed bridge rows cancel. */
     private void removeGone(Set<UUID> desired) {
         for (ProcessRegistry.Deployment row : registry.activeRows()) {
             if (desired.contains(row.id())) {
                 continue;
             }
-            for (UUID taskId : registry.openTasksOfWorkflow(row.tenantId(),
+            for (UUID taskId : registry.openTasksOfWorkflow(row.tenantId(), row.app(),
                     row.workflowId())) {
                 bridge.cancelTaskRow(row.tenantId(), taskId, "workflow removed from the "
                         + "published app");

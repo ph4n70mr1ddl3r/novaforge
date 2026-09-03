@@ -3448,3 +3448,104 @@ vendor subledger.
 ### Recorded open after this pass
 
 Empty.
+
+## Thirty-Third Pass — 2026-09-03 (the independent spec-vs-implementation review: two §9 pins the registry never satisfied, plus build-tree and test-fragility hardening)
+
+An external review of the tree against the phase specs — with live builds, not
+ledger reading. The backend and frontend verified broadly conformant (~500
+backend tests green across every module on the Podman socket; 220 frontend
+tests green in isolation; every spot-checked spec pin exact). Four findings:
+
+### C-33P1 — redeployed BPMN orphaned in-flight instances (HIGH, PHASE-4 §9)
+
+`markDeployed` overwrote `process_definition_id` on the single per-workflow
+registry row, and the bridge resolved a user task only through
+`byProcessDefinition(current id)`. After a changed-content redeploy, an
+in-flight instance of the previous engine version reaching a LATER user task
+found no registry row, was silently never bridged ("not one of our published
+workflows"), and parked forever with no inbox surface — against §9's "running
+instances finish on their own" pin that the ledger's own §9 closeout claims
+("changed BPMN deploys a new engine version — running instances finish on
+their own"). `deploySyncIdempotent` asserted only registry bookkeeping, never
+an old-version instance's post-redeploy bridging — the hole it slipped through.
+
+**Fixed (V8):** `wf_process_deployments.definition_ids jsonb` keeps EVERY
+definition id the row ever deployed (backfilled from the current id);
+`markDeployed` appends; `byProcessDefinition` matches any historical id. The
+fix had been drafted on 2026-08-25 as an uncommitted
+`V5__process_definition_history.sql` — found orphaned in `target/classes` —
+and never landed; this pass lands it (renumbered V8, with the second half
+below folded into the same migration).
+**Pinned:** `BpmnProcessTests.redeployKeepsInflightInstancesBridging` — a
+two-user-task process, redeploy between the tasks, the old-version instance's
+second task bridges and the instance finishes on its own version. Bite-proven:
+with the pre-V8 lookup restored, the pin fails exactly as the defect read
+(`expected: 2L but was: 1L` — the parked instance).
+
+### C-33P2 — the removal cascade was not app-scoped (MEDIUM, PHASE-4 §9)
+
+Bridge rows carried only the bare `workflow_id`, and `openTasksOfWorkflow`
+matched it unqualified — but workflow ids are app-scoped (the deployment rows
+are app-qualified precisely because ids collide across apps). Two apps
+defining the same id in one tenant: removing EITHER app's workflow cancelled
+BOTH apps' same-keyed open tasks ("workflow removed from the published app").
+
+**Fixed (V8, second half):** `wf_process_tasks.app` rides every bridge row
+(backfilled only where unambiguous — one tenant, one same-keyed deployment; a
+genuinely ambiguous legacy row keeps `''` and stays cancellable by any
+same-keyed removal, the old behavior, strictly better than never cancelling);
+`openTasksOfWorkflow(tenant, app, workflow)` is app-qualified.
+**Pinned:** `BpmnProcessTests.removalIsAppScoped` — two apps, same workflow
+id, remove one: its task cancels, its instance cascades, the survivor's task
+stays OPEN and its instance keeps running. Bite-proven: with the unqualified
+lookup restored, the pin fails `expected: "OPEN" but was: "CANCELLED"`.
+
+### C-33P3 — `./mvnw verify` failed on a clean-sources tree (build hygiene)
+
+The uncommitted V5 draft above sat in `target/classes` beside the committed
+`V5__task_notify.sql` → Flyway "Found more than one migration with version 5"
+→ 41 workflow test errors → root verify BUILD FAILURE. Every "verify green"
+claim in this ledger held only from clean checkouts; an incremental build on
+this workspace failed. (The stale artifact is deleted; nothing else in the
+tree carries the defect — a full target-vs-src resource sweep found no others.)
+
+**Fixed:** `deploy/scripts/check-build-tree.sh` — every non-class file under
+`target/classes`/`target/test-classes` must still exist under its src
+counterpart (the renamed-resource defect class), and migration `V<n>` prefixes
+must be unique per directory. Wired into CI ahead of the build step (sub-second
+vs. 20 minutes of Testcontainers to discover the same thing). Bite-proven both
+ways: a planted stale resource and a planted duplicate-V8 migration each fail
+the gate with the offending paths named.
+
+### C-33P4 — timeout flakes under load (test fragility)
+
+`BpmnProcessTests.timerAdvancesProcess` failed under the multi-class reactor
+run while green in isolation, and frontend `pnpm -r test` produced varying
+failures (1–9 tests per run, "Test timed out in 5000ms") while every package
+passed in isolation — the green claims were runner-load-dependent.
+**Fixed at the source, not just the budget:** the timer test now starts its
+process through the manual §9 leg (`starts.start`) instead of the shared
+Kafka event-start consumer — its subject is the engine's own timer
+advancement, which the direct start isolates from whatever sibling cached
+contexts were doing (the event-start path is covered by its own suites); the
+async executor's empty-poll wait is pinned to 1 s in `FlowableEngineConfig`
+(Flowable's 10 s default stretched past every budget on a loaded runner); and
+the three vitest configs carry `testTimeout: 15000`. The raised budgets keep
+CI honest without masking a genuine hang — a hung suite still fails inside
+its budget. Suite now green twice consecutively (60/60).
+
+### Verification (this pass)
+
+- workflow-service: 60/60 green (the two new anti-regressions included),
+  against the real Postgres + Kafka containers.
+- The full workspace frontend run — previously flaky — green twice: 135 + 22 +
+  63 = 220 vitest, plus strict `tsc` clean, with the raised budgets in place.
+- The build-tree gate CLEAN on the tree; bite-proven in both failure modes.
+- No other module touched by the change set; `metadata-model` and friends
+  re-installed locally so single-module runs resolve fresh artifacts (the same
+  stale-`~/.m2` trap this pass's review hit twice — environmental, noted here
+  so the next pass doesn't burn time on it).
+
+### Recorded open after this pass
+
+Empty.

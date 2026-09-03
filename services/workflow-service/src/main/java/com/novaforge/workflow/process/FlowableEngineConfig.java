@@ -23,6 +23,16 @@ public class FlowableEngineConfig {
             ProcessTaskBridge bridge) {
         return configuration -> {
             configuration.setIdGenerator(new StrongUuidGenerator());
+            // in-engine timers acquire on a 1 s cycle (the 10 s default empty-poll
+            // wait stretched past every test budget on a loaded runner — timers
+            // are §6/§9 machinery, not a batch workload; a faster tick is free)
+            var executorConfig = configuration.getAsyncExecutorConfiguration();
+            if (executorConfig != null) {
+                executorConfig.setDefaultTimerJobAcquireWaitTime(
+                        java.time.Duration.ofSeconds(1));
+                executorConfig.setDefaultAsyncJobAcquireWaitTime(
+                        java.time.Duration.ofSeconds(1));
+            }
             List<org.flowable.common.engine.api.delegate.event.FlowableEventListener> listeners =
                     new ArrayList<>();
             if (configuration.getEventListeners() != null) {

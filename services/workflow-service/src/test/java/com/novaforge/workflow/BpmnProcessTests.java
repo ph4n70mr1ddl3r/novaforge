@@ -220,8 +220,38 @@ class BpmnProcessTests extends PostgresTestBase {
 
     private static void publishApp(String workflowId, String bpmn,
                                    WorkflowDefinition.EventStart... eventStarts) {
-        PUBLISHED.add(new PublishedWorkflowSource.AppWorkflows(TENANT, APP,
+        publishApp(APP, workflowId, bpmn, eventStarts);
+    }
+
+    /** The app-aware form (the V8 anti-regressions): workflow ids are app-scoped,
+     *  so two apps may publish the same id in one tenant. */
+    private static void publishApp(String app, String workflowId, String bpmn,
+                                   WorkflowDefinition.EventStart... eventStarts) {
+        PUBLISHED.add(new PublishedWorkflowSource.AppWorkflows(TENANT, app,
                 List.of(new WorkflowDefinition(workflowId, bpmn, List.of(eventStarts)))));
+    }
+
+    /** Two sequential user tasks (start → t1 → t2 → end) — the redeploy scenario's
+     *  shape: the instance sits at t1 when a new version deploys, and its LATER
+     *  task must still bridge on the old definition id (V8). */
+    private static String twoTaskBpmn(String processId, String firstName,
+                                      String secondName) {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                             xmlns:flowable="http://flowable.org/bpmn"
+                             targetNamespace="novaforge">
+                  <process id="%s" isExecutable="true">
+                    <startEvent id="start"/>
+                    <sequenceFlow id="f1" sourceRef="start" targetRef="t1"/>
+                    <userTask id="t1" name="%s" flowable:candidateGroups="manager"/>
+                    <sequenceFlow id="f2" sourceRef="t1" targetRef="t2"/>
+                    <userTask id="t2" name="%s" flowable:candidateGroups="manager"/>
+                    <sequenceFlow id="f3" sourceRef="t2" targetRef="end"/>
+                    <endEvent id="end"/>
+                  </process>
+                </definitions>
+                """.formatted(processId, firstName, secondName);
     }
 
     private void sendRecordEvent(String eventId, String type, UUID recordId) {
@@ -525,15 +555,21 @@ class BpmnProcessTests extends PostgresTestBase {
                   </process>
                 </definitions>
                 """;
-        publishApp("po_timed", bpmn,
-                new WorkflowDefinition.EventStart("record.created", ENTITY, null));
+        publishApp("po_timed", bpmn);
         deployer.syncOnce();
 
-        UUID record = UUID.randomUUID();
-        sendRecordEvent(UUID.randomUUID().toString(), "record.created", record);
+        // started directly (the manual §9 leg): this test's subject is the
+        // engine's own timer advancement, not the Kafka event-start path —
+        // which the earlier suites cover — and routing through the shared
+        // consumer made the budget a function of whatever the sibling contexts
+        // were doing (this was the suite's one consistent flake: green isolated,
+        // red in the full reactor run)
+        starts.start(TENANT, APP, "po_timed", null, Map.of());
 
         // the instance waits at the timer; the executor moves it; the task bridges
-        await().atMost(Duration.ofSeconds(25)).untilAsserted(() ->
+        // (budget raised from 25 s: the acquisition cycle is pinned to 1 s in
+        // FlowableEngineConfig, this budget is the load-sensitive backstop)
+        await().atMost(Duration.ofSeconds(60)).untilAsserted(() ->
                 assertThat(jdbc.queryForObject(
                         "SELECT count(*) FROM wf_process_tasks", Long.class)).isEqualTo(1));
     }
@@ -560,6 +596,104 @@ class BpmnProcessTests extends PostgresTestBase {
         assertThat(runtime.createProcessInstanceQuery().processInstanceId(instanceId)
                 .count()).isZero();
         assertThat(tasks.require(TENANT, taskId).status()).isEqualTo("CANCELLED");
+    }
+
+    @Test
+    @DisplayName("redeploy: an in-flight instance of the previous engine version keeps bridging — running instances finish on their own (§9, V8)")
+    void redeployKeepsInflightInstancesBridging() {
+        // Anti-regression (2026-09-03 spec review): markDeployed OVERWROTE
+        // process_definition_id and the bridge resolved only that id — after a
+        // changed-BPMN redeploy, an old-version instance's LATER user task found
+        // no registry row, was silently never bridged, and the instance parked
+        // forever with no inbox surface.
+        publishApp("po_chain", twoTaskBpmn("po_chain", "First", "Second"));
+        deployer.syncOnce();
+
+        String instanceId = starts.start(TENANT, APP, "po_chain", null, Map.of());
+        String v1Definition = runtime.createProcessInstanceQuery()
+                .processInstanceId(instanceId).singleResult().getProcessDefinitionId();
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() ->
+                assertThat(jdbc.queryForObject("""
+                        SELECT count(*) FROM wf_process_tasks WHERE process_instance_id = ?""",
+                        Long.class, instanceId)).isEqualTo(1));
+        UUID firstTask = inboxTaskOfInstance(instanceId);
+
+        // changed BPMN deploys v2: the registry row points at the NEW definition…
+        PUBLISHED.removeFirst();
+        publishApp("po_chain", twoTaskBpmn("po_chain", "First", "Second v2"));
+        deployer.syncOnce();
+        ProcessRegistry.Deployment row = registry.find(TENANT, APP, "po_chain").orElseThrow();
+        assertThat(row.processDefinitionId()).isNotEqualTo(v1Definition);
+        // …but the history keeps the v1 id — old-version instances still resolve
+        assertThat(jdbc.queryForObject("""
+                SELECT definition_ids @> to_jsonb(ARRAY[?::text])
+                  FROM wf_process_deployments WHERE id = ?""",
+                Boolean.class, v1Definition, row.id())).isTrue();
+
+        // the in-flight v1 instance advances to its SECOND task — bridged on the
+        // old definition id (this is the step that parked forever before V8)
+        tasks.resolve(TENANT, MANAGER, firstTask, true, null);
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() ->
+                assertThat(jdbc.queryForObject("""
+                        SELECT count(*) FROM wf_process_tasks WHERE process_instance_id = ?""",
+                        Long.class, instanceId)).isEqualTo(2));
+
+        // and the instance finishes on its own version
+        UUID secondTask = jdbc.queryForObject("""
+                SELECT p.task_id FROM wf_process_tasks p
+                 WHERE p.process_instance_id = ? AND p.task_id <> ?""",
+                UUID.class, instanceId, firstTask);
+        tasks.resolve(TENANT, MANAGER, secondTask, true, null);
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(history.createHistoricProcessInstanceQuery()
+                        .processInstanceId(instanceId).singleResult().getEndTime()).isNotNull());
+    }
+
+    @Test
+    @DisplayName("removal is app-scoped: removing one app's workflow never cancels another app's same-keyed tasks (§9, V8)")
+    void removalIsAppScoped() {
+        // Anti-regression (2026-09-03 spec review): bridge rows carried only the
+        // bare workflow id and openTasksOfWorkflow matched it unqualified — two
+        // apps defining the same id in one tenant meant removing EITHER app's
+        // workflow cancelled BOTH apps' same-keyed open tasks.
+        String otherApp = "Invo";
+        String bpmn = reviewBpmn("closeChecklist");
+        publishApp(APP, "closeChecklist", bpmn);
+        deployer.syncOnce();
+        String purchInstance = starts.start(TENANT, APP, "closeChecklist", null, Map.of());
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() ->
+                assertThat(jdbc.queryForObject("""
+                        SELECT count(*) FROM wf_process_tasks WHERE app = ?""",
+                        Long.class, APP)).isEqualTo(1));
+
+        // the second app deploys the SAME workflow id — legal: ids are app-scoped
+        publishApp(otherApp, "closeChecklist", bpmn);
+        deployer.syncOnce();
+        String invoInstance = starts.start(TENANT, otherApp, "closeChecklist", null, Map.of());
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() ->
+                assertThat(jdbc.queryForList("""
+                        SELECT app FROM wf_process_tasks ORDER BY app""", String.class))
+                        .containsExactlyInAnyOrder(APP, otherApp));
+        UUID purchTask = jdbc.queryForObject("""
+                SELECT task_id FROM wf_process_tasks WHERE app = ?""", UUID.class, APP);
+        UUID invoTask = jdbc.queryForObject("""
+                SELECT task_id FROM wf_process_tasks WHERE app = ?""", UUID.class, otherApp);
+
+        // the Purch app stops publishing its workflow — only ITS task may cancel
+        PUBLISHED.removeIf(app -> app.appApiName().equals(APP));
+        deployer.syncOnce();
+
+        assertThat(registry.find(TENANT, APP, "closeChecklist").orElseThrow().status())
+                .isEqualTo("REMOVED");
+        assertThat(registry.find(TENANT, otherApp, "closeChecklist").orElseThrow().deployed())
+                .isTrue();
+        assertThat(tasks.require(TENANT, purchTask).status()).isEqualTo("CANCELLED");
+        assertThat(tasks.require(TENANT, invoTask).status()).isEqualTo("OPEN");   // untouched
+        // the surviving app's instance still runs; the removed app's is cascaded
+        assertThat(runtime.createProcessInstanceQuery().processInstanceId(invoInstance)
+                .count()).isEqualTo(1);
+        assertThat(runtime.createProcessInstanceQuery().processInstanceId(purchInstance)
+                .count()).isZero();
     }
 
     @Test

@@ -61,17 +61,25 @@ public class ProcessRegistry {
     }
 
     public Optional<Deployment> byProcessDefinition(String processDefinitionId) {
+        // any HISTORICAL definition id matches (V8): a changed-content redeploy
+        // overwrites process_definition_id, but an in-flight instance of the
+        // previous engine version still carries the old id — its later user
+        // tasks must keep resolving this row ("running instances finish on
+        // their own", §9). Before V8 the lookup missed and the instance parked
+        // forever with no inbox surface.
         return jdbc.query("""
                         SELECT id, tenant_id, app, workflow_id, content_hash, deployment_id,
                                process_definition_id, status, error
                           FROM wf_process_deployments
-                         WHERE process_definition_id = ? AND status = 'DEPLOYED'""",
+                         WHERE status = 'DEPLOYED'
+                           AND (process_definition_id = ?
+                                OR definition_ids @> to_jsonb(ARRAY[?::text]))""",
                 (rs, i) -> new Deployment(rs.getObject("id", UUID.class),
                         rs.getObject("tenant_id", UUID.class), rs.getString("app"),
                         rs.getString("workflow_id"), rs.getString("content_hash"),
                         rs.getString("deployment_id"), rs.getString("process_definition_id"),
                         rs.getString("status"), rs.getString("error")),
-                processDefinitionId).stream().findFirst();
+                processDefinitionId, processDefinitionId).stream().findFirst();
     }
 
     /** The deployed rows with their subscriptions — the event-start matching set. */
@@ -107,11 +115,18 @@ public class ProcessRegistry {
     }
 
     public void markDeployed(UUID id, String deploymentId, String processDefinitionId) {
+        // the new definition id APPENDS to the history (V8) — never replaces:
+        // old-version in-flight instances keep resolving the row
         jdbc.update("""
                 UPDATE wf_process_deployments SET deployment_id = ?, process_definition_id = ?,
+                                                  definition_ids = CASE
+                                                      WHEN definition_ids @> to_jsonb(ARRAY[?::text])
+                                                      THEN definition_ids
+                                                      ELSE definition_ids || to_jsonb(ARRAY[?::text]) END,
                                                   status = 'DEPLOYED', error = NULL,
                                                   updated_at = now()
-                 WHERE id = ?""", deploymentId, processDefinitionId, id);
+                 WHERE id = ?""", deploymentId, processDefinitionId,
+                processDefinitionId, processDefinitionId, id);
     }
 
     public void markFailed(UUID id, String error) {
@@ -164,13 +179,16 @@ public class ProcessRegistry {
     // --- the §5-inbox bridge rows ---
 
     public void linkTask(UUID taskId, String engineTaskId, String processInstanceId,
-                         String workflowId, String taskDefinitionKey) {
+                         String workflowId, String app, String taskDefinitionKey) {
+        // app rides the bridge row (V8): workflow ids are app-scoped, so the
+        // removal pass cancels only the removed app's own same-keyed tasks
         jdbc.update("""
                 INSERT INTO wf_process_tasks (task_id, engine_task_id,
                                               process_instance_id, workflow_id,
-                                              task_definition_key)
-                VALUES (?, ?, ?, ?, ?)""",
-                taskId, engineTaskId, processInstanceId, workflowId, taskDefinitionKey);
+                                              app, task_definition_key)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                taskId, engineTaskId, processInstanceId, workflowId, app,
+                taskDefinitionKey);
     }
 
     public record TaskLink(UUID taskId, String engineTaskId, String processInstanceId,
@@ -187,14 +205,20 @@ public class ProcessRegistry {
                 + " FROM wf_process_tasks WHERE engine_task_id = ?", engineTaskId);
     }
 
-    /** Open inbox rows linked to instances of a workflow — the removal pass cancels them. */
-    public List<UUID> openTasksOfWorkflow(UUID tenantId, String workflowId) {
+    /** Open inbox rows linked to instances of a workflow — the removal pass cancels them.
+     *  App-qualified (V8): two apps may define the same workflow id, and only the
+     *  removed app's own bridge rows cancel. Legacy rows (app = '', pre-V8) stay
+     *  cancellable by any same-keyed removal — the old behavior, better than a
+     *  pre-upgrade row that could never be cancelled at all. */
+    public List<UUID> openTasksOfWorkflow(UUID tenantId, String app, String workflowId) {
         return jdbc.query("""
                         SELECT p.task_id FROM wf_process_tasks p
                           JOIN wf_tasks t ON t.id = p.task_id
                          WHERE p.workflow_id = ? AND t.tenant_id = ?
+                           AND (p.app = ? OR p.app = '')
                            AND t.status = 'OPEN'""",
-                (rs, i) -> rs.getObject("task_id", UUID.class), workflowId, tenantId);
+                (rs, i) -> rs.getObject("task_id", UUID.class),
+                workflowId, tenantId, app);
     }
 
     private Optional<TaskLink> link(String sql, Object key) {

@@ -874,6 +874,31 @@ carries it. Pinned by `TestRunnerJourneyTests.perCaseClockOverridesRunStart`
   (service-client gate, raw fields, gone-record 404); `SchedulerTests` covers the
   processStart target firing (ok + failed runs)
 
+**Spec-review closeout (2026-09-03, thirty-third pass) — §9's "running
+instances finish on their own" and the removal cascade's app scoping never
+held.** Found by an independent spec-vs-implementation review with live
+builds; both were drafted on 2026-08-25 as an uncommitted migration the tree
+then lost (it surfaced as a stale `target/classes` artifact breaking
+incremental builds — see the build-tree gate below). V8 closes both:
+`wf_process_deployments.definition_ids` keeps every definition id a row ever
+deployed (`markDeployed` appends; the bridge matches any historical id), so a
+changed-BPMN redeploy never strands an in-flight old-version instance's later
+user tasks (before: the row's overwritten `process_definition_id` was the only
+lookup key and the instance parked forever with no inbox surface); and
+`wf_process_tasks.app` rides every bridge row so the removal pass cancels only
+the removed app's own same-keyed tasks (before: bare-workflow-id matching
+cross-killed another app's same-keyed open tasks). Pinned by
+`BpmnProcessTests.redeployKeepsInflightInstancesBridging` and
+`removalIsAppScoped`, each bite-proven against the pre-V8 behavior. The same
+review's hygiene closes: `deploy/scripts/check-build-tree.sh` (no stale
+compiled resources — the exact artifact class that broke the tree — and unique
+migration versions; wired into CI ahead of the build; bite-proven both ways)
+and the frontend vitest budgets (15 s) —
+the suites were green-in-isolation/flaky-under-load, which made every "green"
+claim in this ledger runner-dependent; the BPMN timer pin is additionally
+made deterministic (the manual §9 start leg instead of the shared Kafka
+consumer, and the async executor's acquisition cycle pinned to 1 s).
+
 **Fixed with §9 — the Phase-4 branch persistence gap:** state machines, SLAs,
 scheduled jobs (and now workflows) had no persistence path in the Metadata
 Service — `assembleApp`/`mergeApp`/`withIds` dropped every branch, so drafts and
