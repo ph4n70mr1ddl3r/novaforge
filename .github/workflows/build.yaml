@@ -105,6 +105,14 @@ jobs:
       - name: Chart gate (lint, render, drift, DNS consistency)
         run: deploy/helm/check-charts.sh
 
+      # The observability gate (forty-first pass): PHASE-0 §8's "one row per
+      # service" Grafana baseline, enforced — the Integration and File services
+      # were scraped for three phases without a dashboard row, and the Data
+      # Runtime row rendered on top of the Metadata row since Phase 1 (the grid
+      # is absolute). A service added without its row now fails CI.
+      - name: Observability gate (row per service, grid honesty)
+        run: bash deploy/scripts/check-observability.sh
+
   ops-scripts:
     # The deployment shell scripts' own regression suite (twenty-ninth pass):
     # the backup sidecar's inverted base-freshness predicate and the launchers'

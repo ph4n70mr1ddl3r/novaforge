@@ -168,7 +168,9 @@ cold-boot pass — kind cluster (reused if present), jib images loaded, the
 waited Ready, and the serving proof (gateway health 200; a JWKS-gated route 401
 through a port-forward). `--skip-build` reuses daemon images; `--teardown` deletes
 the cluster afterwards. The chart gate (`deploy/helm/check-charts.sh`, wired into
-CI) proves the renders; the smoke proves the boots.
+CI) proves the renders; the observability gate (`deploy/scripts/check-observability.sh`,
+same job) proves the dashboard baseline — one Grafana row per scraped service
+(PHASE-0 §8) and no grid collisions; the smoke proves the boots.
 
 **Frontend workspace:** `corepack enable && (cd frontend && pnpm install && pnpm -r test)` —
 strict `tsc` via `pnpm -r check`; the expr/v1 conformance corpus (shared with the JVM

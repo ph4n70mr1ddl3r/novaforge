@@ -2996,3 +2996,34 @@ The calls now pass the correct shape; `pnpm check` is green again.
 Verified: `frontend/shared` 150/150, `builder-ui` 64/64, `runtime-ui` 22/22,
 `pnpm check` clean; full `./mvnw verify` BUILD SUCCESS (backend untouched; the
 gate run keeps the claim honest).
+
+**Spec-review closeout (2026-09-04, forty-first pass) — the observability
+baseline's missing rows land: PHASE-0 §8's "one row per service" Grafana pin is
+finally true for all eleven services, and the grid the rows live on stops
+rendering two services on top of each other.** The sweep re-walked all nine
+phase specs against the tree (resolver widget mapping, runtime caps and gates,
+lifecycle machinery, harness vocabulary — all confirmed) and found the gap in
+the one artifact no test had ever opened:
+- **The Phase 0 board covered 9 of 11 services.** The Integration and File
+  services landed in Phase 6 with Prometheus scrape jobs from their first day
+  (`prometheus.yml` carried both) but no dashboard row anywhere — §8's standing
+  baseline ("one row per service — availability (up), HTTP p95, JVM heap"),
+  which Phase 4's board honored by carrying its own new services' rows, never
+  reached them. Both rows now render with the three-panel house shape.
+- **The Data Runtime row has overlapped the Metadata row since Phase 1** — both
+  rows at grid y=7, both panel trios at y=8; Grafana's grid is absolute, so the
+  two services rendered stacked on each other. The whole board re-lays out
+  sequentially (rows at y=0,7,…,70, panels +1), board `version` bumped so
+  provisioning re-syncs.
+- **The gate**: `deploy/scripts/check-observability.sh` — every `novaforge-*`
+  scrape job must have a row in the Phase 0 board carrying the stat + two
+  timeseries baseline panels targeting exactly that job, and no provisioned
+  board may carry two panels at one (x, y) grid position. Wired into CI's
+  charts job. Bite-proven all three ways: deleting the File Service row fails
+  ("scraped but has no dashboard row"), stripping a row's heap panel fails the
+  baseline-shape check, and re-colliding the Data Runtime row fails grid
+  honesty — each with the defect named.
+
+Verified: `check-observability.sh` green (11 rows × 3 panels, 3 boards, no
+collisions) after the three bite-proofs restore; `git diff` scoped to the board
+JSON, the gate script, the workflow step, and this ledger entry.
