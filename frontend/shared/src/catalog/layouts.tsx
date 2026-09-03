@@ -191,6 +191,9 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
             <table className="nf-table">
                 <thead>
                     <tr>
+                        {fieldLabels.length > 0 ? <th className="nf-open-col" scope="col">
+                            <span className="nf-visually-hidden">Open</span>
+                        </th> : null}
                         {fieldLabels.map((field) => {
                             const fieldMeta = renderer.fields[field];
                             return (
@@ -220,6 +223,31 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
                             key={String(row.id)}
                             onClick={() => renderer.navigate(renderer.entity!, "detail", String(row.id ?? ""))}
                         >
+                            {/* The record-open control is a real button in the first
+                                cell (§11 item 2's keyboard-only run caught it): the
+                                row's click handler is pointer-convenience — a keyboard
+                                user had no way to open a record from a generated list
+                                at all (WCAG 2.1.1). The accessible name carries the
+                                row's display value; the visible "Open" keeps
+                                Label-in-Name. */}
+                            <td className="nf-open-col">
+                                {row.id != null ? (
+                                    <button
+                                        type="button"
+                                        className="nf-row-open"
+                                        aria-label={`Open ${fieldLabels.length > 0 && row[fieldLabels[0]!] != null
+                                            ? row[fieldLabels[0]!]
+                                            : String(row.id)}`}
+                                        onClick={(event) => {
+                                            // the row's click would double-fire on pointer
+                                            event.stopPropagation();
+                                            renderer.navigate(renderer.entity!, "detail", String(row.id));
+                                        }}
+                                    >
+                                        Open
+                                    </button>
+                                ) : null}
+                            </td>
                             {fieldLabels.map((field) => (
                                 <td key={field}>{row[field] == null ? "" : String(row[field])}</td>
                             ))}

@@ -2948,3 +2948,51 @@ the two engines cannot drift. Pinned by four new `pageDefinitionLifecycle`
 legs (unknown component, stale pin, props violation, the save-resolves /
 publish-rejects pin pair) — bite-proven by disconnecting the check. Verified:
 metadata-service 68/68, `pnpm -r test` 223/223, full `./mvnw verify` green.
+
+**Spec-review closeout (2026-09-03, fortieth pass) — the a11y contract's
+missing halves land: §2's builder axe scans and §11 item 2's keyboard-only
+runs, which immediately caught three product defects.** §2 pins "axe automated
+checks in CI — builder and generated UI": the generated half was covered
+(the gallery + the runtime shell) and the builder half had nothing — axe-core
+sat unused in builder-ui's devDependencies. §11 item 2 pins "per-catalog-
+component stories incl. keyboard-only runs + axe scans": the keyboard half
+existed nowhere in the workspace. Closed both ways, and the first runs proved
+why the spec demands them:
+- **`FieldLookup`'s search could never fire** — the combobox bound its value
+to `open ? term : closedDisplay`, so while closed every keystroke was reset to
+the closed display before the async search could open the listbox; the term
+never reached minChars, for pointer and keyboard users alike, and no test had
+ever typed into the box (the closed-state suite only resolved already-bound
+labels). Now the focused-combobox pattern: the editing buffer shows while
+focused, the blur guard keeps the listbox open when focus moves into it
+(relatedTarget — the keyboard twin of the earlier mousedown/blur fix), and
+selection clears the buffer.
+- **A generated list was unopenable by keyboard** — `ListLayout`'s
+record-open path was a row click only (WCAG 2.1.1); the first cell now carries
+a real `Open` button (accessible name `Open <display value>`, Label-in-Name
+kept) beside the pointer row-click.
+- **The page-builder tree violated ARIA structure** (`aria-required-children`:
+`ul[role=tree] > li[role=none] > span[role=treeitem]`) and the pages/automation
+heading ladders skipped (h1→h3). The row is now the `li[role=treeitem]` itself
+(nested rows stop propagation so a child click no longer re-selects the root —
+caught live by the thirteenth pass's no-silent-wipe pin), the panel headings
+step h1→h2→h3, and both rows carry focus-visible rings.
+- **The coverage**: `frontend/shared/test/keyboard.test.tsx` — keyboard-only
+runs per interactive widget (form Tab-traversal order, select/switch/lookup/
+multi-lookup/json/rich-text/record-actions journeys, list sort + pager + the
+keyboard record-open) over a stateful harness that re-renders on `setValue`;
+`frontend/builder-ui/test/a11y.test.tsx` — one journey axe-scans **all
+thirteen builder screens** with an exhaustive scan-list assertion (the
+gallery's exhaustive-mount rule, mirrored builder-side). Each fix is
+bite-proven: reverting `layouts.tsx` fails the ListLayout leg, reverting
+`fields.tsx` fails the lookup journey (the dead search), reverting the
+tree/heading fixes fails the pages screen's scan.
+- **Also closes the thirty-ninth pass's own typecheck break**: its new
+`pagemodel.test.ts` legs called `validatePage` with a PageDefinition shape
+where the function takes a PageModel — `pnpm check` failed on main from that
+commit (vitest doesn't typecheck, so `pnpm test` stayed green and hid it).
+The calls now pass the correct shape; `pnpm check` is green again.
+
+Verified: `frontend/shared` 150/150, `builder-ui` 64/64, `runtime-ui` 22/22,
+`pnpm check` clean; full `./mvnw verify` BUILD SUCCESS (backend untouched; the
+gate run keeps the claim honest).

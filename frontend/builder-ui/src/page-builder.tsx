@@ -288,7 +288,7 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
             ) : null}
             <div className="nf-b-columns">
                 <div className="nf-b-palette" aria-label="Component palette">
-                    <h3>Palette</h3>
+                    <h2>Palette</h2>
                     {CATALOG.filter((entry) => !entry.id.startsWith("novaforge.report") && entry.id !== "novaforge.chart-widget" && entry.id !== "novaforge.kpi-tile" && entry.id !== "novaforge.dashboard-grid")
                         .map((entry) => (
                             <button
@@ -323,7 +323,7 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
                         ))}
                 </div>
                 <div className="nf-b-canvas" aria-label="Page canvas">
-                    <h3>Canvas</h3>
+                    <h2>Canvas</h2>
                     <NodeTree
                         node={current!.page.model.root}
                         selectedKey={selectedKey}
@@ -340,7 +340,7 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
                     />
                 </div>
                 <div className="nf-b-actions" aria-label="Page actions">
-                    <h3>Actions</h3>
+                    <h2>Actions</h2>
                     {/* The declarative action ladder (§4) — runFlow activates with
                         PHASE-3 §8: a named flow hook on the bound entity. */}
                     <ul>
@@ -407,7 +407,7 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
                     ) : null}
                 </div>
                 <div className="nf-b-props" aria-label="Property panel">
-                    <h3>Properties</h3>
+                    <h2>Properties</h2>
                     {selected ? (
                         <PropertyPanel
                             node={selected.node}
@@ -418,7 +418,7 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
                     )}
                 </div>
                 <div className="nf-b-preview" aria-label="Live preview">
-                    <h3>Preview</h3>
+                    <h2>Preview</h2>
                     <PageRenderer
                         page={current!.page}
                         entity={entity}
@@ -511,28 +511,36 @@ function TreeRow({
     isRoot?: boolean;
 }): ReactNode {
     return (
-        <li role="none">
-            <span
-                className="nf-tree-row"
-                role="treeitem"
-                aria-selected={node.key === selectedKey}
-                tabIndex={0}
-                onKeyDown={(event) => {
-                    if (node.key && (event.key === "Enter" || event.key === " ")) {
-                        event.preventDefault();
-                        onSelect(node.key);
-                    }
-                }}
-                onClick={() => node.key && onSelect(node.key)}
-            >
+        <li
+            className="nf-tree-row"
+            role="treeitem"
+            aria-selected={node.key === selectedKey}
+            aria-label={`${node.type.replace("novaforge.", "")}${node.bind ? ` · ${node.bind}` : ""}`}
+            tabIndex={0}
+            onKeyDown={(event) => {
+                if (node.key && (event.key === "Enter" || event.key === " ")) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onSelect(node.key);
+                }
+            }}
+            // stopPropagation: nested tree rows live INSIDE this li (the treeitem is
+            // the row for axe's required-children rule) — without it a child row's
+            // click bubbles here and re-selects the root
+            onClick={(event) => {
+                event.stopPropagation();
+                if (node.key) onSelect(node.key);
+            }}
+        >
+            <span>
                 {node.type.replace("novaforge.", "")}
                 {node.bind ? <em> · {node.bind}</em> : null}
             </span>
             {!isRoot && node.key ? (
                 <>
-                    <button type="button" aria-label={`Move ${node.key} up`} onClick={() => onMove(node.key!, -1)}>↑</button>
-                    <button type="button" aria-label={`Move ${node.key} down`} onClick={() => onMove(node.key!, 1)}>↓</button>
-                    <button type="button" aria-label={`Remove ${node.key}`} onClick={() => onRemove(node.key!)}>×</button>
+                    <button type="button" aria-label={`Move ${node.key} up`} onClick={(event) => { event.stopPropagation(); onMove(node.key!, -1); }}>↑</button>
+                    <button type="button" aria-label={`Move ${node.key} down`} onClick={(event) => { event.stopPropagation(); onMove(node.key!, 1); }}>↓</button>
+                    <button type="button" aria-label={`Remove ${node.key}`} onClick={(event) => { event.stopPropagation(); onRemove(node.key!); }}>×</button>
                 </>
             ) : null}
             {node.children?.length ? (

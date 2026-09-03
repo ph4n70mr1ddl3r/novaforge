@@ -3983,3 +3983,36 @@ either side alone, the lockstep suite fails at that entry.
 ### Recorded open after this pass
 
 Empty.
+
+## Fortieth Pass — 2026-09-03 (the a11y contract's missing halves: §2's builder axe scans never existed and §11 item 2's keyboard-only runs existed nowhere — and the runs caught a lookup search that could never fire plus a generated list a keyboard could not open)
+
+### C-40P1 — PHASE-2 §2's a11y row ("WCAG 2.2 AA; axe automated checks in CI — **builder** and generated UI") was enforced only on the generated half; PHASE-2 §11 item 2 ("per-catalog-component stories incl. **keyboard-only runs** + axe scans") shipped its axe half only, and no test anywhere drove any interactive control by keyboard
+
+The catalog gallery axe-scans all 22 components and the runtime shell axe-scans the generated shell — but the builder UI had **zero** automated a11y coverage (axe-core sat unused in its devDependencies), and the keyboard-only half of §11 item 2 existed nowhere in the workspace: no test ever pressed Tab, Enter, or Space against any catalog widget. Two silent consequences follow from the spec's own rationale (axe in CI exists to catch regressions; keyboard-only runs exist to catch pointer-only surfaces): builder screens could regress a11y with nothing to trip, and pointer-only defects in the generated UI were guaranteed to survive — and had.
+
+**Fixed (V-C40P1, three product defects the first keyboard runs caught immediately, plus the coverage):**
+
+- **`FieldLookup`'s search could never fire** (`frontend/shared/src/catalog/fields.tsx`). The combobox bound its value to `open ? term : closedDisplay`: while closed, every keystroke's `onChange` set `term` and React immediately reset the DOM input to `closedDisplay` (the async search had not yet opened the listbox), so the term could never reach the 2-character minimum — `search` was unreachable for pointer and keyboard users alike, and no existing test had ever typed into the box (the closed-state suite only ever resolved the label of an already-bound id). The fix is the standard focused-combobox pattern: the editing buffer shows while the input is focused (`open || focused ? term : closedDisplay`), focus/blur maintain the flag, the blur-to-close guard keeps the listbox open when focus moves into it (`relatedTarget` — the keyboard twin of the earlier mousedown/blur fix), and selection clears the buffer and ends the editing state explicitly.
+- **A generated list page was unopenable by keyboard** (`frontend/shared/src/catalog/layouts.tsx`). `ListLayout`'s record-open path was a row `onClick` only — a keyboard user could not open any record's detail from any generated list (WCAG 2.1.1). The first cell now carries a real button (`Open`, accessible name `Open <display value>`, Label-in-Name honored) beside the pointer row-click, with the column header labelled for screen readers and `stopPropagation` fencing the double-fire.
+- **The page-builder's canvas tree violated ARIA structure and the screen's heading ladder skipped** (`frontend/builder-ui/src/page-builder.tsx`, `automation.tsx`). The tree rendered `ul[role=tree] > li[role=none] > span[role=treeitem]` — axe's `aria-required-children` fired because the tree's owned children were not treeitems; the row is now the `li[role=treeitem]` itself (label, selection, focus, keyboard activation on it; the action buttons stop propagation so move/remove never re-select). The pages screen's panel headings were `h3` under the shell's `h1` (`heading-order`) — now `h2`, and the automation screen's machine cards stepped `h3/h4` under no `h2` — now `h2/h3`. (CSS: the tree row became a block-level focus-visible row; the list's open control got its focus-visible ring.)
+
+**The coverage (V-C40P2):**
+- `frontend/shared/test/keyboard.test.tsx` — the keyboard-only runs: full-form Tab traversal order (every labeled input visited in DOM order, Save Enter-activatable through the page-actions bar), `FieldSelect` via the native select's keyboard path, `FieldSwitch` Space-toggle both ways, the `FieldLookup` combobox journey (type → options → Tab → Enter → **the row id lands, never the typed term**; the closed box resolves the target's display label), `FieldMultiLookup` chip add/remove by keyboard, `FieldJson`'s focusable viewer, `FieldRichText` multiline typing, `RecordActions` Edit/Delete activation, and the `ListLayout` leg (sort toggle by Enter with `aria-sort` tracking, pager enablement, and the keyboard record-open). A stateful harness re-renders on `setValue` — the honest stand-in for the shell's controlled-widget context.
+- `frontend/builder-ui/test/a11y.test.tsx` — the builder half of §2: one journey mounts the BuilderShell with a representative app and axe-scans **all thirteen screens** (entities, pages, logic, suites, automation, rbac, reports, dashboards, integrations, i18n, lifecycle, templates, onboarding), with an exhaustive scan-list assertion so a new screen cannot skip its scan — the gallery's exhaustive-mount rule, mirrored on the builder side.
+
+**Also fixed (V-C40P3) — the thirty-ninth pass's own landings broke `pnpm check`:** the pass's new `pagemodel.test.ts` legs called `validatePage` with a `PageDefinition` shape (`apiName`/`entity`/`type`) where the function takes a `PageModel` (`kind`) — typecheck failed on main from that commit onward (vitest does not typecheck, so `pnpm test` stayed green and hid it). The calls now pass the correct shape.
+
+### Bite-proofs
+
+- With the `layouts.tsx` fix reverted, the keyboard suite fails exactly at the ListLayout leg (`Unable to find ... /Open SO-000\\d/`) — 1 failed of 9; restored, 9/9.
+- With the `fields.tsx` fix reverted, the suite fails exactly at the FieldLookup journey (`Unable to find role="option" and name "Acme"` — the dead search); restored, 9/9.
+- With the tree/heading fixes reverted, the a11y journey fails on the pages screen (`aria-required-children` + `heading-order`); restored, green. The tree's first corrected form (handlers without `stopPropagation`) was caught live by the thirteenth pass's own no-silent-wipe pin (`opens a saved page's customizations`) — child-row clicks bubbled to the root and re-selected it; the propagation guards joined the fix before landing.
+
+### Verification (this pass)
+
+- `frontend/shared` 150/150 (141 prior + 9 keyboard), `builder-ui` 64/64 (63 + the 13-screen axe journey), `runtime-ui` 22/22 — `pnpm -r test` green; `pnpm check` green again (the pre-existing 39th-pass break fixed).
+- Full `./mvnw verify` BUILD SUCCESS across the reactor (backend untouched by this pass; the gate run keeps the claim honest).
+
+### Recorded open after this pass
+
+Empty.

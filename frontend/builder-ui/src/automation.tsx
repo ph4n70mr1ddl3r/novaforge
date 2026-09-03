@@ -130,7 +130,7 @@ function MachineDesigner({
                 const states = machine.states.map((state) => state.name);
                 return (
                     <div key={machine.id} className="nf-machine" data-machine={machine.id}>
-                        <h3>{machine.entity}</h3>
+                        <h2>{machine.entity}</h2>
                         <label>
                             Machine id
                             <input aria-label={`Machine id ${machine.id}`} value={machine.id}
@@ -154,7 +154,7 @@ function MachineDesigner({
                                 ))}
                             </select>
                         </label>
-                        <h4>States</h4>
+                        <h3>States</h3>
                         {machine.states.map((state, index) => (
                             <div key={index} className="nf-state-row">
                                 <input aria-label={`State name ${machine.id} ${index}`}
@@ -186,7 +186,7 @@ function MachineDesigner({
                             })}>
                             Add state
                         </button>
-                        <h4>Transitions</h4>
+                        <h3>Transitions</h3>
                         {machine.transitions.map((transition, index) => (
                             <div key={index} className="nf-transition-row">
                                 <select aria-label={`Transition from ${machine.id} ${index}`}

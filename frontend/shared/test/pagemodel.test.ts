@@ -160,7 +160,7 @@ describe("page save/publish validation (§4)", () => {
             type: "novaforge.field-json", key: "n:fj", props: { field: "notes" },
         };
         expect(validatePage({
-            apiName: "p1", entity: "Order", type: "form", base: "auto",
+            kind: "form", base: "auto",
             root: { type: "novaforge.form-layout", key: "form", props: {}, children: [fieldJson] },
             actions: [],
         }, { entity, mode: "save" }).some((issue) => issue.message === "novaforge.field-json requires a bind")).toBe(true);
@@ -169,7 +169,7 @@ describe("page save/publish validation (§4)", () => {
             type: "novaforge.file-upload", key: "n:fu", props: { entity: "Order", recordId: "x" },
         };
         expect(validatePage({
-            apiName: "p2", entity: "Order", type: "form", base: "auto",
+            kind: "form", base: "auto",
             root: { type: "novaforge.form-layout", key: "form", props: {}, children: [upload] },
             actions: [],
         }, { entity, mode: "save" }).some((issue) => issue.message.includes("requires a bind"))).toBe(false);

@@ -204,6 +204,12 @@ export function FieldLookup(props: FieldWidgetProps): ReactNode {
     const [term, setTerm] = useState("");
     const [results, setResults] = useState<Record<string, unknown>[]>([]);
     const [open, setOpen] = useState(false);
+    // the editing buffer is what the box shows while focused: binding the value to
+    // `open ? term : closedDisplay` alone let the closed display reset the DOM
+    // input on every keystroke before the async search could open the listbox —
+    // the term could never reach minChars, so the search was unreachable (the
+    // keyboard-only run caught it; no pointer-only path existed either)
+    const [focused, setFocused] = useState(false);
     const minChars = Number(props.minChars ?? 2);
     const target = String(props.target ?? "");
     // the display field of the TARGET entity — the current entity's field map
@@ -281,15 +287,24 @@ export function FieldLookup(props: FieldWidgetProps): ReactNode {
                 aria-expanded={open}
                 aria-controls={`${id}-listbox`}
                 autoComplete="off"
-                value={open ? term : closedDisplay}
+                value={open || focused ? term : closedDisplay}
                 readOnly={readonly}
                 onChange={(event) => void search(event.target.value)}
-                onBlur={() => {
+                onFocus={() => setFocused(true)}
+                onBlur={(event) => {
                     // blur only closes — the old handler also wrote the raw search
                     // text as the field's value (a typed "Acme" became the FK), and
                     // closing here unmounted the listbox before an option's click
                     // could land (blur fires between mousedown and click in
-                    // Chrome/Firefox/Edge)
+                    // Chrome/Firefox/Edge). Focus moving INTO the listbox keeps it
+                    // open — Tab from the input must reach the options for the
+                    // keyboard-only path (the pointer fix's keyboard twin).
+                    const next = event.relatedTarget;
+                    if (next instanceof Node &&
+                        (event.currentTarget.parentElement?.contains(next) ?? false)) {
+                        return;
+                    }
+                    setFocused(false);
                     setOpen(false);
                 }}
             />
@@ -305,10 +320,14 @@ export function FieldLookup(props: FieldWidgetProps): ReactNode {
                                 onMouseDown={(event) => {
                                     event.preventDefault();
                                     renderer.setValue(props.field, row.id ?? null);
+                                    setTerm("");
+                                    setFocused(false);
                                     setOpen(false);
                                 }}
                                 onClick={() => {
                                     renderer.setValue(props.field, row.id ?? null);
+                                    setTerm("");
+                                    setFocused(false);
                                     setOpen(false);
                                 }}
                             >
