@@ -150,6 +150,31 @@ describe("page save/publish validation (§4)", () => {
         expect(issues.some((issue) => issue.message.includes("disagree"))).toBe(true);
     });
 
+    it("reads the bind requirement from the catalog's declaration, not the id's shape (§6 item 1)", () => {
+        // A declared-binding component (novaforge.field-json — typed field widget,
+        // declaration true) requires a bind; a declared-non-binding component
+        // (novaforge.file-upload — binds an id back through its own props, not a
+        // catalog bind slot) never does, prefix or no. The rule is the entry's
+        // takesBind declaration, which the lockstep suite pins to the manifest.
+        const fieldJson = {
+            type: "novaforge.field-json", key: "n:fj", props: { field: "notes" },
+        };
+        expect(validatePage({
+            apiName: "p1", entity: "Order", type: "form", base: "auto",
+            root: { type: "novaforge.form-layout", key: "form", props: {}, children: [fieldJson] },
+            actions: [],
+        }, { entity, mode: "save" }).some((issue) => issue.message === "novaforge.field-json requires a bind")).toBe(true);
+
+        const upload = {
+            type: "novaforge.file-upload", key: "n:fu", props: { entity: "Order", recordId: "x" },
+        };
+        expect(validatePage({
+            apiName: "p2", entity: "Order", type: "form", base: "auto",
+            root: { type: "novaforge.form-layout", key: "form", props: {}, children: [upload] },
+            actions: [],
+        }, { entity, mode: "save" }).some((issue) => issue.message.includes("requires a bind"))).toBe(false);
+    });
+
     it("rejects unknown components and unknown expression references", () => {
         const page = resolveDefaultPage(entity, "form");
         const broken = deepClone(page.model);
@@ -201,7 +226,7 @@ describe("page save/publish validation (§4)", () => {
 describe("catalog lifecycle warnings (§6 item 2)", () => {
     const node = (type: string): PageNode => ({ type, key: `n:${type}`, props: {} });
     const entry = (id: string, extra: Partial<CatalogEntry>): CatalogEntry => ({
-        id, version: "1.0.0", schema: { type: "object" }, ...extra,
+        id, version: "1.0.0", takesBind: false, schema: { type: "object" }, ...extra,
     });
 
     it("a deprecated component surfaces its migration guidance — never silently", () => {

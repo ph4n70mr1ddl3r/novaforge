@@ -23,6 +23,16 @@ export interface CatalogEntry {
   id: string;
   /** Schema version of the component's props — pages pin this. */
   version: "1.0.0";
+  /**
+   * The data-requirements declaration's bind half (PHASE-2 §6 item 1): whether
+   * the component takes a `bind` slot (§4). Declared per component in the
+   * catalog contract — never derived from the id's shape — and both page gates
+   * (the builder's and the API path's) read exactly this declaration. The
+   * declaration's read half (the fields/relationships the component reads) is
+   * the props schema's `field`/`relationship` properties, which the bind/props
+   * repetition rule enforces against `bind` (§4).
+   */
+  takesBind: boolean;
   /** JSON Schema (draft 2020-12) for the component's props. */
   schema: Record<string, unknown>;
   /** Lifecycle status — absent means `stable` (the v1 set ships stable). */
@@ -34,6 +44,7 @@ export interface CatalogEntry {
 const chartWidget: CatalogEntry = {
   id: "novaforge.chart-widget",
   version: "1.0.0",
+  takesBind: false,
   schema: {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     type: "object",
@@ -72,6 +83,7 @@ const chartWidget: CatalogEntry = {
 const kpiTile: CatalogEntry = {
   id: "novaforge.kpi-tile",
   version: "1.0.0",
+  takesBind: false,
   schema: {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     type: "object",
@@ -89,6 +101,7 @@ const kpiTile: CatalogEntry = {
 const reportTable: CatalogEntry = {
   id: "novaforge.report-table",
   version: "1.0.0",
+  takesBind: false,
   schema: {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     type: "object",
@@ -114,6 +127,7 @@ const reportTable: CatalogEntry = {
 const dashboardGrid: CatalogEntry = {
   id: "novaforge.dashboard-grid",
   version: "1.0.0",
+  takesBind: false,
   schema: {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     type: "object",
@@ -126,6 +140,7 @@ const dashboardGrid: CatalogEntry = {
 const fileUpload: CatalogEntry = {
   id: "novaforge.file-upload",
   version: "1.0.0",
+  takesBind: false,
   schema: {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     type: "object",
@@ -143,6 +158,7 @@ function fieldWidget(id: string, properties: Record<string, unknown>, required: 
   return {
     id,
     version: "1.0.0",
+    takesBind: true,
     schema: {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       type: "object",
@@ -156,6 +172,7 @@ const PAGE_CATALOG: readonly CatalogEntry[] = Object.freeze([
   {
     id: "novaforge.app-shell",
     version: "1.0.0",
+    takesBind: false,
     schema: {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       type: "object",
@@ -168,6 +185,7 @@ const PAGE_CATALOG: readonly CatalogEntry[] = Object.freeze([
   {
     id: "novaforge.nav-list",
     version: "1.0.0",
+    takesBind: false,
     schema: {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       type: "object",
@@ -177,6 +195,7 @@ const PAGE_CATALOG: readonly CatalogEntry[] = Object.freeze([
   {
     id: "novaforge.form-layout",
     version: "1.0.0",
+    takesBind: false,
     schema: {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       type: "object",
@@ -190,6 +209,7 @@ const PAGE_CATALOG: readonly CatalogEntry[] = Object.freeze([
   {
     id: "novaforge.list-layout",
     version: "1.0.0",
+    takesBind: false,
     schema: {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       type: "object",
@@ -204,6 +224,7 @@ const PAGE_CATALOG: readonly CatalogEntry[] = Object.freeze([
   {
     id: "novaforge.record-header",
     version: "1.0.0",
+    takesBind: false,
     schema: {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       type: "object",
@@ -241,6 +262,7 @@ const PAGE_CATALOG: readonly CatalogEntry[] = Object.freeze([
   {
     id: "novaforge.related-list",
     version: "1.0.0",
+    takesBind: true,
     schema: {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       type: "object",
@@ -256,6 +278,7 @@ const PAGE_CATALOG: readonly CatalogEntry[] = Object.freeze([
   {
     id: "novaforge.record-actions",
     version: "1.0.0",
+    takesBind: false,
     schema: {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       type: "object",
@@ -268,6 +291,7 @@ const PAGE_CATALOG: readonly CatalogEntry[] = Object.freeze([
   {
     id: "novaforge.empty-state",
     version: "1.0.0",
+    takesBind: false,
     schema: {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       type: "object",

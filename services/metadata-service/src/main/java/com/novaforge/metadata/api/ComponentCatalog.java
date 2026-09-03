@@ -10,9 +10,11 @@ import java.util.Set;
 
 /**
  * The component catalog's server-side half (PHASE-2 §4/§6): the v1 catalog
- * manifest — component ids, pinned prop-schema versions, and each component's
- * draft-2020-12 props schema — as a classpath resource, plus the focused schema
- * validator the page save/publish gate runs. The manifest is canonical; the TS
+ * manifest — component ids, pinned prop-schema versions, each component's
+ * draft-2020-12 props schema, and each component's data-requirements bind
+ * declaration (§6 item 1's {@code takesBind}) — as a classpath resource, plus
+ * the focused schema validator the page save/publish gate runs. The manifest
+ * is canonical; the TS
  * twin (<code>frontend/shared/src/catalog/schemas.ts</code>) pins its own copy
  * against this file with a lockstep suite, exactly like the expr/v1 conformance
  * corpus.
@@ -33,8 +35,8 @@ public final class ComponentCatalog {
     public record SchemaIssue(String path, String message) {
     }
 
-    /** One catalog entry: id, pinned version, optional lifecycle, props schema. */
-    public record Entry(String id, String version, String status,
+    /** One catalog entry: id, pinned version, bind declaration, lifecycle, props schema. */
+    public record Entry(String id, String version, boolean takesBind, String status,
                         Map<String, Object> deprecation, Map<String, Object> schema) {
     }
 
@@ -54,9 +56,18 @@ public final class ComponentCatalog {
             Map<String, Entry> entries = new LinkedHashMap<>();
             for (Map<String, Object> item : raw) {
                 String id = String.valueOf(item.get("id"));
+                // §6 item 1's data-requirements declaration: every entry declares
+                // whether its component takes a `bind` slot — a manifest entry
+                // without the declaration is an incomplete contract and fails the
+                // load, so a new component cannot ship half-specified.
+                if (!(item.get("takesBind") instanceof Boolean takesBind)) {
+                    throw new IllegalStateException(
+                            "catalog entry " + id + " declares no takesBind slot (§6 item 1)");
+                }
                 entries.put(id, new Entry(
                         id,
                         String.valueOf(item.get("version")),
+                        takesBind,
                         item.get("status") == null ? null : String.valueOf(item.get("status")),
                         castMap(item.get("deprecation")),
                         castMap(item.get("schema"))));
@@ -78,6 +89,17 @@ public final class ComponentCatalog {
     /** The entry for a component id, or {@code null} when the id is unknown. */
     public static Entry find(String componentId) {
         return ENTRIES.get(componentId);
+    }
+
+    /**
+     * The component's declared bind slot (§6 item 1, mirrored by the TS twin's
+     * {@code takesBinding}): read from the entry's contract declaration, never
+     * derived from the id. Unknown components declare nothing — the catalog gate
+     * already rejects them before the bind rule has anything to read.
+     */
+    public static boolean takesBind(String componentId) {
+        Entry entry = ENTRIES.get(componentId);
+        return entry != null && entry.takesBind();
     }
 
     /**

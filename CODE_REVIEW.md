@@ -3911,3 +3911,75 @@ reopen deactivates the lock because the lookup reads status at write time.
 ### Recorded open after this pass
 
 Empty.
+
+## Thirty-Ninth Pass — 2026-09-03 (the bind contract the catalog never declared: §6 item 1's data-requirements half lands as manifest data, the name-prefix heuristic retires on both engines)
+
+### C-39P1 — PHASE-2 §6 item 1 requires every catalog component to ship a data-requirements declaration ("whether the component takes a `bind` slot — §4"), and §4 pins that the property "is declared in its catalog contract"; no catalog entry declared anything, and both page gates derived the rule from a hardcoded name-prefix heuristic
+
+The spec's catalog contract (§6 item 1) lists four things each component ships: the
+implementation, the props JSON Schema, the data-requirements declaration, and a
+version. Two of the four were manifest data (schema, version, plus the §6 item 2
+lifecycle fields); the bind half of the data-requirements declaration existed
+nowhere — not in the canonical JVM manifest
+(`services/metadata-service/src/main/resources/catalog/component-catalog.json`),
+not in the TS twin (`frontend/shared/src/catalog/schemas.ts`). Instead both engines
+hardcoded the same derivation: `takesBinding(id)` answered
+"`id` starts with `novaforge.field-` or equals `novaforge.related-list`" — once in
+the builder's save/publish walk (`frontend/shared/src/pagemodel/validate.ts`) and
+once in the API path's gate (`DefinitionService.checkNodeBinds`). That is exactly
+the phantom-contract defect class: a reviewer walking §6 item 1 finds a declared
+contract, while the enforcing engines consult the id's *shape*. A future component
+named `novaforge.field-imaginary` would silently acquire bind semantics; a binding
+widget named anything else would need two code edits on two sides; and the two
+engines' derivations could drift with no manifest change to trip the lockstep suite.
+
+**Fixed (V-C39P1):** the declaration is manifest data. Every one of the 22 entries
+in the canonical `component-catalog.json` now carries `takesBind: true|false`
+(`true` for the ten binding components — the nine typed field widgets plus
+`novaforge.related-list`; `false` for the rest), the TS `CatalogEntry` interface
+grows the same required field, and both engines read the declaration instead of
+deriving it: the TS `takesBinding` resolves the catalog entry (unknown components
+declare nothing — they already fail the unknown-component check), and the Java gate
+calls the new `ComponentCatalog.takesBind(id)`. The manifest loader *enforces* the
+contract mechanically: an entry without `takesBind` fails the load, so the service
+refuses to boot with a half-specified component — a new component cannot ship
+without declaring its bind contract. Behavior is byte-for-byte identical for every
+page that exists (the declared set equals the legacy heuristic's set exactly — the
+regression pin below), so nothing existing changes meaning; what changes is that
+the contract now lives where §6 item 1 says it does, and one manifest edit is the
+whole versioned growth path.
+
+**Pinned (V-C39P2):** the lockstep suite grew a `takesBind` leg per entry (the
+manifest is canonical; the TS twin deep-equals it — drift on either side now fails
+a suite), plus a manifest-completeness leg and a declared-set leg pinning the exact
+ten ids in manifest order — `novaforge.field-json` bound while
+`novaforge.file-upload` did not, prefix or no. The TS page-validation suite gained
+`reads the bind requirement from the catalog's declaration, not the id's shape`
+(a declared-true `novaforge.field-json` node without a bind rejects; a
+declared-false `novaforge.file-upload` node never reports a bind requirement). The
+API path's `DefinitionLifecycleTests` gained `catalogManifestDeclaresTheBindContract`:
+every manifest entry declares a boolean and `ComponentCatalog.takesBind` answers
+exactly the declared value for every id; the declared set is the ten v1 ids,
+`containsExactly`, in manifest order; and a page node of a declared-false
+`novaforge.record-actions` saves bindless through the PUT path (the declared-true
+rejections remain the existing `novaforge.field-input requires a bind` legs — chain:
+those legs plus this manifest pin mean flipping an entry's declaration flips the
+gate). Bite-proven twice: with `takesBind` deleted from the
+`novaforge.field-input` manifest entry, the service fails its boot with
+`catalog entry novaforge.field-input declares no takesBind slot (§6 item 1)` and
+the suite errors exactly as the defect reads; with the TS declaration flipped on
+either side alone, the lockstep suite fails at that entry.
+
+### Verification (this pass)
+
+- `DefinitionLifecycleTests` 19/19 green (the 18 prior legs unchanged, the new
+  §6-item-1 declaration leg green with the manifest-reading gate).
+- Full metadata-service module suite 69/69 (ERP, purchasing, and perf artifact
+  suites unchanged through the new manifest shape).
+- `frontend/shared` 141/141 (the 3 new lockstep legs + the declaration-driven
+  pagemodel leg), `builder-ui` 63, `runtime-ui` 22 — `pnpm -r test` green.
+- Full `./mvnw verify` BUILD SUCCESS across the whole reactor (all 12 services).
+
+### Recorded open after this pass
+
+Empty.

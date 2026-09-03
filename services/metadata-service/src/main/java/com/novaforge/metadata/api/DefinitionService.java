@@ -293,8 +293,9 @@ public class DefinitionService {
      * The §4 bind rules, node-local (the only form the server can check — the L1
      * default the deltas overlay is role-resolved client-side, ADR-009): where the
      * bound name repeats in widget config a mismatch rejects; a binding-taking
-     * component (catalog contract §6 item 1 — the {@code novaforge.field-*}
-     * widgets and {@code novaforge.related-list}) carries a bind; a bind's head
+     * component — declared by its catalog contract (§6 item 1's per-entry
+     * {@code takesBind}, the canonical manifest's declaration the TS twin pins —
+     * not derived from the component id's shape) carries a bind; a bind's head
      * resolves to a field or relationship on the entity. Delta envelopes
      * ({@code op}-shaped maps) and action maps (closed-ladder types) are not
      * component nodes and never match the shape test.
@@ -317,7 +318,7 @@ public class DefinitionService {
                 }
             }
         }
-        if (takesBinding(type)) {
+        if (ComponentCatalog.takesBind(type)) {
             if (!(bind instanceof String bound) || bound.isBlank()) {
                 errors.add(new ProblemErrors.FieldError(pageApiName + ".layout",
                         type + " requires a bind", type));
@@ -330,12 +331,6 @@ public class DefinitionService {
                 }
             }
         }
-    }
-
-    /** Whether a component consumes a {@code bind} slot (§6 item 1) — the TS twin's rule. */
-    private static boolean takesBinding(String componentType) {
-        return componentType.startsWith("novaforge.field-")
-                || componentType.equals("novaforge.related-list");
     }
 
     /**

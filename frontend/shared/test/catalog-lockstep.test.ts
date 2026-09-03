@@ -11,10 +11,11 @@ import { CATALOG } from "../src/catalog/schemas.ts";
  * Catalog lockstep (PHASE-2 §4/§6): the server-side page gate validates pages
  * against the canonical manifest
  * (`services/metadata-service/src/main/resources/catalog/component-catalog.json`)
- * — the same id/version/props-schema contract this module's `CATALOG` serves the
- * builder and renderer. Neither side may drift: an entry that exists on one side
- * only, a version bumped on one side only, or a schema changed on one side only
- * would make the builder's save/publish gate disagree with the API path's gate.
+ * — the same id/version/bind-declaration/props-schema contract this module's
+ * `CATALOG` serves the builder and renderer. Neither side may drift: an entry that
+ * exists on one side only, a version bumped on one side only, a bind slot declared
+ * on one side only, or a schema changed on one side only would make the builder's
+ * save/publish gate disagree with the API path's gate.
  * This suite pins the two copies entry-for-entry, deep-equal, in the same order
  * — the expr/v1 conformance-corpus pattern applied to the catalog manifest.
  */
@@ -27,6 +28,7 @@ const MANIFEST_URL = new URL(
 interface ManifestEntry {
     id: string;
     version: string;
+    takesBind?: boolean;
     status?: "draft" | "stable" | "deprecated";
     deprecation?: { reason: string; migrateTo?: string };
     schema: Record<string, unknown>;
@@ -43,16 +45,43 @@ describe("catalog lockstep with the server-side manifest", () => {
         expect(CATALOG.map((entry) => entry.id)).toEqual(manifest.map((entry) => entry.id));
     });
 
-    it("matches the manifest entry-for-entry (version, lifecycle, schema)", () => {
+    it("matches the manifest entry-for-entry (version, bind declaration, lifecycle, schema)", () => {
         const server = byId(manifest);
         for (const entry of CATALOG) {
             const twin = server.get(entry.id);
             expect(twin, `manifest entry for ${entry.id}`).toBeDefined();
             expect(entry.version, `${entry.id} version`).toEqual(twin!.version);
+            expect(entry.takesBind, `${entry.id} bind declaration`).toEqual(twin!.takesBind);
             expect(entry.status, `${entry.id} lifecycle status`).toEqual(twin!.status);
             expect(entry.deprecation, `${entry.id} deprecation guidance`).toEqual(twin!.deprecation);
             expect(entry.schema, `${entry.id} props schema`).toEqual(twin!.schema);
         }
+    });
+
+    it("declares the bind slot on every entry (§6 item 1's data-requirements declaration)", () => {
+        for (const entry of manifest) {
+            expect(typeof entry.takesBind, `${entry.id} carries takesBind`).toBe("boolean");
+        }
+    });
+
+    it("declares bind exactly for the v1 binding components (§4's contract, not the id's shape)", () => {
+        // The §6 item 1 declaration's regression pin: the declared set equals the
+        // binding contract the v1 catalog has always enforced (the typed field
+        // widgets plus RelatedList) — and a component id's prefix decides nothing
+        // (novaforge.field-json is bound; novaforge.file-upload is not, prefix or no).
+        const declared = CATALOG.filter((entry) => entry.takesBind).map((entry) => entry.id);
+        expect(declared).toEqual([
+            "novaforge.field-input",
+            "novaforge.field-number",
+            "novaforge.field-select",
+            "novaforge.field-switch",
+            "novaforge.field-date",
+            "novaforge.field-lookup",
+            "novaforge.field-multi-lookup",
+            "novaforge.field-rich-text",
+            "novaforge.field-json",
+            "novaforge.related-list",
+        ]);
     });
 
     it("carries no entry the manifest lacks", () => {

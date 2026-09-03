@@ -1589,6 +1589,89 @@ class DefinitionLifecycleTests extends PostgresTestBase {
     }
 
     @Test
+    @DisplayName("the catalog manifest declares every component's bind slot (§6 item 1) — the gate reads the declaration, not the id's shape")
+    void catalogManifestDeclaresTheBindContract() throws Exception {
+        // §6 item 1's data-requirements declaration is manifest data: every entry
+        // carries `takesBind`, and the save-path bind gate (checkNodeBinds) reads
+        // ComponentCatalog.takesBind — the same canonical manifest the TS twin
+        // pins entry-for-entry in the lockstep suite. ComponentCatalog's loader
+        // fails the boot on any entry missing the key, so a half-specified
+        // component cannot ship; this leg pins the answered values against the
+        // resource itself plus the v1 contract set.
+        java.util.List<java.util.Map<String, Object>> manifest;
+        try (var stream = getClass().getResourceAsStream("/catalog/component-catalog.json")) {
+            manifest = MAPPER.readValue(stream,
+                    MAPPER.getTypeFactory().constructCollectionType(
+                            java.util.List.class, java.util.Map.class));
+        }
+        assertThat(manifest).isNotEmpty();
+        for (java.util.Map<String, Object> entry : manifest) {
+            String id = String.valueOf(entry.get("id"));
+            assertThat(entry.get("takesBind"))
+                    .as("%s declares its bind slot (§6 item 1)", id).isInstanceOf(Boolean.class);
+            assertThat(com.novaforge.metadata.api.ComponentCatalog.takesBind(id))
+                    .as("%s's gate answer equals the manifest declaration", id)
+                    .isEqualTo(entry.get("takesBind"));
+        }
+
+        // The declared set is the v1 binding contract — the typed field widgets
+        // plus RelatedList — pinned in manifest order. The id prefix decides
+        // nothing: novaforge.field-json binds (declaration true) while
+        // novaforge.file-upload does not (declaration false) despite both being
+        // field-shaped ids, and the layout widgets never did.
+        java.util.List<String> declared = manifest.stream()
+                .filter(entry -> Boolean.TRUE.equals(entry.get("takesBind")))
+                .map(entry -> String.valueOf(entry.get("id")))
+                .toList();
+        assertThat(declared).containsExactly(
+                "novaforge.field-input",
+                "novaforge.field-number",
+                "novaforge.field-select",
+                "novaforge.field-switch",
+                "novaforge.field-date",
+                "novaforge.field-lookup",
+                "novaforge.field-multi-lookup",
+                "novaforge.field-rich-text",
+                "novaforge.field-json",
+                "novaforge.related-list");
+        assertThat(com.novaforge.metadata.api.ComponentCatalog.takesBind("novaforge.ghost-widget"))
+                .isFalse();
+
+        // The gate consults the declaration for the non-binding half too: a
+        // declared-false component (record-actions) carries no bind requirement
+        // and saves bindless; the declared-true rejections live in the legs above
+        // ("novaforge.field-input requires a bind"). Chain: those legs + this
+        // manifest pin mean flipping an entry's declaration flips the gate.
+        String appId = createAppWithOrderEntity();
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/declaredFree")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "declaredFree", "type": "form", "entity": "Order",
+                                  "layout": { "root": { "type": "novaforge.record-actions",
+                                    "props": { "showEdit": true } } } }
+                                """))
+                .andExpect(status().isOk());
+    }
+
+    /**
+     * The catalog/bind legs' fixture: one app carrying an {@code Order} entity
+     * (reference text + status enum) to author pages against.
+     */
+    private String createAppWithOrderEntity() throws Exception {
+        MvcResult created = mockMvc.perform(post("/api/v1/metadata/apps").with(builderJwt())
+                        .contentType("application/json").content("""
+                                { "apiName": "BindDecl", "entities": [
+                                  { "apiName": "Order", "displayField": "reference",
+                                    "fields": [
+                                      { "apiName": "reference", "type": "text", "required": true },
+                                      { "apiName": "status", "type": "enum",
+                                        "values": ["DRAFT", "POSTED"] } ] } ] }
+                                """))
+                .andExpect(status().isOk()).andReturn();
+        return MAPPER.readTree(created.getResponse().getContentAsString()).get("id").asString();
+    }
+
+    @Test
     @DisplayName("publish events ride the transactional outbox: enqueued with the version, relayed")
     void publishEventsRideTheOutbox() throws Exception {
         // Anti-regression (2026-08-31): metadata.published was sent inside the publish

@@ -2,6 +2,7 @@
   {
     "id": "novaforge.chart-widget",
     "version": "1.0.0",
+    "takesBind": false,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -39,6 +40,7 @@
   {
     "id": "novaforge.kpi-tile",
     "version": "1.0.0",
+    "takesBind": false,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -55,6 +57,7 @@
   {
     "id": "novaforge.report-table",
     "version": "1.0.0",
+    "takesBind": false,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -79,6 +82,7 @@
   {
     "id": "novaforge.dashboard-grid",
     "version": "1.0.0",
+    "takesBind": false,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -90,6 +94,7 @@
   {
     "id": "novaforge.file-upload",
     "version": "1.0.0",
+    "takesBind": false,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -103,6 +108,7 @@
   {
     "id": "novaforge.app-shell",
     "version": "1.0.0",
+    "takesBind": false,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -115,6 +121,7 @@
   {
     "id": "novaforge.nav-list",
     "version": "1.0.0",
+    "takesBind": false,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -124,6 +131,7 @@
   {
     "id": "novaforge.form-layout",
     "version": "1.0.0",
+    "takesBind": false,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -137,6 +145,7 @@
   {
     "id": "novaforge.list-layout",
     "version": "1.0.0",
+    "takesBind": false,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -151,6 +160,7 @@
   {
     "id": "novaforge.record-header",
     "version": "1.0.0",
+    "takesBind": false,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -163,6 +173,7 @@
   {
     "id": "novaforge.field-input",
     "version": "1.0.0",
+    "takesBind": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -179,6 +190,7 @@
   {
     "id": "novaforge.field-number",
     "version": "1.0.0",
+    "takesBind": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -194,6 +206,7 @@
   {
     "id": "novaforge.field-select",
     "version": "1.0.0",
+    "takesBind": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -208,6 +221,7 @@
   {
     "id": "novaforge.field-switch",
     "version": "1.0.0",
+    "takesBind": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -221,6 +235,7 @@
   {
     "id": "novaforge.field-date",
     "version": "1.0.0",
+    "takesBind": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -235,6 +250,7 @@
   {
     "id": "novaforge.field-lookup",
     "version": "1.0.0",
+    "takesBind": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -250,6 +266,7 @@
   {
     "id": "novaforge.field-multi-lookup",
     "version": "1.0.0",
+    "takesBind": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -264,6 +281,7 @@
   {
     "id": "novaforge.field-rich-text",
     "version": "1.0.0",
+    "takesBind": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -277,6 +295,7 @@
   {
     "id": "novaforge.field-json",
     "version": "1.0.0",
+    "takesBind": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -290,6 +309,7 @@
   {
     "id": "novaforge.related-list",
     "version": "1.0.0",
+    "takesBind": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -305,6 +325,7 @@
   {
     "id": "novaforge.record-actions",
     "version": "1.0.0",
+    "takesBind": false,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -317,6 +338,7 @@
   {
     "id": "novaforge.empty-state",
     "version": "1.0.0",
+    "takesBind": false,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

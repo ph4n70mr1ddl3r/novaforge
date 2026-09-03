@@ -128,9 +128,15 @@ export function validateSchema(
 /** The closed action ladder (PHASE-2 §4; runFlow activated by PHASE-3 §8). */
 const CLOSED_ACTIONS = new Set(["save", "cancel", "delete", "openPage", "runFlow"]);
 
-/** Whether a component consumes a `bind` slot (its catalog contract, §6 item 1). */
+/**
+ * Whether a component consumes a `bind` slot — read from the component's
+ * catalog contract declaration (PHASE-2 §6 item 1), never derived from the
+ * id's shape. Unknown components declare nothing (they already fail the
+ * unknown-component check); the v1 declaration set is pinned by the lockstep
+ * suite and the manifest itself.
+ */
 export function takesBinding(componentId: string): boolean {
-    return componentId.startsWith("novaforge.field-") || componentId === "novaforge.related-list";
+    return CATALOG.find((entry) => entry.id === componentId)?.takesBind ?? false;
 }
 
 export interface ValidationContext {
