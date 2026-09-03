@@ -3609,3 +3609,111 @@ helper returned null there; latent, exposed by the new same-op test).
 ### Recorded open after this pass
 
 Empty.
+
+## Thirty-Fifth Pass — 2026-09-03 (the spec-vs-implementation re-review: the §4 page-bind rules lived only in the TS twin — the server gate stored any page the API could write; and the timer flake's true root: Flowable's hour-long locks and minute-long recovery cadence)
+
+A fresh pin-by-pin walk of the phase specs against the tree, with live builds.
+The RBAC/field-security surfaces, the harness vocabulary, the promotion gate,
+the i18n fallback chain, the HMAC/file pins, the egress two-layer policy, the
+conditional roll-ups (both aggregation paths), the `$decimal` sandbox, the
+system-field query leaves, and the Phase 0–1 caps all verified exact. Two
+findings — one a genuine spec gap, one the definitive root of a flake two
+passes had treated symptomatically.
+
+### C-35P1 — the §4 page-bind rules were TS-twin-only; the server stored any page the API could write (MEDIUM, PHASE-2 §4)
+
+§4 pins: "`bind` is the node's data binding … where the bound name repeats in
+widget config (`props.field`, `props.relationship`), save/publish validation
+rejects a mismatch." The TS twin (`frontend/shared/src/pagemodel/validate.ts`)
+enforces the full node-local rule set — the mismatch rejection, bind presence
+for binding-taking components (catalog contract §6 item 1), bind resolution
+against the entity — but the server-side page save gate (`putPage` →
+`validatePageSlots`) checked only the expression slots and the closed action
+ladder. The builder path was guarded; the API path was not: `PUT
+/api/v1/metadata/apps/{id}/pages/{apiName}` accepted a page whose `bind`
+disagreed with its `props.field`, a field widget with no bind at all, or a bind
+naming no field or relationship — and publish carried it into the served
+bundle. The binding drives the renderer's data path while `props.field` drives
+the widget config: a stored mismatch renders one field's configuration over
+another field's binding. The action-ladder check's own recorded principle —
+"the metadata store can never hold an action no runtime dispatches" — applies
+verbatim to bindings: the store must not hold a binding its widget config
+contradicts, whichever client authored the page.
+
+**Fixed (V-C35P1):** `checkNodeBinds` joins the encoding-agnostic walk in
+`DefinitionService` — every component node (a map carrying a catalog `type`,
+whether a resolved-tree node or the node inside an `insertNode` delta) passes
+the same three node-local rules the TS twin applies, with the twin's message
+wording. Deliberately node-local only: the L1 default the deltas overlay is
+role-resolved client-side (ADR-009), so the server checks exactly what the
+document itself carries — the server-checkable subset, in lockstep with the
+twin; the builder's client-side `checkPage` continues to govern the
+delta-times-L1 interaction no server can resolve.
+
+**Pinned:** `DefinitionLifecycleTests.pageDefinitionLifecycle` grew four
+rejections — bind/`props.field` mismatch, bind/`props.relationship` mismatch,
+bindless `novaforge.field-input`, unresolved `ghost.reference` bind — each
+asserting the rule's message, plus the agreeing positive control (a proper
+form-layout node tree saves and deletes). Bite-proven: with `checkNodeBinds`
+removed, the mismatch PUT returns 200 and the test fails exactly as the defect
+reads.
+
+### C-35P2 — `timerAdvancesProcess` still wedged in full-reactor runs; the root was Flowable's hour-long job locks and minute-long recovery cadence (test-infra, flaky; the 33rd pass's budget fix treated the symptom)
+
+Pass 33 had already met this failure (C-33P4) and fixed what it could see: the
+start routed through the manual §9 leg, the acquisition cycle pinned to 1 s,
+budgets raised — and declared the suite green twice. This pass's first full
+`./mvnw verify` hit it again (`expected: 1L but was: 0L within 1 minutes`),
+green in isolation, red in the reactor — twice. A temporary probe (poll
+ACT_RU_TIMER_JOB / ACT_RU_JOB lock columns inside the await) caught a red run
+live: the timer job WAS acquired and moved to executable (`timerJobs=1 → 0,
+jobs=1`), then sat in ACT_RU_JOB for the rest of the budget — never executed,
+never unlocked, `LOCK_EXP_TIME_` set.
+
+The mechanism (read from Flowable 8.0.0's bytecode and MyBatis mappings):
+- a job locks for **one hour** on acquisition (`timerLockTime`/`asyncJobLockTime`
+  both `Duration.ofHours(1)` — batch-job tuning);
+- acquisition **never re-selects a locked job** — `selectJobsToExecute` takes
+  `LOCK_EXP_TIME_ IS NULL` only;
+- recovery therefore rides exclusively the reset-expired pass —
+  `resetExpiredJobsInterval` default **one minute**, page size three.
+
+The module's surefire JVM hosts several Spring contexts whose embedded engines
+share one ACT_* schema; under full-reactor load one context's executor locked
+the freshly moved job and starved, and no engine — including its own — could
+re-select the job until a reset-expired pass woke up. Worst case 20 s (even
+with this pass's shortened lock) + 60 s cadence ≈ 80 s: past any reasonable
+budget, and in production the same defaults mean a crashed replica's in-flight
+jobs recover in **over an hour**.
+
+**Fixed (V-C35P2, `FlowableEngineConfig`):** job ownership windows pinned to
+20 s (`timerLockTime`/`asyncJobLockTime` — the longest engine-side leg is a
+`callConnector` step at its pinned 10 s timeout, so 20 s keeps margin; the
+optimistic job lock bounds a lost race either way), the reset-expired cadence
+pinned to 5 s (bounding unlock-then-reacquire recovery at ~25 s worst case),
+and the global-acquire-lock force-take floors pinned to 30 s (the 10-minute
+defaults never mattered at this scale). Config-apply verified live: every
+context logs the pinned values; the probe's successful run bridged in ~6 s
+where the same shape previously died at 60 s.
+
+**Pinned:** the existing `timerAdvancesProcess` awaits the real bridge (no
+test mode); its budget stands at 60 s, now comfortably above the bounded ~25 s
+worst case — a genuinely dead executor still fails loudly inside the budget.
+
+### Verification (this pass)
+
+- metadata-service 68/68 green (the lifecycle suite carrying the four new
+  §4 bind rejections + the positive control).
+- Full `./mvnw verify` BUILD SUCCESS **twice consecutively** after the fix
+  (660 backend tests per run, 11:26 each) — against the real Postgres + Kafka
+  containers — after the defect class had failed 2 of 4 full-reactor runs.
+  With the probe, a third consecutive green; BpmnProcessTests runs ~22 s in
+  the reactor where the stall stretched the class to 77 s.
+- No authored app affected: the ERP, purchasing, and perf artifacts carry zero
+  pages (verified), so the new server-side bind gate binds nothing that exists.
+- Frontend untouched (the TS twin already enforced these rules; the server now
+  mirrors the node-local subset).
+
+### Recorded open after this pass
+
+Empty.

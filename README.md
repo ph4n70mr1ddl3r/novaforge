@@ -230,7 +230,12 @@ same-origin by the gateway. **All nine phases' exit work is now verified live**
 exit on the auto-journal — closing the thirty-second review pass's five defects a
 live leg alone could flush: the egress door × harness mock, the script-execute
 attestation reconciliation, the formula × roll-up evaluation order, the harness's
-filter dialect, the eur case's task sequencing). The latest counts: Java (658) +
+filter dialect, the eur case's task sequencing; the thirty-fifth pass closing
+the §4 page-bind rules server-side — the TS twin's mismatch/presence/resolution
+checks now gate `PUT /pages` too — and the BPMN timer flake's true root
+(Flowable's hour-long job locks met a minute-long reset-expired cadence;
+pinned to 20 s / 5 s, two consecutive full-reactor runs green)). The latest
+counts: Java (660) +
 frontend (220: shared 135, builder 63, runtime 22) tests green under `./mvnw verify` +
 `pnpm -r test`. The recorded-open
 set is empty; the remaining surfaces are the deliberate v1 deferrals (PLAN.md §1)

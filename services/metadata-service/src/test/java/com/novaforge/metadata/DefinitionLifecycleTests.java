@@ -1291,6 +1291,64 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors[0].field").value("badExpr.layout"));
 
+        // the §4 bind rules, server-side (mirroring the TS twin): where the bound
+        // name repeats in widget config a mismatch rejects; a binding-taking
+        // component carries a bind; a bind resolves to a field or relationship
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/badBind")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "badBind", "type": "form", "entity": "Order",
+                                  "layout": { "root": { "type": "novaforge.field-input",
+                                    "props": { "field": "status" }, "bind": "reference" } } }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        "bind 'reference' and props.field 'status' disagree"));
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/badRelBind")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "badRelBind", "type": "form", "entity": "Order",
+                                  "layout": { "root": { "type": "novaforge.related-list",
+                                    "props": { "relationship": "lines" }, "bind": "reference" } } }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        "bind 'reference' and props.relationship 'lines' disagree"));
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/bindlessField")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "bindlessField", "type": "form", "entity": "Order",
+                                  "layout": { "root": { "type": "novaforge.field-input",
+                                    "props": { "field": "reference" } } } }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        "novaforge.field-input requires a bind"));
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/ghostBind")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "ghostBind", "type": "form", "entity": "Order",
+                                  "layout": { "root": { "type": "novaforge.field-input",
+                                    "props": { "field": "ghost.reference" }, "bind": "ghost.reference" } } }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].message").value(
+                        "bind 'ghost.reference' resolves to no field or relationship"));
+        // the agreeing shape saves — the rules bind authoring, not the widget contract
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/pages/goodBind")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "goodBind", "type": "form", "entity": "Order",
+                                  "layout": { "root": { "type": "novaforge.form-layout",
+                                    "props": { "columns": 2 }, "children": [
+                                      { "type": "novaforge.field-input",
+                                        "props": { "field": "reference" }, "bind": "reference" } ] } } }
+                                """))
+                .andExpect(status().isOk());
+        mockMvc.perform(delete("/api/v1/metadata/apps/" + appId + "/pages/goodBind")
+                        .with(builderJwt()))
+                .andExpect(status().isOk());
+
         // the closed action ladder, server-side (PHASE-2 §4 + PHASE-3 §8's runFlow):
         // a runFlow action with its hook reference saves; a hookless one and an
         // unknown type reject at save

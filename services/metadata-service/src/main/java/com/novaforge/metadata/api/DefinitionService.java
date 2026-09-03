@@ -170,10 +170,16 @@ public class DefinitionService {
     }
 
     /**
-     * Page slot contract (PHASE-2 §4/§7): the entity must exist, and every
+     * Page slot contract (PHASE-2 §4/§7): the entity must exist, every
      * visibility/required/readonly binding in the layout tree compiles against the
-     * entity's field apiNames — the same compile-check every other expression slot
-     * passes; UI bindings are UX sugar, but they must at least parse and resolve.
+     * entity's field apiNames (UI bindings are UX sugar, but they must at least
+     * parse and resolve), and the §4 bind rules hold: where the bound name repeats
+     * in widget config ({@code props.field}/{@code props.relationship}) a mismatch
+     * rejects, a binding-taking component carries a bind, and a bind resolves to a
+     * field or relationship on the page's entity — the same rules the TS twin
+     * enforces in the builder, mirrored here so the metadata store can never hold
+     * a page whose binding disagrees with its widget config no matter which
+     * client authored it.
      */
     @SuppressWarnings("unchecked")
     private static void validatePageSlots(AppDefinition.PageDefinition page, AppDefinition app,
@@ -199,12 +205,15 @@ public class DefinitionService {
      * Encoding-agnostic slot walk: the persisted layout is structural deltas (§13
      * Q2) but the export/interchange form and builder previews carry resolved trees
      * — every visibility/required/readonly string anywhere in the document
-     * compile-checks, whichever encoding authored it.
+     * compile-checks, whichever encoding authored it, and every component node
+     * (any map carrying a catalog {@code type} — a resolved-tree node, or the node
+     * inside an {@code insertNode} delta) passes the §4 bind checks.
      */
     private static void checkNodeSlots(String pageApiName, Object node, java.util.Set<String> fields,
                                        java.util.function.Function<String, Expression.ValueType> types,
                                        List<ProblemErrors.FieldError> errors) {
         if (node instanceof java.util.Map<?, ?> map) {
+            checkNodeBinds(pageApiName, map, fields, errors);
             for (String slot : java.util.List.of("visibility", "required", "readonly")) {
                 Object expression = map.get(slot);
                 if (expression instanceof String source && !source.isBlank()) {
@@ -230,6 +239,55 @@ public class DefinitionService {
                 checkNodeSlots(pageApiName, child, fields, types, errors);
             }
         }
+    }
+
+    /**
+     * The §4 bind rules, node-local (the only form the server can check — the L1
+     * default the deltas overlay is role-resolved client-side, ADR-009): where the
+     * bound name repeats in widget config a mismatch rejects; a binding-taking
+     * component (catalog contract §6 item 1 — the {@code novaforge.field-*}
+     * widgets and {@code novaforge.related-list}) carries a bind; a bind's head
+     * resolves to a field or relationship on the entity. Delta envelopes
+     * ({@code op}-shaped maps) and action maps (closed-ladder types) are not
+     * component nodes and never match the shape test.
+     */
+    private static void checkNodeBinds(String pageApiName, java.util.Map<?, ?> map,
+                                       java.util.Set<String> fields,
+                                       List<ProblemErrors.FieldError> errors) {
+        if (!(map.get("type") instanceof String type) || !type.startsWith("novaforge.")) {
+            return;
+        }
+        Object bind = map.get("bind");
+        if (bind instanceof String bound && !bound.isBlank()) {
+            if (map.get("props") instanceof java.util.Map<?, ?> props) {
+                for (String prop : java.util.List.of("field", "relationship")) {
+                    if (props.get(prop) instanceof String repeated && !repeated.equals(bound)) {
+                        errors.add(new ProblemErrors.FieldError(pageApiName + ".layout",
+                                "bind '" + bound + "' and props." + prop + " '" + repeated
+                                        + "' disagree", bound));
+                    }
+                }
+            }
+        }
+        if (takesBinding(type)) {
+            if (!(bind instanceof String bound) || bound.isBlank()) {
+                errors.add(new ProblemErrors.FieldError(pageApiName + ".layout",
+                        type + " requires a bind", type));
+            } else {
+                String head = bound.split("\\.")[0];
+                if (!fields.contains(head)) {
+                    errors.add(new ProblemErrors.FieldError(pageApiName + ".layout",
+                            "bind '" + bound + "' resolves to no field or relationship",
+                            bound));
+                }
+            }
+        }
+    }
+
+    /** Whether a component consumes a {@code bind} slot (§6 item 1) — the TS twin's rule. */
+    private static boolean takesBinding(String componentType) {
+        return componentType.startsWith("novaforge.field-")
+                || componentType.equals("novaforge.related-list");
     }
 
     /**
