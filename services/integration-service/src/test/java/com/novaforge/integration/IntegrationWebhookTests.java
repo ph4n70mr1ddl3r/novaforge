@@ -74,6 +74,7 @@ class IntegrationWebhookTests extends PostgresTestBase {
                   "displayField": "reference",
                   "fields": [
                     { "apiName": "reference", "type": "text", "required": true, "uniqueness": true },
+                    { "apiName": "provider", "type": "text", "uniqueness": true },
                     { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 } ],
                   "validations": [
                     { "name": "positive", "scope": "record",
@@ -113,6 +114,9 @@ class IntegrationWebhookTests extends PostgresTestBase {
     /** The write calls the fake runtime observed (order-stable). */
     static final List<Map<String, Object>> WRITE_CALLS = new ArrayList<>();
 
+    /** The upsert-key lookup filters the fake runtime observed (order-stable). */
+    static final List<Map<String, Object>> LOOKUPS = new ArrayList<>();
+
     /** Rows the fake runtime "stores" — upsert lookups read them back. */
     static final Map<String, Map<String, Object>> STORED = new LinkedHashMap<>();
 
@@ -148,14 +152,33 @@ class IntegrationWebhookTests extends PostgresTestBase {
 
                 @Override
                 public ListPage lookup(UUID tenantId, String entity, Map<String, Object> query) {
-                    // the canonical query-DSL leaf the processor sends (the bare
+                    // the query-DSL shape the processor sends: one eq leaf, or an
+                    // and-composite of leaves across several key fields (the bare
                     // {field: value} map 400s at the real runtime — the leaf shape
                     // is pinned engine-side); a fake reading anything else never
                     // matches, and every upsert silently degrades to create
                     Map<?, ?> filter = (Map<?, ?>) query.get("filter");
+                    Map<String, Object> captured = new LinkedHashMap<>();
+                    filter.forEach((key, value) -> captured.put(String.valueOf(key), value));
+                    LOOKUPS.add(captured);
+                    Map<String, Object> pattern = new LinkedHashMap<>();
+                    if (filter.get("and") instanceof List<?> conjuncts) {
+                        for (Object conjunct : conjuncts) {
+                            Map<?, ?> leaf = (Map<?, ?>) conjunct;
+                            pattern.put(String.valueOf(leaf.get("field")), leaf.get("value"));
+                        }
+                    } else {
+                        pattern.put(String.valueOf(filter.get("field")), filter.get("value"));
+                    }
                     Map<String, Object> found = null;
-                    if ("reference".equals(filter.get("field"))) {
-                        found = STORED.get(String.valueOf(filter.get("value")));
+                    for (Map<String, Object> row : STORED.values()) {
+                        boolean matches = pattern.entrySet().stream().allMatch(entry ->
+                                String.valueOf(row.get(entry.getKey()))
+                                        .equals(String.valueOf(entry.getValue())));
+                        if (matches) {
+                            found = row;
+                            break;
+                        }
                     }
                     return new ListPage(found == null ? List.of() : List.of(found),
                             found == null ? 0 : 1);
@@ -298,6 +321,98 @@ class IntegrationWebhookTests extends PostgresTestBase {
         }
         // still exactly one stored row for the reference — the rejected event did not create
         assertThat(STORED.get("pay-upsert").get("amount")).isEqualTo("20.00");
+    }
+
+    @Test
+    @DisplayName("multi-key upsert: the lookup conjoins EVERY key — a row sharing only the last key never resolves")
+    void multiKeyUpsertResolvesByEveryKey() throws Exception {
+        // Anti-regression: the upsert lookup built its filter leaf by looping the
+        // key fields into one flat map — field/value overwrote per iteration, so
+        // only the LAST key survived. A multi-key upsert then resolved by that
+        // field alone: an event sharing only the provider key matched (and rewrote)
+        // a record whose reference key excluded it. The conjunction is the key.
+        withInboundWebhook(new com.novaforge.metadata.WebhookDefinition(
+                "wh_multi", com.novaforge.metadata.WebhookDefinition.INBOUND,
+                null, null, "Payment",
+                new com.novaforge.metadata.WebhookDefinition.Mapping(
+                        "upsert", List.of("reference", "provider"), "${data.id}",
+                        Map.of("reference", "${data.ref}", "provider", "${data.prov}",
+                               "amount", "${data.amount}")),
+                "hook_wh_multi", true), () -> {
+            try {
+                // one stored row: (reference=pay-multi-1, provider=prov-multi)
+                postSigned("""
+                        {"data": {"id": "evt-mk-1", "ref": "pay-multi-1", "prov": "prov-multi", "amount": "10.00"}}""");
+                assertThat(WRITE_CALLS.getLast().get("op")).isEqualTo("create");
+
+                // a second event sharing ONLY the provider key: its reference key
+                // excludes the stored row — the conjunction must not resolve it
+                postSigned("""
+                        {"data": {"id": "evt-mk-2", "ref": "pay-multi-2", "prov": "prov-multi", "amount": "99.00"}}""");
+                Map<String, Object> filter = LOOKUPS.getLast();
+                assertThat(filter.get("and")).asList()
+                        .extracting("field", "op", "value")
+                        .containsExactly(
+                                org.assertj.core.groups.Tuple.tuple("reference", "eq", "pay-multi-2"),
+                                org.assertj.core.groups.Tuple.tuple("provider", "eq", "prov-multi"));
+                assertThat(WRITE_CALLS.getLast().get("op"))
+                        .as("a row sharing only the last key must never resolve as the update target")
+                        .isEqualTo("create");
+                // and the first row was never touched by the second event
+                assertThat(STORED.get("pay-multi-1").get("amount")).isEqualTo("10.00");
+                assertThat(String.valueOf(STORED.get("pay-multi-1").get("reference")))
+                        .isEqualTo("pay-multi-1");
+            } finally {
+                STORED.remove("pay-multi-1");
+                STORED.remove("pay-multi-2");
+            }
+        });
+    }
+
+    /** Posts one event signed for the spliced wh_multi hook. */
+    private void postSigned(String body) throws Exception {
+        String timestamp = String.valueOf(Instant.now().getEpochSecond());
+        String signature = HmacScheme.signature("multi-secret", timestamp,
+                body.getBytes(StandardCharsets.UTF_8));
+        mockMvc.perform(post("/api/v1/webhooks/inbound/" + TENANT + "/Payment/wh_multi")
+                        .header("X-NovaForge-Timestamp", timestamp)
+                        .header("X-NovaForge-Signature", signature)
+                        .contentType("application/json")
+                        .content(body))
+                .andExpect(status().isOk());
+    }
+
+    /** Splices an inbound webhook into the stubbed published app (alongside the suite's). */
+    private void withInboundWebhook(com.novaforge.metadata.WebhookDefinition hook,
+                                    TestBody body) {
+        List<com.novaforge.metadata.WebhookDefinition> hooks =
+                new ArrayList<>(app.integrations().webhooks());
+        hooks.add(hook);
+        com.novaforge.metadata.IntegrationsDefinition withHooks =
+                new com.novaforge.metadata.IntegrationsDefinition(
+                        app.integrations().connectors(), hooks,
+                        app.integrations().credentials(), app.integrations().imports());
+        AppDefinition original = app;
+        app = new AppDefinition(original.id(), original.apiName(), original.label(),
+                original.labelI18n(), original.description(), original.entities(),
+                original.pages(), original.settings(), original.permissionSet(),
+                original.testSuites(), original.stateMachines(), original.slas(),
+                original.jobs(), original.workflows(), original.reports(),
+                original.dashboards(), withHooks);
+        secrets.put(TENANT, "hook_wh_multi", SecretStore.PURPOSE_WEBHOOK, "multi-secret");
+        try {
+            body.run();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        } finally {
+            app = original;
+        }
+    }
+
+    /** A test body that may throw checked exceptions (the post helper throws). */
+    interface TestBody {
+
+        void run() throws Exception;
     }
 
     @Test

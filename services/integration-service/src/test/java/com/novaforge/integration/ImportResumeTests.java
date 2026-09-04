@@ -55,6 +55,21 @@ class ImportResumeTests extends PostgresTestBase {
                     "mapping": { "reference": "Ref", "amount": "Amount" } } ] } }
             """;
 
+    /** The upsert-mode variant: same feed, keyed on the (unique) reference column. */
+    static final String APP_JSON_UPSERT = """
+            { "apiName": "Erp",
+              "entities": [
+                { "apiName": "Payment", "displayField": "reference",
+                  "fields": [
+                    { "apiName": "reference", "type": "text", "required": true, "uniqueness": true },
+                    { "apiName": "amount", "type": "decimal", "precision": 18, "scale": 4 } ] } ],
+              "integrations": {
+                "imports": [
+                  { "apiName": "paymentFeedUpsert", "entity": "Payment", "mode": "upsert",
+                    "keyFields": ["reference"],
+                    "mapping": { "reference": "Ref", "amount": "Amount" } } ] } }
+            """;
+
     /** The CSV source: ten rows, chunk size four → three chunks. */
     static final String CSV = """
             Ref,Amount
@@ -72,6 +87,9 @@ class ImportResumeTests extends PostgresTestBase {
 
     /** Rows the fake runtime applied (create calls only — mode is create). */
     static final List<String> APPLIED = new ArrayList<>();
+
+    /** The upsert-key lookup filters the fake runtime observed (order-stable). */
+    static final List<Map<String, Object>> LOOKUPS = new ArrayList<>();
 
     /** Set to a chunk ordinal to fail that chunk (simulating the kill). */
     static volatile int failOnChunk = -1;
@@ -121,6 +139,20 @@ class ImportResumeTests extends PostgresTestBase {
                 public ListPage list(UUID tenantId, String entity, String asRole,
                                      Map<String, Object> query) {
                     LIST_CALLS.incrementAndGet();
+                    // the runtime's list parser pins the query-DSL filter shape — the
+                    // fake enforces the same contract (a bare {field: value} map
+                    // 400s "filter.field is required" in production)
+                    Object filter = query == null ? null : query.get("filter");
+                    if (filter != null) {
+                        LOOKUPS.add(new LinkedHashMap<>((Map<String, Object>) filter));
+                        Map<?, ?> leaf = (Map<?, ?>) filter;
+                        boolean shaped = leaf.containsKey("and")
+                                || (leaf.containsKey("field") && leaf.containsKey("op"));
+                        if (!shaped) {
+                            throw new IllegalStateException(
+                                    "simulated runtime 400: filter.field is required");
+                        }
+                    }
                     // total 100 >> the 2-row ceiling: the FIRST page must trip it
                     return new ListPage(List.of(), 100);
                 }
@@ -215,6 +247,42 @@ class ImportResumeTests extends PostgresTestBase {
         assertThat(rows).allSatisfy(row -> assertThat(row.status()).isEqualTo("ok"));
         assertThat(rows.stream().map(JobStore.RowOutcome::recordId))
                 .doesNotContainNull();
+    }
+
+    @Test
+    @DisplayName("upsert import: the key lookup rides the query-DSL filter shape — never the bare map that 400s")
+    void upsertImportLookupSendsTheDslFilterShape() {
+        // Anti-regression: when the webhook leg's upsert lookup migrated to the
+        // query-DSL leaf shape ("a bare {field: value} map 400s" — found live), the
+        // import leg kept its bare map — every upsert-mode import failed its first
+        // row's key lookup with HTTP 400 and the job died failed.
+        AppDefinition original = app;
+        app = DefinitionParser.parseApp(APP_JSON_UPSERT);
+        APPLIED.clear();
+        LOOKUPS.clear();
+        try {
+            UUID jobId = jobs.create(TENANT, JobStore.Kind.IMPORT, "Erp", null,
+                    "paymentFeedUpsert", null, null, null, UUID.randomUUID(),
+                    "feed.csv", null, ACTOR, null);
+            runner.scan();
+            JobStore.Job completed = jobs.find(TENANT, jobId).orElseThrow();
+            assertThat(completed.status())
+                    .as("an upsert import must not die on its first key lookup")
+                    .isEqualTo("completed");
+            // every row's key lookup carried the leaf shape (field/op/value)
+            assertThat(LOOKUPS).hasSize(10);
+            assertThat(LOOKUPS).allSatisfy(filter -> {
+                assertThat(filter.get("field")).isEqualTo("reference");
+                assertThat(filter.get("op")).isEqualTo("eq");
+            });
+            assertThat(LOOKUPS).extracting(filter -> filter.get("value"))
+                    .containsExactly("pay-0", "pay-1", "pay-2", "pay-3", "pay-4",
+                            "pay-5", "pay-6", "pay-7", "pay-8", "pay-9");
+            // nothing resolved in the fake store — every row applied as a create
+            assertThat(APPLIED).hasSize(10);
+        } finally {
+            app = original;
+        }
     }
 
     @Test

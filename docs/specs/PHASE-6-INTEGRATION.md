@@ -112,7 +112,11 @@ here.
 - **Mapping → records:** the hook's mapping produces create/update payloads applied
   through the Data Runtime write path as the integration principal — validations,
   state machines, and hooks all fire (a webhook is just another writer; the single
-  write path is absolute).
+  write path is absolute). Upsert keys resolve through the runtime's lowered
+  lookups in the query-DSL filter shape, and **every** key field conjoins — one
+  key is a single `eq` leaf, several keys an `and` of leaves — so a multi-key
+  upsert never resolves (and never rewrites) a record any one of its keys
+  excludes. The import leg (§7) rides the same contract.
 - Idempotency: provider event id (or body hash when absent) dedupes; poison
   messages DLQ with the payload preserved for replay from the builder.
 - **Rate limiting lands here:** the anonymous route is the gateway's only public

@@ -189,10 +189,11 @@ public class JobRunner {
     /** Upsert items resolve their key through the integration-scoped lookup (§6). */
     private Map<String, Object> upsertItem(JobStore.Job job, ImportDefinition mapping,
                                           Map<String, Object> mapped) {
-        Map<String, Object> filter = new LinkedHashMap<>();
-        for (String key : mapping.keyFields()) {
-            filter.put(key, mapped.get(key));
-        }
+        // the query-DSL filter shape the runtime's list parser pins — the bare
+        // {field: value} map that lived here 400s ("filter.field is required"),
+        // so every upsert import failed its first row's lookup when the webhook
+        // leg was migrated to the leaf shape and this leg was left behind
+        Map<String, Object> filter = RuntimeClient.keyLookupFilter(mapping.keyFields(), mapped);
         RuntimeClient.ListPage found = runtime.lookup(job.tenantId(), mapping.entity(),
                 Map.of("filter", filter, "page", Map.of("size", 1)));
         Map<String, Object> item = new LinkedHashMap<>();

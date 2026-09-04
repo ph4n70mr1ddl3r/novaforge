@@ -3,6 +3,8 @@ package com.novaforge.integration.clients;
 import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
 import com.novaforge.security.ServiceTokenClient;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -124,6 +126,28 @@ public class RuntimeClient {
     /** The integration-scoped lookup (upsert keys, §6) — a one-page convenience. */
     public ListPage lookup(UUID tenantId, String entity, Map<String, Object> query) {
         return list(tenantId, entity, null, query);
+    }
+
+    /**
+     * The upsert key's lookup filter in the query-DSL shape the runtime's list
+     * parser pins (§6): one key lowers to a single {@code {field, op, value}} leaf;
+     * several keys conjoin under {@code {and: […]}}. A bare {@code {field: value}}
+     * map 400s at the parser ("filter.field is required" — found live on the
+     * webhook leg), and a flat leaf assembled by looping the keys keeps only the
+     * LAST field — a multi-key upsert then resolves by that field alone and can
+     * rewrite a record its other keys exclude.
+     */
+    public static Map<String, Object> keyLookupFilter(List<String> keyFields,
+                                                       Map<String, Object> values) {
+        List<Map<String, Object>> leaves = new ArrayList<>();
+        for (String key : keyFields) {
+            Map<String, Object> leaf = new LinkedHashMap<>();
+            leaf.put("field", key);
+            leaf.put("op", "eq");
+            leaf.put("value", values.get(key));
+            leaves.add(leaf);
+        }
+        return leaves.size() == 1 ? leaves.getFirst() : Map.of("and", leaves);
     }
 
     /** A page of rows plus the full total (export paging loops on the former). */
