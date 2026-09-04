@@ -148,6 +148,28 @@ as compact JSON, percent-encoded per RFC 3986 (`filter=%7B%22and%22%3A…%7D`) �
 bespoke flattening; anything richer — deep nesting,
 aggregates — goes to `POST /{entity}/query`.
 
+**Keyset paging (the §12 Q2 landing, pinned 2026-09-04):** `page` grows an optional
+`after` — the opaque seek cursor the response returns as `nextAfter` on any list page
+that came back full. `after` and `offset` are mutually exclusive (reject); the seek
+order is the list's effective order — the declared sorts, then the engine's `id`
+tiebreaker — so every list is seekable, a sortless list included (its effective order
+is `id asc`). The cursor is self-describing (base64url JSON: version, the effective
+sort contract, the last row's position); a cursor minted for a different sort rejects
+`VALIDATION_FAILED`, as does a garbled one. Lowering adds one conjunct after the
+filter — per sort key `>` (asc) / `<` (desc), chained through null-safe equality
+(`IS NOT DISTINCT FROM`; Postgres default null ordering: nulls largest) — so a deep
+page seeks instead of scanning-and-discarding, riding the same promoted/JSONB
+expressions the ORDER BY already uses. Count semantics: a seek page skips the
+`count(*)` the offset model pays on every page (measured 364.9 ms at 1M rows —
+docs/loadtests/results-2026-09-04-deep-offset.md) and omits `total`; clients take
+`total` from an offset page (typically the first) and walk `nextAfter` after. Field
+security holds: seeking by a field hidden for the actor rejects at the same door
+filters reject; `nextAfter` is minted only when every sort-key value survives the
+projection (never a hidden value inside a cursor — base64 is an encoding, not
+cryptography). Wire default unchanged: offset + total stays valid for every existing
+client; the growth is additive, versioned per the same rule as the §3.6 leaf growth
+(PHASE-7).
+
 Write path (the Phase 1 slice of the ARCHITECTURE.md §2.4 pipeline): resolve metadata →
 authorize (§7) → apply field `default`s — static values, plus sequence references drawn
 once at create (§5 Sequences below; expression defaults arrive with Phase 3 write-path
@@ -321,7 +343,7 @@ spike deliverable (§2) — the policy is fixed, the numbers validate it.
   unfiltered at 990k) — keyset paging is due, with the per-page count tax its
   landing must rule on. Records + analysis:
   docs/loadtests/results-2026-09-04-deep-offset.md; the landing goes through the
-  SDD agreement's spec-first gate.)*
+  SDD agreement's spec-first gate — pinned: §5's keyset paragraph (2026-09-04).)*
 - **Q3 — Projection promotion policy: DECIDED —** fields named in entity-level
   `indexes` declarations (ARCHITECTURE.md §3) and unique constraints promote,
   plus automatic promotion of display and lookup fields; the spike's measurements
