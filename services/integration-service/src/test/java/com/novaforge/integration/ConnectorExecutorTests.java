@@ -181,7 +181,9 @@ class ConnectorExecutorTests extends PostgresTestBase {
                 respond(exchange, 500, "{\"error\":\"provider down\"}");
                 return;
             }
-            respond(exchange, 200, "{\"object\":\"list\",\"data\":[{\"id\":\"txn_1\"}]}");
+            respond(exchange, 200, "{\"object\":\"list\",\"data\":[{\"id\":\"txn_1\"," 
+                    + "\"amount\":9999999999999999.99,"
+                    + "\"providerRef\":123456789012345678901}]}");
         });
         // the OAuth2 connectors' provider legs — every one echoes the bearer it rode
         for (String oauthConnector : List.of("con_oauth", "con_oauth_exp", "con_oauth_flaky")) {
@@ -336,6 +338,38 @@ class ConnectorExecutorTests extends PostgresTestBase {
                 .isInstanceOf(PlatformException.class)
                 .hasMessageContaining("no operation noSuchOperation");
         assertThat(HITS.get()).isEqualTo(before);
+    }
+
+    @Test
+    @Order(10)
+    @DisplayName("provider money stays decimal-exact through the executor's parse — and the dedupe replay re-reads it exact")
+    void providerMoneyStaysExactThroughParseAndReplay() {
+        // Anti-regression (money rule, PLAN.md §1 / ARCHITECTURE.md §4): the provider
+        // response is a third-party document whose numbers the platform owns the
+        // parse of. The old default tree read typed every float DoubleNode — an
+        // amount past 17 significant digits was corrupted at first contact, before
+        // the delivery was recorded and before the flow's response mapping bound it
+        // (9999999999999999.99 → 1.0E16: silently wrong money in the record).
+        var execution = connectors.execute(TENANT, "Erp", "con_stripe_tx", "listTransactions",
+                Map.of("limit", "1"), "money-key-1");
+        var row = execution.body().path("data").path(0);
+        assertThat(row.path("amount"))
+                .isInstanceOf(tools.jackson.databind.node.DecimalNode.class);
+        assertThat(row.path("amount").decimalValue())
+                .isEqualByComparingTo(new java.math.BigDecimal("9999999999999999.99"));
+        // a JSON integer past 64 bits keeps its full magnitude
+        assertThat(row.path("providerRef").decimalValue())
+                .isEqualByComparingTo(new java.math.BigDecimal("123456789012345678901"));
+
+        // the recorded outcome re-reads exact on the dedupe replay (the delivery's
+        // response summary is the serialized exact tree — the replay parse must be
+        // exactness-preserving too, or a retried flow binds the recorded money wrong)
+        var replayed = connectors.execute(TENANT, "Erp", "con_stripe_tx", "listTransactions",
+                Map.of("limit", "1"), "money-key-1");
+        assertThat(replayed.body().path("data").path(0).path("amount").decimalValue())
+                .isEqualByComparingTo(new java.math.BigDecimal("9999999999999999.99"));
+        assertThat(replayed.body().path("data").path(0).path("providerRef").decimalValue())
+                .isEqualByComparingTo(new java.math.BigDecimal("123456789012345678901"));
     }
 
     // --- the OAuth2 client-credentials leg (RFC 6749 §2.3.1, against the mock token endpoint) ---

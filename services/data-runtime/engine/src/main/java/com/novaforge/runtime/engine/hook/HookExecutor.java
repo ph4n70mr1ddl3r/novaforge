@@ -787,11 +787,25 @@ public class HookExecutor {
                     }
                 }
             }
+            // A path that walks off the document resolves empty — the selector's
+            // null arm — never the raw NPE a null enum selector throws (the same
+            // "unresolved reference" stance the step and path lookups above carry;
+            // found live: a provider body without the bound key 500'd the flow).
             return switch (current == null ? null : current.getNodeType()) {
+                case null -> null;
                 case STRING -> current.asText();
-                case NUMBER -> current.isBigDecimal() || current.isFloatingPointNumber()
-                        ? java.math.BigDecimal.valueOf(current.doubleValue())
-                        : (Object) Long.valueOf(current.longValue());
+                // Numbers bind as their exact decimal — decimalValue() carries the
+                // node's full magnitude (DecimalNode/BigIntegerNode included). The
+                // old double/long split broke the money rule twice on one line:
+                // BigDecimal.valueOf(doubleValue()) re-typed a provider amount past
+                // 17 significant digits as its float64 shadow (9999999999999999.99
+                // → 1.0E16 — silently wrong money in the record), and
+                // Long.valueOf(longValue()) threw a raw JsonNodeException on any
+                // JSON integer past 64 bits — an opaque 500 where the binding owed
+                // the value. The same rule the reporting cache leg pins for its own
+                // JSON re-parse (ReportRunner's CACHE_READ): a platform-owned parse
+                // never types money through the binary float.
+                case NUMBER -> current.decimalValue();
                 case BOOLEAN -> Boolean.valueOf(current.booleanValue());
                 case OBJECT, ARRAY -> JSON.convertValue(current, Object.class);
                 default -> null;   // null, missing — unresolved, never an error

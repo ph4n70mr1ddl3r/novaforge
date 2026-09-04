@@ -101,6 +101,27 @@ class RestConnectorPortTests {
     }
 
     @Test
+    @DisplayName("provider money survives the envelope parse decimal-exact — never its float64 shadow")
+    void providerNumbersStayExact() {
+        // 17+ significant digits of money and a 21-digit provider id — both past the
+        // binary float's exact band. A default Map read types the amount Double and
+        // the flow's response mapping binds 1.0E16 where the provider charged
+        // 9999999999999999.99 (PLAN.md §1 money rule; the same stance ReportRunner's
+        // cache read pins for its own JSON re-parse).
+        responseBody = "{\"status\": 201, \"body\": {\"amount\": 9999999999999999.99, "
+                + "\"providerId\": 123456789012345678901}}";
+        var result = client().execute(TENANT, "erp", "stripe", "charge", Map.of(), null);
+
+        assertThat(result.body().get("amount"))
+                .isInstanceOf(tools.jackson.databind.node.DecimalNode.class);
+        assertThat(result.body().get("amount").decimalValue())
+                .isEqualByComparingTo(new java.math.BigDecimal("9999999999999999.99"));
+        // a JSON integer past 64 bits keeps its full magnitude — never a long read
+        assertThat(result.body().get("providerId").decimalValue())
+                .isEqualByComparingTo(new java.math.BigDecimal("123456789012345678901"));
+    }
+
+    @Test
     @DisplayName("a known executor problem code maps onto the hook failure policy")
     void problemMaps() {
         status = 400;

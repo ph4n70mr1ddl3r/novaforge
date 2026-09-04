@@ -29,6 +29,19 @@ public class RestConnectorPort implements ConnectorPort {
 
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
+    /**
+     * The envelope's money stays decimal-exact (PLAN.md §1 / ARCHITECTURE.md §4): the
+     * connector's provider response is a third-party document whose numbers we own
+     * the parse of, and a default Map read types every JSON float as Double — a
+     * provider amount past 17 significant digits lands in the flow's response
+     * mapping as its float64 shadow (9999999999999999.99 → 1.0E16, silently wrong
+     * money in the record). The same rule ReportRunner's cache read pins for its
+     * own JSON re-parse (USE_BIG_DECIMAL_FOR_FLOATS there).
+     */
+    private static final JsonMapper EXACT_READ = JsonMapper.builder()
+            .enable(tools.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+            .build();
+
     private final RestClient integration;
     private final ServiceTokenClient serviceToken;
 
@@ -60,17 +73,18 @@ public class RestConnectorPort implements ConnectorPort {
             if (dedupeKey != null) {
                 body.put("dedupeKey", dedupeKey);
             }
-            Map<String, Object> response = integration.method(HttpMethod.POST)
+            String responseText = integration.method(HttpMethod.POST)
                     .uri("/api/v1/integrations/internal/execute")
                     .headers(headers -> headers.setBearerAuth(serviceToken.token()))
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(MAPPER.writeValueAsString(body))
                     .retrieve()
-                    .body(Map.class);
-            if (response == null) {
+                    .body(String.class);
+            if (responseText == null || responseText.isBlank()) {
                 throw new PlatformException(PlatformErrorCode.INTERNAL,
                         "connector executor returned no body for " + connector + "." + operation);
             }
+            Map<String, Object> response = EXACT_READ.readValue(responseText, Map.class);
             return new ConnectorResult(
                     ((Number) response.getOrDefault("status", 500)).intValue(),
                     MAPPER.valueToTree(response.get("body")));

@@ -56,7 +56,11 @@ here.
 - **Mapping engine:** request/response field maps use the shared `${…}` template
   convention (ADR-008); pure transforms are expression-DSL snippets compiled at
   publish; genuinely procedural transforms are scripts (escape hatch, counted in the
-  script ratio).
+  script ratio). Provider numbers parse decimal-exact end to end — the executor's
+  provider-body read, the runtime's envelope read, and the flow's response binding
+  all keep JSON floats as `BigDecimal` and past-64-bit integers at full magnitude
+  (PLAN.md §1 money rule: the platform owns this parse, a third-party document's
+  numbers never ride through the binary float).
 - **Outbound execution:** Resilience4j circuit breaker + bounded retries with
   exponential backoff; every delivery idempotent (dedupe key from
   provider response/event id) with a DLQ after terminal failure — deliveries land

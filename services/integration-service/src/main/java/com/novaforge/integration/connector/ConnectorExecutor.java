@@ -50,6 +50,19 @@ public class ConnectorExecutor {
     private static final Logger LOG = LoggerFactory.getLogger(ConnectorExecutor.class);
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
+    /**
+     * The provider response's numbers stay decimal-exact (PLAN.md §1 / ARCHITECTURE.md
+     * §4 money rule): a default tree read types every JSON float as DoubleNode, so a
+     * provider amount past 17 significant digits is corrupted at first contact —
+     * before the delivery is recorded, before the flow's response mapping binds it
+     * (9999999999999999.99 → 1.0E16, silently wrong money downstream). This is the
+     * platform-owned parse of a third-party document: exactness here, and the rest
+     * of the chain (the executor envelope, walkNode's decimalValue()) carries it.
+     */
+    private static final JsonMapper PROVIDER_READ = JsonMapper.builder()
+            .enable(tools.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+            .build();
+
     private static final Pattern TEMPLATE = Pattern.compile("\\$\\{([^}]+)}");
 
     /** The §4-pinned synchronous budget — a connector call never suspends a flow. */
@@ -126,7 +139,7 @@ public class ConnectorExecutor {
         var settled = deliveries.settleOrOpen(tenantId, DeliveryStore.KIND_CONNECTOR,
                 connectorId + ":" + operationName, key, MAPPER.writeValueAsString(request));
         if (settled.isPresent() && settled.get().delivered()) {
-            return new Execution(200, MAPPER.readTree(
+            return new Execution(200, PROVIDER_READ.readTree(
                     settled.get().responseSummary() == null ? "{}" : settled.get().responseSummary()),
                     null);   // the recorded outcome stands — the call never re-fires
         }
@@ -242,7 +255,7 @@ public class ConnectorExecutor {
         LOG.debug("connector {}.{} → {} in {}ms", connector.id(), operation.name(),
                 uri, elapsed);
         JsonNode body = response == null || response.isBlank()
-                ? MAPPER.readTree("{}") : MAPPER.readTree(response);
+                ? MAPPER.readTree("{}") : PROVIDER_READ.readTree(response);
         return new Execution(200, body, null);
     }
 
