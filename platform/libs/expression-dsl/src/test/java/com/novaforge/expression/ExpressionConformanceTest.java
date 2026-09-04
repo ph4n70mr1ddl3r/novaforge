@@ -51,6 +51,23 @@ class ExpressionConformanceTest {
         assertThat(failures).as("conformance failures").isEmpty();
     }
 
+    @Test
+    @DisplayName("a non-integer round scale is authoring feedback (ExpressionException, renders 400) — never the raw ArithmeticException that 500s the write path")
+    void roundNonIntegerScaleIsAuthoringFeedback() {
+        // round(x, 1.5) parses and compile-checks clean (arity 2, numeric shapes), so
+        // the defect only surfaces at evaluation — on a stored formula that is the
+        // write path. The evaluator must reject with ExpressionException (ProblemAdvice
+        // renders it 400 VALIDATION_FAILED), not BigDecimal.intValueExact()'s
+        // ArithmeticException, which fell to the 500 handler.
+        Expression expression = Expression.parse("round(total, 1.5)");
+        Map<String, Object> bindings = Map.of("total", new BigDecimal("50.00"));
+        assertThatThrownBy(() -> expression.evaluate(Expression.Bindings.of(bindings),
+                Clock.fixed(Instant.parse("2026-09-04T00:00:00Z"), ZoneOffset.UTC)))
+                .isInstanceOf(ExpressionException.class)
+                .isNotInstanceOf(ArithmeticException.class)
+                .hasMessageContaining("integer scale");
+    }
+
     private void run(JsonNode item) {
         String source = item.path("expr").asString();
         boolean invalid = item.path("invalid").asBoolean(false);

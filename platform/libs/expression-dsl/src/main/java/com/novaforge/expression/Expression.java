@@ -655,7 +655,22 @@ public final class Expression {
             }
             BigDecimal value = numeric(eval(call.args().getFirst()));
             BigDecimal scale = numeric(eval(call.args().get(1)));
-            return value.setScale(scale.intValueExact(), RoundingMode.HALF_EVEN);
+            // A fractional scale (round(x, 1.5)) is an authoring defect, and it used to
+            // escape as BigDecimal.intValueExact()'s raw ArithmeticException — a bare
+            // 500 on the first write that evaluated the stored formula (the failure
+            // mode PHASE-3 §2's 400-not-500 rule pins). ExpressionException renders
+            // 400 VALIDATION_FAILED at every door.
+            if (scale.stripTrailingZeros().scale() > 0) {
+                throw new ExpressionException("round(x, scale) takes an integer scale");
+            }
+            try {
+                return value.setScale(scale.intValueExact(), RoundingMode.HALF_EVEN);
+            } catch (ArithmeticException scaleOutOfRange) {
+                // integral but beyond int range — the same authoring feedback
+                throw new ExpressionException(
+                        "round(x, scale) scale is out of range: " + scale.toPlainString(),
+                        scaleOutOfRange);
+            }
         }
 
         private Object minMax(Node.Call call, boolean min) {

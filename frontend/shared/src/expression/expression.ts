@@ -576,7 +576,14 @@ class Evaluator {
                 }
                 const value = this.numeric(this.eval(node.args[0]!));
                 const scale = this.numeric(this.eval(node.args[1]!));
-                return value.setScale(Number(scale.digits) * scale.sign);
+                // Mirrors the JVM engine: a fractional scale (round(x, 1.5)) is an
+                // authoring defect that rejects — the old Number(digits) read turned
+                // 1.5 into scale 15 and silently returned a wrong value.
+                if (!scale.isIntegral()) {
+                    throw new ExpressionError("round(x, scale) takes an integer scale");
+                }
+                const stripped = scale.stripTrailingZeros();
+                return value.setScale(Number(stripped.digits) * stripped.sign);
             }
             case "min":
             case "max": {
