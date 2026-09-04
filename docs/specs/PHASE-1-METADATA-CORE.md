@@ -315,7 +315,13 @@ spike deliverable (§2) — the policy is fixed, the numbers validate it.
   make grants authorable (consistent with PHASE-2 §9's fail-closed testing).
 - **Q2 — Paging model: DECIDED — offset + total count**, max page size 200 (builder
   lists need totals). Keyset paging joins only if the §10 load test shows
-  deep-offset pain.
+  deep-offset pain. *(Evaluated 2026-09-04, the probe this decision waited on:
+  deep-offset measured at the 1M-row fixture — pain confirmed, the trigger FIRES
+  (the §10 bar breaks from OFFSET ≈ 1,000 on the §10 shape itself; 3.8 s p95
+  unfiltered at 990k) — keyset paging is due, with the per-page count tax its
+  landing must rule on. Records + analysis:
+  docs/loadtests/results-2026-09-04-deep-offset.md; the landing goes through the
+  SDD agreement's spec-first gate.)*
 - **Q3 — Projection promotion policy: DECIDED —** fields named in entity-level
   `indexes` declarations (ARCHITECTURE.md §3) and unique constraints promote,
   plus automatic promotion of display and lookup fields; the spike's measurements
