@@ -554,7 +554,16 @@ public final class Expression {
             }
             if (left instanceof LocalDate date) {
                 long days = requireDays(right);
-                return plus ? date.plusDays(days) : date.minusDays(days);
+                try {
+                    return plus ? date.plusDays(days) : date.minusDays(days);
+                } catch (ArithmeticException | java.time.DateTimeException outOfRange) {
+                    // In-long-range but beyond the calendar (date + 9e18): plusDays'
+                    // raw overflow exception would slip past ExpressionException's
+                    // 400 rendering and 500 the write path evaluating the stored
+                    // formula — the same authoring-feedback class as round(x, 1.5).
+                    throw new ExpressionException("date " + (plus ? "+ " : "- ")
+                            + decimal(days) + " is outside the supported calendar range");
+                }
             }
             if (left instanceof BigDecimal l && right instanceof BigDecimal r) {
                 return plus ? l.add(r, MATH) : l.subtract(r, MATH);
@@ -564,9 +573,21 @@ public final class Expression {
 
         private long requireDays(Object value) {
             if (value instanceof BigDecimal decimal && decimal.stripTrailingZeros().scale() <= 0) {
-                return decimal.longValueExact();
+                try {
+                    return decimal.longValueExact();
+                } catch (ArithmeticException outOfRange) {
+                    // Integral but beyond long range (date + 1e30): the raw
+                    // ArithmeticException would 500 the write path — reject as
+                    // authoring feedback instead.
+                    throw new ExpressionException("date arithmetic requires a day count "
+                            + "within the supported calendar range: " + decimal.toPlainString());
+                }
             }
             throw new ExpressionException("date arithmetic requires an integer day count");
+        }
+
+        private String decimal(long value) {
+            return BigDecimal.valueOf(value).toPlainString();
         }
 
         private BigDecimal[] pair(Object left, Object right) {

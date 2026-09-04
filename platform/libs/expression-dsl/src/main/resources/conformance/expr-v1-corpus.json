@@ -29,6 +29,8 @@
     { "name": "round to a negative scale (hundreds, banker's)", "expr": "round(1250, -2)", "expect": 1200 },
     { "name": "round negative HALF_EVEN tie", "expr": "round(x, 2)", "bindings": { "x": -2.375 }, "expect": -2.38 },
     { "name": "eval: non-integer round scale rejects", "expr": "round(total, 1.5)", "bindings": { "total": 50.0 }, "invalid": true },
+    { "name": "eval: out-of-range round scale rejects", "expr": "round(total, 1000000000000000000000)", "bindings": { "total": 50.0 }, "invalid": true },
+    { "name": "eval: date plus a day count beyond the calendar rejects", "expr": "entryDate + 1000000000000000000000000000000", "bindings": { "entryDate": { "$date": "2026-08-31" } }, "invalid": true },
     { "name": "min", "expr": "min(a, b)", "bindings": { "a": 3.5, "b": 2.5 }, "expect": 2.5 },
     { "name": "max", "expr": "max(a, b)", "bindings": { "a": 3.5, "b": 2.5 }, "expect": 3.5 },
     { "name": "string functions", "expr": "upper(trim(code)) == 'JE-1' && contains(code, '-') && startsWith(upper(trim(code)), 'JE') && length(trim(code)) == 4", "bindings": { "code": " je-1 " }, "expect": true },

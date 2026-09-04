@@ -161,6 +161,38 @@ class FieldCoercerTests {
                 Map.of("qty", "3.5"), checks(true), null, bad);
         assertThat(sole(bad).message()).isEqualTo("expected an integer");
 
+        // Integral but beyond the type's range joins the errors list like every other
+        // field defect (a shaped 400 with the field named) — the old code let
+        // intValueExact()/longValueExact()'s raw ArithmeticException escape the
+        // coerce net and 500 the write (the round(x, 1.5) defect class on the
+        // coercion door).
+        var intOverflow = new java.util.ArrayList<ProblemErrors.FieldError>();
+        FieldCoercer.canonicalize(entity(field("qty", FieldType.INT)),
+                Map.of("qty", 3_000_000_000L), checks(true), null, intOverflow);
+        assertThat(sole(intOverflow).message())
+                .isEqualTo("value out of range for int: 3000000000");
+
+        var intUnderflow = new java.util.ArrayList<ProblemErrors.FieldError>();
+        FieldCoercer.canonicalize(entity(field("qty", FieldType.INT)),
+                Map.of("qty", -3_000_000_000L), checks(true), null, intUnderflow);
+        assertThat(sole(intUnderflow).message())
+                .isEqualTo("value out of range for int: -3000000000");
+
+        var longOverflow = new java.util.ArrayList<ProblemErrors.FieldError>();
+        var canonicalOverflow = FieldCoercer.canonicalize(entity(field("big", FieldType.LONG)),
+                Map.of("big", new BigDecimal("1e30")), checks(true), null, longOverflow);
+        assertThat(sole(longOverflow).message()).startsWith("value out of range for long:");
+        assertThat(canonicalOverflow).doesNotContainKey("big");
+
+        // in-range values still canonicalize through the same branch
+        var inRange = new java.util.ArrayList<ProblemErrors.FieldError>();
+        var canonicalInRange = FieldCoercer.canonicalize(
+                entity(field("qty", FieldType.INT), field("big", FieldType.LONG)),
+                map("qty", 2_000_000_000L, "big", -9_000_000_000L), checks(true), null, inRange);
+        assertThat(inRange).isEmpty();
+        assertThat(canonicalInRange).containsEntry("qty", 2_000_000_000)
+                .containsEntry("big", -9_000_000_000L);
+
         // MONEY defaults: precision 18, scale 4 (ARCHITECTURE.md §4 money rule)
         var moneyErrors = new java.util.ArrayList<ProblemErrors.FieldError>();
         FieldCoercer.canonicalize(entity(field("amount", FieldType.MONEY)),

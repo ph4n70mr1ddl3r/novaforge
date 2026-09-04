@@ -505,7 +505,17 @@ class Evaluator {
     private requireDays(value: ExpressionValue): number {
         if (value instanceof Decimal && value.isIntegral()) {
             const stripped = value.stripTrailingZeros();
-            return Number(stripped.digits) * stripped.sign;
+            const days = Number(stripped.digits) * stripped.sign;
+            // Mirrors the JVM engine: a day count beyond the supported calendar range
+            // (date('2026-01-01') + 1e30 …) rejects as authoring feedback. The old
+            // read handed the float straight to addDays, which silently fabricated a
+            // garbage date where the JVM engine throws — the twins' verdicts diverged.
+            if (!Number.isSafeInteger(days)) {
+                throw new ExpressionError(
+                    "date arithmetic requires a day count within the supported calendar range",
+                );
+            }
+            return days;
         }
         throw new ExpressionError("date arithmetic requires an integer day count");
     }
@@ -583,7 +593,14 @@ class Evaluator {
                     throw new ExpressionError("round(x, scale) takes an integer scale");
                 }
                 const stripped = scale.stripTrailingZeros();
-                return value.setScale(Number(stripped.digits) * stripped.sign);
+                const places = Number(stripped.digits) * stripped.sign;
+                // Mirrors the JVM engine's out-of-range arm: an absurd integral scale
+                // (round(x, 1e21)) rejects — the old read drove setScale into
+                // building a 10^21-digit bigint, hanging the evaluating tab.
+                if (!Number.isSafeInteger(places)) {
+                    throw new ExpressionError("round(x, scale) scale is out of range");
+                }
+                return value.setScale(places);
             }
             case "min":
             case "max": {

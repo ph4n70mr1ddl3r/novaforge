@@ -68,6 +68,41 @@ class ExpressionConformanceTest {
                 .hasMessageContaining("integer scale");
     }
 
+    @Test
+    @DisplayName("a day count beyond long range is authoring feedback — never the raw ArithmeticException from longValueExact that 500s the write path")
+    void outOfRangeDayCountIsAuthoringFeedback() {
+        // date + 1e30 parses and compile-checks clean (numeric operand of date
+        // arithmetic), so the defect only surfaces at evaluation — on a stored
+        // formula that is the write path. BigDecimal.longValueExact()'s raw
+        // ArithmeticException fell to the 500 handler instead of the 400 the
+        // evaluation-failure contract pins.
+        Expression expression = Expression.parse("entryDate + days");
+        Map<String, Object> bindings = Map.of(
+                "entryDate", LocalDate.parse("2026-08-31"),
+                "days", new BigDecimal("1e30"));
+        assertThatThrownBy(() -> expression.evaluate(Expression.Bindings.of(bindings),
+                Clock.fixed(Instant.parse("2026-09-04T00:00:00Z"), ZoneOffset.UTC)))
+                .isInstanceOf(ExpressionException.class)
+                .isNotInstanceOf(ArithmeticException.class)
+                .hasMessageContaining("calendar range");
+    }
+
+    @Test
+    @DisplayName("a day count in long range but beyond the calendar is authoring feedback — plusDays' overflow exception must not escape raw")
+    void calendarOverflowingDayCountIsAuthoringFeedback() {
+        // 9e18 fits a long, so requireDays passes it — LocalDate.plusDays then
+        // overflows with its own raw ArithmeticException/DateTimeException, which
+        // equally 500s the write path evaluating the stored formula.
+        Expression expression = Expression.parse("entryDate + days");
+        Map<String, Object> bindings = Map.of(
+                "entryDate", LocalDate.parse("2026-08-31"),
+                "days", new BigDecimal("9000000000000000000"));
+        assertThatThrownBy(() -> expression.evaluate(Expression.Bindings.of(bindings),
+                Clock.fixed(Instant.parse("2026-09-04T00:00:00Z"), ZoneOffset.UTC)))
+                .isInstanceOf(ExpressionException.class)
+                .hasMessageContaining("outside the supported calendar range");
+    }
+
     private void run(JsonNode item) {
         String source = item.path("expr").asString();
         boolean invalid = item.path("invalid").asBoolean(false);

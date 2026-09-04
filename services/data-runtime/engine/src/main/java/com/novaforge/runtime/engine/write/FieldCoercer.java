@@ -158,11 +158,23 @@ public final class FieldCoercer {
                     if (decimal == null) {
                         yield null;
                     }
-                    yield decimal.stripTrailingZeros().scale() <= 0
-                            ? (field.type() == FieldType.INT
-                                    ? (Object) decimal.intValueExact()
-                                    : (Object) decimal.longValueExact())
-                            : fail(name, "expected an integer", value, errors);
+                    if (decimal.stripTrailingZeros().scale() > 0) {
+                        yield fail(name, "expected an integer", value, errors);
+                    }
+                    try {
+                        yield field.type() == FieldType.INT
+                                ? (Object) decimal.intValueExact()
+                                : (Object) decimal.longValueExact();
+                    } catch (ArithmeticException outOfRange) {
+                        // Integral but beyond the type's range: the same authoring-
+                        // feedback class as the expression engine's round(x, 1.5) —
+                        // the raw ArithmeticException slipped past this method's
+                        // DateTimeParseException|IllegalArgumentException net and
+                        // 500'd the write instead of joining the errors list.
+                        yield fail(name, "value out of range for "
+                                + field.type().name().toLowerCase() + ": " + decimal.toPlainString(),
+                                value, errors);
+                    }
                 }
                 case DECIMAL, MONEY -> {
                     BigDecimal decimal = decimal(name, value, errors);
