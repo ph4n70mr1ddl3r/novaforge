@@ -420,6 +420,37 @@ class IntegrationFlowTests extends PostgresTestBase {
                 .andExpect(jsonPath("$.outcomes[0].code").value("4010"));
     }
 
+    @Test
+    @DisplayName("the integration write door rides decimal-exact — a webhook/import amount past 17 significant digits lands as authored, never as its float64 shadow")
+    void integrationWriteDoorIsDecimalExact() throws Exception {
+        // Anti-regression (money rule, PLAN.md §1 / ARCHITECTURE.md §4): the §6/§7
+        // write surface is the door every webhook application and import chunk
+        // rides, and its @RequestBody Map read typed every JSON float as Double —
+        // so an amount the integration service sent EXACT re-corrupted at this
+        // door: 9999999999999.9999 (17 significant digits) landed Double 1.0E13,
+        // FieldCoercer coined BigDecimal(Double.toString) = 10000000000000, and the
+        // write SUCCEEDED — silently wrong money in the record, its shadow happily
+        // inside the field's precision/scale. The platform owns this parse too:
+        // the body decodes decimal-exact before FieldCoercer ever sees it.
+        String body = """
+                {"tenantId": "%s", "items": [{"op": "create", "entity": "Payment",
+                  "record": {"reference": "wh-exact", "amount": 9999999999999.9999}}]}"""
+                .formatted(TENANT);
+        mockMvc.perform(post("/api/v1/hooks/integration/write").with(serviceJwt())
+                        .contentType("application/json")
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcomes[0].status").value("ok"));
+        // the stored record carries the exact decimal — the projection row is the
+        // end state every later read, roll-up, and report answers from
+        String stored = jdbc.queryForObject(
+                "SELECT data->>'amount' FROM " + table("Payment") + " WHERE reference = ?",
+                String.class, "wh-exact");
+        assertThat(stored)
+                .as("the provider amount must land decimal-exact — the Double shadow is 1.0E13 = 10000000000000")
+                .isEqualTo("9999999999999.9999");
+    }
+
     private static String table(String entity) {
         return "rec_" + com.novaforge.metadata.Snake.caseName(entity);
     }

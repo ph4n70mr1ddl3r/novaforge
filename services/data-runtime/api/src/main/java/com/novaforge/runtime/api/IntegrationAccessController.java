@@ -31,6 +31,22 @@ public class IntegrationAccessController {
     private static final tools.jackson.databind.json.JsonMapper MAPPER =
             tools.jackson.databind.json.JsonMapper.builder().build();
 
+    /**
+     * The §6/§7 write surface's door read rides decimal-exact (PLAN.md §1 /
+     * ARCHITECTURE.md §4 money rule): this is the door every webhook application
+     * and import chunk crosses, and a default Map read types every JSON float as
+     * Double — an amount a provider sent EXACT re-corrupted here, after the wire
+     * already carried it faithfully (9999999999999.9999 → Double 1.0E13 →
+     * FieldCoercer's BigDecimal(Double.toString) = 10000000000000, silently wrong
+     * money in the record, its shadow inside the field's precision/scale). The
+     * same stance ReportRunner's CACHE_READ and the connector chain's exact reads
+     * pin: the platform owns this parse.
+     */
+    private static final tools.jackson.databind.json.JsonMapper EXACT_READ =
+            tools.jackson.databind.json.JsonMapper.builder()
+                    .enable(tools.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+                    .build();
+
     private final RecordEngine engine;
 
     public IntegrationAccessController(RecordEngine engine) {
@@ -48,11 +64,21 @@ public class IntegrationAccessController {
     /**
      * Batch writes as the integration principal: the PHASE-1 §5 per-item-outcome
      * contract (capped at the engine's batch bound) — import chunks and webhook
-     * applications ride it; every item traverses the full write path.
+     * applications ride it; every item traverses the full write path. The raw body
+     * decodes decimal-exact (the door read above) — a malformed body still rejects
+     * VALIDATION_FAILED at the door, now shaped here.
      */
     @PostMapping("/write")
-    public Map<String, Object> write(@RequestBody WriteRequest request) {
+    public Map<String, Object> write(@RequestBody String body) {
         ServiceClientGate.require("integration-write");
+        WriteRequest request;
+        try {
+            request = EXACT_READ.readValue(body, WriteRequest.class);
+        } catch (RuntimeException malformed) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "integration write body is not a valid write request: "
+                            + malformed.getMessage());
+        }
         if (request.tenantId() == null || request.items() == null || request.items().isEmpty()) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "integration writes require tenantId and at least one item");
@@ -122,8 +148,19 @@ public class IntegrationAccessController {
     }
 
     @PostMapping("/list")
-    public Map<String, Object> list(@RequestBody ListRequest request) {
+    public Map<String, Object> list(@RequestBody String body) {
         ServiceClientGate.require("integration-list");
+        // the same exact door read as /write: the upsert-key lookup's filter values
+        // ride it, and a float key re-typed through the Double would lower to its
+        // shadow — the lookup would miss the exact-stored row it is owed
+        ListRequest request;
+        try {
+            request = EXACT_READ.readValue(body, ListRequest.class);
+        } catch (RuntimeException malformed) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "integration list body is not a valid read request: "
+                            + malformed.getMessage());
+        }
         if (request.tenantId() == null || request.entity() == null) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "integration reads require tenantId and entity");

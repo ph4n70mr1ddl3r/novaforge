@@ -37,6 +37,12 @@ public class IntegrationController {
 
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
+    /** The parked payload renders to the builder as the provider sent it — a
+     *  default readTree would show its float64 shadow in the DLQ surface. */
+    private static final JsonMapper EXACT_READ = JsonMapper.builder()
+            .enable(tools.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+            .build();
+
     private final SecretStore secrets;
     private final DeliveryStore deliveries;
     private final InboundProcessor inbound;
@@ -102,7 +108,7 @@ public class IntegrationController {
                     row.put("id", entry.id());
                     row.put("kind", entry.kind());
                     row.put("target", entry.target());
-                    row.put("payload", MAPPER.readTree(entry.payload()));
+                    row.put("payload", EXACT_READ.readTree(entry.payload()));
                     row.put("error", entry.error());
                     row.put("attempts", entry.attempts());
                     row.put("createdAt", entry.createdAt().toString());
@@ -120,14 +126,16 @@ public class IntegrationController {
         UUID tenant = tenant();
         var entry = deliveries.dlqEntry(tenant, id).orElseThrow(() ->
                 new PlatformException(PlatformErrorCode.NOT_FOUND, "dlq entry " + id));
-        Map<String, Object> payload = MAPPER.readValue(entry.payload(), Map.class);
         if (DeliveryStore.KIND_WEBHOOK_INBOUND.equals(entry.kind())) {
             InboundProcessor.Hook hook = inbound.resolveById(tenant, entry.target());
-            Map<String, Object> result = inbound.replay(tenant, hook,
-                    MAPPER.writeValueAsString(payload.get("payload")).getBytes());
+            // the parked envelope decodes decimal-exact inside the processor —
+            // the controller-side default-mapper decode used to re-type every
+            // float through the binary float before the replay leg saw it
+            Map<String, Object> result = inbound.replayParked(tenant, hook, entry.payload());
             deliveries.markReplayed(tenant, id);
             return Map.of("status", "replayed", "outcome", result);
         }
+        Map<String, Object> payload = MAPPER.readValue(entry.payload(), Map.class);
         if (DeliveryStore.KIND_WEBHOOK_OUTBOUND.equals(entry.kind())) {
             InboundProcessor.Hook hook = inbound.resolveById(tenant, entry.target());
             outbound.deliver(tenant, hook.webhook(),

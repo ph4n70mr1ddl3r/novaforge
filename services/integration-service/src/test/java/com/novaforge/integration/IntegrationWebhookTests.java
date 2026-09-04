@@ -18,6 +18,7 @@ import com.novaforge.testsupport.PostgresTestBase;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.OutputStream;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -64,6 +65,9 @@ import tools.jackson.databind.json.JsonMapper;
 class IntegrationWebhookTests extends PostgresTestBase {
 
     static final UUID TENANT = UUID.fromString("11111111-1111-4111-8111-111111111111");
+
+    /** The builder driving the DLQ replay route (the §9 builder gate). */
+    static final UUID ACTOR = UUID.fromString("22222222-2222-4222-8222-222222222222");
 
     static final JsonMapper MAPPER = JsonMapper.builder().build();
 
@@ -558,6 +562,80 @@ class IntegrationWebhookTests extends PostgresTestBase {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
                         .jsonPath("$.deduped").value(true));
         assertThat(WRITE_CALLS).hasSize(before + 1);
+    }
+
+    @Test
+    @DisplayName("the provider payload rides decimal-exact — a float past 17 significant digits binds as authored, never as its float64 shadow")
+    void providerPayloadBindsDecimalExact() throws Exception {
+        // Anti-regression (money rule, PLAN.md §1 / ARCHITECTURE.md §4): the inbound
+        // payload is a third-party document whose parse the platform owns, and the
+        // leg's default tree read typed every JSON float as Double at first contact
+        // — 9999999999999999.99 landed DoubleNode → the ${data.amount} binding put
+        // its float64 shadow (1.0E16) into the mapped record body, the delivery log
+        // and the DLQ envelope stored the same shadow. Every other webhook test here
+        // posts its amount as a STRING ("150.50"), which is why the suite never
+        // noticed: strings ride the write path's own exact coercion untouched.
+        try {
+            signed(mockMvc, """
+                    {"data": {"id": "evt-exact", "ref": "pay-exact", "amount": 9999999999999999.99}}""",
+                    "hook-secret-one", null, null, status().isOk());
+            Object amount = ((Map<?, ?>) WRITE_CALLS.getLast().get("record")).get("amount");
+            assertThat(amount)
+                    .as("the bound amount must be the exact decimal, never a binary float")
+                    .isInstanceOf(BigDecimal.class);
+            assertThat((BigDecimal) amount)
+                    .as("9999999999999999.99 must survive the mapping — its Double shadow is 1.0E16")
+                    .isEqualByComparingTo(new BigDecimal("9999999999999999.99"));
+        } finally {
+            STORED.remove("pay-exact");
+        }
+    }
+
+    @Test
+    @DisplayName("the DLQ replay leg rides decimal-exact — the parked envelope and its decode never re-type the payload through the float")
+    void dlqReplayRidesDecimalExact() throws Exception {
+        // Anti-regression (the replay twin of the parse above): a poison message's
+        // payload is preserved for builder replay — but the park envelope converted
+        // the parsed tree through the default mapper (Double again), and the replay
+        // controller decoded the parked JSON through the same default mapper before
+        // re-running the leg. A replayed event therefore wrote the float64 shadow
+        // into the record even where the live leg would have been fixed: the
+        // poison path is exactly the path a bad validation leaves money on.
+        String event = """
+                {"data": {"id": "evt-exact-dlq", "ref": "pay-exact-dlq", "amount": 99999999999999.9999}}""";
+        rejectReference = "pay-exact-dlq";
+        try {
+            signed(mockMvc, event, "hook-secret-one", null, null, status().isBadRequest());
+        } finally {
+            rejectReference = null;
+        }
+        UUID dlqId = deliveries.dlq(TENANT, DeliveryStore.KIND_WEBHOOK_INBOUND, true).stream()
+                .filter(entry -> entry.target().equals("wh_feed")
+                        && entry.error() != null
+                        && entry.error().contains("amount must be positive"))
+                .findFirst().orElseThrow()
+                .id();
+        int before = WRITE_CALLS.size();
+        mockMvc.perform(post("/api/v1/integrations/dlq/" + dlqId + "/replay")
+                        .with(org.springframework.security.test.web.servlet.request
+                                .SecurityMockMvcRequestPostProcessors.jwt().jwt(token -> token
+                                        .claim("platform_roles", java.util.List.of("builder"))
+                                        .claim("tenant_id", TENANT.toString())
+                                        .subject(ACTOR.toString()))
+                                .authorities(new org.springframework.security.core.authority
+                                        .SimpleGrantedAuthority("ROLE_builder")))
+                        .contentType("application/json"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$.status").value("replayed"));
+        assertThat(WRITE_CALLS).hasSize(before + 1);   // the replay re-applied, exactly once
+        Object amount = ((Map<?, ?>) WRITE_CALLS.getLast().get("record")).get("amount");
+        assertThat(amount)
+                .as("the replayed binding must be the exact decimal, never a binary float")
+                .isInstanceOf(BigDecimal.class);
+        assertThat((BigDecimal) amount)
+                .as("99999999999999.9999 must survive park + replay — the Double shadow is 1.0E14")
+                .isEqualByComparingTo(new BigDecimal("99999999999999.9999"));
     }
 
     // --- outbound (§5/§11 items 1-2) ---

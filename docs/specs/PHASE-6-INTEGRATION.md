@@ -112,11 +112,18 @@ here.
 - **Mapping → records:** the hook's mapping produces create/update payloads applied
   through the Data Runtime write path as the integration principal — validations,
   state machines, and hooks all fire (a webhook is just another writer; the single
-  write path is absolute). Upsert keys resolve through the runtime's lowered
-  lookups in the query-DSL filter shape, and **every** key field conjoins — one
-  key is a single `eq` leaf, several keys an `and` of leaves — so a multi-key
+  write path is absolute). The provider payload is a third-party document whose
+  parse the platform owns: every read of it — the live leg's tree read, every
+  tree→Map envelope conversion (a `convertValue` re-types through the mapper's
+  deserialization config), the parked DLQ envelope and its replay decode — keeps
+  JSON floats decimal-exact (`USE_BIG_DECIMAL_FOR_FLOATS`), never the binary float
+  (the §3 stance, extended to the §6 leg). Upsert keys resolve through the runtime's
+  lowered lookups in the query-DSL filter shape, and **every** key field conjoins —
+  one key is a single `eq` leaf, several keys an `and` of leaves — so a multi-key
   upsert never resolves (and never rewrites) a record any one of its keys
-  excludes. The import leg (§7) rides the same contract.
+  excludes. The integration write surface decodes its request bodies
+  decimal-exact at the door, so an amount the wire carried faithfully lands as
+  authored (the import leg rides the same door).
 - Idempotency: provider event id (or body hash when absent) dedupes; poison
   messages DLQ with the payload preserved for replay from the builder.
 - **Rate limiting lands here:** the anonymous route is the gateway's only public

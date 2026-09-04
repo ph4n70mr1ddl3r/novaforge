@@ -36,6 +36,21 @@ public class InboundProcessor {
     private static final Logger LOG = LoggerFactory.getLogger(InboundProcessor.class);
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
+    /**
+     * The provider payload is a third-party document whose parse the platform owns
+     * (PLAN.md §1 / ARCHITECTURE.md §4 money rule — the same stance the connector
+     * chain's PROVIDER_READ pins): a default tree read types every JSON float as
+     * Double at first contact, so an amount past 17 significant digits landed its
+     * float64 shadow in the mapped record body, the delivery log, and the DLQ
+     * envelope (9999999999999999.99 → 1.0E16, silently wrong money downstream).
+     * Every read of the provider document — and every tree→Map conversion of it
+     * (a convertValue re-types through the mapper's own deserialization config,
+     * so the exact feature must carry it) — rides this exact read.
+     */
+    private static final JsonMapper EXACT_READ = JsonMapper.builder()
+            .enable(tools.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+            .build();
+
     private final PublishedIntegrations definitions;
     private final SecretStore secrets;
     private final DeliveryStore deliveries;
@@ -139,14 +154,33 @@ public class InboundProcessor {
         return applyMapped(tenantId, hook, body, null);
     }
 
+    /**
+     * The parked DLQ entry's decode-and-replay, in one decimal-exact step — the
+     * builder route hands the preserved envelope over verbatim and this leg owns
+     * the parse end to end. The envelope decodes through the same exact read that
+     * parsed the live payload, so a replayed event re-runs the leg with the
+     * provider's true numbers: the decode used to ride the caller's default
+     * mapper, which re-typed every float through the binary float before the leg
+     * ever saw it — a replayed event wrote the float64 shadow into the record
+     * even where the live leg was exact, and the poison path is exactly the path
+     * a rejected write leaves money on.
+     */
+    public Map<String, Object> replayParked(UUID tenantId, Hook hook, String parkedEnvelope) {
+        Map<?, ?> envelope = EXACT_READ.readValue(parkedEnvelope, Map.class);
+        Object payload = envelope.get("payload");
+        return replay(tenantId, hook,
+                EXACT_READ.writeValueAsString(payload == null ? Map.of() : payload)
+                        .getBytes(StandardCharsets.UTF_8));
+    }
+
     private Map<String, Object> applyMapped(UUID tenantId, Hook hook, byte[] body,
                                             String signature) {
-        JsonNode payload = MAPPER.readTree(new String(body, StandardCharsets.UTF_8));
+        JsonNode payload = EXACT_READ.readTree(new String(body, StandardCharsets.UTF_8));
         String dedupeKey = idempotencyKey(hook.webhook().mapping(), payload,
                 bodyHash(body));
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("hook", hook.webhook().id());
-        request.put("payload", MAPPER.convertValue(payload, Map.class));
+        request.put("payload", EXACT_READ.convertValue(payload, Map.class));
         var settled = deliveries.settleOrOpen(tenantId, DeliveryStore.KIND_WEBHOOK_INBOUND,
                 hook.webhook().id(), dedupeKey, MAPPER.writeValueAsString(request));
         if (settled.isPresent() && settled.get().delivered()) {
@@ -176,7 +210,7 @@ public class InboundProcessor {
             Map<String, Object> envelope = new LinkedHashMap<>();
             envelope.put("hook", hook.webhook().id());
             envelope.put("signature", signature);
-            envelope.put("payload", MAPPER.convertValue(payload, Map.class));
+            envelope.put("payload", EXACT_READ.convertValue(payload, Map.class));
             deliveries.park(tenantId, DeliveryStore.KIND_WEBHOOK_INBOUND,
                     hook.webhook().id(), envelope, signature, error);
             deliveries.outbox(tenantId, "webhook.dispatched", Map.of(
@@ -270,7 +304,7 @@ public class InboundProcessor {
             String pointer = "/" + template.substring(2, template.length() - 1).replace('.', '/');
             JsonNode node = payload.at(pointer);
             return node.isMissingNode() || node.isNull() ? null
-                    : MAPPER.convertValue(node, Object.class);
+                    : EXACT_READ.convertValue(node, Object.class);
         }
         return template;
     }
