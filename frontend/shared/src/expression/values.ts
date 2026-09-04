@@ -64,8 +64,23 @@ export function daysBetween(a: DateValue, b: DateValue): Decimal {
     return new Decimal(BigInt(dayNumber(b.$date) - dayNumber(a.$date)), 0);
 }
 
+/**
+ * The supported calendar range in day numbers — the JVM LocalDate proleptic range
+ * (years −999,999,999 … +999,999,999), the band inside which both engines answer.
+ * Beyond it the JVM's plusDays throws and the date arithmetic must reject with it;
+ * the old unguarded read fabricated year-billions date strings where the JVM
+ * rejects (a day count between the calendar edge and the float-safe bound —
+ * entryDate + 100000000000000 — slipped straight past).
+ */
+const CALENDAR_MIN_DAY = -365243219162;
+const CALENDAR_MAX_DAY = 365241780471;
+
 export function addDays(value: DateValue, days: number): DateValue {
-    return dateValue(fromDayNumber(dayNumber(value.$date) + days));
+    const total = dayNumber(value.$date) + days;
+    if (total < CALENDAR_MIN_DAY || total > CALENDAR_MAX_DAY) {
+        throw new ExpressionError("date arithmetic is outside the supported calendar range");
+    }
+    return dateValue(fromDayNumber(total));
 }
 
 /** Proleptic-Gregorian day number (UTC-safe arithmetic on canonical dates). */

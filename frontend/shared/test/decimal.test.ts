@@ -119,4 +119,23 @@ describe("Decimal — the 34-digit HALF_EVEN context (Java BigDecimal parity)", 
         expect(d("120.00").isIntegral()).toBe(true);
         expect(d("120.50").isIntegral()).toBe(false);
     });
+
+    it("setScale at negative scales rounds exactly like BigDecimal's compact arithmetic", () => {
+        // below half → zero; above half → one unit at the target scale
+        expect(d("1.234").setScale(-5).compareTo(Decimal.ZERO)).toBe(0);
+        expect(d("60000000").setScale(-8).toString()).toBe("100000000");
+        expect(d("-60000000").setScale(-8).toString()).toBe("-100000000");
+        // exact half with an even quotient (0) rounds to even → zero
+        expect(d("50000000").setScale(-8).compareTo(Decimal.ZERO)).toBe(0);
+    });
+
+    it("setScale at an absurd negative scale answers instantly — it never builds 10^drop", () => {
+        // drop = 2147483647: building 10^drop (the pre-guard path) hung the
+        // evaluating tab where Java's compact scale arithmetic answers instantly.
+        // The whole value sits strictly below the half-way point → rounds to zero.
+        const start = Date.now();
+        expect(d("1.234").setScale(-2147483647).compareTo(Decimal.ZERO)).toBe(0);
+        expect(d("9999999").setScale(-2147483647).compareTo(Decimal.ZERO)).toBe(0);
+        expect(Date.now() - start).toBeLessThan(1000);
+    });
 });

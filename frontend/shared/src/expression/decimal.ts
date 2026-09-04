@@ -88,7 +88,11 @@ export class Decimal {
 
     private alignedScale(other: Decimal): [bigint, bigint, number] {
         const scale = Math.max(this.scale, other.scale);
-        const shift = (n: bigint, from: number) => n * 10n ** BigInt(scale - from);
+        // A zero's unscaled digits never need the power — skip building 10^(scale−from)
+        // for it (compareTo of zero at an extreme scale — e.g. setScale(−2147483647)'s
+        // result — answers instantly, like BigDecimal's compact arithmetic).
+        const shift = (n: bigint, from: number) =>
+            n === 0n ? 0n : n * 10n ** BigInt(scale - from);
         return [shift(this.digits, this.scale), shift(other.digits, other.scale), scale];
     }
 
@@ -134,6 +138,14 @@ export class Decimal {
             return new Decimal(this.digits * 10n ** BigInt(places - this.scale), places, this.sign);
         }
         const drop = this.scale - places;
+        if (drop > digitCount(this.digits)) {
+            // 10^drop dwarfs the digits: the whole value sits strictly below the
+            // half-way point and rounds to zero (a tie is impossible — 2×digits
+            // carries at most one more digit than digits). Building 10^drop —
+            // 10^2147483647 for round(x, -2147483647) — would hang the tab where
+            // the JVM's compact scale arithmetic answers instantly.
+            return new Decimal(0n, places, 1);
+        }
         const divisor = 10n ** BigInt(drop);
         const quotient = this.digits / divisor;
         const remainder = this.digits % divisor;

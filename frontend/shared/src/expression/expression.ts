@@ -505,17 +505,20 @@ class Evaluator {
     private requireDays(value: ExpressionValue): number {
         if (value instanceof Decimal && value.isIntegral()) {
             const stripped = value.stripTrailingZeros();
-            const days = Number(stripped.digits) * stripped.sign;
-            // Mirrors the JVM engine: a day count beyond the supported calendar range
-            // (date('2026-01-01') + 1e30 …) rejects as authoring feedback. The old
-            // read handed the float straight to addDays, which silently fabricated a
-            // garbage date where the JVM engine throws — the twins' verdicts diverged.
-            if (!Number.isSafeInteger(days)) {
+            // The true magnitude: unscaled digits × 10^−scale. After the integral
+            // gate the scale is ≤ 0, so this EXPANDS — reading Number(digits) alone
+            // ignored negative scale, and division quotients carry it (1000000 / 0.5
+            // → Decimal(200000n, −1) read as 200,000 where the value is 2,000,000:
+            // a wrong date even in-calendar, where the JVM answers 7502-06-25).
+            const magnitude = stripped.digits * 10n ** BigInt(-stripped.scale);
+            // Exact bigint comparison against the safe bound — Number(magnitude)
+            // would silently round past 2^53 and let a lossy count through.
+            if (magnitude > BigInt(Number.MAX_SAFE_INTEGER)) {
                 throw new ExpressionError(
                     "date arithmetic requires a day count within the supported calendar range",
                 );
             }
-            return days;
+            return Number(magnitude) * stripped.sign;
         }
         throw new ExpressionError("date arithmetic requires an integer day count");
     }
@@ -593,13 +596,21 @@ class Evaluator {
                     throw new ExpressionError("round(x, scale) takes an integer scale");
                 }
                 const stripped = scale.stripTrailingZeros();
-                const places = Number(stripped.digits) * stripped.sign;
-                // Mirrors the JVM engine's out-of-range arm: an absurd integral scale
-                // (round(x, 1e21)) rejects — the old read drove setScale into
-                // building a 10^21-digit bigint, hanging the evaluating tab.
-                if (!Number.isSafeInteger(places)) {
+                // The true magnitude — unscaled digits × 10^−scale (the integral gate
+                // leaves scale ≤ 0, so this expands). The old Number(digits) read
+                // ignored negative scale: a division quotient (1000000 / 0.000001 →
+                // 1e12) read as its unscaled digits and silently rounded at scale
+                // 1,000,000 where the JVM rejects.
+                const magnitude = stripped.digits * 10n ** BigInt(-stripped.scale);
+                // Mirrors the JVM engine's out-of-range arm: its read is
+                // intValueExact(), so anything beyond the 32-bit int range rejects —
+                // the old safe-integer gate admitted scales 1000× past it (and an
+                // absurd integral scale drove setScale into building a 10^21-digit
+                // bigint, hanging the evaluating tab).
+                if (magnitude > 2147483647n) {
                     throw new ExpressionError("round(x, scale) scale is out of range");
                 }
+                const places = Number(magnitude) * stripped.sign;
                 return value.setScale(places);
             }
             case "min":
