@@ -56,6 +56,18 @@ export class Decimal {
         return this.digits === 0n ? new Decimal(0n, 0, 1) : this;
     }
 
+    /**
+     * Applies the shared 34-digit HALF_EVEN context after an operation the JVM engine
+     * carries its MathContext into: the reference engine's {@code negate(MATH)} and
+     * {@code abs(MATH)} ROUND — so the twin's unary minus and abs() must too. Without
+     * this a literal past 34 significant digits evaluates to a different VALUE than
+     * the server answers (abs(1234567890123456789012345678901234567890): the JVM
+     * rounds to …1235×10^6, the unguarded twin kept all 40 digits).
+     */
+    inContext(): Decimal {
+        return this.rounded();
+    }
+
     /** Rounds to ≤34 significant digits, HALF_EVEN. */
     private rounded(inexactTail: boolean = false): Decimal {
         const digitsStr = this.digits.toString();

@@ -103,6 +103,26 @@ class ExpressionConformanceTest {
                 .hasMessageContaining("outside the supported calendar range");
     }
 
+    @Test
+    @DisplayName("abs(MATH)/negate(MATH) round to the 34-digit context — the verdicts the TS twin's context-precision pin mirrors")
+    void contextBearingUnaryOpsRound() {
+        // The reference engine carries MathContext(34, HALF_EVEN) into negate and abs,
+        // so a literal past 34 significant digits ROUNDs — the TS twin's unary minus
+        // and abs() must answer the same value (frontend/shared test/
+        // expression-context.test.ts pins the mirror). A future change here that
+        // drops the context breaks twin parity silently — this pin makes it loud.
+        BigDecimal fortyDigits = new BigDecimal("1234567890123456789012345678901234567890");
+        BigDecimal expected = new BigDecimal("1234567890123456789012345678901235000000");
+        Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
+        Object abs = Expression.parse("abs(x)").evaluate(
+                Expression.Bindings.of(Map.of("x", fortyDigits)), clock);
+        Object negated = Expression.parse("-x").evaluate(
+                Expression.Bindings.of(Map.of("x", fortyDigits)), clock);
+        assertThat(((BigDecimal) abs).compareTo(expected)).as("abs(MATH) rounds to the context").isZero();
+        assertThat(((BigDecimal) negated).compareTo(expected.negate()))
+                .as("negate(MATH) rounds to the context").isZero();
+    }
+
     private void run(JsonNode item) {
         String source = item.path("expr").asString();
         boolean invalid = item.path("invalid").asBoolean(false);

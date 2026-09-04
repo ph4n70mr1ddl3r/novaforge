@@ -376,7 +376,11 @@ class Evaluator {
             return !this.truth(value);
         }
         if (value instanceof Decimal) {
-            return value.negate();
+            // Mirrors the JVM engine's decimal.negate(MATH): the reference engine's
+            // unary minus carries the 34-digit context and ROUNDS — the unguarded
+            // twin kept every digit of a >34-digit literal and evaluated to a
+            // different value than the server answers.
+            return value.negate().inContext();
         }
         throw new ExpressionError("unary - requires a numeric operand");
     }
@@ -581,7 +585,9 @@ class Evaluator {
                 return this.size(this.eval(this.single(node, "size")));
             case "abs": {
                 const value = this.eval(this.single(node, "abs"));
-                return value == null ? null : this.numeric(value).abs();
+                // Mirrors the JVM engine's numeric(value).abs(MATH): rounded to the
+                // 34-digit context, exactly like unary minus above.
+                return value == null ? null : this.numeric(value).abs().inContext();
             }
             case "round": {
                 if (node.args.length !== 2) {
