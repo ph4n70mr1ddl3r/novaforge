@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { mergeBranch } from "./branch-merge.ts";
 import type { AppDefinition, GapLogEntry, PlatformClient } from "@novaforge/shared";
 
@@ -55,6 +55,98 @@ export function Lifecycle({ client, appId }: { client: PlatformClient; appId: st
     // override:true for every acked prod promote.
     const [overrideGate, setOverrideGate] = useState(false);
     const [overrideReason, setOverrideReason] = useState("");
+    // The rollback rides the same in-app dialog every other prompt uses (the inbox
+    // set the pattern) — the blocking window.prompt was unstylable, dumped focus,
+    // and Number("abc") → NaN silently no-opped the click. The dialog validates
+    // the target BEFORE the destructive call and states exactly what will move.
+    const [rollbackOpen, setRollbackOpen] = useState(false);
+    const [rollbackVersion, setRollbackVersion] = useState("");
+    const restoreFocusRef = useRef<HTMLElement | null>(null);
+    // the rollback's re-entry fence (every write's rule): `busy` state is async —
+    // an Enter-plus-click in the same frame re-entered before the re-render
+    const rollingBackRef = useRef(false);
+
+    const openRollback = (): void => {
+        restoreFocusRef.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        setRollbackVersion("");
+        setRollbackOpen(true);
+    };
+
+    const closeRollback = (): void => {
+        setRollbackOpen(false);
+        restoreFocusRef.current?.focus();
+    };
+
+    const rollbackVersionNumber = /^\d+$/.test(rollbackVersion.trim())
+        ? Number(rollbackVersion.trim())
+        : 0;
+
+    // Dialog modality for the rollback panel: Escape cancels, Tab is TRAPPED, and
+    // closing restores focus to the trigger (the inbox ask-dialog's rules — one
+    // keyboard contract across every modal in the product).
+    useEffect(() => {
+        if (!rollbackOpen) {
+            return;
+        }
+        const onKey = (event: globalThis.KeyboardEvent): void => {
+            if (event.key === "Escape") {
+                event.stopPropagation();
+                closeRollback();
+                return;
+            }
+            if (event.key !== "Tab") {
+                return;
+            }
+            const dialog = document.querySelector(".nf-dialog");
+            if (!(dialog instanceof HTMLElement)) {
+                return;
+            }
+            const focusable = Array.from(
+                dialog.querySelectorAll<HTMLElement>("button, input, textarea, select, a[href]"),
+            ).filter((element) => !element.hasAttribute("disabled"));
+            if (focusable.length === 0) {
+                return;
+            }
+            const first = focusable[0]!;
+            const last = focusable[focusable.length - 1]!;
+            const active = document.activeElement;
+            if (event.shiftKey && (active === first || !(active instanceof Node) || !dialog.contains(active))) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && active === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+        document.addEventListener("keydown", onKey, true);
+        return () => {
+            document.removeEventListener("keydown", onKey, true);
+        };
+    }, [rollbackOpen]);
+
+    const runRollback = async (previous: number): Promise<void> => {
+        if (rollingBackRef.current) {
+            return;
+        }
+        rollingBackRef.current = true;
+        setRollbackOpen(false);
+        restoreFocusRef.current?.focus();
+        setBusy(true);
+        try {
+            await client.rollback(appId, env, { toVersion: previous, dataMigrationAcknowledged: ack });
+            setFlash(`Rolled back to v${previous}`);
+            // the review panel above described the PREVIOUS baseline — a stale
+            // diff, gate, and "from vN" header read as if nothing moved
+            const fresh = await client.changeset(appId, env) as ChangeSet;
+            setChangeset(fresh);
+        } catch (caught) {
+            setError(caught instanceof Error ? caught.message : String(caught));
+        } finally {
+            rollingBackRef.current = false;
+            setBusy(false);
+        }
+    };
 
     useEffect(() => {
         let cancelled = false;
@@ -249,6 +341,10 @@ export function Lifecycle({ client, appId }: { client: PlatformClient; appId: st
                                     setFlash(`Promoted to ${env}`);
                                     setOverrideGate(false);
                                     setOverrideReason("");
+                                    // the review panel rides the new baseline — a stale
+                                    // "from vN" header and diff misread as a no-op
+                                    const fresh = await client.changeset(appId, env) as ChangeSet;
+                                    setChangeset(fresh);
                                 } catch (caught) {
                                     setError(caught instanceof Error ? caught.message : String(caught));
                                 } finally {
@@ -258,26 +354,7 @@ export function Lifecycle({ client, appId }: { client: PlatformClient; appId: st
                         >
                             Promote to {env}
                         </button>
-                        <button
-                            type="button"
-                            disabled={busy}
-                            onClick={async () => {
-                                setBusy(true);
-                                try {
-                                    const previous = Number(
-                                        window.prompt("Roll back to version") ?? 0,
-                                    );
-                                    if (previous > 0) {
-                                        await client.rollback(appId, env, { toVersion: previous, dataMigrationAcknowledged: ack });
-                                        setFlash(`Rolled back to v${previous}`);
-                                    }
-                                } catch (caught) {
-                                    setError(caught instanceof Error ? caught.message : String(caught));
-                                } finally {
-                                    setBusy(false);
-                                }
-                            }}
-                        >
+                        <button type="button" disabled={busy} onClick={openRollback}>
                             Roll back…
                         </button>
                     </div>
@@ -286,6 +363,70 @@ export function Lifecycle({ client, appId }: { client: PlatformClient; appId: st
                             <input type="checkbox" checked={ack} onChange={(event) => setAck(event.target.checked)} />
                             Platform-admin approval for the prod hop (§4)
                         </label>
+                    ) : null}
+                    {rollbackOpen ? (
+                        // scrim click and Escape both cancel; the destructive leg is
+                        // danger-toned and gated on a valid positive whole version
+                        <div className="nf-dialog-scrim" onClick={() => closeRollback()}>
+                            <div
+                                role="dialog"
+                                aria-modal="true"
+                                aria-label={`Roll back ${env}`}
+                                className="nf-dialog"
+                                onClick={(event) => event.stopPropagation()}
+                            >
+                                <h3>Roll back {env}</h3>
+                                <p className="nf-hint">
+                                    Moves {env} back to an earlier published version. The
+                                    promotion history records the rollback forever.
+                                </p>
+                                <label>
+                                    Target version (a published version number)
+                                    {/* text + inputMode, not type=number: browsers sanitize
+                                        a number input's invalid text to "" before the app
+                                        ever sees it — the validation below would never fire
+                                        (FieldNumber's own rule) */}
+                                    <input
+                                        autoFocus
+                                        type="text"
+                                        inputMode="numeric"
+                                        autoComplete="off"
+                                        value={rollbackVersion}
+                                        aria-invalid={rollbackVersion.trim() !== "" && rollbackVersionNumber <= 0 ? true : undefined}
+                                        onChange={(event) => setRollbackVersion(event.target.value)}
+                                        onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
+                                            // Enter confirms when the input is valid —
+                                            // a prompt's Enter-leg, kept
+                                            if (event.key === "Enter" && rollbackVersionNumber > 0 && !busy) {
+                                                void runRollback(rollbackVersionNumber);
+                                            }
+                                        }}
+                                    />
+                                </label>
+                                {rollbackVersion.trim() !== "" && rollbackVersionNumber <= 0 ? (
+                                    <p role="alert" className="nf-field-error">
+                                        Enter a whole version number greater than 0.
+                                    </p>
+                                ) : null}
+                                {env === "prod" && !ack ? (
+                                    <p className="nf-hint">
+                                        The platform-admin approval below is unchecked — the
+                                        rollback rides without a data-migration acknowledgment.
+                                    </p>
+                                ) : null}
+                                <div className="nf-dialog-actions">
+                                    <button type="button" onClick={() => closeRollback()}>Cancel</button>
+                                    <button
+                                        type="button"
+                                        className="nf-danger"
+                                        disabled={rollbackVersionNumber <= 0 || busy}
+                                        onClick={() => void runRollback(rollbackVersionNumber)}
+                                    >
+                                        Roll back {env}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     ) : null}
                 </>
             ) : (

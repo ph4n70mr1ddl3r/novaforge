@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
     DashboardGrid,
     DashboardCell,
@@ -51,6 +51,35 @@ export function Dashboards({
         () => new Map(app.reports.map((report) => [report.id, report.label?.trim() ? report.label : report.id])),
         [app.reports],
     );
+    // A REAL tabs pattern: `role="tab"` alone advertised keyboard semantics the
+    // widget never delivered — arrow keys did nothing and no tabpanel association
+    // existed. Roving tabindex, selection-follows-focus on the arrow keys, and the
+    // aria-controls/aria-labelledby wiring are the WAI-ARIA contract.
+    const tabRefs = useRef(new Map<string, HTMLButtonElement>());
+    const onTablistKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+        if (visible.length === 0) {
+            return;
+        }
+        const current = visible.findIndex((dashboard) => dashboard.id === selected?.id);
+        let next: number | null = null;
+        if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+            next = (current + 1) % visible.length;
+        } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+            next = (current - 1 + visible.length) % visible.length;
+        } else if (event.key === "Home") {
+            next = 0;
+        } else if (event.key === "End") {
+            next = visible.length - 1;
+        }
+        if (next === null) {
+            return;
+        }
+        event.preventDefault();
+        const target = visible[next]!;
+        setSelected(target);
+        // the tabs are all mounted — focus moves synchronously with the selection
+        tabRefs.current.get(target.id)?.focus();
+    };
     return (
         <section className="nf-dashboards" aria-label="Dashboards">
             <h2>Dashboards</h2>
@@ -58,13 +87,24 @@ export function Dashboards({
                 <p role="status">No dashboards available for your roles.</p>
             ) : (
                 <>
-                    <div role="tablist" aria-label="Dashboard selection">
+                    <div role="tablist" aria-label="Dashboard selection" onKeyDown={onTablistKeyDown}>
                         {visible.map((dashboard) => (
                             <button
                                 key={dashboard.id}
                                 role="tab"
+                                id={`nf-dashboard-tab-${dashboard.id}`}
                                 aria-selected={selected?.id === dashboard.id}
+                                aria-controls="nf-dashboard-panel"
+                                // roving tabindex: one tab stop for the whole tablist
+                                tabIndex={selected?.id === dashboard.id ? 0 : -1}
                                 type="button"
+                                ref={(element) => {
+                                    if (element) {
+                                        tabRefs.current.set(dashboard.id, element);
+                                    } else {
+                                        tabRefs.current.delete(dashboard.id);
+                                    }
+                                }}
                                 onClick={() => setSelected(dashboard)}
                             >
                                 {resolveLabel(dashboard, undefined, dashboard.id)}
@@ -72,14 +112,21 @@ export function Dashboards({
                         ))}
                     </div>
                     {selected ? (
-                        <DashboardView
-                            client={client}
-                            appApiName={appApiName}
-                            app={app}
-                            dashboard={selected}
-                            reportLabels={reportLabels}
-                            onDrill={onDrill}
-                        />
+                        <div
+                            role="tabpanel"
+                            id="nf-dashboard-panel"
+                            aria-labelledby={`nf-dashboard-tab-${selected.id}`}
+                            tabIndex={0}
+                        >
+                            <DashboardView
+                                client={client}
+                                appApiName={appApiName}
+                                app={app}
+                                dashboard={selected}
+                                reportLabels={reportLabels}
+                                onDrill={onDrill}
+                            />
+                        </div>
                     ) : null}
                 </>
             )}

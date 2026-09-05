@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import { createElement } from "react";
 import { PlatformClient, type AppDefinition } from "@novaforge/shared";
 import { RuntimeShell } from "../src/shell.tsx";
@@ -205,5 +205,59 @@ describe("dashboards (PHASE-5 §5)", () => {
         // the loading state speaks the report's label too (never the raw id)
         const loading = await screen.findByText(/Loading Outstanding by customer/);
         expect(loading.getAttribute("role")).toBe("status");
+    });
+
+    it("the tablist answers the arrow keys, roves its tabindex, and its panel is labelled by the active tab", async () => {
+        const twoDashboards: AppDefinition = {
+            ...app,
+            dashboards: [
+                { id: "exec", label: "Executive", widgets: [], roles: [] },
+                { id: "ops", label: "Operations", widgets: [], roles: [] },
+            ],
+        };
+        const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ rows: [], total: 0 }), { status: 200 }));
+        const client = new PlatformClient("", () => "t", fetchImpl as unknown as typeof fetch);
+        render(createElement(RuntimeShell, {
+            client,
+            published: { version: 3, app: twoDashboards } as never,
+            user: { name: "demo", roles: ["erp.arClerk"] },
+            versionKey: "v3",
+        }));
+        screen.getByRole("button", { name: "Dashboards" }).click();
+
+        const tablist = await screen.findByRole("tablist", { name: "Dashboard selection" });
+        const execTab = within(tablist).getByRole("tab", { name: "Executive" });
+        const opsTab = within(tablist).getByRole("tab", { name: "Operations" });
+        // roving tabindex: one tab stop, the selection carries it
+        expect(execTab.getAttribute("aria-selected")).toBe("true");
+        expect(execTab.getAttribute("tabindex")).toBe("0");
+        expect(opsTab.getAttribute("tabindex")).toBe("-1");
+        const panel = screen.getByRole("tabpanel");
+        expect(panel.getAttribute("aria-labelledby")).toBe(execTab.id);
+        expect(execTab.getAttribute("aria-controls")).toBe(panel.id);
+
+        // arrow keys move BOTH the selection and the focus (activation on focus)
+        fireEvent.keyDown(tablist, { key: "ArrowRight" });
+        expect(opsTab.getAttribute("aria-selected")).toBe("true");
+        expect(document.activeElement).toBe(opsTab);
+        expect(panel.getAttribute("aria-labelledby")).toBe(opsTab.id);
+
+        fireEvent.keyDown(tablist, { key: "ArrowLeft" });
+        expect(document.activeElement).toBe(execTab);
+        fireEvent.keyDown(tablist, { key: "End" });
+        expect(document.activeElement).toBe(opsTab);
+        fireEvent.keyDown(tablist, { key: "Home" });
+        expect(document.activeElement).toBe(execTab);
+    });
+});
+
+describe("dashboards a11y (axe)", () => {
+    it("the dashboard tablist + tabpanel are axe-clean", async () => {
+        const axe = (await import("axe-core")).default;
+        const { container } = render(shell(stubClient({}).client));
+        screen.getByRole("button", { name: "Dashboards" }).click();
+        await screen.findByRole("tabpanel");
+        const results = await axe.run(container, {});
+        expect(results.violations).toEqual([]);
     });
 });

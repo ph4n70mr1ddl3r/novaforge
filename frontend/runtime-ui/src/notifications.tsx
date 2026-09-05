@@ -145,9 +145,11 @@ export function Notifications({ client }: { client: PlatformClient }): ReactNode
                 <p role="status">No notifications yet.</p>
             ) : null}
             <div className="nf-pager">
-                <button type="button" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>
+                {/* busy owns the pager (the inbox's rule): a page flip mid-markRead
+                    raced the reload's older response against the new page's load */}
+                <button type="button" disabled={page === 0 || busy} onClick={() => setPage(page - 1)}>Previous</button>
                 <span>{page * size + 1}–{Math.min((page + 1) * size, total)} / {total}</span>
-                <button type="button" disabled={(page + 1) * size >= total} onClick={() => setPage(page + 1)}>Next</button>
+                <button type="button" disabled={(page + 1) * size >= total || busy} onClick={() => setPage(page + 1)}>Next</button>
             </div>
             <fieldset>
                 <legend>Channel preferences</legend>

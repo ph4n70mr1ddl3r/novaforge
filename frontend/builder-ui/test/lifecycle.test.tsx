@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import type { AppDefinition, GapLogEntry, PlatformClient } from "@novaforge/shared";
 import { GapLogEditor, Lifecycle } from "../src/lifecycle.tsx";
@@ -188,5 +188,93 @@ describe("GapLogEditor (PHASE-7 §1 rule 2)", () => {
         await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
         const gapLog = (saved as { gapLog: GapLogEntry[] }).gapLog;
         expect(gapLog.map((entry) => entry.id)).toEqual(["G-1", "G-3", "G-2"]);
+    });
+});
+
+describe("Lifecycle rollback (the blocking window.prompt's replacement)", () => {
+    /** The changeset answers the mount payload first, then the rolled-back one —
+     *  the destructive leg must refresh the review panel onto its new baseline. */
+    function rollingBackClient(rollback: ReturnType<typeof vi.fn>): PlatformClient {
+        const reviewV4 = { ...review };
+        const reviewV3 = { ...review, publishedVersion: 3 };
+        let changesetCalls = 0;
+        return {
+            changeset: async () => {
+                changesetCalls += 1;
+                return changesetCalls === 1 ? reviewV4 : reviewV3;
+            },
+            rollback,
+        } as unknown as PlatformClient;
+    }
+
+    it("rolls back through the in-app dialog, then refreshes the review onto the new baseline", async () => {
+        const rollback = vi.fn(async () => ({}));
+        render(createElement(Lifecycle, { client: rollingBackClient(rollback), appId: "app-1" }));
+
+        await waitFor(() => expect(screen.getByText("Change set (from v4)")).toBeTruthy());
+        // jsdom's synthetic click doesn't move focus — a real click would focus the
+        // trigger, so the test focuses it the way the shell's ask-dialog test does
+        const trigger = screen.getByRole("button", { name: "Roll back…" });
+        trigger.focus();
+        fireEvent.click(trigger);
+        const dialog = await screen.findByRole("dialog", { name: "Roll back staging" });
+        expect(dialog.getAttribute("aria-modal")).toBe("true");
+
+        // cancel leg: Escape closes, nothing was sent, focus returns to the trigger
+        fireEvent.keyDown(document, { key: "Escape" });
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+        expect(rollback).not.toHaveBeenCalled();
+        expect(document.activeElement).toBe(trigger);
+
+        fireEvent.click(screen.getByRole("button", { name: "Roll back…" }));
+        const reopened = await screen.findByRole("dialog", { name: "Roll back staging" });
+        const confirm = within(reopened).getByRole("button", { name: "Roll back staging" }) as HTMLButtonElement;
+        expect(confirm.disabled).toBe(true); // empty target — no silent NaN no-op
+
+        fireEvent.change(within(reopened).getByLabelText(/Target version/), { target: { value: "3" } });
+        expect(confirm.disabled).toBe(false);
+        fireEvent.click(confirm);
+
+        await waitFor(() =>
+            expect(rollback).toHaveBeenCalledWith("app-1", "staging", { toVersion: 3, dataMigrationAcknowledged: false }),
+        );
+        // the review panel re-ran its changeset: the header tracks the new baseline
+        await waitFor(() => expect(screen.getByText("Change set (from v3)")).toBeTruthy());
+    });
+
+    it("rejects a non-positive target in the dialog instead of silently doing nothing", async () => {
+        const rollback = vi.fn(async () => ({}));
+        render(createElement(Lifecycle, { client: rollingBackClient(rollback), appId: "app-1" }));
+
+        await waitFor(() => expect(screen.getByText("Change set (from v4)")).toBeTruthy());
+        fireEvent.click(screen.getByRole("button", { name: "Roll back…" }));
+        const dialog = await screen.findByRole("dialog", { name: "Roll back staging" });
+        const input = within(dialog).getByLabelText(/Target version/);
+
+        fireEvent.change(input, { target: { value: "abc" } });
+        const confirm = within(dialog).getByRole("button", { name: "Roll back staging" }) as HTMLButtonElement;
+        expect(confirm.disabled).toBe(true);
+        expect(within(dialog).getByRole("alert").textContent).toContain("greater than 0");
+        fireEvent.click(confirm);
+        expect(rollback).not.toHaveBeenCalled();
+
+        fireEvent.change(input, { target: { value: "0" } });
+        expect(confirm.disabled).toBe(true);
+        expect(rollback).not.toHaveBeenCalled();
+    });
+});
+
+describe("Lifecycle rollback dialog a11y (axe)", () => {
+    it("the open rollback dialog is axe-clean", async () => {
+        const axe = (await import("axe-core")).default;
+        const { container } = render(createElement(Lifecycle, {
+            client: stubClient(review),
+            appId: "app-1",
+        }));
+        await waitFor(() => expect(screen.getByText("Change set (from v4)")).toBeTruthy());
+        fireEvent.click(screen.getByRole("button", { name: "Roll back…" }));
+        await screen.findByRole("dialog", { name: "Roll back staging" });
+        const results = await axe.run(container, {});
+        expect(results.violations).toEqual([]);
     });
 });

@@ -81,3 +81,36 @@ describe("Notifications (PHASE-4 §8)", () => {
         expect(screen.getByRole("status").textContent).toContain("Preferences saved");
     });
 });
+
+describe("Notifications pager (the inbox's busy rule)", () => {
+    it("locks the pager while a mark-read round-trip is in flight", async () => {
+        // a second page exists (total 51 > size 25), so Next starts enabled
+        const rows = [
+            { id: "n-1", category: "task-assignment", title: "PO-42 needs approval", body: "", created_at: "2026-08-24T10:00:00Z", read_at: null },
+        ];
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        const client = {
+            notifications: async () => ({ rows, total: 51 }),
+            markNotificationRead: async () => {
+                await gate;
+                return { status: "read" };
+            },
+            notificationPreferences: async () => [],
+        } as unknown as PlatformClient;
+        render(createElement(Notifications, { client }));
+
+        await waitFor(() => expect(screen.getByText("PO-42 needs approval")).toBeTruthy());
+        const next = screen.getByRole("button", { name: "Next" }) as HTMLButtonElement;
+        expect(next.disabled).toBe(false);
+
+        fireEvent.click(screen.getByRole("button", { name: /Mark read/ }));
+        // mid-flight: the pager must not race the reload (the inbox's fenced rule)
+        expect(next.disabled).toBe(true);
+        const previous = screen.getByRole("button", { name: "Previous" }) as HTMLButtonElement;
+        expect(previous.disabled).toBe(true);
+
+        release();
+        await waitFor(() => expect(next.disabled).toBe(false));
+    });
+});
