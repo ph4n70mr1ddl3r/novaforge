@@ -12,7 +12,8 @@
   gap: var(--nf-spacing-1);
   background: var(--nf-color-surface);
   border: 1px solid var(--nf-color-border);
-  border-radius: var(--nf-radius);
+  border-radius: var(--nf-radius-lg);
+  box-shadow: var(--nf-shadow-1);
   padding: var(--nf-spacing-3);
 }
 
@@ -41,6 +42,19 @@
   color: var(--nf-color-text);
 }
 
+.nf-report-table thead th {
+  font-size: var(--nf-font-size-small);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--nf-color-muted);
+  border-bottom: 2px solid var(--nf-color-border-strong);
+}
+
+.nf-report-table tbody tr:hover {
+  background: var(--nf-color-surface-hover);
+}
+
 .nf-report-table th,
 .nf-report-table td {
   text-align: left;
@@ -60,6 +74,11 @@
   display: grid;
   grid-template-columns: repeat(12, 1fr);
   gap: var(--nf-spacing-4);
+}
+
+.nf-dashboard-cell {
+  /* a wide chart must shrink its track, never blow the grid out sideways */
+  min-width: 0;
 }
 
 @media (max-width: 720px) {

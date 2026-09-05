@@ -1,6 +1,7 @@
 package com.novaforge.metadata.api;
 
 import com.novaforge.metadata.AppDefinition;
+import com.novaforge.metadata.BrandingDefinition;
 import com.novaforge.metadata.GapLogEntry;
 import com.novaforge.metadata.IntegrationsDefinition;
 import com.novaforge.metadata.PermissionSet;
@@ -46,7 +47,8 @@ public record AppPatch(
         List<com.novaforge.metadata.DashboardDefinition> dashboards,
         IntegrationsDefinition integrations,
         List<TranslationsDefinition> translations,
-        List<GapLogEntry> gapLog) {
+        List<GapLogEntry> gapLog,
+        BrandingDefinition branding) {
 
     /** The patch applied over a current draft: null keeps, empty clears, else replaces. */
     AppDefinition mergeOver(AppDefinition current) {
@@ -69,6 +71,7 @@ public record AppPatch(
                 dashboards != null ? dashboards : current.dashboards(),
                 integrations != null ? integrations : current.integrations(),
                 translations != null ? translations : current.translations(),
-                gapLog != null ? gapLog : current.gapLog());
+                gapLog != null ? gapLog : current.gapLog(),
+                branding != null ? branding : current.branding());
     }
 }

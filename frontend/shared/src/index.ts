@@ -1,4 +1,8 @@
+// the token sheet first: it defines every --nf-* variable the two component
+// sheets consume (ADR-009 §5) — without it their var() references all fall through
+import "./tokens.css";
 import "./catalog/pages.css";
+import "./catalog/catalog.css";
 export {
   ChartWidget,
 } from "./catalog/ChartWidget.tsx";
@@ -69,6 +73,7 @@ export {
   HOOK_TRIGGERS,
   SUITE_OPS,
   type AppDefinition,
+  type BrandingDefinition,
   type DashboardDefinition,
   type DashboardWidget,
   type EntityDefinition,

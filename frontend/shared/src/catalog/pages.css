@@ -1,4 +1,126 @@
-/* The v1 page-catalog + shell styles (PHASE-2 §6) — tokens only, no hex literals. */
+/* The v1 page-catalog + shell styles (PHASE-2 §6) — tokens only, no hex literals.
+   Every value reads from tokens.css (ADR-009 §5); dark mode comes free through
+   the token re-mapping, never through a second rule set. */
+
+/* --- base layer: resets + control chrome (the apps render bare <button>s
+       everywhere; without this they show raw browser defaults) --- */
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  background: var(--nf-color-bg);
+  color: var(--nf-color-text);
+  font-family: var(--nf-font-family);
+  font-size: var(--nf-font-size-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.nf-builder *,
+.nf-runtime *,
+.nf-shell * {
+  box-sizing: border-box;
+}
+
+/* WCAG 2.2 AA: a focus indicator on every interactive element, tokens-only */
+.nf-builder :focus-visible,
+.nf-runtime :focus-visible,
+.nf-shell :focus-visible {
+  outline: 2px solid var(--nf-color-focus);
+  outline-offset: 2px;
+}
+
+.nf-builder h1,
+.nf-runtime h1 {
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  color: var(--nf-color-text);
+  background: var(--nf-color-surface);
+  border: 1px solid var(--nf-color-border);
+  border-radius: var(--nf-radius);
+  padding: calc(var(--nf-spacing-1) + 1px) var(--nf-spacing-3);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--nf-color-surface-hover);
+  border-color: var(--nf-color-border-strong);
+}
+
+button:active:not(:disabled) {
+  background: var(--nf-color-surface-selected);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--nf-color-text);
+  background: var(--nf-color-bg);
+  border: 1px solid var(--nf-color-border);
+  border-radius: var(--nf-radius);
+  padding: var(--nf-spacing-1) var(--nf-spacing-2);
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--nf-color-focus);
+  outline-offset: 0;
+  border-color: var(--nf-color-accent);
+}
+
+input[readonly],
+input:disabled,
+textarea:disabled,
+select:disabled {
+  background: var(--nf-color-surface-hover);
+  cursor: not-allowed;
+}
+
+/* the primary action — one filled accent button per view (22 call sites) */
+.nf-action-primary {
+  background: var(--nf-color-accent);
+  border-color: var(--nf-color-accent);
+  color: var(--nf-color-accent-contrast);
+  font-weight: 600;
+}
+
+.nf-action-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--nf-color-accent) 86%, var(--nf-color-accent-contrast));
+  border-color: color-mix(in srgb, var(--nf-color-accent) 86%, var(--nf-color-accent-contrast));
+}
+
+.nf-action-primary:active:not(:disabled) {
+  background: color-mix(in srgb, var(--nf-color-accent) 78%, var(--nf-color-accent-contrast));
+}
+
+/* destructive action — negative tone, never filled (accidents stay rare) */
+.nf-danger {
+  color: var(--nf-color-negative);
+  border-color: color-mix(in srgb, var(--nf-color-negative) 45%, var(--nf-color-border));
+}
+
+.nf-danger:hover:not(:disabled) {
+  background: var(--nf-color-negative-soft);
+  border-color: var(--nf-color-negative);
+  color: var(--nf-color-negative);
+}
 
 /* --- fields --- */
 
@@ -12,41 +134,27 @@
 .nf-field > label {
   font-size: var(--nf-font-size-base);
   color: var(--nf-color-text);
+  font-weight: 500;
 }
 
 .nf-required {
-  color: var(--nf-color-danger, currentColor);
-}
-
-.nf-field input,
-.nf-field select,
-.nf-field textarea {
-  font: inherit;
-  padding: var(--nf-spacing-1) var(--nf-spacing-2);
-  border: 1px solid var(--nf-color-border);
-  border-radius: var(--nf-radius);
-  background: var(--nf-color-surface);
-  color: var(--nf-color-text);
-}
-
-.nf-field input[readonly],
-.nf-field input:disabled {
-  background: var(--nf-color-muted);
+  color: var(--nf-color-negative);
 }
 
 .nf-field-error {
-  color: var(--nf-color-danger, inherit);
+  color: var(--nf-color-negative);
   font-size: var(--nf-font-size-small);
   margin: 0;
 }
 
 .nf-json {
-  background: var(--nf-color-muted);
+  background: var(--nf-color-surface-hover);
   border: 1px solid var(--nf-color-border);
   border-radius: var(--nf-radius);
   padding: var(--nf-spacing-2);
   overflow: auto;
-  font-family: var(--nf-font-mono, monospace);
+  font-family: var(--nf-font-mono);
+  font-size: var(--nf-font-size-small);
 }
 
 .nf-lookup-options {
@@ -55,7 +163,8 @@
   padding: 0;
   border: 1px solid var(--nf-color-border);
   border-radius: var(--nf-radius);
-  background: var(--nf-color-surface);
+  background: var(--nf-color-bg);
+  box-shadow: var(--nf-shadow-1);
 }
 
 .nf-lookup-options button {
@@ -65,12 +174,13 @@
   padding: var(--nf-spacing-1) var(--nf-spacing-2);
   background: none;
   border: none;
+  border-radius: 0;
   font: inherit;
   cursor: pointer;
 }
 
 .nf-lookup-options button:hover {
-  background: var(--nf-color-muted);
+  background: var(--nf-color-surface-hover);
 }
 
 .nf-chips {
@@ -84,10 +194,13 @@
 
 .nf-chip {
   display: inline-flex;
+  align-items: center;
   gap: var(--nf-spacing-1);
-  background: var(--nf-color-muted);
-  border-radius: var(--nf-radius);
+  background: var(--nf-color-surface-hover);
+  border: 1px solid var(--nf-color-border);
+  border-radius: 999px;
   padding: 0 var(--nf-spacing-2);
+  font-size: var(--nf-font-size-small);
 }
 
 /* --- layouts --- */
@@ -104,6 +217,13 @@
   gap: var(--nf-spacing-3);
   padding: var(--nf-spacing-2) var(--nf-spacing-3);
   border-bottom: 1px solid var(--nf-color-border);
+  background: var(--nf-color-surface);
+}
+
+.nf-brand {
+  font-weight: 700;
+  color: var(--nf-color-accent);
+  letter-spacing: 0.02em;
 }
 
 .nf-shell-body {
@@ -123,6 +243,19 @@
   margin: 0;
 }
 
+.nf-nav h2 {
+  font-size: var(--nf-font-size-base);
+  margin: 0 0 var(--nf-spacing-2);
+}
+
+.nf-nav h3 {
+  font-size: var(--nf-font-size-small);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--nf-color-muted);
+  margin: var(--nf-spacing-3) 0 var(--nf-spacing-1);
+}
+
 .nf-form {
   display: grid;
   gap: var(--nf-spacing-2) var(--nf-spacing-3);
@@ -139,10 +272,13 @@
   display: flex;
   flex-direction: column;
   gap: var(--nf-spacing-2);
+  border-bottom: 1px solid var(--nf-color-border);
 }
 
 .nf-record-id {
   color: var(--nf-color-muted);
+  font-size: var(--nf-font-size-small);
+  font-family: var(--nf-font-mono);
 }
 
 .nf-list {
@@ -156,18 +292,6 @@
   display: flex;
   align-items: baseline;
   gap: var(--nf-spacing-3);
-}
-
-.nf-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.nf-table th,
-.nf-table td {
-  text-align: left;
-  padding: var(--nf-spacing-1) var(--nf-spacing-2);
-  border-bottom: 1px solid var(--nf-color-border);
 }
 
 .nf-pager {
@@ -186,10 +310,11 @@
 }
 
 .nf-empty {
-  padding: var(--nf-spacing-3);
+  padding: var(--nf-spacing-5) var(--nf-spacing-3);
   color: var(--nf-color-muted);
   border: 1px dashed var(--nf-color-border);
-  border-radius: var(--nf-radius);
+  border-radius: var(--nf-radius-lg);
+  text-align: center;
 }
 
 .nf-fallback {
@@ -199,25 +324,114 @@
   color: var(--nf-color-muted);
 }
 
+/* --- tables (list pages + the editors' grid tables) --- */
+
+.nf-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.nf-table th,
+.nf-table td {
+  text-align: left;
+  padding: var(--nf-spacing-1) var(--nf-spacing-2);
+  border-bottom: 1px solid var(--nf-color-border);
+}
+
+.nf-table thead th {
+  font-size: var(--nf-font-size-small);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--nf-color-muted);
+  border-bottom: 2px solid var(--nf-color-border-strong);
+}
+
+.nf-table tbody tr:hover {
+  background: var(--nf-color-surface-hover);
+}
+
 /* --- shells (runtime + builder) --- */
 
 .nf-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   gap: var(--nf-spacing-3);
   padding: var(--nf-spacing-2) var(--nf-spacing-3);
   border-bottom: 1px solid var(--nf-color-border);
+  background: var(--nf-color-surface);
+  box-shadow: var(--nf-shadow-1);
 }
 
 .nf-topbar nav {
   display: flex;
-  gap: var(--nf-spacing-2);
+  gap: var(--nf-spacing-1);
   flex-wrap: wrap;
+  flex: 1;
+}
+
+.nf-topbar nav button {
+  background: none;
+  border-color: transparent;
+  border-radius: var(--nf-radius);
+  color: var(--nf-color-muted);
+  padding: calc(var(--nf-spacing-1) + 1px) var(--nf-spacing-2);
+}
+
+.nf-topbar nav button:hover:not(:disabled) {
+  background: var(--nf-color-surface-hover);
+  color: var(--nf-color-text);
+  border-color: transparent;
+}
+
+/* the active section — the builder sets aria-current; it just had no face */
+.nf-topbar nav button[aria-current] {
+  background: var(--nf-color-surface-selected);
+  color: var(--nf-color-accent);
+  font-weight: 600;
+  border-color: transparent;
 }
 
 .nf-navgroup {
   display: inline-flex;
   gap: var(--nf-spacing-1);
+}
+
+.nf-user {
+  font-size: var(--nf-font-size-small);
+  color: var(--nf-color-muted);
+  border: 1px solid var(--nf-color-border);
+  border-radius: 999px;
+  padding: 0 var(--nf-spacing-2);
+  white-space: nowrap;
+}
+
+.nf-locale {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--nf-spacing-1);
+  font-size: var(--nf-font-size-small);
+  color: var(--nf-color-muted);
+}
+
+.nf-locale select {
+  padding: 0 var(--nf-spacing-1);
+}
+
+/* the branding editor's live preview — it paints exactly the two variables the
+   runtime shell will override, falling back to the platform tokens identically */
+.nf-branding-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  padding: var(--nf-spacing-1) var(--nf-spacing-3);
+  border: 1px solid var(--nf-color-border);
+  border-radius: var(--nf-radius);
+  font-weight: 600;
 }
 
 .nf-builder,
@@ -230,8 +444,24 @@
 .nf-builder main,
 .nf-runtime main {
   flex: 1;
-  padding: var(--nf-spacing-3);
+  padding: var(--nf-spacing-3) var(--nf-spacing-4) var(--nf-spacing-6);
+  width: 100%;
+  max-width: 84rem;
+  margin-inline: auto;
 }
+
+/* the pre-auth screens render straight on <main className="nf-signin"> */
+.nf-signin {
+  min-height: 100vh;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--nf-spacing-4);
+  text-align: center;
+  margin: 0;
+}
+
+/* --- builder canvas --- */
 
 .nf-b-columns {
   display: grid;
@@ -248,12 +478,20 @@
   border-radius: var(--nf-radius);
   padding: var(--nf-spacing-2);
   min-height: 20rem;
+  background: var(--nf-color-bg);
 }
 
 .nf-b-palette {
   display: flex;
   flex-direction: column;
   gap: var(--nf-spacing-1);
+}
+
+.nf-b-meta,
+.nf-hint {
+  color: var(--nf-color-muted);
+  font-size: var(--nf-font-size-small);
+  margin: 0 0 var(--nf-spacing-2);
 }
 
 .nf-tree,
@@ -264,20 +502,32 @@
 }
 
 .nf-tree-row {
-  cursor: pointer;
+  /* a chromeless list row — the base button chrome above must not dress it */
   display: block;
-  padding: var(--nf-spacing-1);
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
   border-radius: var(--nf-radius);
+  cursor: pointer;
+  padding: var(--nf-spacing-1);
+}
+
+.nf-tree-row:hover {
+  background: var(--nf-color-surface-hover);
+  border-color: transparent;
 }
 
 .nf-tree-row:focus-visible {
-  outline: 2px solid var(--nf-color-focus, currentColor);
+  outline: 2px solid var(--nf-color-focus);
   outline-offset: 1px;
 }
 
 .nf-tree-row[aria-selected="true"] {
-  background: var(--nf-color-muted);
-  outline: 1px solid var(--nf-color-border);
+  background: var(--nf-color-surface-selected);
+  color: var(--nf-color-accent);
+  font-weight: 600;
+  outline: 1px solid color-mix(in srgb, var(--nf-color-accent) 40%, transparent);
 }
 
 .nf-props {
@@ -293,14 +543,6 @@
   font-size: var(--nf-font-size-small);
 }
 
-.nf-props input,
-.nf-props select {
-  font: inherit;
-  padding: var(--nf-spacing-1);
-  border: 1px solid var(--nf-color-border);
-  border-radius: var(--nf-radius);
-}
-
 .nf-b-toolbar,
 .nf-b-actions,
 .nf-list-toolbar {
@@ -310,32 +552,92 @@
   flex-wrap: wrap;
 }
 
-.nf-action-primary {
-  font-weight: 600;
-}
-
-.nf-danger {
-  color: var(--nf-color-danger, inherit);
-}
-
-.nf-flash,
-.nf-stale {
-  padding: var(--nf-spacing-1) var(--nf-spacing-2);
-  border-radius: var(--nf-radius);
-}
-
-.nf-steps {
-  display: flex;
-  gap: var(--nf-spacing-3);
-  list-style: none;
-  padding: 0;
-}
-
 .nf-inline {
   display: inline-flex;
   gap: var(--nf-spacing-1);
   align-items: center;
   margin-right: var(--nf-spacing-2);
+}
+
+/* --- status + feedback (each role its own tone — they used to be
+       indistinguishable grey boxes) --- */
+
+/* The save/action toast — fixed bottom-right, shell-rendered, self-dismissing
+   (the shell owns the 6s budget). The tone modifier flips it to the negative
+   palette for failures; the page's role=alert panels keep the details. */
+.nf-flash {
+  position: fixed;
+  right: var(--nf-spacing-4);
+  bottom: var(--nf-spacing-4);
+  z-index: 20;
+  max-width: min(24rem, calc(100vw - 2 * var(--nf-spacing-4)));
+  margin: 0;
+  padding: var(--nf-spacing-2) var(--nf-spacing-3);
+  border-radius: var(--nf-radius);
+  border: 1px solid color-mix(in srgb, var(--nf-color-positive) 40%, transparent);
+  border-left: 3px solid var(--nf-color-positive);
+  background: var(--nf-color-positive-soft);
+  color: var(--nf-color-text);
+  box-shadow: var(--nf-shadow-2);
+}
+
+.nf-flash-error {
+  border-color: color-mix(in srgb, var(--nf-color-negative) 40%, transparent);
+  border-left-color: var(--nf-color-negative);
+  background: var(--nf-color-negative-soft);
+}
+
+.nf-stale {
+  padding: var(--nf-spacing-2) var(--nf-spacing-3);
+  border-radius: var(--nf-radius);
+  border: 1px solid color-mix(in srgb, var(--nf-color-warning) 40%, transparent);
+  border-left: 3px solid var(--nf-color-warning);
+  background: var(--nf-color-warning-soft);
+  color: var(--nf-color-text);
+}
+
+.nf-error {
+  padding: var(--nf-spacing-2) var(--nf-spacing-3);
+  border-radius: var(--nf-radius);
+  border: 1px solid color-mix(in srgb, var(--nf-color-negative) 40%, transparent);
+  border-left: 3px solid var(--nf-color-negative);
+  background: var(--nf-color-negative-soft);
+  color: var(--nf-color-text);
+}
+
+/* state-machine transition buttons ride the record footer */
+.nf-transitions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--nf-spacing-2);
+  margin-top: var(--nf-spacing-3);
+  padding-top: var(--nf-spacing-3);
+  border-top: 1px solid var(--nf-color-border);
+}
+
+/* the onboarding stepper — ol only: `nf-table nf-steps` is a real <table>
+   (the logic editor's step grid) and must keep its table layout */
+ol.nf-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--nf-spacing-2);
+  list-style: none;
+  padding: 0;
+}
+
+ol.nf-steps li {
+  padding: calc(var(--nf-spacing-1) + 1px) var(--nf-spacing-3);
+  border: 1px solid var(--nf-color-border);
+  border-radius: 999px;
+  color: var(--nf-color-muted);
+  font-size: var(--nf-font-size-small);
+}
+
+ol.nf-steps li[aria-current="step"] {
+  background: var(--nf-color-surface-selected);
+  border-color: color-mix(in srgb, var(--nf-color-accent) 40%, transparent);
+  color: var(--nf-color-accent);
+  font-weight: 600;
 }
 
 /* screen-reader-only content (labels for structural columns, e.g. the drill column) */

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
     ApiError,
     PlatformClient,
@@ -42,6 +42,13 @@ type Route =
     | { view: "notifications" }
     | { view: "dashboards" };
 
+/** The save/action toast: the message plus its tone. Success and failure shared
+ * one grey paragraph before, so "Saved" and an error looked identical. */
+interface Flash {
+    message: string;
+    tone: "ok" | "error";
+}
+
 function effectiveRoles(app: AppDefinition, user: { roles: string[] }): string[] {
     // App-scoped roles arrive as `app.role` assignments; the shell maps EVERY
     // app-defined role the user holds (PHASE-2 §9: rendering only — the Data
@@ -56,6 +63,18 @@ function effectiveRoles(app: AppDefinition, user: { roles: string[] }): string[]
 
 export function RuntimeShell({ client, published, user, versionKey }: RuntimeShellProps): ReactNode {
     const app = published.app as AppDefinition;
+    // Tenant branding (ADR-009 §5): overrides ride the token layer — the shell
+    // sets the variables on its root and every surface under it re-themes (light
+    // and dark both, the tokens re-map underneath); no component reads a raw
+    // color. accentContrast keeps the platform token when the tenant omits it.
+    const brandingStyle: CSSProperties | undefined = app.branding?.accent
+        ? ({
+              "--nf-color-accent": app.branding.accent,
+              ...(app.branding.accentContrast
+                  ? { "--nf-color-accent-contrast": app.branding.accentContrast }
+                  : {}),
+          } as CSSProperties)
+        : undefined;
     const [route, setRoute] = useState<Route>({ view: "home" });
     const [locale, setLocale] = useState<string | undefined>(user.locale);
     const roles = effectiveRoles(app, user);
@@ -72,7 +91,17 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
     // journey). The engine pins the qualified form; the shell must send it.
     const qualified = (entityApiName: string) => `${app.apiName}.${entityApiName}`;
 
-    const [flash, setFlash] = useState<string | null>(null);
+    const [flash, setFlash] = useState<Flash | null>(null);
+    // the toast dismisses itself: a "Saved" that outlives its context is noise,
+    // and the same budget applies to failures — the page's role=alert surfaces
+    // keep failure details on screen regardless
+    useEffect(() => {
+        if (!flash) {
+            return;
+        }
+        const timer = window.setTimeout(() => setFlash(null), 6000);
+        return () => window.clearTimeout(timer);
+    }, [flash]);
     const data: RendererDataService = useMemo(
         () => ({
             list: (request) => client.list({ ...request, entity: qualified(request.entity) }),
@@ -110,7 +139,7 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
     );
 
     return (
-        <div className="nf-runtime" data-metadata-version={versionKey}>
+        <div className="nf-runtime" data-metadata-version={versionKey} style={brandingStyle}>
             <header className="nf-topbar">
                 <h1>{app.label ?? app.apiName}</h1>
                 <nav aria-label="Primary">
@@ -175,11 +204,22 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
                         locale={locale}
                         data={data}
                         navigate={navigate}
-                        flash={flash}
                         setFlash={setFlash}
                     />
                 )}
             </main>
+            {flash ? (
+                // keyed by content: repeating the same message re-runs the toast
+                // (and restarts its dismiss budget) instead of invisibly no-oping
+                <div
+                    key={`${flash.tone}:${flash.message}`}
+                    role="status"
+                    aria-live="polite"
+                    className={flash.tone === "error" ? "nf-flash nf-flash-error" : "nf-flash"}
+                >
+                    {flash.message}
+                </div>
+            ) : null}
         </div>
     );
 }
@@ -193,12 +233,11 @@ interface EntityPageProps {
     filter?: QueryFilter;
     savedPages: Map<string, PageDefinition>;
     app: AppDefinition;
-    /** The save/action flash, lifted to the shell: a create navigates to the
-     * record's detail, and a page-local flash died with the page it reported
-     * for — the "Saved" confirmation was unobservable on every create (found
-     * live at the golden journey's final step). */
-    flash: string | null;
-    setFlash: (message: string | null) => void;
+    /** The save/action toast setter, lifted to the shell: a create navigates to
+     * the record's detail, and a page-local toast died with the page it
+     * reported for — "Saved" was unobservable on every create (found live at
+     * the golden journey's final step). The toast itself renders in the shell. */
+    setFlash: (flash: Flash | null) => void;
     role?: string;
     locale?: string;
     data: RendererDataService;
@@ -206,7 +245,7 @@ interface EntityPageProps {
 }
 
 function EntityPage(props: EntityPageProps): ReactNode {
-    const { client, entity, kind, id, filter, savedPages, app, role, locale, data, navigate, flash, setFlash } = props;
+    const { client, entity, kind, id, filter, savedPages, app, role, locale, data, navigate, setFlash } = props;
     // app-qualified runtime addresses (see RuntimeShell's note — the ambiguity guard)
     const qualified = (entityApiName: string) => `${app.apiName}.${entityApiName}`;
     const saved = savedPages.get(`${entity.apiName}:${kind}`);
@@ -299,7 +338,7 @@ function EntityPage(props: EntityPageProps): ReactNode {
                           );
                     createKeyRef.current = null;
                     setRecord(savedRecord);
-                    setFlash("Saved");
+                    setFlash({ message: "Saved", tone: "ok" });
                     if (!record?.id) {
                         navigate(entity.apiName, "detail", String(savedRecord.id));
                     }
@@ -310,9 +349,9 @@ function EntityPage(props: EntityPageProps): ReactNode {
                     // on screen as active misinformation
                     if (error instanceof ApiError) {
                         setErrors(error.fieldErrors());
-                        setFlash(error.message);
+                        setFlash({ message: error.message, tone: "error" });
                     } else {
-                        setFlash(error instanceof Error ? error.message : "Save failed");
+                        setFlash({ message: error instanceof Error ? error.message : "Save failed", tone: "error" });
                     }
                 } finally {
                     savingRef.current = false;
@@ -328,7 +367,7 @@ function EntityPage(props: EntityPageProps): ReactNode {
                     } catch (error) {
                         // a 409 (stale version) or 403 on delete was a silent
                         // unhandled rejection — the user clicked again and again
-                        setFlash(error instanceof Error ? error.message : "Delete failed");
+                        setFlash({ message: error instanceof Error ? error.message : "Delete failed", tone: "error" });
                     }
                 }
             },
@@ -348,20 +387,20 @@ function EntityPage(props: EntityPageProps): ReactNode {
                 // PHASE-3 §8: the named flow runs server-side (system principal, the
                 // initiating actor recorded); the shell reloads the record's state after.
                 if (!record?.id) {
-                    setFlash("runFlow needs a saved record");
+                    setFlash({ message: "runFlow needs a saved record", tone: "error" });
                     return;
                 }
                 setBusy(true);
                 try {
                     const fresh = await client.runHook(qualified(entity.apiName), String(record.id), hook);
                     setRecord(fresh);
-                    setFlash(`Ran ${hook}`);
+                    setFlash({ message: `Ran ${hook}`, tone: "ok" });
                 } catch (error) {
                     if (error instanceof ApiError) {
                         setErrors(error.fieldErrors());
-                        setFlash(error.message);
+                        setFlash({ message: error.message, tone: "error" });
                     } else {
-                        setFlash(error instanceof Error ? error.message : `Running ${hook} failed`);
+                        setFlash({ message: error instanceof Error ? error.message : `Running ${hook} failed`, tone: "error" });
                     }
                 } finally {
                     setBusy(false);
@@ -387,9 +426,6 @@ function EntityPage(props: EntityPageProps): ReactNode {
                 <p role="status" className="nf-stale">
                     {stale.length} page overlay(s) no longer apply after the last entity change.
                 </p>
-            ) : null}
-            {flash ? (
-                <p role="status" className="nf-flash" aria-live="polite">{flash}</p>
             ) : null}
             {loadError ? (
                 <p role="alert" className="nf-error">
@@ -426,15 +462,15 @@ function EntityPage(props: EntityPageProps): ReactNode {
                                         // the SERVER's record — its state, its version —
                                         // never a locally guessed shape
                                         setRecord(fresh);
-                                        setFlash(`Moved to ${transition.to}`);
+                                        setFlash({ message: `Moved to ${transition.to}`, tone: "ok" });
                                     })
                                     .catch((error: unknown) => {
                                         if (error instanceof ApiError) {
                                             setErrors(error.fieldErrors());
-                                            setFlash(error.message);
+                                            setFlash({ message: error.message, tone: "error" });
                                         } else {
                                             setFlash(
-                                                error instanceof Error ? error.message : `Moving to ${transition.to} failed`,
+                                                { message: error instanceof Error ? error.message : `Moving to ${transition.to} failed`, tone: "error" },
                                             );
                                         }
                                     })

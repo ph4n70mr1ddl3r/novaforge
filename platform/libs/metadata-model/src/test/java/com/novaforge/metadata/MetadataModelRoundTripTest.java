@@ -97,6 +97,30 @@ class MetadataModelRoundTripTest {
     }
 
     @Test
+    @DisplayName("tenant branding parses, round-trips, and stays absent when unbranded")
+    void brandingRoundTrip() {
+        // an unbranded app serializes with no branding key at all (NON_NULL) —
+        // pre-branding documents stay byte-identical through the upgrade
+        AppDefinition plain = DefinitionParser.parseApp(JOURNAL_APP);
+        assertThat(plain.branding()).isNull();
+        assertThat(DefinitionParser.writeApp(plain)).doesNotContain("branding");
+
+        AppDefinition branded = DefinitionParser.parseApp("""
+                {
+                  "apiName": "Erp",
+                  "branding": { "accent": "#7c3aed", "accentContrast": "#ffffff" },
+                  "entities": []
+                }
+                """);
+        assertThat(branded.branding())
+                .isEqualTo(new BrandingDefinition("#7c3aed", "#ffffff"));
+
+        String json = DefinitionParser.writeApp(branded);
+        assertThat(json).contains("\"branding\"");
+        assertThat(DefinitionParser.parseApp(json)).isEqualTo(branded);
+    }
+
+    @Test
     @DisplayName("sequence formatting honors prefix/padding/suffix")
     void sequenceFormatting() {
         SequenceDefinition seq = new SequenceDefinition("entryNumber", SequenceMode.GAPLESS,

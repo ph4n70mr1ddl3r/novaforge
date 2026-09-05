@@ -17,6 +17,8 @@ import java.util.Map;
  * @param gapLog   the dogfood gap log (PHASE-7 §1 rule 2) as versioned metadata —
  *                change-set review renders the entries a version resolves
  *                (PHASE-8 §3)
+ * @param branding tenant branding (ADR-009 §5): token overrides the runtime
+ *                shell applies to its root — null keeps the platform palette
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record AppDefinition(
@@ -38,7 +40,8 @@ public record AppDefinition(
         List<DashboardDefinition> dashboards,
         IntegrationsDefinition integrations,
         List<TranslationsDefinition> translations,
-        List<GapLogEntry> gapLog) {
+        List<GapLogEntry> gapLog,
+        BrandingDefinition branding) {
 
     public AppDefinition {
         entities = entities == null ? List.of() : List.copyOf(entities);
@@ -234,7 +237,23 @@ public record AppDefinition(
                          List<TranslationsDefinition> translations) {
         this(id, apiName, label, labelI18n, description, entities, pages, settings,
                 permissionSet, testSuites, stateMachines, slas, jobs, workflows,
-                reports, dashboards, integrations, translations, List.of());
+                reports, dashboards, integrations, translations, List.of(), null);
+    }
+
+    /** Constructor without the branding branch (unbranded drafts and tests). */
+    public AppDefinition(String id, String apiName, String label, Map<String, String> labelI18n,
+                         String description, List<EntityDefinition> entities,
+                         List<PageDefinition> pages, SettingsDefinition settings,
+                         PermissionSet permissionSet, List<TestSuiteDefinition> testSuites,
+                         List<StateMachineDefinition> stateMachines,
+                         List<SlaDefinition> slas, List<ScheduledJobDefinition> jobs,
+                         List<WorkflowDefinition> workflows, List<ReportDefinition> reports,
+                         List<DashboardDefinition> dashboards, IntegrationsDefinition integrations,
+                         List<TranslationsDefinition> translations,
+                         List<GapLogEntry> gapLog) {
+        this(id, apiName, label, labelI18n, description, entities, pages, settings,
+                permissionSet, testSuites, stateMachines, slas, jobs, workflows,
+                reports, dashboards, integrations, translations, gapLog, null);
     }
 
     /**

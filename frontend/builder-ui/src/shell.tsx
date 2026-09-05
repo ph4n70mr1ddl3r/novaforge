@@ -18,6 +18,7 @@ import { SuitesEditor } from "./suites-editor.tsx";
 import { Automation } from "./automation.tsx";
 import { Integrations } from "./integrations.tsx";
 import { Templates } from "./templates.tsx";
+import { BrandingEditor } from "./branding-editor.tsx";
 
 /**
  * The builder shell (PHASE-2 §8): design-time surface over the Metadata draft
@@ -36,6 +37,7 @@ export type BuilderScreen =
     | "reports"
     | "dashboards"
     | "integrations"
+    | "branding"
     | "i18n"
     | "lifecycle"
     | "templates"
@@ -90,7 +92,7 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
             <header className="nf-topbar">
                 <h1>NovaForge Builder</h1>
                 <nav aria-label="Builder sections">
-                    {(["entities", "pages", "logic", "suites", "automation", "rbac", "reports", "dashboards", "integrations", "i18n", "lifecycle", "templates", "onboarding"] as BuilderScreen[]).map((name) => (
+                    {(["entities", "pages", "logic", "suites", "automation", "rbac", "reports", "dashboards", "integrations", "branding", "i18n", "lifecycle", "templates", "onboarding"] as BuilderScreen[]).map((name) => (
                         <button key={name} type="button" aria-current={screen === name} onClick={() => setScreen(name)} id={name === "entities" ? "entities" : undefined}>
                             {name}
                         </button>
@@ -263,6 +265,28 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                                         integrations: mutate(fresh.integrations ?? {}),
                                     } as Record<string, unknown>);
                                     await reload();
+                                }}
+                            />
+                        ) : null}
+                        {screen === "branding" ? (
+                            <BrandingEditor
+                                key={String(app.id)}
+                                app={app}
+                                busy={busy}
+                                onSave={async (mutate) => {
+                                    // the branding patch applies to a FRESH fetch (the
+                                    // dashboards rule); an empty branch replaces whole,
+                                    // dropping the tenant back to the platform palette
+                                    setBusy(true);
+                                    try {
+                                        const fresh = (await client.getApp(app.id ?? "")) as AppDefinition;
+                                        await client.patchApp(app.id ?? "", {
+                                            branding: mutate(fresh.branding),
+                                        } as Record<string, unknown>);
+                                        await reload();
+                                    } finally {
+                                        setBusy(false);
+                                    }
                                 }}
                             />
                         ) : null}

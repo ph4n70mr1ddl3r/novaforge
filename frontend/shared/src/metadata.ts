@@ -449,6 +449,14 @@ export interface PageDefinition {
     revision?: number;
 }
 
+/** Tenant branding (ADR-009 §5): token overrides the runtime shell applies to
+ *  its root. Any CSS color; supply accentContrast whenever the accent is light
+ *  in light mode so primary surfaces stay WCAG-readable. */
+export interface BrandingDefinition {
+    accent?: string;
+    accentContrast?: string;
+}
+
 export interface AppDefinition {
     id?: string;
     apiName: string;
@@ -467,6 +475,7 @@ export interface AppDefinition {
     testSuites?: TestSuiteDefinition[];
     translations: TranslationsDefinition[];
     gapLog?: GapLogEntry[];
+    branding?: BrandingDefinition;
 }
 
 /** The published read (PHASE-1 §4): bundle + version for cache keys. */

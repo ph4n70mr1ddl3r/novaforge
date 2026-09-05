@@ -2,22 +2,89 @@
  * NovaForge design tokens (W3C DTCG-derived) as CSS variables — ADR-009 §5:
  * theming's single source for light/dark/tenant branding. The Phase 2 shell loads
  * this once; catalog components consume only the variables, never hex literals.
+ *
+ * Layering: the light block below is the ONLY place primitive hexes live. Dark
+ * mode re-maps the same semantic names under `prefers-color-scheme: dark`, so
+ * any component written against the tokens themes itself for free. Soft tints
+ * are derived with color-mix() from the tokens themselves — never second hexes.
  */
 :root {
+  color-scheme: light dark;
+
+  /* surfaces */
   --nf-color-bg: #ffffff;
   --nf-color-surface: #f6f7f9;
+  --nf-color-surface-hover: #eceff3;
+  --nf-color-surface-selected: #e3ecfd;
+
+  /* text */
   --nf-color-text: #1a1d21;
   --nf-color-muted: #5b616e;
+
+  /* lines */
   --nf-color-border: #d4d7dd;
+  --nf-color-border-strong: #b8bcc4;
+
+  /* brand + feedback (danger aliases negative so existing
+     var(--nf-color-danger, …) call sites resolve instead of falling through) */
   --nf-color-accent: #2f6fed;
+  --nf-color-accent-contrast: #ffffff;
   --nf-color-positive: #1c7d43;
   --nf-color-negative: #b3261e;
+  --nf-color-danger: var(--nf-color-negative);
+  --nf-color-warning: #8a5300;
+
+  /* focus — WCAG 2.2 AA: the ring must stay visible on every surface */
+  --nf-color-focus: #1d4ed8;
+
+  /* soft tints derived from the tokens above — no second source of hexes */
+  --nf-color-accent-soft: color-mix(in srgb, var(--nf-color-accent) 12%, var(--nf-color-bg));
+  --nf-color-positive-soft: color-mix(in srgb, var(--nf-color-positive) 12%, var(--nf-color-bg));
+  --nf-color-negative-soft: color-mix(in srgb, var(--nf-color-negative) 10%, var(--nf-color-bg));
+  --nf-color-warning-soft: color-mix(in srgb, var(--nf-color-warning) 14%, var(--nf-color-bg));
+
+  /* typography */
   --nf-font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --nf-font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --nf-font-size-small: 0.8125rem;
   --nf-font-size-base: 0.9375rem;
   --nf-font-size-kpi: 1.75rem;
+
+  /* geometry */
   --nf-radius: 6px;
+  --nf-radius-lg: 10px;
   --nf-spacing-1: 0.25rem;
   --nf-spacing-2: 0.5rem;
   --nf-spacing-3: 0.75rem;
   --nf-spacing-4: 1rem;
+  --nf-spacing-5: 1.5rem;
+  --nf-spacing-6: 2rem;
+  --nf-shadow-1: 0 1px 2px rgb(16 20 26 / 0.06), 0 1px 3px rgb(16 20 26 / 0.08);
+  --nf-shadow-2: 0 4px 14px rgb(16 20 26 / 0.14);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --nf-color-bg: #121417;
+    --nf-color-surface: #1b1f24;
+    --nf-color-surface-hover: #262b32;
+    --nf-color-surface-selected: #24354f;
+
+    --nf-color-text: #e6e8eb;
+    --nf-color-muted: #9aa3ad;
+
+    --nf-color-border: #3a4048;
+    --nf-color-border-strong: #4d545d;
+
+    --nf-color-accent: #7da4ff;
+    --nf-color-accent-contrast: #0b1a38;
+    --nf-color-positive: #5cc48f;
+    --nf-color-negative: #ff8f88;
+    --nf-color-warning: #e0b45c;
+
+    --nf-color-focus: #8ab4ff;
+
+    --nf-shadow-1: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 3px rgb(0 0 0 / 0.5);
+    --nf-shadow-2: 0 4px 14px rgb(0 0 0 / 0.55);
+  }
 }
