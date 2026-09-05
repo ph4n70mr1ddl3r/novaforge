@@ -608,13 +608,23 @@ class Evaluator {
                 // 1e12) read as its unscaled digits and silently rounded at scale
                 // 1,000,000 where the JVM rejects.
                 const magnitude = stripped.digits * 10n ** BigInt(-stripped.scale);
-                // Mirrors the JVM engine's out-of-range arm: its read is
-                // intValueExact(), so anything beyond the 32-bit int range rejects —
-                // the old safe-integer gate admitted scales 1000× past it (and an
-                // absurd integral scale drove setScale into building a 10^21-digit
-                // bigint, hanging the evaluating tab).
-                if (magnitude > 2147483647n) {
-                    throw new ExpressionError("round(x, scale) scale is out of range");
+                // Out-of-range mirrors the JVM engine and covers both signs: the
+                // reference engine's intValueExact() rejects past the 32-bit int
+                // range, and its setScale ITSELF overflows (“BigInteger would
+                // overflow supported range”) from ±646456884 up — an
+                // ArithmeticException the JVM engine renders as this same
+                // rejection. The twin must never attempt those builds: its BigInt
+                // dies with a raw RangeError past ~322M digits (a crash, not an
+                // ExpressionError), and a negative-scale result its own toString
+                // cannot render. So the guard rejects a deliberately wider band
+                // than the int range (the calendar guard's precedent): past 10^8
+                // the power-of-ten build is beyond a tab's budget and the whole
+                // JVM-overflow band is covered — the failure mode is authoring
+                // feedback, never a crashed preview.
+                if (magnitude > 100000000n) {
+                    throw new ExpressionError(
+                        `round(x, scale) scale is out of range: ${scale.toString()}`,
+                    );
                 }
                 const places = Number(magnitude) * stripped.sign;
                 return value.setScale(places);

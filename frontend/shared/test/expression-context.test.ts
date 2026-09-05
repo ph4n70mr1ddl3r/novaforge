@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Decimal } from "../src/expression/decimal.ts";
 import { Expression } from "../src/expression/expression.ts";
+import { ExpressionError } from "../src/expression/values.ts";
 
 /**
  * The context-precision seam (PHASE-2 §7 Annex A): the JVM reference engine carries
@@ -70,5 +71,27 @@ describe("expr/v1 context precision — abs() and unary minus honor the JVM engi
         const y = Decimal.parse("1234567890123456789012345678901234567889");
         expect((evalWith("min(x, y)", { x, y }) as Decimal).toString()).toBe(y.toString());
         expect((evalWith("max(x, y)", { x, y }) as Decimal).toString()).toBe(x.toString());
+    });
+
+    it("round scale past the engines' range rejects as ExpressionError — never a RangeError crash, either sign", () => {
+        // The JVM engine's setScale overflows its compact range from ±646456884 up
+        // (2147483647 itself included — it fits intValueExact but the pow does not)
+        // and renders that ArithmeticException as this authoring-feedback
+        // rejection. The old twin guard (> 2^31) let the int boundary through:
+        // setScale built 10^2147483647 and died with a raw RangeError
+        // ("Maximum BigInt size exceeded"), and a negative scale past the band
+        // fabricated a decimal whose own toString explodes ("Invalid string
+        // length") — a crash where the server answers 400. The corpus pins the
+        // shared REJECTION verdict; this pins the error TYPE (ExpressionError,
+        // the 400 contract — a RangeError would fail here loudly).
+        for (const scale of ["2147483647", "646456884", "-646456884", "-2147483000"]) {
+            expect(
+                () => evalWith(`round(total, ${scale})`, { total: Decimal.parse("50.5") }),
+                `scale ${scale} must reject as ExpressionError`,
+            ).toThrow(ExpressionError);
+        }
+        // within the band, compact scales still compute
+        const compact = evalWith("round(total, 1000000)", { total: Decimal.parse("50.5") });
+        expect((compact as Decimal).compareTo(Decimal.parse("50.5"))).toBe(0);
     });
 });

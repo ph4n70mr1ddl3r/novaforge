@@ -104,6 +104,30 @@ class ExpressionConformanceTest {
     }
 
     @Test
+    @DisplayName("a round scale past the engines' supported range is authoring feedback (ExpressionException), never a raw crash — the int boundary and both signs included")
+    void roundScalePastEngineRangeIsAuthoringFeedback() {
+        // 2147483647 fits intValueExact(), but BigDecimal.setScale overflows its
+        // compact range there (“BigInteger would overflow supported range”, the
+        // same from ±646456884 up) — the raw ArithmeticException fell to the 500
+        // handler. The rejection must stay the 400-shaped ExpressionException, and
+        // it must hold for NEGATIVE scales too (the mirror band, -2147483000
+        // included). Within the band the compact scales still compute.
+        Clock clock = Clock.fixed(Instant.parse("2026-09-04T00:00:00Z"), ZoneOffset.UTC);
+        for (String scale : new String[] {"2147483647", "646456884", "-646456884", "-2147483000"}) {
+            Expression expression = Expression.parse("round(total, " + scale + ")");
+            assertThatThrownBy(() -> expression.evaluate(
+                    Expression.Bindings.of(Map.of("total", new BigDecimal("50.5"))), clock))
+                    .as("scale " + scale + " must reject")
+                    .isInstanceOf(ExpressionException.class)
+                    .isNotInstanceOf(ArithmeticException.class)
+                    .hasMessageContaining("out of range");
+        }
+        Object compact = Expression.parse("round(total, 1000000)").evaluate(
+                Expression.Bindings.of(Map.of("total", new BigDecimal("50.5"))), clock);
+        assertThat(((BigDecimal) compact).compareTo(new BigDecimal("50.5"))).isZero();
+    }
+
+    @Test
     @DisplayName("abs(MATH)/negate(MATH) round to the 34-digit context — the verdicts the TS twin's context-precision pin mirrors")
     void contextBearingUnaryOpsRound() {
         // The reference engine carries MathContext(34, HALF_EVEN) into negate and abs,
