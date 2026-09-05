@@ -116,8 +116,8 @@ novaforge/
 │                        #   the metadata-driven app shell; builder-ui = the
 │                        #   entity/page/RBAC/report/i18n/lifecycle builders
 ├── e2e-tests/           # whole-platform end-to-end ERP cycles (O2C/P2P/R2R) —
-│                        #   nine services boot from their packaged jars against
-│                        #   Testcontainers infra; cycles ride the public APIs
+│                        #   the cycles' services boot from their packaged jars
+│                        #   against Testcontainers infra; cycles ride the APIs
 ├── deploy/              # compose (Keycloak/PG/Redis/Kafka/Prometheus/Grafana
 │                        #   + Tempo/Loki/promtail, Mailpit), postgres-init,
 │                        #   kind/, helm/ (one chart per service + umbrella)

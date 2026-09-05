@@ -3083,8 +3083,10 @@ artifact, its gap log, the spec amendments, the two test files, and this entry.
 re-played them.** `e2e-tests/` closes that: a Maven module whose five tests boot
 the entire platform — Testcontainers infra at the compose stack's image pins
 (Postgres with the per-service databases + audit role, Redis, Kafka, Keycloak
-importing the realm) and **nine services from their packaged Spring Boot jars** on
-the documented ports with the documented defaults — then drive complete ERP cycles
+importing the realm) and **the five cycle-path services from their packaged Spring Boot jars**
+(audit/notification/scheduler/file/gateway are off-path) on the documented ports
+with the documented defaults, each awaited before the next spawns so a 2-CPU CI
+runner never boots fat contexts into each other — then drive complete ERP cycles
 through the public APIs only:
 
 - **O2C** (`ErpOrderToCashE2ETest` + the new `apps/erp/suites/orderToCash.json`):

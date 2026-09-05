@@ -85,35 +85,33 @@ public final class NovaForgeStack {
 
     private static final String METADATA = "metadata-service";
     private static final String RUNTIME = "data-runtime";
-    private static final String SCRIPT = "script-engine";
-    private static final String AUDIT = "audit-service";
     private static final String WORKFLOW = "workflow-service";
-    private static final String NOTIFICATION = "notification-service";
     private static final String REPORTING = "reporting-service";
     private static final String INTEGRATION = "integration-service";
 
-    /** module dir under services/ (data-runtime is a nested aggregator), port. */
+    /** module dir under services/ (data-runtime is a nested aggregator), port. The
+     * five services on the cycles' path — audit/notification/scheduler/file/gateway
+     * and the script engine (no authored flow uses runScript) are off-path and stay
+     * down: a CI runner's 7 GB cannot carry the whole landscape beside Maven. */
     private static final Map<String, String> SERVICE_MODULES = Map.of(
             METADATA, "metadata-service",
             RUNTIME, "data-runtime/api",
-            SCRIPT, "script-engine",
-            AUDIT, "audit-service",
             WORKFLOW, "workflow-service",
-            NOTIFICATION, "notification-service",
             REPORTING, "reporting-service",
             INTEGRATION, "integration-service");
 
     private static final Map<String, Integer> SERVICE_PORTS = Map.of(
             METADATA, 8081,
             RUNTIME, 8083,
-            SCRIPT, 8084,
-            AUDIT, 8085,
             WORKFLOW, 8086,
-            NOTIFICATION, 8088,
             REPORTING, 8089,
             INTEGRATION, 8090);
 
+    /** Processes of every boot attempt — a later attempt reaps a failed one's orphans. */
+    private static final List<Process> ALL_SPAWNED = new ArrayList<>();
+
     private static NovaForgeStack start() {
+        reapOrphans();
         preflightPorts(SERVICE_PORTS.values());
         PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(
                         DockerImageName.parse("docker.io/library/postgres:16.15")
@@ -127,11 +125,13 @@ public final class NovaForgeStack {
                 .withExposedPorts(6379);
         redis.start();
         KafkaContainer kafka = new KafkaContainer("apache/kafka:4.3.1");
+        kafka.withEnv("KAFKA_HEAP_OPTS", "-Xmx256m -Xms128m");
         kafka.start();
         GenericContainer<?> keycloak = new GenericContainer<>(DockerImageName.parse("quay.io/keycloak/keycloak:26.7.2"))
                 .withCommand("start-dev", "--import-realm")
                 .withEnv("KC_HOSTNAME_STRICT", "false")
                 .withEnv("KC_HTTP_ENABLED", "true")
+                .withEnv("JAVA_OPTS_APPEND", "-Xmx512m")
                 .withExposedPorts(8080)
                 // the realm import minus the novaforge-auth event listener (that
                 // provider ships in the auth-listener deploy artifact and only feeds
@@ -203,12 +203,16 @@ public final class NovaForgeStack {
         common.put("NOVAFORGE_RELAY_INTERVAL_MS", "250");
         common.put("NOVAFORGE_HOOK_RETRY_SCAN_MS", "1000");
         common.put("NOVAFORGE_METADATA_INDEX_TTL_MS", "5000");
-        common.put("JAVA_TOOL_OPTIONS", "-Xmx512m -XX:MaxMetaspaceSize=384m -XX:+ExitOnOutOfMemoryError");
+        // a CI runner shares 7 GB with Maven, five infra containers and these JVMs —
+        // tight heaps keep the landscape from swapping the health checks to death
+        common.put("JAVA_TOOL_OPTIONS",
+                "-Xmx384m -XX:MaxMetaspaceSize=220m -XX:+ExitOnOutOfMemoryError");
 
         // boot order matters only for warm-up latency: metadata first (everything
-        // resolves through it), then the runtime, then the rest
-        List<String> order = List.of(METADATA, RUNTIME, SCRIPT, AUDIT, WORKFLOW,
-                NOTIFICATION, REPORTING, INTEGRATION);
+        // resolves through it), then the runtime, then the rest — each awaited
+        // before the next spawns, so a 2-CPU runner never boots nine fat contexts
+        // into each other
+        List<String> order = List.of(METADATA, RUNTIME, WORKFLOW, REPORTING, INTEGRATION);
         for (String service : order) {
             Path jar = serviceJar(SERVICE_MODULES.get(service));
             Map<String, String> env = new LinkedHashMap<>(common);
@@ -216,18 +220,14 @@ public final class NovaForgeStack {
                 env.put("NOVAFORGE_PROCESS_SYNC_MS", "5000");
                 env.put("NOVAFORGE_SLA_SCAN_MS", "2000");
             }
-            services.put(service, spawn(service, jar, env));
-        }
-        for (Map.Entry<String, Integer> entry : SERVICE_PORTS.entrySet()) {
-            String service = entry.getKey();
-            String health = "http://127.0.0.1:" + entry.getValue() + "/actuator/health";
+            Process process = spawn(service, jar, env);
+            services.put(service, process);
+            String health = "http://127.0.0.1:" + SERVICE_PORTS.get(service) + "/actuator/health";
             try {
-                await(300, service + " health", () -> get200(health));
+                await(420, service + " health", () -> get200(health));
             } catch (IllegalStateException timeout) {
-                Process process = services.get(service);
                 throw new IllegalStateException(timeout.getMessage()
-                        + (process != null && !process.isAlive()
-                        ? " — the process EXITED" : " — the process is still alive")
+                        + (!process.isAlive() ? " — the process EXITED" : " — the process is still alive")
                         + "\n--- last log lines (" + service + ") ---\n"
                         + logTail(service), timeout);
             }
@@ -255,6 +255,7 @@ public final class NovaForgeStack {
                     .redirectErrorStream(true);
             pb.environment().putAll(env);
             Process process = pb.start();
+            ALL_SPAWNED.add(process);
             return process;
         } catch (IOException e) {
             throw new IllegalStateException("could not start " + name, e);
@@ -284,9 +285,8 @@ public final class NovaForgeStack {
     }
 
     private void stopServices() {
-        for (Map.Entry<String, Process> entry : services.entrySet()) {
-            Process process = entry.getValue();
-            if (process != null && process.isAlive()) {
+        for (Process process : ALL_SPAWNED) {
+            if (process.isAlive()) {
                 process.destroy();
                 try {
                     if (!process.waitFor(15, TimeUnit.SECONDS)) {
@@ -296,6 +296,31 @@ public final class NovaForgeStack {
                     process.destroyForcibly();
                     Thread.currentThread().interrupt();
                 }
+            }
+        }
+    }
+
+    /** A failed boot attempt must not orphan its services into the next one's ports. */
+    private static void reapOrphans() {
+        boolean any = false;
+        for (Process process : ALL_SPAWNED) {
+            if (process.isAlive()) {
+                any = true;
+                process.destroy();
+            }
+        }
+        if (!any) {
+            return;
+        }
+        long deadline = System.currentTimeMillis() + 20_000;
+        for (Process process : ALL_SPAWNED) {
+            try {
+                if (process.isAlive() && !process.waitFor(
+                        Math.max(1, deadline - System.currentTimeMillis()), TimeUnit.MILLISECONDS)) {
+                    process.destroyForcibly();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
         }
     }

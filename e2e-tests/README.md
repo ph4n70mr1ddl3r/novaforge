@@ -7,10 +7,12 @@ driven against the **real service topology**, not mocks:
   (per-service databases + the audit role, `deploy/postgres-init`'s shape), Redis 7,
   Kafka 4 (KRaft), Keycloak 26 with the realm import (the compose realm minus the
   `novaforge-auth` event listener — that provider only feeds the auth.* spine).
-- **Services**: metadata, data-runtime, script-engine, audit, workflow, notification,
-  reporting, integration — each booted from its **packaged Spring Boot jar** with the
-  same defaults and ports the README's host-JVM bring-up uses. One stack per test JVM;
-  `ErpSuiteCorpusE2ETest` (alphabetically first) carries the boot.
+- **Services**: metadata, data-runtime, workflow, reporting, integration — the five
+  on the cycles' path (audit/notification/scheduler/file/gateway and the script
+  engine are off-path; no authored flow uses `runScript`) — each booted from its
+  **packaged Spring Boot jar** with the same defaults and ports the README's
+  host-JVM bring-up uses, one awaited before the next spawns. One stack per test
+  JVM; a failed boot attempt's orphans are reaped before the next one starts.
 - **The cycles** ride public APIs only: the admin surface (tenants/users/roles), the
   runtime write path, the workflow inbox, the report run surface, and the builder's
   headless suite-run API (`TestRunner`'s scratch-tenant machinery is the platform's
