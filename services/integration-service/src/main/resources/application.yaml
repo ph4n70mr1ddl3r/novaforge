@@ -19,6 +19,15 @@ spring:
     password: ${NOVAFORGE_INTEGRATION_DB_PASSWORD:novaforge}
   flyway:
     locations: classpath:db/migration
+  data:
+    redis:
+      # The published-integrations epoch counters ride Redis (PublishedIntegrations) —
+      # the same plumb the data runtime and reporting carry. Found live in the e2e
+      # stack run: the env twin was missing here, so the service reached for the
+      # localhost default and its health check never turned green wherever Redis
+      # does not sit on 6379.
+      host: ${NOVAFORGE_REDIS_HOST:localhost}
+      port: ${NOVAFORGE_REDIS_PORT:6379}
   kafka:
     bootstrap-servers: ${NOVAFORGE_KAFKA:localhost:9092}
     producer:
