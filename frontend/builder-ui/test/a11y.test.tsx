@@ -3,7 +3,7 @@ import axe from "axe-core";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { PlatformClient, type AppDefinition } from "@novaforge/shared";
-import { BuilderShell } from "../src/shell.tsx";
+import { BUILDER_NAV, BuilderShell } from "../src/shell.tsx";
 
 /**
  * The builder's axe scans (PHASE-2 §2's a11y row: "WCAG 2.2 AA; axe automated
@@ -100,31 +100,30 @@ describe("builder a11y — axe scans of every screen (PHASE-2 §2)", () => {
         // the entities screen renders once the app loads
         await screen.findByText("Invoice");
 
-        const screens = [
-            "entities", "pages", "logic", "suites", "automation", "rbac", "reports",
-            "dashboards", "integrations", "i18n", "lifecycle", "templates", "onboarding",
-        ];
+        // the nav drives from the same grouped mapping the shell renders — labels,
+        // not raw screen keys (the nav's human-face pass)
+        const screens = BUILDER_NAV.flatMap((group) => group.items.map((item) => item));
         const scanned: string[] = [];
-        for (const name of screens) {
-            fireEvent.click(screen.getByRole("button", { name: name }));
+        for (const item of screens) {
+            fireEvent.click(screen.getByRole("button", { name: item.label }));
             // let the screen's async mounts settle before scanning
             // eslint-disable-next-line no-await-in-loop
             await waitFor(() => {
                 const current = container.querySelector('[aria-current="true"]');
-                expect(current?.textContent).toBe(name);
+                expect(current?.textContent).toBe(item.label);
             });
             // eslint-disable-next-line no-await-in-loop
             await new Promise((resolve) => setTimeout(resolve, 50));
             const results = await axe.run(container, {});
             expect(
                 results.violations,
-                `${name} screen: ` + results.violations.map((v) =>
+                `${item.key} screen: ` + results.violations.map((v) =>
                     `${v.id} (${v.nodes.length} nodes): ${v.help}`).join("; "),
             ).toHaveLength(0);
-            scanned.push(name);
+            scanned.push(item.key);
         }
         // exhaustive: every screen the shell renders was scanned
-        expect(scanned).toEqual(screens);
+        expect(scanned).toEqual(screens.map((item) => item.key));
         unmount();
     });
 });

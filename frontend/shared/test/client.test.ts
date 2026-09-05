@@ -39,6 +39,58 @@ describe("PlatformClient", () => {
         expect(JSON.parse(params.get("page")!)).toEqual({ size: 50, offset: 100 });
     });
 
+    it("serializes composites to the server's canonical wire shape (the op as the node key)", async () => {
+        // Anti-regression: the TS type names `op` + `children`, but the JVM
+        // QueryParser reads `{"and": […]}` (the shape ReportCompiler lowers to).
+        // Sent verbatim, every drill-through deep link — the one composite
+        // producer — 400'd as VALIDATION_FAILED before its list could render.
+        const { client, fetchImpl } = stubClient({
+            "GET /runtime/Order": { status: 200, body: { rows: [], total: 0 } },
+        });
+        await client.list({
+            entity: "Order",
+            filter: {
+                op: "and",
+                children: [
+                    { field: "status", op: "eq", value: "POSTED" },
+                    { field: "reference", op: "contains", value: "SO" },
+                ],
+            },
+            size: 50,
+            offset: 0,
+        });
+        const url = String((fetchImpl.mock.calls[0] as unknown[])[0]);
+        const params = new URLSearchParams(url.slice(url.indexOf("?") + 1));
+        expect(JSON.parse(params.get("filter")!)).toEqual({
+            and: [
+                { field: "status", op: "eq", value: "POSTED" },
+                { field: "reference", op: "contains", value: "SO" },
+            ],
+        });
+
+        // `or` lowers the same way, and nesting survives
+        await client.list({
+            entity: "Order",
+            filter: {
+                op: "or",
+                children: [
+                    { field: "status", op: "eq", value: "DRAFT" },
+                    { op: "and", children: [{ field: "total", op: "gt", value: 100 }] },
+                ],
+            },
+            size: 50,
+            offset: 0,
+        });
+        const url2 = String((fetchImpl.mock.calls[1] as unknown[])[0]);
+        const params2 = new URLSearchParams(url2.slice(url2.indexOf("?") + 1));
+        expect(JSON.parse(params2.get("filter")!)).toEqual({
+            or: [
+                { field: "status", op: "eq", value: "DRAFT" },
+                { and: [{ field: "total", op: "gt", value: 100 }] },
+            ],
+        });
+    });
+
     it("recovers a 401 with one refresh and one retry — and surfaces when refresh fails", async () => {
         // Anti-regression (2026-08-31, thirteenth pass): the client had no notion of
         // token expiry — an SPA in use past the access token's lifetime 401'd every

@@ -319,6 +319,150 @@ describe("RuntimeShell", () => {
         await waitFor(() => expect(calls.some((call) => call.includes("/tasks/t-1/delegate"))).toBe(true));
     });
 
+    it("marks the active view in the nav with aria-current — the runtime nav finally has a where-am-I face", async () => {
+        const { client } = stubClient();
+        render(shell(client));
+        const home = await screen.findByRole("button", { name: "Home" });
+        expect(home.getAttribute("aria-current")).toBe("page");
+
+        // an entity list: its nav button takes the marker, Home loses it
+        const customers = screen.getByRole("button", { name: "Customers" });
+        customers.click();
+        await waitFor(() => expect(screen.getByText("1 record")).toBeTruthy());
+        expect(customers.getAttribute("aria-current")).toBe("page");
+        expect(home.getAttribute("aria-current")).toBeNull();
+
+        // and the top-level surfaces each carry it in turn
+        screen.getByRole("button", { name: "Approvals" }).click();
+        await waitFor(() =>
+            expect(screen.getByRole("button", { name: "Approvals" }).getAttribute("aria-current")).toBe("page"));
+        expect(customers.getAttribute("aria-current")).toBeNull();
+    });
+
+    it("navigating away from a dirty form asks first — a stray nav click used to destroy typed data", async () => {
+        const { client } = stubClient();
+        render(shell(client));
+        screen.getByRole("button", { name: "Customers" }).click();
+        await waitFor(() => expect(screen.getByText("1 record")).toBeTruthy());
+        screen.getByRole("button", { name: /new|add/i }).click();
+        // the form's lazy fields suspend then resolve — wait for the FORM's own
+        // chrome before grabbing the field, never a detached node of the old page
+        await screen.findByRole("button", { name: "Save" });
+        const name = screen.getByLabelText(/^Name/) as HTMLInputElement;
+        await act(async () => {
+            fireEvent.change(name, { target: { value: "Acme" } });
+        });
+
+        // the nav click must NOT switch views — the guard interjects first
+        await act(async () => {
+            screen.getByRole("button", { name: "Approvals" }).click();
+        });
+        const dialog = await screen.findByRole("dialog", { name: "Unsaved changes" });
+        // the draft is still on screen behind the dialog — nothing was lost yet
+        expect((screen.getByLabelText(/^Name/) as HTMLInputElement).value).toBe("Acme");
+
+        // Keep editing: the dialog closes, the route never changed
+        await act(async () => {
+            within(dialog).getByRole("button", { name: "Keep editing" }).click();
+        });
+        expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).toBeNull();
+        expect(screen.getByLabelText(/^Name/)).toBeTruthy();
+
+        // Discard changes: the interrupted navigation completes
+        await act(async () => {
+            screen.getByRole("button", { name: "Approvals" }).click();
+        });
+        await act(async () => {
+            within(await screen.findByRole("dialog", { name: "Unsaved changes" }))
+                .getByRole("button", { name: "Discard changes" }).click();
+        });
+        await waitFor(() => expect(screen.getByRole("heading", { name: "My approvals" })).toBeTruthy());
+    });
+
+    it("a page that just SAVED navigates silently — the guard never re-prompts on its own save", async () => {
+        const fetchImpl = vi.fn(async (input: string | URL, init?: RequestInit) => {
+            const url = String(input);
+            const method = (init?.method ?? "GET").toUpperCase();
+            if (url.includes("/runtime/erp.Customer") && method === "POST") {
+                return new Response(JSON.stringify({ id: "c-2", name: "Acme", version: 1 }), { status: 200 });
+            }
+            if (url.includes("/runtime/erp.Customer/c-2")) {
+                return new Response(JSON.stringify({ id: "c-2", name: "Acme", version: 1 }), { status: 200 });
+            }
+            if (url.includes("/runtime/erp.Customer")) {
+                return new Response(
+                    JSON.stringify({ rows: [{ id: "c-1", name: "Acme", region: "EU" }], total: 1 }),
+                    { status: 200 },
+                );
+            }
+            return new Response(JSON.stringify({ rows: [], total: 0 }), { status: 200 });
+        });
+        const client = new PlatformClient("", () => "t", fetchImpl as unknown as typeof fetch);
+        render(shell(client));
+        screen.getByRole("button", { name: "Customers" }).click();
+        await waitFor(() => expect(screen.getByText("1 record")).toBeTruthy());
+        screen.getByRole("button", { name: /new|add/i }).click();
+        await screen.findByRole("button", { name: "Save" });
+        const name = screen.getByLabelText(/^Name/);
+        await act(async () => {
+            fireEvent.change(name, { target: { value: "Acme" } });
+        });
+        const save = await screen.findByRole("button", { name: "Save" });
+        await act(async () => {
+            save.click();
+        });
+        // the create resolved and navigated to the new record's detail
+        await waitFor(() => expect(screen.getByDisplayValue("Acme")).toBeTruthy());
+
+        // leaving NOW is silent: the save adopted its own baseline before navigating
+        await act(async () => {
+            screen.getByRole("button", { name: "Approvals" }).click();
+        });
+        await waitFor(() => expect(screen.getByRole("heading", { name: "My approvals" })).toBeTruthy());
+        expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).toBeNull();
+    });
+
+    it("the ask dialog traps Tab, cancels on Escape, and restores focus to its trigger", async () => {
+        const rows = [{ id: "t-1", type: "approval", entity: "Erp.Order", recordId: "r-1", status: "OPEN", createdBy: "u-2", createdAt: "2026-08-24T10:00:00Z" }];
+        const fetchImpl = vi.fn(async (input: string | URL) => {
+            const url = String(input);
+            if (url.includes("/workflow/tasks")) {
+                return new Response(JSON.stringify({ rows, total: 1 }), { status: 200 });
+            }
+            return new Response(JSON.stringify({ title: "not stubbed", status: 404 }), { status: 404 });
+        });
+        const client = new PlatformClient("", () => "t", fetchImpl as unknown as typeof fetch);
+        render(createElement(Inbox, { client }));
+
+        const triggers = await screen.findAllByRole("button", { name: "Reject" });
+        expect(triggers).toHaveLength(1);
+        await act(async () => {
+            // a real click focuses the trigger — jsdom's synthetic click doesn't
+            triggers[0]!.focus();
+            triggers[0]!.click();
+        });
+        const dialog = await screen.findByRole("dialog", { name: "Reject task" });
+        expect(dialog.getAttribute("aria-modal")).toBe("true");
+        // autofocus landed in the comment field
+        const comment = dialog.querySelector("textarea") as HTMLTextAreaElement;
+        expect(document.activeElement).toBe(comment);
+
+        // Tab from the LAST focusable (the dialog's own Reject) cycles to the FIRST
+        const submit = within(dialog).getByRole("button", { name: "Reject" });
+        await act(async () => {
+            submit.focus();
+            fireEvent.keyDown(document, { key: "Tab" });
+        });
+        expect(document.activeElement).toBe(comment);
+
+        // Escape cancels — and focus returns to the row's Reject trigger
+        await act(async () => {
+            fireEvent.keyDown(document, { key: "Escape" });
+        });
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+        expect(document.activeElement).toBe(triggers[0]);
+    });
+
     it("passes axe on the shell chrome", async () => {
         const { client } = stubClient();
         const { container } = render(shell(client));

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
     DashboardGrid,
     DashboardCell,
@@ -45,6 +45,12 @@ export function Dashboards({
             !dashboard.roles?.length || dashboard.roles.some((role) => roles.includes(role)),
     );
     const [selected, setSelected] = useState<DashboardDefinition | undefined>(visible[0]);
+    // widgets were titled by the raw report id ("revenueByRegion") — the report's
+    // authored label is what a human can read; the id stays the fallback
+    const reportLabels = useMemo(
+        () => new Map(app.reports.map((report) => [report.id, report.label?.trim() ? report.label : report.id])),
+        [app.reports],
+    );
     return (
         <section className="nf-dashboards" aria-label="Dashboards">
             <h2>Dashboards</h2>
@@ -66,7 +72,14 @@ export function Dashboards({
                         ))}
                     </div>
                     {selected ? (
-                        <DashboardView client={client} appApiName={appApiName} app={app} dashboard={selected} onDrill={onDrill} />
+                        <DashboardView
+                            client={client}
+                            appApiName={appApiName}
+                            app={app}
+                            dashboard={selected}
+                            reportLabels={reportLabels}
+                            onDrill={onDrill}
+                        />
                     ) : null}
                 </>
             )}
@@ -79,12 +92,14 @@ function DashboardView({
     appApiName,
     app,
     dashboard,
+    reportLabels,
     onDrill,
 }: {
     client: PlatformClient;
     appApiName: string;
     app: AppDefinition;
     dashboard: DashboardDefinition;
+    reportLabels: Map<string, string>;
     onDrill?: (entity: string, filter: QueryFilter) => void;
 }): ReactNode {
     const drillBinding = useCallback(
@@ -118,6 +133,7 @@ function DashboardView({
                     client={client}
                     appApiName={appApiName}
                     widget={widget}
+                    label={reportLabels.get(widget.reportRef) ?? widget.reportRef}
                     drill={drillBinding(widget.reportRef)}
                 />
             ))}
@@ -133,11 +149,14 @@ function WidgetCell({
     client,
     appApiName,
     widget,
+    label,
     drill,
 }: {
     client: PlatformClient;
     appApiName: string;
     widget: DashboardWidget;
+    /** The report's authored label — the human-readable widget title. */
+    label: string;
     drill?: DrillThroughBinding & { drill: (filter: QueryFilter) => void };
 }): ReactNode {
     const [run, setRun] = useState<ReportRun | null>(null);
@@ -192,9 +211,9 @@ function WidgetCell({
     return (
         <DashboardCell span={widget.span ?? 6}>
             {failed && !run ? (
-                <p role="status">{widget.reportRef} unavailable — the run failed.</p>
+                <p role="status">{label} unavailable — the run failed.</p>
             ) : !run ? (
-                <p role="status">Loading {widget.reportRef}…</p>
+                <p role="status">Loading {label}…</p>
             ) : (
                 <>
                     {/* a failed AUTO-refresh keeps the last successful run — say so:
@@ -205,14 +224,14 @@ function WidgetCell({
                         </p>
                     ) : null}
                     {widget.widget === "kpi" ? (
-                        <KpiTile reportRef={widget.reportRef} totals={run.totals} metric={metric} label={widget.reportRef} />
+                        <KpiTile reportRef={widget.reportRef} totals={run.totals} metric={metric} label={label} />
                     ) : widget.widget === "chart" ? (
-                        <ChartWidget reportRef={widget.reportRef} chart={run.chart} title={widget.reportRef} />
+                        <ChartWidget reportRef={widget.reportRef} chart={run.chart} title={label} />
                     ) : (
                         <ReportTable
                             reportRef={widget.reportRef}
                             run={run}
-                            title={widget.reportRef}
+                            title={label}
                             drillThrough={drill}
                             onDrill={drill ? (_row, filter) => drill.drill(filter) : undefined}
                         />

@@ -294,6 +294,24 @@ select:disabled {
   gap: var(--nf-spacing-3);
 }
 
+/* the list's search-as-you-type box — pushed right, sized to type in */
+.nf-search {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--nf-spacing-1);
+}
+
+.nf-search input[type="search"] {
+  min-width: 11rem;
+}
+
+/* list rows open on click (the Open button is the accessible control) — the
+   pointer says the whole row is live */
+.nf-list .nf-table tbody tr {
+  cursor: pointer;
+}
+
 .nf-pager {
   display: flex;
   align-items: center;

@@ -120,13 +120,23 @@ describe("dashboards (PHASE-5 §5)", () => {
             .filter((url) => url.includes("/runtime/erp.Customer"))
             .pop()!;
         const filter = JSON.parse(new URL(listCall, "http://gateway").searchParams.get("filter")!);
+        // the SERVER's canonical composite shape ({"and": […]}) — the TS-side
+        // {op, children} used to ride the wire verbatim and 400 at the QueryParser
         expect(filter).toEqual({
-            op: "and",
-            children: [
+            and: [
                 { field: "status", op: "eq", value: "POSTED" },
                 { field: "name", op: "eq", value: "acme" },
             ],
         });
+    });
+
+    it("titles widgets by the report's authored label, never the raw report id", async () => {
+        const { client } = stubClient({});
+        render(shell(client));
+        screen.getByRole("button", { name: "Dashboards" }).click();
+        // "Outstanding by customer" is the report's label; "byCustomer" is an id
+        expect(await screen.findByText("Outstanding by customer")).toBeTruthy();
+        expect(screen.queryByText("byCustomer")).toBeNull();
     });
 
     it("auto-refreshes a widget on its authored timer, and stays static without one", async () => {
@@ -192,7 +202,8 @@ describe("dashboards (PHASE-5 §5)", () => {
         const client = new PlatformClient("", () => "t", fetchImpl as unknown as typeof fetch);
         render(shell(client));
         screen.getByRole("button", { name: "Dashboards" }).click();
-        const loading = await screen.findByText(/Loading byCustomer/);
+        // the loading state speaks the report's label too (never the raw id)
+        const loading = await screen.findByText(/Loading Outstanding by customer/);
         expect(loading.getAttribute("role")).toBe("status");
     });
 });

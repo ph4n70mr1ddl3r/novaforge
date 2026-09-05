@@ -30,6 +30,60 @@ export function Inbox({ client }: { client: PlatformClient }): ReactNode {
     const size = 25;
     const reloadSeq = useRef(0);
 
+    // Dialog modality: Escape cancels (document-level — the scrim's key handler
+    // only worked while focus happened to be inside), Tab is TRAPPED (it used to
+    // cycle into the table behind the modal), and closing restores focus to the
+    // trigger so keyboard users aren't dumped back at <body>. The return target
+    // is captured at OPEN time — an effect capture would run after the commit,
+    // when the dialog's own autofocus already owns focus.
+    const restoreFocusRef = useRef<HTMLElement | null>(null);
+    const openAsk = (dialog: AskDialog): void => {
+        restoreFocusRef.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        setAskValue("");
+        setAsk(dialog);
+    };
+    useEffect(() => {
+        if (!ask) {
+            return;
+        }
+        const onKey = (event: KeyboardEvent): void => {
+            if (event.key === "Escape") {
+                event.stopPropagation();
+                setAsk(null);
+                return;
+            }
+            if (event.key !== "Tab") {
+                return;
+            }
+            const dialog = document.querySelector(".nf-dialog");
+            if (!(dialog instanceof HTMLElement)) {
+                return;
+            }
+            const focusable = Array.from(
+                dialog.querySelectorAll<HTMLElement>("button, input, textarea, select, a[href]"),
+            ).filter((element) => !element.hasAttribute("disabled"));
+            if (focusable.length === 0) {
+                return;
+            }
+            const first = focusable[0]!;
+            const last = focusable[focusable.length - 1]!;
+            const active = document.activeElement;
+            if (event.shiftKey && (active === first || !(active instanceof Node) || !dialog.contains(active))) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && active === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+        document.addEventListener("keydown", onKey, true);
+        return () => {
+            document.removeEventListener("keydown", onKey, true);
+            restoreFocusRef.current?.focus();
+        };
+    }, [ask]);
+
     const reload = (target: number): void => {
         // only the LATEST load commits (notifications' own fence): a page change
         // racing a resolve-triggered reload used to let the older request's rows
@@ -79,8 +133,7 @@ export function Inbox({ client }: { client: PlatformClient }): ReactNode {
     const approve = (taskId: string): Promise<void> => run(() => client.resolveTask(taskId, true));
 
     const reject = (taskId: string): void => {
-        setAskValue("");
-        setAsk({
+        openAsk({
             title: "Reject task",
             label: "Rejection comment",
             submitLabel: "Reject",
@@ -96,8 +149,7 @@ export function Inbox({ client }: { client: PlatformClient }): ReactNode {
     const claim = (taskId: string): Promise<void> => run(() => client.claimTask(taskId));
 
     const delegate = (taskId: string): void => {
-        setAskValue("");
-        setAsk({
+        openAsk({
             title: "Delegate task",
             label: "Delegate to (user id)",
             submitLabel: "Delegate",
@@ -171,15 +223,10 @@ export function Inbox({ client }: { client: PlatformClient }): ReactNode {
             {ask ? (
                 // scrim click and Escape both cancel — a prompt's cancel button was
                 // the ONLY escape hatch, and the browser-owned dialog fought the app
-                <div
-                    className="nf-dialog-scrim"
-                    onClick={() => setAsk(null)}
-                    onKeyDown={(event) => {
-                        if (event.key === "Escape") setAsk(null);
-                    }}
-                >
+                <div className="nf-dialog-scrim" onClick={() => setAsk(null)}>
                     <div
                         role="dialog"
+                        aria-modal="true"
                         aria-label={ask.title}
                         className="nf-dialog"
                         onClick={(event) => event.stopPropagation()}

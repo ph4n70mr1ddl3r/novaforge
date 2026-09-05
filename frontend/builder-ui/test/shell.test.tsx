@@ -3,7 +3,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { PlatformClient, type AppDefinition } from "@novaforge/shared";
 import { BuilderShell } from "../src/shell.tsx";
-
 /**
  * The BuilderShell harness (twentieth pass): the shell had no test mount of its
  * own — the nineteenth pass's pages-screen fix ("every screen-saver reloads;
@@ -77,7 +76,7 @@ describe("BuilderShell (twentieth-pass harness)", () => {
         render(createElement(BuilderShell, { client: stub.client, role: "builder" }));
 
         // navigate to the pages screen once the app has loaded
-        fireEvent.click(await screen.findByRole("button", { name: "pages" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Pages" }));
 
         // dirty a customization (the §4 visibility overlay the page-builder pins ride)
         fireEvent.click(await screen.findByRole("treeitem", { name: /status/ }));

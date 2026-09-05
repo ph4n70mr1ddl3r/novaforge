@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
     ApiError,
+    EmptyState,
     PlatformClient,
     type PageDefinition,
     type QueryFilter,
@@ -61,6 +62,20 @@ function effectiveRoles(app: AppDefinition, user: { roles: string[] }): string[]
         .filter((role) => appRoles.has(role));
 }
 
+/**
+ * Stable deep-compare of a record draft against its loaded/saved baseline (key-
+ * sorted, arrays and nesting included): the unsaved-changes guard must answer
+ * synchronously at navigation time, not from render-lagged state.
+ */
+function canonicalJson(value: unknown): string {
+    if (value === null || typeof value !== "object") return JSON.stringify(value ?? null);
+    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+    const entries = Object.entries(value as Record<string, unknown>)
+        .filter(([, member]) => member !== undefined)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([key, member]) => `${JSON.stringify(key)}:${canonicalJson(member)}`).join(",")}}`;
+}
+
 export function RuntimeShell({ client, published, user, versionKey }: RuntimeShellProps): ReactNode {
     const app = published.app as AppDefinition;
     // Tenant branding (ADR-009 §5): overrides ride the token layer — the shell
@@ -77,6 +92,23 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
         : undefined;
     const [route, setRoute] = useState<Route>({ view: "home" });
     const [locale, setLocale] = useState<string | undefined>(user.locale);
+    // The unsaved-changes guard: EntityPage registers a SYNCHRONOUS dirty check
+    // (draft vs baseline through refs — render-lagged state would either miss the
+    // last keystroke or, worse, prompt right after a save that already navigated).
+    // Any route change while dirty first asks — a stray nav click used to destroy
+    // typed data without a word.
+    const dirtyCheckRef = useRef<(() => boolean) | null>(null);
+    const registerDirtyCheck = useCallback((check: (() => boolean) | null) => {
+        dirtyCheckRef.current = check;
+    }, []);
+    const [pendingRoute, setPendingRoute] = useState<Route | null>(null);
+    const routeTo = useCallback((next: Route) => {
+        if (dirtyCheckRef.current?.()) {
+            setPendingRoute(next);
+            return;
+        }
+        setRoute(next);
+    }, []);
     const roles = effectiveRoles(app, user);
     const role = roles[0];
     const entities = useMemo(
@@ -119,13 +151,13 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
     );
 
     const navigate = (entity: string, kind: "list" | "form" | "detail", id?: string) => {
-        setRoute({ view: "entity", entity, kind, id });
+        routeTo({ view: "entity", entity, kind, id });
     };
 
     // the drill-through deep link (PHASE-5 §5): the report row's filters ride the
     // route as a query-DSL payload the list page consumes natively
     const drillTo = (entity: string, filter: QueryFilter) => {
-        setRoute({ view: "entity", entity, kind: "list", filter });
+        routeTo({ view: "entity", entity, kind: "list", filter });
     };
 
     const nav = resolveNav(app, { role, locale });
@@ -143,7 +175,15 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
             <header className="nf-topbar">
                 <h1>{app.label ?? app.apiName}</h1>
                 <nav aria-label="Primary">
-                    <button type="button" onClick={() => setRoute({ view: "home" })}>Home</button>
+                    {/* aria-current marks where the user IS — the builder's nav had
+                        the state face, the runtime's was a sea of identical tabs */}
+                    <button
+                        type="button"
+                        aria-current={route.view === "home" ? "page" : undefined}
+                        onClick={() => routeTo({ view: "home" })}
+                    >
+                        Home
+                    </button>
                     {nav.map((group) => (
                         <span key={group.label} className="nf-navgroup">
                             {/* the module label was resolved and then dropped — an ERP's
@@ -153,6 +193,7 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
                                 <button
                                     key={entity.apiName}
                                     type="button"
+                                    aria-current={route.view === "entity" && route.entity === entity.apiName ? "page" : undefined}
                                     onClick={() => navigate(entity.apiName, "list")}
                                 >
                                     {entity.label}
@@ -160,9 +201,27 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
                             ))}
                         </span>
                     ))}
-                    <button type="button" onClick={() => setRoute({ view: "inbox" })}>Approvals</button>
-                    <button type="button" onClick={() => setRoute({ view: "notifications" })}>Notifications</button>
-                    <button type="button" onClick={() => setRoute({ view: "dashboards" })}>Dashboards</button>
+                    <button
+                        type="button"
+                        aria-current={route.view === "inbox" ? "page" : undefined}
+                        onClick={() => routeTo({ view: "inbox" })}
+                    >
+                        Approvals
+                    </button>
+                    <button
+                        type="button"
+                        aria-current={route.view === "notifications" ? "page" : undefined}
+                        onClick={() => routeTo({ view: "notifications" })}
+                    >
+                        Notifications
+                    </button>
+                    <button
+                        type="button"
+                        aria-current={route.view === "dashboards" ? "page" : undefined}
+                        onClick={() => routeTo({ view: "dashboards" })}
+                    >
+                        Dashboards
+                    </button>
                 </nav>
                 <label className="nf-locale">
                     Locale
@@ -182,7 +241,10 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
             </header>
             <main>
                 {route.view === "home" ? (
-                    <p className="nf-home">Select a record type to begin.</p>
+                    <EmptyState
+                        message="Select a record type to begin."
+                        hint="Pick an entity from the navigation above — approvals, notifications, and dashboards live there too."
+                    />
                 ) : route.view === "inbox" ? (
                     <Inbox client={client} />
                 ) : route.view === "notifications" ? (
@@ -208,6 +270,7 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
                         data={data}
                         navigate={navigate}
                         setFlash={setFlash}
+                        registerDirtyCheck={registerDirtyCheck}
                     />
                 )}
             </main>
@@ -221,6 +284,41 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
                     className={flash.tone === "error" ? "nf-flash nf-flash-error" : "nf-flash"}
                 >
                     {flash.message}
+                </div>
+            ) : null}
+            {pendingRoute ? (
+                // the unsaved-changes gate — a real dialog, not a blocking
+                // browser confirm; Discard completes the interrupted navigation
+                <div className="nf-dialog-scrim" onClick={() => setPendingRoute(null)}>
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="Unsaved changes"
+                        className="nf-dialog"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <h3>Leave with unsaved changes?</h3>
+                        <p className="nf-hint">
+                            The record you were editing has not been saved. Discarding loses
+                            every change you typed.
+                        </p>
+                        <div className="nf-dialog-actions">
+                            <button type="button" autoFocus onClick={() => setPendingRoute(null)}>
+                                Keep editing
+                            </button>
+                            <button
+                                type="button"
+                                className="nf-danger"
+                                onClick={() => {
+                                    const target = pendingRoute;
+                                    setPendingRoute(null);
+                                    setRoute(target);
+                                }}
+                            >
+                                Discard changes
+                            </button>
+                        </div>
+                    </div>
                 </div>
             ) : null}
         </div>
@@ -245,10 +343,14 @@ interface EntityPageProps {
     locale?: string;
     data: RendererDataService;
     navigate: (entity: string, kind: "list" | "form" | "detail", id?: string) => void;
+    /** Registers this page's synchronous dirty check with the shell's route guard
+     *  (null on unmount). The guard must answer from refs at click time — render-
+     *  lagged state would miss the last keystroke or prompt after a save. */
+    registerDirtyCheck: (check: (() => boolean) | null) => void;
 }
 
 function EntityPage(props: EntityPageProps): ReactNode {
-    const { client, entity, kind, id, filter, savedPages, app, role, locale, data, navigate, setFlash } = props;
+    const { client, entity, kind, id, filter, savedPages, app, role, locale, data, navigate, setFlash, registerDirtyCheck } = props;
     // app-qualified runtime addresses (see RuntimeShell's note — the ambiguity guard)
     const qualified = (entityApiName: string) => `${app.apiName}.${entityApiName}`;
     const saved = savedPages.get(`${entity.apiName}:${kind}`);
@@ -257,11 +359,29 @@ function EntityPage(props: EntityPageProps): ReactNode {
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [busy, setBusy] = useState(false);
 
+    // The draft mirror + saved baseline: `adopt` marks the record as the point to
+    // lose changes FROM (load, save, transition, hook — every server confirmation).
+    // Both ride refs so the guard's check is exact at navigation time; the render-
+    // time mirror assignment is idempotent and safe to overwrite pre-navigate.
+    const recordRef = useRef<Record<string, unknown> | null>(null);
+    recordRef.current = record;
+    const baselineRef = useRef<Record<string, unknown> | null>(null);
+    const adopt = (next: Record<string, unknown> | null): void => {
+        recordRef.current = next;
+        baselineRef.current = next;
+    };
+    useEffect(() => {
+        registerDirtyCheck(() => canonicalJson(recordRef.current) !== canonicalJson(baselineRef.current));
+        return () => registerDirtyCheck(null);
+    }, [registerDirtyCheck]);
+
     const [loadError, setLoadError] = useState<string | null>(null);
 
     const load = async (recordId: string): Promise<void> => {
         try {
-            setRecord(await client.getRecord(qualified(entity.apiName), recordId));
+            const loaded = await client.getRecord(qualified(entity.apiName), recordId);
+            setRecord(loaded);
+            adopt(loaded);
             setLoadError(null);
         } catch (caught) {
             // a failed detail load used to leave a silent empty form plus an
@@ -341,6 +461,10 @@ function EntityPage(props: EntityPageProps): ReactNode {
                           );
                     createKeyRef.current = null;
                     setRecord(savedRecord);
+                    // the baseline moves to the SAVED record BEFORE the create's
+                    // navigate: the guard must see a clean page, not re-prompt on
+                    // the very save that just succeeded
+                    adopt(savedRecord);
                     setFlash({ message: "Saved", tone: "ok" });
                     if (!record?.id) {
                         navigate(entity.apiName, "detail", String(savedRecord.id));
@@ -397,6 +521,7 @@ function EntityPage(props: EntityPageProps): ReactNode {
                 try {
                     const fresh = await client.runHook(qualified(entity.apiName), String(record.id), hook);
                     setRecord(fresh);
+                    adopt(fresh);
                     setFlash({ message: `Ran ${hook}`, tone: "ok" });
                 } catch (error) {
                     if (error instanceof ApiError) {
@@ -465,6 +590,7 @@ function EntityPage(props: EntityPageProps): ReactNode {
                                         // the SERVER's record — its state, its version —
                                         // never a locally guessed shape
                                         setRecord(fresh);
+                                        adopt(fresh);
                                         setFlash({ message: `Moved to ${transition.to}`, tone: "ok" });
                                     })
                                     .catch((error: unknown) => {

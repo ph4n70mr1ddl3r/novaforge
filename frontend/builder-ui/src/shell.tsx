@@ -43,6 +43,59 @@ export type BuilderScreen =
     | "templates"
     | "onboarding";
 
+/**
+ * The topbar nav, module-grouped like the runtime's (§5): fourteen raw screen
+ * keys in one unlabeled run ("rbac", "i18n", …) read as debug output — groups
+ * with human labels are scannable, and the divider CSS carries the grouping.
+ * Exported so the tests drive the same mapping the shell renders.
+ */
+export const BUILDER_NAV: { group: string; items: { key: BuilderScreen; label: string }[] }[] = [
+    {
+        group: "Build",
+        items: [
+            { key: "entities", label: "Entities" },
+            { key: "pages", label: "Pages" },
+            { key: "logic", label: "Logic" },
+        ],
+    },
+    {
+        group: "Automate",
+        items: [
+            { key: "automation", label: "Automation" },
+            { key: "integrations", label: "Integrations" },
+        ],
+    },
+    {
+        group: "Quality",
+        items: [
+            { key: "suites", label: "Suites" },
+            { key: "lifecycle", label: "Lifecycle" },
+        ],
+    },
+    {
+        group: "Insight",
+        items: [
+            { key: "reports", label: "Reports" },
+            { key: "dashboards", label: "Dashboards" },
+        ],
+    },
+    {
+        group: "Govern",
+        items: [
+            { key: "rbac", label: "RBAC" },
+            { key: "branding", label: "Branding" },
+            { key: "i18n", label: "I18n" },
+        ],
+    },
+    {
+        group: "Workspace",
+        items: [
+            { key: "templates", label: "Templates" },
+            { key: "onboarding", label: "Onboarding" },
+        ],
+    },
+];
+
 export interface BuilderShellProps {
     client: PlatformClient;
     role?: string;
@@ -92,10 +145,21 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
             <header className="nf-topbar">
                 <h1>NovaForge Builder</h1>
                 <nav aria-label="Builder sections">
-                    {(["entities", "pages", "logic", "suites", "automation", "rbac", "reports", "dashboards", "integrations", "branding", "i18n", "lifecycle", "templates", "onboarding"] as BuilderScreen[]).map((name) => (
-                        <button key={name} type="button" aria-current={screen === name} onClick={() => setScreen(name)} id={name === "entities" ? "entities" : undefined}>
-                            {name}
-                        </button>
+                    {BUILDER_NAV.map((group) => (
+                        <span key={group.group} className="nf-navgroup">
+                            <span className="nf-navgroup-label">{group.group}</span>
+                            {group.items.map((item) => (
+                                <button
+                                    key={item.key}
+                                    type="button"
+                                    aria-current={screen === item.key}
+                                    onClick={() => setScreen(item.key)}
+                                    id={item.key === "entities" ? "entities" : undefined}
+                                >
+                                    {item.label}
+                                </button>
+                            ))}
+                        </span>
                     ))}
                 </nav>
                 {role ? <span className="nf-user">{role}</span> : null}

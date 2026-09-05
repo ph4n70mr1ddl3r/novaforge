@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { PageRenderer } from "../src/renderer/renderer.ts";
 import { resolveDefaultPage } from "../src/resolver.ts";
 import type { EntityDefinition } from "../src/metadata.ts";
+import type { QueryFilter } from "../src/renderer/context.ts";
 
 /**
  * The list surface's request discipline (re-audit): header-sort clicks lower to
@@ -33,7 +34,15 @@ interface CapturedRequest {
     sort?: { field: string; dir: string }[];
 }
 
-function mountList(list: (request: CapturedRequest) => Promise<unknown>, requests: CapturedRequest[]) {
+function mountList(
+    list: (request: CapturedRequest) => Promise<unknown>,
+    requests: CapturedRequest[],
+    options: {
+        fields?: Record<string, unknown>;
+        displayFieldOf?: (target: string) => string | undefined;
+        listFilter?: QueryFilter;
+    } = {},
+) {
     const ctx = {
         mode: "runtime" as const,
         clock: "2026-09-01T10:00:00Z",
@@ -42,14 +51,16 @@ function mountList(list: (request: CapturedRequest) => Promise<unknown>, request
         errors: {},
         getValue: () => null,
         setValue: () => {},
-        fields: {},
+        fields: options.fields ?? {},
         entity: "Invoice",
+        listFilter: options.listFilter,
         data: {
             list: async (request: CapturedRequest) => {
                 requests.push(request);
                 return list(request);
             },
             search: async () => [],
+            displayFieldOf: options.displayFieldOf,
         },
         actions: {
             save: async () => {},
@@ -104,5 +115,69 @@ describe("ListLayout", () => {
         expect(alert.textContent).toContain("gateway 502");
         // the lie the sixth pass hunted: an empty-looking table below a failed load
         expect(screen.queryByText(/No .* yet/i)).toBeNull();
+    });
+
+    it("a textual display field surfaces search; typing lowers a debounced contains filter and resets the offset", async () => {
+        const requests: (CapturedRequest & { filter?: QueryFilter })[] = [];
+        // the runtime shell's data service resolves the entity's display field
+        mountList(async () => ({ rows: [], total: 120000 }), requests, {
+            displayFieldOf: (target) => (target === "Invoice" ? "number" : undefined),
+            fields: { number: { apiName: "number", type: "text", label: "Invoice No" } },
+        });
+        await screen.findByRole("table");
+
+        const box = screen.getByRole("searchbox", { name: "Search Invoice" });
+        expect(box).toBeTruthy();
+
+        // type past page 1, then let the debounce commit: the request rides the
+        // whole set (offset 0), not the page-2 window of the unsearched list
+        fireEvent.click(screen.getByRole("button", { name: /Next/i }));
+        await waitFor(() => expect(requests[requests.length - 1]?.offset).toBe(50));
+        fireEvent.change(box, { target: { value: "SO-1" } });
+        await waitFor(() => {
+            expect(requests[requests.length - 1]?.filter).toEqual({
+                field: "number",
+                op: "contains",
+                value: "SO-1",
+            });
+            expect(requests[requests.length - 1]?.offset).toBe(0);
+        });
+        // the count says the list is filtered
+        expect(screen.getByText(/0 records \(filtered\)/)).toBeTruthy();
+
+        // clearing drops the filter
+        fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+        await waitFor(() => expect(requests[requests.length - 1]?.filter).toBeUndefined());
+    });
+
+    it("the search composes with a deep-linked drill filter (both apply, never either)", async () => {
+        const requests: (CapturedRequest & { filter?: QueryFilter })[] = [];
+        mountList(async () => ({ rows: [], total: 0 }), requests, {
+            displayFieldOf: () => "number",
+            fields: { number: { apiName: "number", type: "text", label: "Invoice No" } },
+            listFilter: { field: "amount", op: "gt", value: 100 },
+        });
+        await screen.findByRole("table");
+        fireEvent.change(screen.getByRole("searchbox", { name: "Search Invoice" }), {
+            target: { value: "SO" },
+        });
+        await waitFor(() =>
+            expect(requests[requests.length - 1]?.filter).toEqual({
+                op: "and",
+                children: [
+                    { field: "amount", op: "gt", value: 100 },
+                    { field: "number", op: "contains", value: "SO" },
+                ],
+            }));
+    });
+
+    it("no textual display field — no search box (the server rejects contains off the textual family)", async () => {
+        const requests: CapturedRequest[] = [];
+        mountList(async () => ({ rows: [], total: 0 }), requests, {
+            displayFieldOf: () => "amount",
+            fields: { amount: { apiName: "amount", type: "money", label: "Amount" } },
+        });
+        await screen.findByRole("table");
+        expect(screen.queryByRole("searchbox")).toBeNull();
     });
 });

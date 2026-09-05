@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { dispatchAction, useBoundValue, useRenderer, type ListResult } from "../renderer/context.ts";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { dispatchAction, useBoundValue, useRenderer, type ListResult, type QueryFilter } from "../renderer/context.ts";
 import { resolveLabel } from "../metadata.ts";
 
 /**
@@ -14,6 +14,10 @@ export interface LayoutProps {
     children?: ReactNode;
     [key: string]: unknown;
 }
+
+/** The field types the Data Runtime's `contains` op accepts (FieldType.textual()'s
+ *  exact family — anything else rejects the query server-side). */
+const SEARCHABLE_TYPES = new Set(["text", "longText", "richText", "email", "phone", "url"]);
 
 export function AppShell(props: LayoutProps & { brand?: string }): ReactNode {
     const renderer = useRenderer();
@@ -133,7 +137,40 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
     const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
     const [loading, setLoading] = useState(false);
 
-    const { data, entity, mode, listFilter } = renderer;
+    // Search-as-you-type over the entity's display field (a `contains` leaf,
+    // debounced — one request per pause, not per keystroke). The box renders only
+    // when the entity HAS a display field the server's `contains` accepts (its
+    // textual family — enum/money etc. reject the op); preview mode has no data
+    // service and hides it with the same guard.
+    const displayField = renderer.data?.displayFieldOf?.(renderer.entity ?? "");
+    const displayFieldMeta = displayField ? renderer.fields[displayField] : undefined;
+    const searchable = Boolean(
+        displayField && displayFieldMeta && SEARCHABLE_TYPES.has(String(displayFieldMeta.type)),
+    );
+    const [term, setTerm] = useState("");
+    const [appliedTerm, setAppliedTerm] = useState("");
+    useEffect(() => {
+        if (!searchable) {
+            return;
+        }
+        const timer = window.setTimeout(() => setAppliedTerm(term.trim()), 250);
+        return () => window.clearTimeout(timer);
+    }, [term, searchable]);
+    const searchFilter: QueryFilter | undefined =
+        searchable && displayField && appliedTerm !== ""
+            ? { field: displayField, op: "contains", value: appliedTerm }
+            : undefined;
+    // the search composes with a deep-linked drill filter (both apply) — never
+    // one replacing the other
+    const listFilter = renderer.listFilter;
+    const effectiveFilter = useMemo<QueryFilter | undefined>(() => {
+        if (listFilter && searchFilter) {
+            return { op: "and", children: [listFilter, searchFilter] };
+        }
+        return searchFilter ?? listFilter;
+    }, [listFilter, searchFilter]);
+
+    const { data, entity, mode } = renderer;
     useEffect(() => {
         let cancelled = false;
         if (!entity || !data || mode === "preview") {
@@ -142,7 +179,7 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
         setLoading(true);
         data.list({
             entity,
-            filter: listFilter,
+            filter: effectiveFilter,
             size: pageSize,
             offset,
             sort: sortField ? [{ field: sortField, dir: sortDir }] : undefined,
@@ -164,7 +201,7 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
         return () => {
             cancelled = true;
         };
-    }, [data, entity, mode, listFilter, offset, pageSize, sortDir, sortField]);
+    }, [data, entity, mode, effectiveFilter, offset, pageSize, sortDir, sortField]);
 
     const columns = (props.columns as string[] | undefined) ?? [];
     const fieldLabels = columns.filter((field) => renderer.fields[field] !== undefined || field !== "actions");
@@ -175,7 +212,7 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
                 <h2>{props.title}</h2>
                 <span className="nf-list-count" aria-live="polite">
                     {state.total} record{state.total === 1 ? "" : "s"}
-                    {listFilter ? " (filtered)" : ""}
+                    {listFilter || searchFilter ? " (filtered)" : ""}
                 </span>
                 {(renderer.pageActions ?? []).map((action, index) => (
                     <button
@@ -187,6 +224,39 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
                         {action.type === "openPage" ? "New" : actionLabel(action.type)}
                     </button>
                 ))}
+                {searchable ? (
+                    <span className="nf-search">
+                        <input
+                            type="search"
+                            aria-label={`Search ${props.title ?? "records"}`}
+                            placeholder={`Search ${resolveLabel(
+                                displayFieldMeta,
+                                renderer.user?.locale,
+                                displayField ?? "",
+                            ).toLowerCase()}…`}
+                            value={term}
+                            onChange={(event) => {
+                                setTerm(event.target.value);
+                                // searching re-queries the whole set — a page-2
+                                // window of the OLD term must not survive
+                                setOffset(0);
+                            }}
+                        />
+                        {term !== "" ? (
+                            <button
+                                type="button"
+                                aria-label="Clear search"
+                                onClick={() => {
+                                    setTerm("");
+                                    setAppliedTerm("");
+                                    setOffset(0);
+                                }}
+                            >
+                                ×
+                            </button>
+                        ) : null}
+                    </span>
+                ) : null}
             </div>
             <table className="nf-table">
                 <thead>

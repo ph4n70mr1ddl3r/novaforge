@@ -44,6 +44,20 @@ export interface TokenProvider {
 }
 
 /**
+ * The query-DSL composite rides the server's canonical wire shape: the TS type
+ * names `op` + `children`, but the JVM QueryParser reads the op as the node's own
+ * key (`{"and": […]}` / `{"or": […]}` — the same shape ReportCompiler lowers to).
+ * Serialized verbatim, every drill-through deep link (the one producer of
+ * composites) 400'd as VALIDATION_FAILED — "view records" never reached its list.
+ */
+function filterToWire(filter: QueryFilter): unknown {
+    if ("children" in filter) {
+        return { [filter.op]: filter.children.map(filterToWire) };
+    }
+    return filter;
+}
+
+/**
  * The 401 recovery hook: called once per failed request with the platform's own
  * refresh machinery (single-flight on the caller's side); a returned token retries
  * the request exactly once, null gives up and surfaces the 401. Without it, an SPA's
@@ -237,7 +251,7 @@ export class PlatformClient {
     async list(request: ListRequest): Promise<ListResult> {
         const params = new URLSearchParams();
         if (request.filter) {
-            params.set("filter", JSON.stringify(request.filter));
+            params.set("filter", JSON.stringify(filterToWire(request.filter)));
         }
         if (request.sort?.length) {
             params.set("sort", JSON.stringify(request.sort));
