@@ -586,6 +586,57 @@ describe("RuntimeShell", () => {
         await waitFor(() =>
             expect(screen.queryByRole("group", { name: "State transitions" })).toBeNull());
     });
+
+    it("the home view lands on module cards and a Work card, not a dead end", async () => {
+        // Anti-regression (fifth UX pass): the home route was an empty state
+        // pointing back at the nav it sat under — the first screen every user
+        // saw was a dead end. It is a real landing now: one card per nav module
+        // plus a Work card for the three platform surfaces.
+        const { client } = stubClient();
+        render(shell(client));
+        await screen.findByRole("button", { name: "Customers" }); // the topbar
+        // the intro line's copy is load-bearing — the golden journey waits on
+        // it as the shell-booted signal
+        expect(screen.getByText("Select a record type to begin.")).toBeTruthy();
+        const home = within(screen.getByRole("region", { name: "Home" }));
+        expect(home.getByRole("heading", { name: "Sales" })).toBeTruthy();
+        // a card link navigates to the entity's list — and its accessible name
+        // carries the visually-hidden suffix, so the page holds two Customers
+        // buttons without an ambiguous name for readers or exact-name lookups
+        home.getByRole("button", { name: "Customers — open the list" }).click();
+        await waitFor(() => expect(screen.getByText("1 record")).toBeTruthy());
+        // the home region retired with the navigation
+        expect(screen.queryByRole("region", { name: "Home" })).toBeNull();
+    });
+
+    it("the home Work card opens the approvals inbox", async () => {
+        const { client } = stubClient();
+        render(shell(client));
+        await screen.findByRole("button", { name: "Customers" });
+        within(screen.getByRole("region", { name: "Home" }))
+            .getByRole("button", { name: "Approvals — open the approvals inbox" })
+            .click();
+        await waitFor(() => expect(screen.queryByRole("region", { name: "Home" })).toBeNull());
+        expect(screen.getByRole("region", { name: "My approvals" })).toBeTruthy();
+    });
+
+    it("an empty inbox hides the pager — the degenerate 1–0 / 0 range is gone", async () => {
+        const fetchImpl = vi.fn(async (input: string | URL) => {
+            if (String(input).includes("/workflow/tasks")) {
+                return new Response(JSON.stringify({ rows: [], total: 0 }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+            return new Response(JSON.stringify({ title: "not stubbed", status: 404 }), { status: 404 });
+        });
+        const client = new PlatformClient("", () => "t", fetchImpl as unknown as typeof fetch);
+        render(createElement(Inbox, { client }));
+        // the shared empty state carries the load-bearing message verbatim
+        await waitFor(() => expect(screen.getByText("No pending approvals.")).toBeTruthy());
+        expect(screen.queryByRole("button", { name: "Next" })).toBeNull();
+        expect(screen.queryByText("1–0 / 0")).toBeNull();
+    });
 });
 
 describe("the page pipeline: L1 → overlay deltas → persisted artifact", () => {

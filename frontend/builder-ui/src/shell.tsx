@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
     ApiError,
     PlatformClient,
@@ -109,6 +109,75 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
     // legs live here) — the ref-less version left their buttons live mid-flight
     const [busy, setBusy] = useState(false);
 
+    // The builder's unsaved-changes gate — the runtime shell's contract, learned:
+    // the page builder and the dashboard composer hold edits LOCAL until their
+    // explicit Save ("Save page •"), but a topbar click unmounted them silently
+    // and destroyed the work (the exact class of loss the runtime's route guard
+    // fixed for typed records). Mounted editors register a SYNCHRONOUS dirty
+    // check (refs, not render-lagged state — the runtime's lesson); a gated
+    // screen switch asks first.
+    const dirtyCheckRef = useRef<(() => boolean) | null>(null);
+    const registerDirtyCheck = useCallback((check: (() => boolean) | null) => {
+        dirtyCheckRef.current = check;
+    }, []);
+    const [pendingScreen, setPendingScreen] = useState<{ proceed: () => void } | null>(null);
+    // where focus returns when the gate's dialog closes: the trigger (a nav
+    // button) is captured at guard-fire time — an effect capture would run after
+    // the commit, when the dialog's own autofocus already owns focus
+    const restoreFocusRef = useRef<HTMLElement | null>(null);
+    const guard = useCallback((proceed: () => void) => {
+        if (dirtyCheckRef.current?.()) {
+            restoreFocusRef.current =
+                document.activeElement instanceof HTMLElement ? document.activeElement : null;
+            setPendingScreen({ proceed });
+            return;
+        }
+        proceed();
+    }, []);
+    // Dialog modality — the product's keyboard contract (the runtime's gate, the
+    // inbox's ask dialog): Escape cancels, Tab is TRAPPED inside the dialog, and
+    // closing restores focus to the trigger.
+    useEffect(() => {
+        if (!pendingScreen) {
+            return;
+        }
+        const onKey = (event: KeyboardEvent): void => {
+            if (event.key === "Escape") {
+                event.stopPropagation();
+                setPendingScreen(null);
+                return;
+            }
+            if (event.key !== "Tab") {
+                return;
+            }
+            const dialog = document.querySelector(".nf-dialog");
+            if (!(dialog instanceof HTMLElement)) {
+                return;
+            }
+            const focusable = Array.from(
+                dialog.querySelectorAll<HTMLElement>("button, input, textarea, select, a[href]"),
+            ).filter((element) => !element.hasAttribute("disabled"));
+            if (focusable.length === 0) {
+                return;
+            }
+            const first = focusable[0]!;
+            const last = focusable[focusable.length - 1]!;
+            const active = document.activeElement;
+            if (event.shiftKey && (active === first || !(active instanceof Node) || !dialog.contains(active))) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && active === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+        document.addEventListener("keydown", onKey, true);
+        return () => {
+            document.removeEventListener("keydown", onKey, true);
+            restoreFocusRef.current?.focus();
+        };
+    }, [pendingScreen]);
+
     useEffect(() => {
         let cancelled = false;
         client
@@ -153,7 +222,10 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                                     key={item.key}
                                     type="button"
                                     aria-current={screen === item.key}
-                                    onClick={() => setScreen(item.key)}
+                                    // every screen switch rides the gate: a dirty page
+                                    // builder or dashboard composer asks before its
+                                    // unmount destroys the edits
+                                    onClick={() => guard(() => setScreen(item.key))}
                                     id={item.key === "entities" ? "entities" : undefined}
                                 >
                                     {item.label}
@@ -189,6 +261,11 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                             <PageBuilder
                                 app={app}
                                 role={role}
+                                // the gate rides in: the builder's own entity/kind
+                                // switches discard the working page just as a topbar
+                                // click would, so they route through the same guard
+                                guard={guard}
+                                registerDirtyCheck={registerDirtyCheck}
                                 savePage={async (page) => {
                                     try {
                                         const saved = await client.putPage(app.id ?? "", page);
@@ -303,6 +380,7 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                         {screen === "dashboards" ? (
                             <DashboardComposer
                                 app={app}
+                                registerDirtyCheck={registerDirtyCheck}
                                 saveDashboards={async (mutate) => {
                                     // the mutation applies to a FRESH fetch: a stale
                                     // mount-time snapshot must never replace another
@@ -420,6 +498,41 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                     />
                 ) : null}
             </main>
+            {pendingScreen ? (
+                // the unsaved-changes gate — a real dialog, not a blocking
+                // browser confirm; Discard completes the interrupted switch
+                <div className="nf-dialog-scrim" onClick={() => setPendingScreen(null)}>
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="Unsaved changes"
+                        className="nf-dialog"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <h3>Leave with unsaved changes?</h3>
+                        <p className="nf-hint">
+                            This screen has edits that are not saved yet. Discarding loses
+                            every change since the last save.
+                        </p>
+                        <div className="nf-dialog-actions">
+                            <button type="button" autoFocus onClick={() => setPendingScreen(null)}>
+                                Keep editing
+                            </button>
+                            <button
+                                type="button"
+                                className="nf-danger"
+                                onClick={() => {
+                                    const target = pendingScreen;
+                                    setPendingScreen(null);
+                                    target.proceed();
+                                }}
+                            >
+                                Discard changes
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
         </div>
     );
 }

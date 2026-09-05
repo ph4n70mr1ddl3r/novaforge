@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
     ApiError,
-    EmptyState,
     PlatformClient,
     type PageDefinition,
     type QueryFilter,
@@ -9,6 +8,7 @@ import {
     type RendererDataService,
     resolvePage,
     resolveNav,
+    type NavGroup,
     PageRenderer,
     type AppDefinition,
     type EntityDefinition,
@@ -48,6 +48,69 @@ type Route =
 interface Flash {
     message: string;
     tone: "ok" | "error";
+}
+
+/**
+ * The runtime home (route "home"): a landing card per nav module plus a Work
+ * card for the three platform surfaces. The old home was a dead end — an empty
+ * state pointing back at the very nav it sat under — while the rest of the
+ * product earned real first-run orientation. Card links carry visually-hidden
+ * suffixes so their accessible names stay DISTINCT from the topbar's own
+ * buttons (exact-name lookups — screen readers included — stay unambiguous
+ * with two "Customers" on one page; Label-in-Name holds because the visible
+ * text rides inside the composed name). The intro line's copy is load-bearing:
+ * the golden journey waits on it as the shell-booted signal.
+ */
+function HomeView({ groups, onEntity, onWork }: {
+    groups: NavGroup[];
+    onEntity: (entity: string) => void;
+    onWork: (view: "inbox" | "notifications" | "dashboards") => void;
+}): ReactNode {
+    return (
+        <section className="nf-home" aria-label="Home">
+            <p className="nf-hint">Select a record type to begin.</p>
+            <div className="nf-home-grid">
+                {groups.map((group) => (
+                    <section key={group.label} className="nf-home-card" aria-label={group.label}>
+                        <h2>{group.label}</h2>
+                        <ul className="nf-home-links">
+                            {group.entities.map((entity) => (
+                                <li key={entity.apiName}>
+                                    <button type="button" onClick={() => onEntity(entity.apiName)}>
+                                        {entity.label}
+                                        <span className="nf-visually-hidden"> — open the list</span>
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    </section>
+                ))}
+                <section className="nf-home-card" aria-label="Work">
+                    <h2>Work</h2>
+                    <ul className="nf-home-links">
+                        <li>
+                            <button type="button" onClick={() => onWork("inbox")}>
+                                Approvals
+                                <span className="nf-visually-hidden"> — open the approvals inbox</span>
+                            </button>
+                        </li>
+                        <li>
+                            <button type="button" onClick={() => onWork("notifications")}>
+                                Notifications
+                                <span className="nf-visually-hidden"> — open the notifications inbox</span>
+                            </button>
+                        </li>
+                        <li>
+                            <button type="button" onClick={() => onWork("dashboards")}>
+                                Dashboards
+                                <span className="nf-visually-hidden"> — open the dashboards</span>
+                            </button>
+                        </li>
+                    </ul>
+                </section>
+            </div>
+        </section>
+    );
 }
 
 function effectiveRoles(app: AppDefinition, user: { roles: string[] }): string[] {
@@ -292,9 +355,10 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
             </header>
             <main>
                 {route.view === "home" ? (
-                    <EmptyState
-                        message="Select a record type to begin."
-                        hint="Pick an entity from the navigation above — approvals, notifications, and dashboards live there too."
+                    <HomeView
+                        groups={nav}
+                        onEntity={(entity) => navigate(entity, "list")}
+                        onWork={(view) => routeTo({ view })}
                     />
                 ) : route.view === "inbox" ? (
                     <Inbox client={client} />

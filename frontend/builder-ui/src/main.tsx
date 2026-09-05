@@ -28,6 +28,8 @@ function Root(): ReactNode {
             { className: "nf-signin" },
             createElement("h1", null, "NovaForge Builder"),
             createElement("button", { type: "button", onClick: () => void login(config) }, "Sign in"),
+            // the runtime's rule: one muted line under a lone button
+            createElement("p", { className: "nf-signin-hint" }, "Use your platform account to continue."),
         );
     }
     // the manager keeps tokens alive past the access token's lifetime (refresh on

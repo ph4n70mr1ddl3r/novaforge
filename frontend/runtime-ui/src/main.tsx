@@ -40,6 +40,9 @@ function Root(): ReactNode {
             { className: "nf-signin" },
             h("h1", null, "NovaForge"),
             h("button", { type: "button", onClick: () => void login(config) }, "Sign in"),
+            // the button sat alone on a blank page — one muted line tells the
+            // first-run user what the sign-in is for
+            h("p", { className: "nf-signin-hint" }, "Use your platform account to continue."),
         );
     }
     // the manager keeps tokens alive past the access token's lifetime (refresh on

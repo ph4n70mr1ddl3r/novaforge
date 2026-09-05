@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { PlatformClient } from "@novaforge/shared";
+import { EmptyState, PlatformClient } from "@novaforge/shared";
 import { formatWhen } from "./format.ts";
 
 /**
@@ -212,14 +212,27 @@ export function Inbox({ client }: { client: PlatformClient }): ReactNode {
                     })}
                 </tbody>
             </table>
-            {tasks.length === 0 && !busy ? <p role="status">No pending approvals.</p> : null}
-            <div className="nf-pager">
-                {/* busy owns the pager too: a click mid-resolve raced the reload's
-                    older response against the new page's load (see reload's fence) */}
-                <button type="button" disabled={page === 0 || busy} onClick={() => setPage(page - 1)}>Previous</button>
-                <span>{page * size + 1}–{Math.min((page + 1) * size, total)} / {total}</span>
-                <button type="button" disabled={(page + 1) * size >= total || busy} onClick={() => setPage(page + 1)}>Next</button>
-            </div>
+            {tasks.length === 0 && !busy ? (
+                // the shared empty state (the message text is load-bearing: the
+                // shell tests and the golden journey wait on it as the
+                // inbox-loaded signal)
+                <EmptyState
+                    message="No pending approvals."
+                    hint="Approvals addressed to you — directly or through one of your roles — land here for a decision."
+                />
+            ) : null}
+            {/* the pager only speaks when there is something to page: an empty
+                total rendered the degenerate range "1–0 / 0" under the empty
+                state, arithmetic talking where silence would do */}
+            {total > 0 ? (
+                <div className="nf-pager">
+                    {/* busy owns the pager too: a click mid-resolve raced the reload's
+                        older response against the new page's load (see reload's fence) */}
+                    <button type="button" disabled={page === 0 || busy} onClick={() => setPage(page - 1)}>Previous</button>
+                    <span>{page * size + 1}–{Math.min((page + 1) * size, total)} / {total}</span>
+                    <button type="button" disabled={(page + 1) * size >= total || busy} onClick={() => setPage(page + 1)}>Next</button>
+                </div>
+            ) : null}
             {ask ? (
                 // scrim click and Escape both cancel — a prompt's cancel button was
                 // the ONLY escape hatch, and the browser-owned dialog fought the app

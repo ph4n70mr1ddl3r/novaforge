@@ -598,6 +598,73 @@ select:disabled {
   margin: 0;
 }
 
+.nf-signin h1 {
+  margin: 0;
+  font-size: 1.375rem;
+}
+
+/* the one muted line under a lone Sign in button — a first-run user otherwise
+   landed on a bare button with no word of what it was for */
+.nf-signin-hint {
+  margin: 0;
+  color: var(--nf-color-muted);
+}
+
+/* --- runtime home --- */
+
+/* the home landing (route "home"): one card per nav module plus a Work card —
+   the old home was an empty state pointing back at the nav it sat under. Cards
+   fill the row responsively; module links ride full-width buttons. */
+.nf-home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: var(--nf-spacing-3);
+}
+
+.nf-home-card {
+  border: 1px solid var(--nf-color-border);
+  border-radius: var(--nf-radius-lg);
+  background: var(--nf-color-bg);
+  box-shadow: var(--nf-shadow-1);
+  padding: var(--nf-spacing-3);
+}
+
+.nf-home-card h2 {
+  margin: 0 0 var(--nf-spacing-2);
+  font-size: var(--nf-font-size-small);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--nf-color-muted);
+}
+
+.nf-home-links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--nf-spacing-1);
+}
+
+.nf-home-links button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border-color: transparent;
+  color: var(--nf-color-accent);
+}
+
+.nf-home-links button:hover:not(:disabled) {
+  background: var(--nf-color-surface-hover);
+  border-color: transparent;
+  text-decoration: underline;
+}
+
+.nf-home-links button:active:not(:disabled) {
+  background: var(--nf-color-surface-selected);
+}
+
 /* --- builder canvas --- */
 
 .nf-b-columns {

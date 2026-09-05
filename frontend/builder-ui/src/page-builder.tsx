@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
     ApiError,
     CATALOG,
@@ -33,6 +33,13 @@ export interface PageBuilderProps {
     app: AppDefinition;
     savePage: (page: Record<string, unknown>) => Promise<unknown>;
     role?: string;
+    /** The shell's unsaved-changes gate (optional for standalone mounts): every
+     *  navigation that discards the working page — the shell's topbar switch via
+     *  the registered check, and THIS component's own entity/kind selects —
+     *  routes through it, so a dirty page asks before its edits die. */
+    guard?: (proceed: () => void) => void;
+    /** Registers the dirty check with the shell's gate (null on unmount). */
+    registerDirtyCheck?: (check: (() => boolean) | null) => void;
 }
 
 type BuilderState = {
@@ -46,7 +53,7 @@ type BuilderState = {
     revision: number | null;
 };
 
-export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNode {
+export function PageBuilder({ app, savePage, role, guard, registerDirtyCheck }: PageBuilderProps): ReactNode {
     const entities = app.entities;
     const [entityApiName, setEntityApiName] = useState(entities[0]?.apiName ?? "");
     const [kind, setKind] = useState<"form" | "list" | "detail">("form");
@@ -90,6 +97,20 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
     const dirty = current
         ? JSON.stringify(diffPages(current.loaded, current.page)) !== "[]"
         : false;
+
+    // The dirty check rides a REF (render-lagged state would miss the last
+    // keystroke at click time — the runtime form's lesson) and registers with
+    // the shell's gate: a topbar screen switch while this builder holds edits
+    // used to unmount the editor and destroy them without a word.
+    const dirtyRef = useRef(dirty);
+    dirtyRef.current = dirty;
+    useEffect(() => {
+        registerDirtyCheck?.(() => dirtyRef.current);
+        return () => registerDirtyCheck?.(null);
+    }, [registerDirtyCheck]);
+    // every discard-the-page navigation inside the builder routes through the
+    // shell's gate; standalone mounts (tests, preview) pass through untouched
+    const leave = guard ?? ((proceed: () => void) => proceed());
 
     const edit = (updater: (page: ResolvedPage) => ResolvedPage): void => {
         if (!current) return;
@@ -227,7 +248,15 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
             <div className="nf-b-toolbar">
                 <label>
                     Entity
-                    <select value={entityApiName} onChange={(event) => setEntityApiName(event.target.value)}>
+                    <select
+                        value={entityApiName}
+                        onChange={(event) => {
+                            // a switch re-seeds the editor from the saved page —
+                            // with unsaved edits that is a destruction, so it asks
+                            const next = event.target.value;
+                            leave(() => setEntityApiName(next));
+                        }}
+                    >
                         {entities.map((candidate) => (
                             <option key={candidate.apiName} value={candidate.apiName}>
                                 {candidate.label ?? candidate.apiName}
@@ -237,7 +266,14 @@ export function PageBuilder({ app, savePage, role }: PageBuilderProps): ReactNod
                 </label>
                 <label>
                     Kind
-                    <select value={kind} onChange={(event) => setKind(event.target.value as typeof kind)}>
+                    <select
+                        value={kind}
+                        onChange={(event) => {
+                            // the entity select's rule: a dirty page asks first
+                            const next = event.target.value as typeof kind;
+                            leave(() => setKind(next));
+                        }}
+                    >
                         <option value="form">form</option>
                         <option value="list">list</option>
                         <option value="detail">detail</option>

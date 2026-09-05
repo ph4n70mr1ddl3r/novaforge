@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AppDefinition, DashboardDefinition } from "@novaforge/shared";
 
 /**
@@ -20,9 +20,13 @@ import type { AppDefinition, DashboardDefinition } from "@novaforge/shared";
 export function DashboardComposer({
     app,
     saveDashboards,
+    registerDirtyCheck,
 }: {
     app: AppDefinition;
     saveDashboards: (mutate: (current: DashboardDefinition[]) => DashboardDefinition[]) => Promise<void>;
+    /** Registers the composer's dirty check with the shell's unsaved-changes
+     *  gate — the working copy used to die silently on a topbar screen switch. */
+    registerDirtyCheck?: (check: (() => boolean) | null) => void;
 }): ReactNode {
     const [selectedId, setSelectedId] = useState<string | null>(app.dashboards[0]?.id ?? null);
     const [flash, setFlash] = useState<string | null>(null);
@@ -33,6 +37,16 @@ export function DashboardComposer({
     const dashboards = app.dashboards.map((dashboard) => edits[dashboard.id] ?? dashboard);
     const draft = dashboards.find((dashboard) => dashboard.id === selectedId) ?? null;
     const dirty = Object.keys(edits).length > 0;
+
+    // The shell's gate reads this editor's dirt through a REF (render-lagged
+    // state would miss the last edit at click time) — registered on mount,
+    // retired on unmount, exactly the page builder's contract.
+    const dirtyRef = useRef(dirty);
+    dirtyRef.current = dirty;
+    useEffect(() => {
+        registerDirtyCheck?.(() => dirtyRef.current);
+        return () => registerDirtyCheck?.(null);
+    }, [registerDirtyCheck]);
 
     const update = (patch: Partial<DashboardDefinition>): void => {
         if (!draft) return;
