@@ -11,6 +11,7 @@ import com.novaforge.metadata.DefinitionParser;
 import com.novaforge.runtime.engine.metadata.MetadataClient;
 import com.novaforge.runtime.storage.materializer.Materializer;
 import com.novaforge.testsupport.PostgresTestBase;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeAll;
@@ -32,6 +33,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -255,6 +257,60 @@ class SharingTests extends PostgresTestBase {
                 .andExpect(status().isNotFound());
         mockMvc.perform(get("/api/v1/runtime/Review/" + auditors).with(jwtFor(AUDITOR)))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("a sharing-restricted list sorted by an unpromoted numeric field rides the splice intact")
+    void restrictedListSortedByUnpromotedNumeric() throws Exception {
+        // Case.amount is unpromoted (only the display field promotes), so sorting by
+        // it lowers the ORDER BY to the shape-gated numeric cast — whose regex
+        // literal carries four question marks of its own. The restricted scope
+        // splices its visibility clause before that tail; counting the literal ?s
+        // as bind placeholders corrupted the parameter list — the splice threw
+        // (IndexOutOfBoundsException) or, with enough filter binds in front,
+        // reordered real binds into the wrong slots (a 500 from the driver).
+        // Found hunting; pinned here at the wire through the real splice.
+        createCase(CLERK1, "splice-small", 111.25);
+        createCase(CLERK2, "splice-big", 7777.5);
+        createCase(CLERK2, "splice-mid", 250.5);
+
+        // the auditor's criteria rule (amount > 100) shares exactly those rows —
+        // the auditor owns no Case — in numeric DESC order
+        MvcResult listed = mockMvc.perform(
+                        post("/api/v1/runtime/Case/query").with(jwtFor(AUDITOR))
+                                .contentType("application/json")
+                                .content("{\"sort\":[{\"field\":\"amount\",\"dir\":\"desc\"}]}"))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode rows = MAPPER.readTree(listed.getResponse().getContentAsString()).path("rows");
+        List<Double> mine = new ArrayList<>();
+        for (JsonNode row : rows) {
+            // every shared row satisfies the criterion — never a widened bind slot
+            org.assertj.core.api.Assertions.assertThat(row.path("amount").asDouble())
+                    .isGreaterThan(100.0);
+            String subject = row.path("subject").asString();
+            if (subject.startsWith("splice-")) {
+                mine.add(row.path("amount").asDouble());
+            }
+        }
+        org.assertj.core.api.Assertions.assertThat(mine)
+                .containsExactly(7777.5, 250.5, 111.25);
+
+        // the same splice with filter binds in front (the misalignment mode that
+        // reordered real binds instead of throwing) — still the shared scope, still
+        // numeric order
+        mockMvc.perform(post("/api/v1/runtime/Case/query").with(jwtFor(AUDITOR))
+                        .contentType("application/json")
+                        .content("""
+                                { "filter": { "and": [
+                                    { "field": "subject", "op": "contains", "value": "splice" },
+                                    { "field": "amount", "op": "gt", "value": 0 } ] },
+                                  "sort": [ { "field": "amount", "dir": "asc" } ] }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows[0].subject").value("splice-small"))
+                .andExpect(jsonPath("$.rows[1].subject").value("splice-mid"))
+                .andExpect(jsonPath("$.rows[2].subject").value("splice-big"));
     }
 
     private int ownedBy(UUID actor) {

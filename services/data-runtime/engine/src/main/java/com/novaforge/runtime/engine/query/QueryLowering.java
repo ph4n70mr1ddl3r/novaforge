@@ -48,13 +48,35 @@ public final class QueryLowering {
                 return new Lowered(sql + " AND (" + clause + ")", List.copyOf(merged));
             }
             String tail = sql.substring(tailStart);
-            long tailParams = tail.chars().filter(c -> c == '?').count();
+            long tailParams = placeholders(tail);
             List<Object> merged = new java.util.ArrayList<>(
                     params.subList(0, params.size() - (int) tailParams));
             merged.addAll(clauseParams);
             merged.addAll(params.subList(params.size() - (int) tailParams, params.size()));
             return new Lowered(sql.substring(0, tailStart) + " AND (" + clause + ")" + tail,
                     List.copyOf(merged));
+        }
+
+        /**
+         * Bind placeholders in a SQL fragment — a {@code ?} outside single-quoted string
+         * literals. The lowering embeds literals into the tail it splits on: sorting by
+         * an unpromoted numeric field rides the shape-gated cast whose regex literal
+         * carries four question marks of its own, and counting those as placeholders
+         * mis-split the parameter list — the sharing splice either walked off the bind
+         * list entirely or silently reordered real binds into the wrong slots.
+         */
+        private static long placeholders(String fragment) {
+            long count = 0;
+            boolean inLiteral = false;
+            for (int i = 0; i < fragment.length(); i++) {
+                char c = fragment.charAt(i);
+                if (c == '\'') {
+                    inLiteral = !inLiteral;   // '' (an escaped quote) toggles twice — net no-op
+                } else if (c == '?' && !inLiteral) {
+                    count++;
+                }
+            }
+            return count;
         }
 
         public Lowered {

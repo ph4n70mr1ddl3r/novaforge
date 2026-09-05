@@ -136,6 +136,40 @@ class GoldenSqlTests {
     }
 
     @Test
+    @DisplayName("sharing splice over a regex-sorted list: the tail's literal ?s are never counted as binds")
+    void sharingSpliceOverNumericSortTail() {
+        // applySharing lowers the sharing clause into list SQL through Lowered.and(),
+        // which splits the statement at the ORDER BY tail and counts the tail's ?s to
+        // keep the bind list aligned. Sorting by an UNPROMOTED numeric field rides
+        // the shape-gated cast — whose regex literal carries four question marks of
+        // its own. Counting those as placeholders mis-split the parameter list: the
+        // splice threw (or, with a filter in front, silently reordered real binds).
+        QueryLowering lowering = new QueryLowering(entity);
+        QueryModel.ListQuery query = QueryParser.parseList("""
+                { "sort": [ { "field": "amount", "dir": "desc" } ],
+                  "page": { "size": 50, "offset": 0 } }
+                """, entity);
+        Lowered lowered = lowering.list("Erp.JournalEntry", TENANT, query);
+
+        // the exact splice applySharing performs for an owner-set restriction
+        UUID owner = UUID.randomUUID();
+        Lowered shared = lowered.and("created_by IN (?)", List.of(owner));
+
+        // every placeholder still gets a bind, in order: tenant, entity, owner, limit,
+        // offset — the pinned SQL + params pin the alignment exactly (the tail's four
+        // regex ?s are literal text, never bind slots)
+        org.assertj.core.api.Assertions.assertThat(shared.sql())
+                .isEqualTo("SELECT id, version, created_at, updated_at, created_by, updated_by, "
+                        + "deleted, data FROM rec_journal_entry WHERE tenant_id = ? AND deleted = false "
+                        + "AND entity_id = ? AND (created_by IN (?)) "
+                        + "ORDER BY (CASE WHEN (data->>'amount')"
+                        + " ~ '^-?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?$'"
+                        + " THEN (data->>'amount')::numeric END) DESC, id LIMIT ? OFFSET ?");
+        org.assertj.core.api.Assertions.assertThat(shared.params()).containsExactly(
+                TENANT, "Erp.JournalEntry", owner, 50, 0L);
+    }
+
+    @Test
     @DisplayName("parser rejects: unknown field, bad op, contains on enum, page size over 200")
     void parserRejections() {
         assertThatThrownBy(() -> QueryParser.parseList(
