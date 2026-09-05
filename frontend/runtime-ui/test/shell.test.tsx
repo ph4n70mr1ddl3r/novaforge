@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import axe from "axe-core";
@@ -19,6 +19,13 @@ import { Inbox } from "../src/inbox.tsx";
  * page (server-side paging) → form page through the real renderer; the approval
  * inbox rides the same shell (PHASE-4 §5).
  */
+
+beforeEach(() => {
+    // hash routing (the deep-link pass): a prior test's screen must never
+    // seed the next mount's boot — the shell restores from location.hash
+    window.location.hash = "";
+});
+
 
 const app: import("@novaforge/shared").AppDefinition = {
     apiName: "erp",

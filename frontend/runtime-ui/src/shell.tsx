@@ -18,6 +18,9 @@ import {
 import { Inbox } from "./inbox.tsx";
 import { Notifications } from "./notifications.tsx";
 import { Dashboards } from "./dashboards.tsx";
+import { decodeRoute, encodeRoute, type Route } from "./router.ts";
+
+export type { Route };
 
 /**
  * The runtime application shell (PHASE-2 §6): nav from published metadata
@@ -33,15 +36,6 @@ export interface RuntimeShellProps {
     user: { name: string; roles: string[]; locale?: string };
     versionKey: string;
 }
-
-type Route =
-    | { view: "home" }
-    | { view: "entity"; entity: string; kind: "list" | "form" | "detail"; id?: string;
-        /** A drill-through deep link's query-DSL payload (PHASE-5 §5). */
-        filter?: QueryFilter }
-    | { view: "inbox" }
-    | { view: "notifications" }
-    | { view: "dashboards" };
 
 /** The save/action toast: the message plus its tone. Success and failure shared
  * one grey paragraph before, so "Saved" and an error looked identical. */
@@ -153,7 +147,18 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
                   : {}),
           } as CSSProperties)
         : undefined;
-    const [route, setRoute] = useState<Route>({ view: "home" });
+    // Boot reads the URL: a refresh or a shared deep link lands ON the route it
+    // names (unknown/junk hashes fall home). The URL is aligned to that route in
+    // a mount effect below — silently (replaceState), so boot never writes a
+    // history entry.
+    const [route, setRoute] = useState<Route>(
+        () => decodeRoute(window.location.hash, new Set(app.entities.map((entity) => entity.apiName)))
+            ?? { view: "home" },
+    );
+    // the route's synchronous mirror: the hashchange listener compares echoes
+    // and the gate rewinds from it at navigation time — both run outside render
+    const routeRef = useRef(route);
+    routeRef.current = route;
     const [locale, setLocale] = useState<string | undefined>(user.locale);
     // The unsaved-changes guard: EntityPage registers a SYNCHRONOUS dirty check
     // (draft vs baseline through refs — render-lagged state would either miss the
@@ -169,6 +174,14 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
     // button) is captured at guard-fire time — an effect capture would run after
     // the commit, when the dialog's own autofocus already owns focus
     const restoreFocusRef = useRef<HTMLElement | null>(null);
+    // The URL is the route's persistent face (router.ts): a click applies state
+    // SYNCHRONOUSLY and then pushes the hash, so the interface never waits on the
+    // async hashchange echo (fake timers included) — the echo exists only to
+    // serve the browser's Back/Forward buttons.
+    const knownEntities = useMemo(
+        () => new Set(app.entities.map((entity) => entity.apiName)),
+        [app.entities],
+    );
     const routeTo = useCallback((next: Route) => {
         if (dirtyCheckRef.current?.()) {
             restoreFocusRef.current =
@@ -177,7 +190,40 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
             return;
         }
         setRoute(next);
+        // assigning an unchanged hash is a no-op (no event, no history spam) —
+        // re-clicking the drill-through you're already on just re-renders
+        if (window.location.hash !== encodeRoute(next)) {
+            window.location.hash = encodeRoute(next);
+        }
     }, []);
+    // Back/Forward (and every other committed hash jump): decode and apply —
+    // unless the page is dirty, in which case the URL is rewound to where we
+    // still are and the gate asks; Discard re-applies the interrupted target.
+    // An echo of our own write (decoded == current) and junk hashes (unknown
+    // screen/entity — decodeRoute null) are both ignored; a junk hash also has
+    // its URL snapped back so the address bar never disagrees with the app.
+    useEffect(() => {
+        const onHashChange = (): void => {
+            const next = decodeRoute(window.location.hash, knownEntities);
+            if (!next) {
+                history.replaceState(null, "", encodeRoute(routeRef.current));
+                return;
+            }
+            if (canonicalJson(next) === canonicalJson(routeRef.current)) {
+                return;
+            }
+            if (dirtyCheckRef.current?.()) {
+                restoreFocusRef.current =
+                    document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                history.replaceState(null, "", encodeRoute(routeRef.current));
+                setPendingRoute(next);
+                return;
+            }
+            setRoute(next);
+        };
+        window.addEventListener("hashchange", onHashChange);
+        return () => window.removeEventListener("hashchange", onHashChange);
+    }, [knownEntities]);
     // Dialog modality for the unsaved-changes gate — the SAME keyboard contract
     // as the inbox's ask dialog and the builder's rollback panel: Escape cancels
     // (keeps editing), Tab is TRAPPED inside the dialog, and closing restores
@@ -273,6 +319,17 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
     const drillTo = (entity: string, filter: QueryFilter) => {
         routeTo({ view: "entity", entity, kind: "list", filter });
     };
+
+    // boot-time URL alignment: an empty or hand-edited hash snaps to the
+    // restored route's canonical form without adding a history entry
+    useEffect(() => {
+        const encoded = encodeRoute(route);
+        if (window.location.hash !== encoded) {
+            history.replaceState(null, "", encoded);
+        }
+        // mount-only — the initial route is the alignment source
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const nav = resolveNav(app, { role, locale });
     const savedPages = useMemo(
@@ -428,6 +485,12 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
                                     const target = pendingRoute;
                                     setPendingRoute(null);
                                     setRoute(target);
+                                    // replaceState, not a hash push: the interrupted
+                                    // navigation was never (or was rewound from)
+                                    // committed, so it must not become a history entry
+                                    if (window.location.hash !== encodeRoute(target)) {
+                                        history.replaceState(null, "", encodeRoute(target));
+                                    }
                                 }}
                             >
                                 Discard changes

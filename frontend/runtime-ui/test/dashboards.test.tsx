@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import { createElement } from "react";
 import { PlatformClient, type AppDefinition } from "@novaforge/shared";
@@ -10,6 +10,13 @@ import { RuntimeShell } from "../src/shell.tsx";
  * round-trip: click → list filters match the row) and per-widget client-timer
  * auto-refresh (configurable, default off — the server never pushes in v1).
  */
+
+beforeEach(() => {
+    // hash routing (the deep-link pass): a prior test's screen must never
+    // seed the next mount's boot — the shell restores from location.hash
+    window.location.hash = "";
+});
+
 
 const app: AppDefinition = {
     apiName: "erp",

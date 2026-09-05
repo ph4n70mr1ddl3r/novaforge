@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import axe from "axe-core";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
@@ -14,6 +14,13 @@ import { BUILDER_NAV, BuilderShell } from "../src/shell.tsx";
  * builder surface that fails the scans fails CI, exactly like the gallery's
  * exhaustive-mount rule on the runtime side.
  */
+
+beforeEach(() => {
+    // hash routing (the deep-link pass): a prior test's screen must never
+    // seed the next mount's boot — the shell restores from location.hash
+    window.location.hash = "";
+});
+
 
 const app: AppDefinition = {
     id: "app-1",

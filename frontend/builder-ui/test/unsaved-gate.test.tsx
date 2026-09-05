@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import { PlatformClient, type AppDefinition } from "@novaforge/shared";
@@ -11,6 +11,13 @@ import { BuilderShell } from "../src/shell.tsx";
  * builder's own entity/kind selects re-seeded the editor the same way. A dirty
  * editor must ASK before its edits die; a clean one must never prompt.
  */
+
+beforeEach(() => {
+    // hash routing (the deep-link pass): a prior test's screen must never
+    // seed the next mount's boot — the shell restores from location.hash
+    window.location.hash = "";
+});
+
 
 const app: AppDefinition = {
     apiName: "Erp",

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { PlatformClient, type AppDefinition } from "@novaforge/shared";
@@ -14,6 +14,13 @@ import { BuilderShell } from "../src/shell.tsx";
  * re-fetched (the reload), so the builder's next save rides the server's own
  * revision instead of the pre-save snapshot.
  */
+
+beforeEach(() => {
+    // hash routing (the deep-link pass): a prior test's screen must never
+    // seed the next mount's boot — the shell restores from location.hash
+    window.location.hash = "";
+});
+
 
 const baseApp: AppDefinition = {
     apiName: "Erp",

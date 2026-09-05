@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { PlatformClient } from "@novaforge/shared";
@@ -13,6 +13,13 @@ import { RuntimeShell } from "../src/shell.tsx";
  * journey (a bare map lookup: "customer" ≠ "Customer" → undefined →
  * entity.fields threw); the pin drives it through the real renderer.
  */
+
+beforeEach(() => {
+    // hash routing (the deep-link pass): a prior test's screen must never
+    // seed the next mount's boot — the shell restores from location.hash
+    window.location.hash = "";
+});
+
 
 const app: import("@novaforge/shared").AppDefinition = {
     apiName: "erp",

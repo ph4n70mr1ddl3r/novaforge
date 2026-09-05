@@ -96,13 +96,47 @@ export const BUILDER_NAV: { group: string; items: { key: BuilderScreen; label: s
     },
 ];
 
+/** Every legal screen key, derived from the nav so the two can never drift. */
+const BUILDER_SCREENS: readonly BuilderScreen[] =
+    BUILDER_NAV.flatMap((group) => group.items.map((item) => item.key));
+
+/** Hash routing for the builder (the runtime router's trivial twin): the
+ *  screen lives in the fragment — `#pages`, `#rbac` — so a refresh keeps the
+ *  editor you were in and an editor screen deep-links. Anything unknown
+ *  decodes null; the shell falls to its default screen. */
+const encodeScreen = (screen: BuilderScreen): string => `#${screen}`;
+
+const decodeScreen = (hash: string): BuilderScreen | null => {
+    const raw = hash.replace(/^#\/?/, "");
+    return (BUILDER_SCREENS as readonly string[]).includes(raw) ? (raw as BuilderScreen) : null;
+};
+
 export interface BuilderShellProps {
     client: PlatformClient;
     role?: string;
 }
 
 export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
-    const [screen, setScreen] = useState<BuilderScreen>("entities");
+    // Boot reads the URL (encodeScreen/decodeScreen above): a refresh or a
+    // shared link lands ON the named screen; junk falls to the default. The
+    // screen's synchronous mirror serves the hashchange listener below — echo
+    // suppression and the gate's rewind both run outside render.
+    const [screen, setScreen] = useState<BuilderScreen>(
+        () => decodeScreen(window.location.hash) ?? "entities",
+    );
+    const screenRef = useRef(screen);
+    screenRef.current = screen;
+    // Apply a screen AND its URL face: a changed hash is pushed (an in-app nav
+    // becomes a history entry, so Back walks screens), an unchanged one is left
+    // alone. The async hashchange echo of our own push re-decodes to the screen
+    // we already applied — screenRef suppresses it (and serves the Back/Forward
+    // arm, which arrives with no click of its own).
+    const go = useCallback((next: BuilderScreen) => {
+        setScreen(next);
+        if (window.location.hash !== encodeScreen(next)) {
+            window.location.hash = encodeScreen(next);
+        }
+    }, []);
     const [app, setApp] = useState<AppDefinition | null>(null);
     const [error, setError] = useState<string | null>(null);
     // the logic/suites editors take their busy state from the shell (their save
@@ -133,6 +167,43 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
             return;
         }
         proceed();
+    }, []);
+    // Back/Forward: a committed hash jump lands here with no click of its own —
+    // apply it, unless the builder is dirty, in which case the URL is rewound to
+    // where we still are and the gate asks (its Discard rides the same go()).
+    // Echoes of our own go() (decoded == current) and junk hashes are ignored;
+    // a junk hash also has its URL snapped back so the bar never disagrees.
+    useEffect(() => {
+        const onHashChange = (): void => {
+            const next = decodeScreen(window.location.hash);
+            if (!next) {
+                history.replaceState(null, "", encodeScreen(screenRef.current));
+                return;
+            }
+            if (next === screenRef.current) {
+                return;
+            }
+            if (dirtyCheckRef.current?.()) {
+                restoreFocusRef.current =
+                    document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                history.replaceState(null, "", encodeScreen(screenRef.current));
+                setPendingScreen({ proceed: () => go(next) });
+                return;
+            }
+            setScreen(next);
+        };
+        window.addEventListener("hashchange", onHashChange);
+        return () => window.removeEventListener("hashchange", onHashChange);
+    }, [go]);
+    // boot-time URL alignment: an empty or hand-edited hash snaps to the
+    // mounted screen's canonical form without adding a history entry
+    useEffect(() => {
+        const encoded = encodeScreen(screen);
+        if (window.location.hash !== encoded) {
+            history.replaceState(null, "", encoded);
+        }
+        // mount-only — the initial screen is the alignment source
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     // Dialog modality — the product's keyboard contract (the runtime's gate, the
     // inbox's ask dialog): Escape cancels, Tab is TRAPPED inside the dialog, and
@@ -225,7 +296,7 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                                     // every screen switch rides the gate: a dirty page
                                     // builder or dashboard composer asks before its
                                     // unmount destroys the edits
-                                    onClick={() => guard(() => setScreen(item.key))}
+                                    onClick={() => guard(() => go(item.key))}
                                     id={item.key === "entities" ? "entities" : undefined}
                                 >
                                     {item.label}
@@ -470,7 +541,7 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                         client={client}
                         onInstalled={(apiName) => {
                             setError(null);
-                            setScreen("entities");
+                            go("entities");
                             void (async () => {
                                 const apps = (await client.listApps()) as { id?: string }[];
                                 if (apps[0]?.id) {
@@ -486,7 +557,7 @@ export function BuilderShell({ client, role }: BuilderShellProps): ReactNode {
                         client={client}
                         onAppCreated={() => {
                             setError(null);
-                            setScreen("entities");
+                            go("entities");
                             void (async () => {
                                 const apps = (await client.listApps()) as { id?: string }[];
                                 if (apps[0]?.id) {
