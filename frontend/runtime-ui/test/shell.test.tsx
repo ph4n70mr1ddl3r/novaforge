@@ -379,6 +379,53 @@ describe("RuntimeShell", () => {
         await waitFor(() => expect(screen.getByRole("heading", { name: "My approvals" })).toBeTruthy());
     });
 
+    it("the unsaved-changes dialog honors the keyboard contract — Escape cancels, Tab is trapped, focus returns to the trigger", async () => {
+        // the inbox's ask dialog and the builder's rollback panel both trap Tab,
+        // cancel on Escape, and restore focus on close — the guard's dialog was
+        // the product's most destructive modal and the only one without the
+        // contract (Tab wandered behind its scrim; close dumped focus to <body>)
+        const { client } = stubClient();
+        render(shell(client));
+        screen.getByRole("button", { name: "Customers" }).click();
+        await waitFor(() => expect(screen.getByText("1 record")).toBeTruthy());
+        screen.getByRole("button", { name: /new|add/i }).click();
+        await screen.findByRole("button", { name: "Save" });
+        const name = screen.getByLabelText(/^Name/) as HTMLInputElement;
+        await act(async () => {
+            fireEvent.change(name, { target: { value: "Acme" } });
+        });
+
+        // the guard fires from a nav click — the trigger owns focus at that moment
+        // (a keyboard user Tab-navigating holds focus on the button they press)
+        const trigger = screen.getByRole("button", { name: "Approvals" });
+        await act(async () => {
+            trigger.focus();
+            trigger.click();
+        });
+        const dialog = await screen.findByRole("dialog", { name: "Unsaved changes" });
+        // the dialog's own autofocus owns focus on open — the trigger is remembered
+        // for the restore on CLOSE
+        expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Keep editing" }));
+
+        // Tab at the dialog's LAST control wraps to its first — never to the
+        // record form behind the scrim
+        await act(async () => {
+            within(dialog).getByRole("button", { name: "Discard changes" }).focus();
+            fireEvent.keyDown(document, { key: "Tab" });
+        });
+        expect(dialog.contains(document.activeElement)).toBe(true);
+        expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Keep editing" }));
+
+        // Escape cancels: the dialog closes, the route never changed, and focus
+        // is restored to the nav trigger that opened the gate
+        await act(async () => {
+            fireEvent.keyDown(document, { key: "Escape" });
+        });
+        expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).toBeNull();
+        expect(screen.getByLabelText(/^Name/)).toBeTruthy();
+        expect(document.activeElement).toBe(trigger);
+    });
+
     it("a page that just SAVED navigates silently — the guard never re-prompts on its own save", async () => {
         const fetchImpl = vi.fn(async (input: string | URL, init?: RequestInit) => {
             const url = String(input);

@@ -777,6 +777,90 @@ ol.nf-steps li[aria-current="step"] {
   font-weight: 600;
 }
 
+/* a grid-cell node marked nf-full spans the whole form row — FormLayout's
+   action bar carries the class but the rule never existed, so Save/Cancel sat
+   in ONE column of a two-column form while section titles spanned correctly */
+.nf-full {
+  grid-column: 1 / -1;
+}
+
+/* wide grids scroll INSIDE their surface instead of dragging the whole page
+   sideways — a ten-column integrations table used to push main out past the
+   viewport edge (a scrollbar only appears when content actually overflows) */
+.nf-list,
+.nf-inbox,
+.nf-notifications {
+  overflow-x: auto;
+}
+
+/* vestibular safety (WCAG 2.3.3): the chrome's hover/active fades off entirely
+   when the OS asks for reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .nf-builder button,
+  .nf-runtime button,
+  .nf-shell button {
+    transition: none;
+  }
+}
+
+/* --- narrow viewports (the 720px breakpoint catalog.css already speaks) ---
+   The apps ship the viewport meta, but only the dashboard grid ever answered a
+   media query: the page builder's four-pane canvas crushed, the topbar's
+   fourteen buttons ate the viewport, and two-column forms rendered half-width
+   inputs on a phone. */
+
+/* tablet: the canvas folds to palette+canvas over props+preview — four tight
+   columns need ~1100px, so below that the 1fr tracks starve */
+@media (max-width: 1080px) {
+  .nf-b-columns {
+    grid-template-columns: 10rem 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .nf-builder main,
+  .nf-runtime main {
+    padding: var(--nf-spacing-2) var(--nf-spacing-3) var(--nf-spacing-5);
+  }
+
+  .nf-topbar {
+    flex-wrap: wrap;
+    padding: var(--nf-spacing-2);
+  }
+
+  /* the page builder's panes stack full-width, palette → canvas → props →
+     preview (the authoring order) */
+  .nf-b-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .nf-b-palette,
+  .nf-b-canvas,
+  .nf-b-props,
+  .nf-b-preview {
+    min-height: auto;
+  }
+
+  /* FormLayout sets its column count inline — !important is the only way past
+     an inline style (catalog.css set the precedent with the dashboard cells);
+     a two-column form on a phone is a ~160px input */
+  .nf-form {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* the catalog AppShell's nav + content side-by-side never fit — the nav
+     becomes a full-width band above the content */
+  .nf-shell-body {
+    flex-direction: column;
+  }
+
+  .nf-nav {
+    min-width: 0;
+    border-right: none;
+    border-bottom: 1px solid var(--nf-color-border);
+  }
+}
+
 /* screen-reader-only content (labels for structural columns, e.g. the drill column) */
 .nf-visually-hidden {
   position: absolute;

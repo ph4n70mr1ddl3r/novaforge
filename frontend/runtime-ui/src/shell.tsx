@@ -102,13 +102,64 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
         dirtyCheckRef.current = check;
     }, []);
     const [pendingRoute, setPendingRoute] = useState<Route | null>(null);
+    // where focus returns when the guard's dialog closes: the trigger (a nav
+    // button) is captured at guard-fire time — an effect capture would run after
+    // the commit, when the dialog's own autofocus already owns focus
+    const restoreFocusRef = useRef<HTMLElement | null>(null);
     const routeTo = useCallback((next: Route) => {
         if (dirtyCheckRef.current?.()) {
+            restoreFocusRef.current =
+                document.activeElement instanceof HTMLElement ? document.activeElement : null;
             setPendingRoute(next);
             return;
         }
         setRoute(next);
     }, []);
+    // Dialog modality for the unsaved-changes gate — the SAME keyboard contract
+    // as the inbox's ask dialog and the builder's rollback panel: Escape cancels
+    // (keeps editing), Tab is TRAPPED inside the dialog, and closing restores
+    // focus to the trigger. The product's most destructive dialog was the only
+    // one still letting Tab wander into the page behind its scrim.
+    useEffect(() => {
+        if (!pendingRoute) {
+            return;
+        }
+        const onKey = (event: KeyboardEvent): void => {
+            if (event.key === "Escape") {
+                event.stopPropagation();
+                setPendingRoute(null);
+                return;
+            }
+            if (event.key !== "Tab") {
+                return;
+            }
+            const dialog = document.querySelector(".nf-dialog");
+            if (!(dialog instanceof HTMLElement)) {
+                return;
+            }
+            const focusable = Array.from(
+                dialog.querySelectorAll<HTMLElement>("button, input, textarea, select, a[href]"),
+            ).filter((element) => !element.hasAttribute("disabled"));
+            if (focusable.length === 0) {
+                return;
+            }
+            const first = focusable[0]!;
+            const last = focusable[focusable.length - 1]!;
+            const active = document.activeElement;
+            if (event.shiftKey && (active === first || !(active instanceof Node) || !dialog.contains(active))) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && active === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+        document.addEventListener("keydown", onKey, true);
+        return () => {
+            document.removeEventListener("keydown", onKey, true);
+            restoreFocusRef.current?.focus();
+        };
+    }, [pendingRoute]);
     const roles = effectiveRoles(app, user);
     const role = roles[0];
     const entities = useMemo(
