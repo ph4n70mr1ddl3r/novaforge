@@ -39,10 +39,27 @@ export class Decimal {
         return new Decimal(digits, scale, sign).normalized();
     }
 
-    /** From a JSON number via its shortest round-trip decimal string. */
+    /** From a JSON number via its shortest round-trip decimal string.
+     *
+     *  Total for every finite JS number: `String()` renders exponent notation
+     *  outside the plain-decimal band (|v| ≥ 1e21 → "1e+21", 0 < |v| < 1e-6 →
+     *  "1e-7") — values a DECIMAL field legally holds (precision 38, authorable
+     *  scale), whose bindings bridge used to die on with a raw Error and take the
+     *  whole map (every slot rule on the page) down with it. The exponent expands
+     *  into the sign × digits × 10^−scale triple directly — the authored-input
+     *  grammar ({@link parse}) stays plain-decimal strict. The value still rides
+     *  the float's own shadow (a JSON number carries ≤ 17 significant digits); the
+     *  exactness contract is the server's to enforce.
+     */
     static fromNumber(value: number): Decimal {
         if (!Number.isFinite(value)) throw new Error(`not a finite number: ${value}`);
-        return Decimal.parse(String(value));
+        const text = String(value);
+        const m = /^([+-]?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/.exec(text);
+        if (!m) return Decimal.parse(text);
+        const sign: 1 | -1 = m[1] === "-" ? -1 : 1;
+        const digits = BigInt(m[2]! + (m[3] ?? ""));
+        const scale = (m[3] ?? "").length - Number(m[4]);
+        return new Decimal(digits, scale, sign).normalized();
     }
 
     /** The 34-digit banker's rounding context (mirrors Java MathContext(34, HALF_EVEN)). */

@@ -88,4 +88,25 @@ describe("renderer expression slots", () => {
         // the parse failure must NOT hide the field (a blank page reads as data loss)
         expect((await screen.findByLabelText(/Invoice No/i))).toBeTruthy();
     });
+
+    it("a legal decimal the wire carries in exponent notation must not freeze the form", async () => {
+        // A DECIMAL field legally holds 1e21 (precision 38, scale 0 ≤ field scale):
+        // the record JSON carries the number token, JSON.parse makes it a JS number,
+        // and String() renders exponent notation ("1e+21") — which the bindings
+        // bridge's plain-decimal grammar rejected. The raw Error aborted the WHOLE
+        // bindings map, so every slot rule fell back — and the fallback FROZE the
+        // field (readonly === true on throw) whose rule reads perfectly healthy
+        // bindings. One exotic-but-legal decimal locked the entire form.
+        const record: Record<string, unknown> = {
+            id: "1", number: "INV-1", status: "DRAFT",
+            amount: 1e21,
+        };
+        render(createElement(PageRenderer, {
+            page: pageWith((node) => { node.readonly = "status == 'POSTED'"; }),
+            entity,
+            context: context(record),
+        }));
+        expect(((await screen.findByLabelText(/Invoice No/i)) as HTMLInputElement).readOnly)
+            .toBe(false);
+    });
 });

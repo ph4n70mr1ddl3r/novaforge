@@ -129,6 +129,30 @@ describe("Decimal — the 34-digit HALF_EVEN context (Java BigDecimal parity)", 
         expect(d("50000000").setScale(-8).compareTo(Decimal.ZERO)).toBe(0);
     });
 
+    it("fromNumber carries every string String() renders — exponent notation included", () => {
+        // JS stringifies |v| ≥ 1e21 and 0 < |v| < 1e-6 in exponent notation
+        // ("1e+21", "1e-7") — the old fromNumber fed those straight into the
+        // plain-decimal grammar and threw a raw Error on values a DECIMAL field
+        // legally holds (precision 38/scale n), freezing and forcing every
+        // readonly/required rule on the page (the bindings map aborts wholesale).
+        expect(Decimal.fromNumber(1e21).toString()).toBe("1000000000000000000000");
+        expect(Decimal.fromNumber(1e-7).toString()).toBe("0.0000001");
+        expect(Decimal.fromNumber(-1.5e-8).toString()).toBe("-0.000000015");
+        expect(Decimal.fromNumber(1.5e21).toString()).toBe("1500000000000000000000");
+        expect(Decimal.fromNumber(Number.MAX_VALUE).toString())
+            .toBe("17976931348623157" + "0".repeat(292));
+        // value semantics across the bridge (compareTo, never scale)
+        expect(Decimal.fromNumber(1e-7).compareTo(Decimal.parse("0.0000001"))).toBe(0);
+        expect(Decimal.fromNumber(1e21).compareTo(Decimal.parse("1000000000000000000000"))).toBe(0);
+        // the authored-input grammar stays plain-decimal strict — exponents reject there
+        expect(Decimal.tryParse("1e+21")).toBeUndefined();
+        // plain notation unchanged
+        expect(Decimal.fromNumber(0.1).toString()).toBe("0.1");
+        expect(Decimal.fromNumber(123.456).toString()).toBe("123.456");
+        expect(Decimal.fromNumber(0).toString()).toBe("0");
+        expect(Decimal.fromNumber(-0).toString()).toBe("0");
+    });
+
     it("setScale at an absurd negative scale answers instantly — it never builds 10^drop", () => {
         // drop = 2147483647: building 10^drop (the pre-guard path) hung the
         // evaluating tab where Java's compact scale arithmetic answers instantly.
