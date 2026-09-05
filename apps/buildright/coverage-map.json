@@ -1,0 +1,82 @@
+{
+  "comment": "Hand-maintained coverage claims for the BuildRight portfolio against the erpplans requirement catalog. Prefix entries set the DEFAULT state for every requirement with that ID prefix; 'requirements' entries override individual rows with specific evidence. Statuses: covered = implemented and suite-pinned; partial = implemented subset, named gaps; uncovered = no app metadata yet. Waves follow apps/buildright/README.md. Every 'partial'/'covered' claim must name its evidence (app + artifact surface) — claims without evidence fail review.",
+  "prefixes": {
+    "FIN": {
+      "status": "partial",
+      "wave": 2,
+      "app": "apps/erp + apps/buildright",
+      "note": "GL/AR core is the Phase 7 corpus (journals, AR documents, period close, aging); AP joins via the wave-1 P2P app; assets/tax/intercompany/treasury remain wave 2+ (Erp gap log G-9, G-13 track AP-bill and revaluation)."
+    },
+    "INV": {
+      "status": "partial",
+      "wave": 2,
+      "app": "apps/erp + apps/buildright",
+      "note": "Receipt-side ledger with conditional roll-ups and weighted-average costing is proven (inventoryCosting suite); transfers/counts/lots/serials are wave 2 (Erp gap log FIFO/lot entry)."
+    },
+    "PUR": {
+      "status": "partial",
+      "wave": 1,
+      "app": "apps/buildright",
+      "note": "Wave 1 ships the PO→receipt→bill→payment document chain with threshold approval; replenishment/imports/RTV/scorecards are wave 2+; hard 3-way-match guards are logged (BR-G-2)."
+    },
+    "MDM": {
+      "status": "partial",
+      "wave": 3,
+      "app": "apps/buildright",
+      "note": "Minimal Item/Vendor master entities exist for the P2P cycle; the 55K-SKU controlled item-master workflow is wave 3."
+    },
+    "CCR": {
+      "status": "partial",
+      "wave": 3,
+      "app": "apps/erp",
+      "note": "AR aging, dunning letters, and credit limits exist in the Phase 7 corpus; scoring/alert automation is wave 3."
+    },
+    "POS": { "status": "uncovered", "wave": "edge", "app": null, "note": "Best-of-breed edge per the sourcing doctrine — integration metadata (webhooks/imports), never entities." },
+    "ECOM": { "status": "uncovered", "wave": "edge", "app": null, "note": "Best-of-breed edge — integration metadata only." },
+    "WMS": { "status": "uncovered", "wave": "edge", "app": null, "note": "Best-of-breed edge — integration metadata only." },
+    "SCP": { "status": "uncovered", "wave": 3, "app": null, "note": "Replenishment planning rides PUR wave 3; full SCP is a bought edge." },
+    "HR": { "status": "uncovered", "wave": 4, "app": null, "note": "HCM is a bought edge (hire-to-retire); only expense/integration seams land here." },
+    "CRM": { "status": "uncovered", "wave": 4, "app": null, "note": "Loyalty/CRM rides the edge stack; portfolio models the integration seam." },
+    "GOV": { "status": "uncovered", "wave": 4, "app": null, "note": "Governance workflows are process-layer (BPMN + task inboxes) once wave-2 domains land." },
+    "RPT": { "status": "uncovered", "wave": 2, "app": null, "note": "The reporting pillar exists platform-side; the specific RPT-00x executive/tax reports are wave 2 app metadata." },
+    "COM": { "status": "uncovered", "wave": 3, "app": null, "note": "Intercompany (R11) is wave 2; general communications wave 3." },
+    "MER": { "status": "uncovered", "wave": 4, "app": null, "note": "Merchandising strategy is a planning discipline — wave 4." },
+    "DOC": { "status": "uncovered", "wave": 3, "app": null, "note": "Document management rides the File service + retention platform work (BIR 10-year forcing function)." },
+    "LP": { "status": "uncovered", "wave": 4, "app": null, "note": "Loss prevention wave 4." },
+    "BCP": { "status": "uncovered", "wave": 4, "app": null, "note": "Continuity/insurance wave 4." },
+    "VPP": { "status": "uncovered", "wave": 3, "app": null, "note": "Vendor portal — inbound webhook/import seam, wave 3." },
+    "INS": { "status": "uncovered", "wave": 4, "app": null, "note": "Insurance & claims wave 4." },
+    "HSE": { "status": "uncovered", "wave": 4, "app": null, "note": "Health/safety/environment wave 4." },
+    "BIA": { "status": "uncovered", "wave": 4, "app": null, "note": "BI operations ride the platform reporting/analytics stack; wave 4 for app metadata." },
+    "RCL": { "status": "uncovered", "wave": 4, "app": null, "note": "Recall management needs lot tracking (wave 2 inventory) first." },
+    "MKT": { "status": "uncovered", "wave": 4, "app": null, "note": "Marketing wave 4." },
+    "SRV": { "status": "uncovered", "wave": 4, "app": null, "note": "In-store/installation services wave 4." },
+    "IC": { "status": "uncovered", "wave": 2, "app": null, "note": "Intercompany & transfer pricing — wave 2 R2R depth." },
+    "ESG": { "status": "uncovered", "wave": 4, "app": null, "note": "ESG wave 4." },
+    "WHL": { "status": "uncovered", "wave": 4, "app": null, "note": "Wholesale/reseller wave 4." },
+    "WSL": { "status": "uncovered", "wave": 4, "app": null, "note": "Wholesale & reseller operations (R16) wave 4." },
+    "MNT": { "status": "uncovered", "wave": 4, "app": null, "note": "Maintenance wave 4." },
+    "LOG": { "status": "uncovered", "wave": "edge", "app": null, "note": "Transport management is a bought edge (TMS)." },
+    "HAZ": { "status": "uncovered", "wave": 4, "app": null, "note": "Dangerous goods compliance wave 4." },
+    "ENG": { "status": "uncovered", "wave": 4, "app": null, "note": "Engineering/construction wave 4." },
+    "REG": { "status": "uncovered", "wave": 4, "app": null, "note": "Regulatory wave 4." },
+    "PRJ": { "status": "uncovered", "wave": 4, "app": null, "note": "Project/trade coordination — the in-house differentiator archetype; wave 4." },
+    "PROP": { "status": "uncovered", "wave": 4, "app": null, "note": "Property wave 4." },
+    "AUD": { "status": "uncovered", "wave": 4, "app": null, "note": "Audit wave 4." },
+    "NFR": { "status": "uncovered", "wave": "platform", "app": null, "note": "Non-functionals are platform contracts (PLAN.md §1, IMPLEMENTATION.md), not app metadata — tracked by the platform phases and the perf harness (apps/perf), not per-requirement here." }
+  },
+  "requirements": {
+    "PUR-001": { "status": "partial", "app": "apps/buildright", "evidence": "PurchaseOrder entity + DRAFT→SUBMITTED→APPROVED→CLOSED machine; close process itself unsuite-pinned (wave 2)" },
+    "PUR-003": { "status": "partial", "app": "apps/buildright", "evidence": "Vendor master (terms, contact); performance scorecards absent (wave 2+)" },
+    "PUR-005": { "status": "partial", "app": "apps/buildright", "evidence": "PO/GoodsReceipt/VendorBill chain with poLine + item references; hard quantity guards are BR-G-2, approval gate is the compensating control (p2pReceivingBillingEdges)" },
+    "PUR-010": { "status": "partial", "app": "apps/buildright", "evidence": "Threshold approval (approvalThreshold, mode-all, SOD_VIOLATION pinned in p2pApprovalEdges); single approval level — multi-level escalation is a platform deferral (PLAN §1)" },
+    "PUR-011": { "status": "partial", "app": "apps/buildright", "evidence": "GoodsReceipt with costing on post, terminal freeze (p2pHappyPath, p2pReceivingBillingEdges); DSD store-level receipt is the same entity (location dimension wave 2)" },
+    "FIN-004": { "status": "partial", "app": "apps/buildright", "evidence": "VendorBill auto-journal with approval (submitForPosting flow, JE balanced + frozen); matching guards = BR-G-2 (same claim as PUR-005)" },
+    "FIN-005": { "status": "partial", "app": "apps/erp", "evidence": "Invoice/Payment/CreditNote/DunningLetter corpus + reconciliation suite (Phase 7)" },
+    "FIN-014": { "status": "partial", "app": "apps/erp + apps/buildright", "evidence": "Document-currency FX with book-currency posting (fxRate + totalBook, creditAndCurrency suite); revaluation/realized gain-loss = Erp G-9" },
+    "FIN-015": { "status": "partial", "app": "apps/erp", "evidence": "AccountingPeriod machine + periodLock harvest + closeChecklist BPMN (controls suite)" },
+    "INV-003": { "status": "covered", "app": "apps/erp", "evidence": "Weighted-average costing via the declarative bind flow; inventoryCosting suite pins the numbers" },
+    "INV-015": { "status": "partial", "app": "apps/erp", "evidence": "inventoryValuation report (value/qty totals); by-location/category slicing waits for report join-lowering (Erp G-12)" },
+    "MDM-001": { "status": "partial", "app": "apps/buildright", "evidence": "Item master entity (SKU-unique); controlled creation workflow is wave 3" }
+  }
+}

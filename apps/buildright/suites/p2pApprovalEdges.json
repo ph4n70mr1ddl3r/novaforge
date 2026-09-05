@@ -1,0 +1,258 @@
+{
+  "apiName": "p2pApprovalEdges",
+  "label": "PO approval edges — threshold branching, SoD on self-approval, rejection + resubmission",
+  "cases": [
+    {
+      "name": "po-above-threshold-needs-manager-approval-and-sod-blocks-self-approval",
+      "fixtures": [
+        {
+          "entity": "Item",
+          "asRole": "receivingClerk",
+          "template": {
+            "sku": "SKU-BD-2001",
+            "name": "Table Saw",
+            "uom": "EA"
+          }
+        },
+        {
+          "entity": "Vendor",
+          "asRole": "buyer",
+          "template": {
+            "name": "ToolWorks Distribution"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "template": {
+            "vendor": "${Vendor[0].id}",
+            "orderDate": "2026-09-07",
+            "status": "DRAFT",
+            "lines": [
+              {
+                "item": "${Item[0].id}",
+                "qty": 100,
+                "unitPrice": "25.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "recordId": "${PurchaseOrder[0].id}",
+          "template": {
+            "version": "${PurchaseOrder[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "procurementManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "buyer",
+          "recordId": "${Task[0].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "error(SOD_VIOLATION)"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "procurementManager",
+          "recordId": "${Task[0].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${PurchaseOrder[0].total} == 2500.0000",
+        "${PurchaseOrder[0].status} == 'APPROVED'"
+      ]
+    },
+    {
+      "name": "po-below-threshold-auto-approves-without-a-task",
+      "fixtures": [
+        {
+          "entity": "Item",
+          "asRole": "receivingClerk",
+          "template": {
+            "sku": "SKU-BD-2002",
+            "name": "Screwdriver Set",
+            "uom": "PK"
+          }
+        },
+        {
+          "entity": "Vendor",
+          "asRole": "buyer",
+          "template": {
+            "name": "Hardware Bulk Trading"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "template": {
+            "vendor": "${Vendor[0].id}",
+            "orderDate": "2026-09-07",
+            "status": "DRAFT",
+            "lines": [
+              {
+                "item": "${Item[0].id}",
+                "qty": 20,
+                "unitPrice": "5.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "recordId": "${PurchaseOrder[0].id}",
+          "template": {
+            "version": "${PurchaseOrder[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${PurchaseOrder[0].total} == 100.0000",
+        "${PurchaseOrder[0].status} == 'APPROVED'"
+      ]
+    },
+    {
+      "name": "rejection-returns-the-po-and-resubmission-re-approves",
+      "fixtures": [
+        {
+          "entity": "Item",
+          "asRole": "receivingClerk",
+          "template": {
+            "sku": "SKU-BD-2003",
+            "name": "Generator 5kW",
+            "uom": "EA"
+          }
+        },
+        {
+          "entity": "Vendor",
+          "asRole": "buyer",
+          "template": {
+            "name": "PowerEquip Imports"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "template": {
+            "vendor": "${Vendor[0].id}",
+            "orderDate": "2026-09-07",
+            "status": "DRAFT",
+            "lines": [
+              {
+                "item": "${Item[0].id}",
+                "qty": 2,
+                "unitPrice": "1000.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "recordId": "${PurchaseOrder[0].id}",
+          "template": {
+            "version": "${PurchaseOrder[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "procurementManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "procurementManager",
+          "recordId": "${Task[0].id}",
+          "template": {
+            "action": "reject",
+            "comment": "no budget line this quarter"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "recordId": "${PurchaseOrder[0].id}",
+          "template": {
+            "version": "${PurchaseOrder[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "procurementManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "procurementManager",
+          "recordId": "${Task[0].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${PurchaseOrder[0].status} == 'APPROVED'"
+      ]
+    }
+  ]
+}

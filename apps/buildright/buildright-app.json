@@ -1,0 +1,1611 @@
+{
+  "apiName": "Buildright",
+  "label": "BuildRight Depot P2P (wave 1)",
+  "description": "The BuildRight Depot portfolio's first product app: the Tier-1 procure-to-pay cycle (VS-15) — purchase orders with threshold approval, goods receipts with weighted-average-ready costing, vendor bills with auto-journal, and settlement by posted-payment roll-up. Authored entirely as metadata; rides the same constructs the Phase 7 dogfood proved. Requirements traceability: apps/buildright/coverage/.",
+  "settings": {
+    "sequences": [
+      {
+        "apiName": "poNumber",
+        "mode": "gapless",
+        "start": 1,
+        "prefix": "PO-",
+        "padding": 6
+      },
+      {
+        "apiName": "receiptNumber",
+        "mode": "gapless",
+        "start": 1,
+        "prefix": "RCV-",
+        "padding": 6
+      },
+      {
+        "apiName": "billNumber",
+        "mode": "gapless",
+        "start": 1,
+        "prefix": "BILL-",
+        "padding": 6
+      },
+      {
+        "apiName": "entryNumber",
+        "mode": "gapless",
+        "start": 1,
+        "prefix": "BJE-",
+        "padding": 6
+      },
+      {
+        "apiName": "paymentNumber",
+        "mode": "cached",
+        "start": 1,
+        "prefix": "BPAY-",
+        "padding": 5
+      }
+    ],
+    "currencies": [
+      {
+        "code": "USD",
+        "scale": 4
+      },
+      {
+        "code": "EUR",
+        "scale": 4
+      }
+    ]
+  },
+  "permissionSet": {
+    "roles": [
+      {
+        "name": "procurementManager",
+        "description": "Approves purchase orders above threshold and vendor bills (SoD: never the preparer)",
+        "level": 10
+      },
+      {
+        "name": "buyer",
+        "description": "Raises and submits purchase orders, owns vendors (the requesting role)",
+        "level": 20
+      },
+      {
+        "name": "receivingClerk",
+        "description": "Receives goods against purchase orders, owns items",
+        "level": 20
+      },
+      {
+        "name": "apClerk",
+        "description": "Books vendor bills and payments (the preparer role)",
+        "level": 20
+      },
+      {
+        "name": "reporting",
+        "description": "Scheduled report delivery scope (explicitly permissioned, never admin)"
+      }
+    ],
+    "objectPermissions": [
+      {
+        "role": "buyer",
+        "entity": "Vendor",
+        "create": true,
+        "read": true,
+        "update": true,
+        "delete": true
+      },
+      {
+        "role": "buyer",
+        "entity": "PurchaseOrder",
+        "create": true,
+        "read": true,
+        "update": true
+      },
+      {
+        "role": "buyer",
+        "entity": "PurchaseOrderLine",
+        "create": true,
+        "read": true,
+        "update": true,
+        "delete": true
+      },
+      {
+        "role": "buyer",
+        "entity": "Item",
+        "read": true
+      },
+      {
+        "role": "buyer",
+        "entity": "GoodsReceipt",
+        "read": true
+      },
+      {
+        "role": "buyer",
+        "entity": "VendorBill",
+        "read": true
+      },
+      {
+        "role": "receivingClerk",
+        "entity": "Item",
+        "create": true,
+        "read": true,
+        "update": true,
+        "delete": true
+      },
+      {
+        "role": "receivingClerk",
+        "entity": "GoodsReceipt",
+        "create": true,
+        "read": true,
+        "update": true
+      },
+      {
+        "role": "receivingClerk",
+        "entity": "PurchaseOrder",
+        "read": true
+      },
+      {
+        "role": "receivingClerk",
+        "entity": "PurchaseOrderLine",
+        "read": true
+      },
+      {
+        "role": "apClerk",
+        "entity": "VendorBill",
+        "create": true,
+        "read": true,
+        "update": true
+      },
+      {
+        "role": "apClerk",
+        "entity": "VendorBillLine",
+        "create": true,
+        "read": true,
+        "update": true,
+        "delete": true
+      },
+      {
+        "role": "apClerk",
+        "entity": "BillPayment",
+        "create": true,
+        "read": true,
+        "update": true,
+        "delete": true
+      },
+      {
+        "role": "apClerk",
+        "entity": "Vendor",
+        "create": true,
+        "read": true,
+        "update": true
+      },
+      {
+        "role": "apClerk",
+        "entity": "PurchaseOrder",
+        "read": true
+      },
+      {
+        "role": "apClerk",
+        "entity": "PurchaseOrderLine",
+        "read": true
+      },
+      {
+        "role": "apClerk",
+        "entity": "GoodsReceipt",
+        "read": true
+      },
+      {
+        "role": "apClerk",
+        "entity": "Account",
+        "read": true
+      },
+      {
+        "role": "procurementManager",
+        "entity": "PurchaseOrder",
+        "create": true,
+        "read": true,
+        "update": true,
+        "delete": true
+      },
+      {
+        "role": "procurementManager",
+        "entity": "PurchaseOrderLine",
+        "create": true,
+        "read": true,
+        "update": true,
+        "delete": true
+      },
+      {
+        "role": "procurementManager",
+        "entity": "VendorBill",
+        "create": true,
+        "read": true,
+        "update": true,
+        "delete": true
+      },
+      {
+        "role": "procurementManager",
+        "entity": "VendorBillLine",
+        "create": true,
+        "read": true,
+        "update": true,
+        "delete": true
+      },
+      {
+        "role": "procurementManager",
+        "entity": "JournalEntry",
+        "create": true,
+        "read": true,
+        "update": true,
+        "delete": true,
+        "reportExecute": true
+      },
+      {
+        "role": "procurementManager",
+        "entity": "JournalLine",
+        "create": true,
+        "read": true,
+        "update": true,
+        "delete": true
+      },
+      {
+        "role": "procurementManager",
+        "entity": "Account",
+        "create": true,
+        "read": true,
+        "update": true,
+        "delete": true,
+        "reportExecute": true
+      },
+      {
+        "role": "procurementManager",
+        "entity": "Vendor",
+        "read": true
+      },
+      {
+        "role": "procurementManager",
+        "entity": "GoodsReceipt",
+        "read": true
+      },
+      {
+        "role": "procurementManager",
+        "entity": "BillPayment",
+        "read": true
+      },
+      {
+        "role": "procurementManager",
+        "entity": "Item",
+        "read": true
+      },
+      {
+        "role": "reporting",
+        "entity": "VendorBill",
+        "read": true,
+        "reportExecute": true
+      },
+      {
+        "role": "reporting",
+        "entity": "PurchaseOrder",
+        "read": true
+      },
+      {
+        "role": "reporting",
+        "entity": "JournalLine",
+        "read": true
+      }
+    ]
+  },
+  "entities": [
+    {
+      "apiName": "Account",
+      "label": "Account",
+      "displayField": "code",
+      "module": "GL",
+      "fields": [
+        {
+          "apiName": "code",
+          "type": "text",
+          "required": true,
+          "uniqueness": true
+        },
+        {
+          "apiName": "name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "apiName": "type",
+          "type": "enum",
+          "required": true,
+          "values": [
+            "ASSET",
+            "LIABILITY",
+            "EQUITY",
+            "REVENUE",
+            "EXPENSE"
+          ]
+        }
+      ],
+      "indexes": [
+        {
+          "fields": [
+            "code"
+          ]
+        },
+        {
+          "fields": [
+            "type"
+          ]
+        }
+      ]
+    },
+    {
+      "apiName": "JournalEntry",
+      "label": "Journal Entry",
+      "displayField": "reference",
+      "module": "GL",
+      "freezeOnTerminal": true,
+      "fields": [
+        {
+          "apiName": "reference",
+          "type": "text",
+          "required": true,
+          "uniqueness": true,
+          "default": {
+            "sequence": "entryNumber"
+          }
+        },
+        {
+          "apiName": "memo",
+          "type": "text"
+        },
+        {
+          "apiName": "entryDate",
+          "type": "date",
+          "required": true
+        },
+        {
+          "apiName": "sourceBill",
+          "type": "lookup",
+          "target": "VendorBill",
+          "label": "Source bill (auto-journal link)"
+        },
+        {
+          "apiName": "status",
+          "type": "enum",
+          "values": [
+            "DRAFT",
+            "SUBMITTED",
+            "POSTED"
+          ]
+        },
+        {
+          "apiName": "totalDebit",
+          "type": "money",
+          "rollup": "SUM(lines.debit)"
+        },
+        {
+          "apiName": "totalCredit",
+          "type": "money",
+          "rollup": "SUM(lines.credit)"
+        }
+      ],
+      "relationships": [
+        {
+          "apiName": "lines",
+          "type": "child",
+          "target": "JournalLine",
+          "cascadeDelete": true
+        }
+      ],
+      "validations": [
+        {
+          "name": "balanced",
+          "scope": "record",
+          "expression": "totalDebit == totalCredit",
+          "message": "Entry must balance: total debit must equal total credit"
+        }
+      ],
+      "hooks": [
+        {
+          "name": "submitForPosting",
+          "trigger": "afterSave",
+          "flow": {
+            "id": "b1",
+            "op": "branch",
+            "params": {
+              "guard": "status == 'SUBMITTED' && totalDebit > 0"
+            },
+            "onTrue": "a1",
+            "onFalse": null,
+            "body": {
+              "id": "a1",
+              "op": "requestApproval",
+              "params": {
+                "approvers": "Buildright.procurementManager",
+                "mode": "any"
+              },
+              "next": "p1",
+              "body": {
+                "id": "r1",
+                "op": "publishEvent",
+                "params": {
+                  "name": "buildright.journal.rejected",
+                  "payload": {
+                    "reference": "${reference}",
+                    "reason": "approval rejected"
+                  }
+                },
+                "body": {
+                  "id": "p1",
+                  "op": "transitionState",
+                  "params": {
+                    "to": "POSTED"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "indexes": [
+        {
+          "fields": [
+            "entryDate"
+          ]
+        },
+        {
+          "fields": [
+            "status"
+          ]
+        }
+      ]
+    },
+    {
+      "apiName": "JournalLine",
+      "label": "Journal Line",
+      "module": "GL",
+      "fields": [
+        {
+          "apiName": "entry",
+          "type": "lookup",
+          "target": "JournalEntry",
+          "required": true
+        },
+        {
+          "apiName": "account",
+          "type": "lookup",
+          "target": "Account",
+          "required": true
+        },
+        {
+          "apiName": "debit",
+          "type": "money"
+        },
+        {
+          "apiName": "credit",
+          "type": "money"
+        },
+        {
+          "apiName": "memo",
+          "type": "text"
+        }
+      ],
+      "validations": [
+        {
+          "name": "oneSideOnly",
+          "scope": "record",
+          "expression": "(debit == null || credit == null) || !(debit > 0 && credit > 0)",
+          "message": "A line carries debit or credit, never both"
+        }
+      ],
+      "indexes": [
+        {
+          "fields": [
+            "debit"
+          ]
+        },
+        {
+          "fields": [
+            "credit"
+          ]
+        },
+        {
+          "fields": [
+            "account"
+          ]
+        }
+      ]
+    },
+    {
+      "apiName": "Item",
+      "label": "Item",
+      "displayField": "sku",
+      "module": "MDM",
+      "fields": [
+        {
+          "apiName": "sku",
+          "type": "text",
+          "required": true,
+          "uniqueness": true
+        },
+        {
+          "apiName": "name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "apiName": "uom",
+          "type": "enum",
+          "values": [
+            "EA",
+            "BOX",
+            "CASE",
+            "PK"
+          ],
+          "default": {
+            "value": "EA"
+          }
+        },
+        {
+          "apiName": "unitCost",
+          "type": "money"
+        },
+        {
+          "apiName": "qtyReceived",
+          "type": "decimal",
+          "precision": 18,
+          "scale": 6,
+          "rollup": "SUM(receipts.qty WHERE status = 'POSTED')"
+        }
+      ],
+      "relationships": [
+        {
+          "apiName": "receipts",
+          "type": "child",
+          "target": "GoodsReceipt",
+          "cascadeDelete": true
+        }
+      ],
+      "indexes": [
+        {
+          "fields": [
+            "sku"
+          ]
+        },
+        {
+          "fields": [
+            "qtyReceived"
+          ]
+        }
+      ]
+    },
+    {
+      "apiName": "Vendor",
+      "label": "Vendor",
+      "displayField": "name",
+      "module": "AP",
+      "fields": [
+        {
+          "apiName": "name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "apiName": "email",
+          "type": "email"
+        },
+        {
+          "apiName": "paymentTerms",
+          "type": "enum",
+          "values": [
+            "NET15",
+            "NET30",
+            "NET60"
+          ],
+          "default": {
+            "value": "NET30"
+          }
+        }
+      ],
+      "indexes": [
+        {
+          "fields": [
+            "name"
+          ]
+        }
+      ]
+    },
+    {
+      "apiName": "PurchaseOrder",
+      "label": "Purchase Order",
+      "displayField": "number",
+      "module": "PO",
+      "fields": [
+        {
+          "apiName": "number",
+          "type": "text",
+          "required": true,
+          "uniqueness": true,
+          "default": {
+            "sequence": "poNumber"
+          }
+        },
+        {
+          "apiName": "vendor",
+          "type": "lookup",
+          "target": "Vendor",
+          "required": true
+        },
+        {
+          "apiName": "orderDate",
+          "type": "date",
+          "required": true
+        },
+        {
+          "apiName": "currency",
+          "type": "enum",
+          "values": [
+            "USD",
+            "EUR"
+          ],
+          "default": {
+            "value": "USD"
+          }
+        },
+        {
+          "apiName": "fxRate",
+          "type": "decimal",
+          "precision": 18,
+          "scale": 6,
+          "default": {
+            "value": 1
+          }
+        },
+        {
+          "apiName": "approvalThreshold",
+          "type": "money",
+          "default": {
+            "value": 1000
+          }
+        },
+        {
+          "apiName": "status",
+          "type": "enum",
+          "values": [
+            "DRAFT",
+            "SUBMITTED",
+            "APPROVED",
+            "REJECTED",
+            "CLOSED"
+          ]
+        },
+        {
+          "apiName": "total",
+          "type": "money",
+          "rollup": "SUM(lines.amount)"
+        },
+        {
+          "apiName": "totalBook",
+          "type": "money",
+          "formula": "total * fxRate",
+          "label": "Total (book currency)"
+        }
+      ],
+      "relationships": [
+        {
+          "apiName": "lines",
+          "type": "child",
+          "target": "PurchaseOrderLine",
+          "cascadeDelete": true
+        }
+      ],
+      "hooks": [
+        {
+          "name": "submitForApproval",
+          "trigger": "afterSave",
+          "flow": {
+            "id": "b1",
+            "op": "branch",
+            "params": {
+              "guard": "status == 'SUBMITTED'"
+            },
+            "onTrue": "b2",
+            "onFalse": null,
+            "body": {
+              "id": "b2",
+              "op": "branch",
+              "params": {
+                "guard": "total > approvalThreshold"
+              },
+              "onTrue": "a1",
+              "onFalse": "p2",
+              "body": {
+                "id": "a1",
+                "op": "requestApproval",
+                "params": {
+                  "approvers": "Buildright.procurementManager",
+                  "mode": "all"
+                },
+                "next": "p2",
+                "body": {
+                  "id": "r1",
+                  "op": "transitionState",
+                  "params": {
+                    "to": "REJECTED"
+                  },
+                  "body": {
+                    "id": "p2",
+                    "op": "transitionState",
+                    "params": {
+                      "to": "APPROVED"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "indexes": [
+        {
+          "fields": [
+            "status"
+          ]
+        },
+        {
+          "fields": [
+            "orderDate"
+          ]
+        },
+        {
+          "fields": [
+            "vendor"
+          ]
+        },
+        {
+          "fields": [
+            "total"
+          ]
+        },
+        {
+          "fields": [
+            "totalBook"
+          ]
+        }
+      ]
+    },
+    {
+      "apiName": "PurchaseOrderLine",
+      "label": "Purchase Order Line",
+      "module": "PO",
+      "fields": [
+        {
+          "apiName": "po",
+          "type": "lookup",
+          "target": "PurchaseOrder",
+          "required": true
+        },
+        {
+          "apiName": "item",
+          "type": "lookup",
+          "target": "Item",
+          "required": true
+        },
+        {
+          "apiName": "qty",
+          "type": "decimal",
+          "required": true,
+          "precision": 18,
+          "scale": 6
+        },
+        {
+          "apiName": "unitPrice",
+          "type": "money",
+          "required": true
+        },
+        {
+          "apiName": "amount",
+          "type": "money",
+          "formula": "qty * unitPrice"
+        },
+        {
+          "apiName": "qtyReceived",
+          "type": "decimal",
+          "precision": 18,
+          "scale": 6,
+          "default": {
+            "value": 0
+          },
+          "label": "Received to date (clerk-maintained until BR-G-2 closes)"
+        }
+      ],
+      "validations": [
+        {
+          "name": "qtyPositive",
+          "scope": "record",
+          "expression": "qty > 0",
+          "message": "An ordered quantity is positive"
+        }
+      ],
+      "indexes": [
+        {
+          "fields": [
+            "po"
+          ]
+        },
+        {
+          "fields": [
+            "item"
+          ]
+        }
+      ]
+    },
+    {
+      "apiName": "GoodsReceipt",
+      "label": "Goods Receipt",
+      "displayField": "number",
+      "module": "RECEIVING",
+      "freezeOnTerminal": true,
+      "fields": [
+        {
+          "apiName": "number",
+          "type": "text",
+          "required": true,
+          "uniqueness": true,
+          "default": {
+            "sequence": "receiptNumber"
+          }
+        },
+        {
+          "apiName": "po",
+          "type": "lookup",
+          "target": "PurchaseOrder",
+          "required": true,
+          "label": "Purchase order (denormalized with poLine until BR-G-2 closes)"
+        },
+        {
+          "apiName": "poLine",
+          "type": "lookup",
+          "target": "PurchaseOrderLine",
+          "required": true
+        },
+        {
+          "apiName": "item",
+          "type": "lookup",
+          "target": "Item",
+          "required": true
+        },
+        {
+          "apiName": "receiptDate",
+          "type": "date",
+          "required": true
+        },
+        {
+          "apiName": "qty",
+          "type": "decimal",
+          "required": true,
+          "precision": 18,
+          "scale": 6
+        },
+        {
+          "apiName": "unitCost",
+          "type": "money"
+        },
+        {
+          "apiName": "value",
+          "type": "money"
+        },
+        {
+          "apiName": "status",
+          "type": "enum",
+          "values": [
+            "DRAFT",
+            "POSTED"
+          ]
+        }
+      ],
+      "validations": [
+        {
+          "name": "receiptPositive",
+          "scope": "record",
+          "expression": "qty > 0",
+          "message": "Receipts carry a positive quantity"
+        },
+        {
+          "name": "receiptPriced",
+          "scope": "record",
+          "expression": "status != 'POSTED' || unitCost != null",
+          "message": "Posting a receipt requires its unit cost"
+        }
+      ],
+      "hooks": [
+        {
+          "name": "postReceipt",
+          "trigger": "beforeSave",
+          "flow": {
+            "id": "postGuard",
+            "op": "branch",
+            "params": {
+              "guard": "status == 'POSTED' && unitCost != null && value == null"
+            },
+            "onTrue": "receiptValue",
+            "body": {
+              "id": "receiptValue",
+              "op": "setField",
+              "params": {
+                "field": "value",
+                "expression": "qty * unitCost"
+              }
+            }
+          }
+        }
+      ],
+      "indexes": [
+        {
+          "fields": [
+            "receiptDate"
+          ]
+        },
+        {
+          "fields": [
+            "status"
+          ]
+        },
+        {
+          "fields": [
+            "po"
+          ]
+        },
+        {
+          "fields": [
+            "qty"
+          ]
+        }
+      ]
+    },
+    {
+      "apiName": "VendorBill",
+      "label": "Vendor Bill",
+      "displayField": "number",
+      "module": "AP",
+      "fields": [
+        {
+          "apiName": "number",
+          "type": "text",
+          "required": true,
+          "uniqueness": true,
+          "default": {
+            "sequence": "billNumber"
+          }
+        },
+        {
+          "apiName": "vendor",
+          "type": "lookup",
+          "target": "Vendor",
+          "required": true
+        },
+        {
+          "apiName": "po",
+          "type": "lookup",
+          "target": "PurchaseOrder",
+          "required": true
+        },
+        {
+          "apiName": "billDate",
+          "type": "date",
+          "required": true
+        },
+        {
+          "apiName": "dueDate",
+          "type": "date",
+          "required": true
+        },
+        {
+          "apiName": "currency",
+          "type": "enum",
+          "values": [
+            "USD",
+            "EUR"
+          ],
+          "default": {
+            "value": "USD"
+          }
+        },
+        {
+          "apiName": "fxRate",
+          "type": "decimal",
+          "precision": 18,
+          "scale": 6,
+          "default": {
+            "value": 1
+          }
+        },
+        {
+          "apiName": "apAccount",
+          "type": "lookup",
+          "target": "Account",
+          "required": true,
+          "label": "AP control posting account"
+        },
+        {
+          "apiName": "expenseAccount",
+          "type": "lookup",
+          "target": "Account",
+          "required": true,
+          "label": "Expense posting account"
+        },
+        {
+          "apiName": "status",
+          "type": "enum",
+          "values": [
+            "DRAFT",
+            "SUBMITTED",
+            "POSTED"
+          ]
+        },
+        {
+          "apiName": "total",
+          "type": "money",
+          "rollup": "SUM(lines.amount)"
+        },
+        {
+          "apiName": "totalBook",
+          "type": "money",
+          "formula": "total * fxRate",
+          "label": "Total (book currency)"
+        },
+        {
+          "apiName": "amountPaid",
+          "type": "money",
+          "rollup": "SUM(payments.amount WHERE status = 'POSTED')"
+        },
+        {
+          "apiName": "amountOutstanding",
+          "type": "money",
+          "formula": "total - amountPaid",
+          "label": "Outstanding (total less posted payments)"
+        }
+      ],
+      "relationships": [
+        {
+          "apiName": "lines",
+          "type": "child",
+          "target": "VendorBillLine",
+          "cascadeDelete": true
+        },
+        {
+          "apiName": "payments",
+          "type": "child",
+          "target": "BillPayment",
+          "cascadeDelete": true
+        }
+      ],
+      "validations": [
+        {
+          "name": "dueNotBeforeBill",
+          "scope": "record",
+          "expression": "dueDate >= billDate",
+          "message": "Due date cannot precede the bill date"
+        }
+      ],
+      "hooks": [
+        {
+          "name": "submitForPosting",
+          "trigger": "afterSave",
+          "flow": {
+            "id": "b1",
+            "op": "branch",
+            "params": {
+              "guard": "status == 'SUBMITTED'"
+            },
+            "onTrue": "a1",
+            "onFalse": null,
+            "body": {
+              "id": "a1",
+              "op": "requestApproval",
+              "params": {
+                "approvers": "Buildright.procurementManager",
+                "mode": "any"
+              },
+              "next": "j1",
+              "body": {
+                "id": "r1",
+                "op": "publishEvent",
+                "params": {
+                  "name": "buildright.bill.rejected",
+                  "payload": {
+                    "number": "${number}",
+                    "reason": "approval rejected"
+                  }
+                },
+                "body": {
+                  "id": "j1",
+                  "op": "createRecord",
+                  "params": {
+                    "entity": "JournalEntry",
+                    "template": {
+                      "entryDate": "${billDate}",
+                      "memo": "Bill ${number}",
+                      "sourceBill": "${id}",
+                      "lines": [
+                        {
+                          "account": "${expenseAccount}",
+                          "debit": "${totalBook}",
+                          "memo": "Expense"
+                        },
+                        {
+                          "account": "${apAccount}",
+                          "credit": "${totalBook}",
+                          "memo": "AP control"
+                        }
+                      ]
+                    }
+                  },
+                  "next": "p1",
+                  "body": {
+                    "id": "p1",
+                    "op": "transitionState",
+                    "params": {
+                      "to": "POSTED"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "indexes": [
+        {
+          "fields": [
+            "status"
+          ]
+        },
+        {
+          "fields": [
+            "dueDate"
+          ]
+        },
+        {
+          "fields": [
+            "vendor"
+          ]
+        },
+        {
+          "fields": [
+            "amountOutstanding"
+          ]
+        },
+        {
+          "fields": [
+            "total"
+          ]
+        }
+      ]
+    },
+    {
+      "apiName": "VendorBillLine",
+      "label": "Vendor Bill Line",
+      "module": "AP",
+      "fields": [
+        {
+          "apiName": "bill",
+          "type": "lookup",
+          "target": "VendorBill",
+          "required": true
+        },
+        {
+          "apiName": "poLine",
+          "type": "lookup",
+          "target": "PurchaseOrderLine",
+          "label": "Matched PO line (3-way match reference)"
+        },
+        {
+          "apiName": "item",
+          "type": "lookup",
+          "target": "Item",
+          "required": true
+        },
+        {
+          "apiName": "description",
+          "type": "text"
+        },
+        {
+          "apiName": "quantity",
+          "type": "decimal",
+          "precision": 18,
+          "scale": 6
+        },
+        {
+          "apiName": "unitPrice",
+          "type": "money"
+        },
+        {
+          "apiName": "amount",
+          "type": "money",
+          "formula": "quantity * unitPrice"
+        }
+      ],
+      "indexes": [
+        {
+          "fields": [
+            "bill"
+          ]
+        },
+        {
+          "fields": [
+            "poLine"
+          ]
+        }
+      ]
+    },
+    {
+      "apiName": "BillPayment",
+      "label": "Bill Payment",
+      "displayField": "number",
+      "module": "AP",
+      "freezeOnTerminal": true,
+      "fields": [
+        {
+          "apiName": "number",
+          "type": "text",
+          "required": true,
+          "uniqueness": true,
+          "default": {
+            "sequence": "paymentNumber"
+          }
+        },
+        {
+          "apiName": "bill",
+          "type": "lookup",
+          "target": "VendorBill",
+          "required": true
+        },
+        {
+          "apiName": "vendor",
+          "type": "lookup",
+          "target": "Vendor"
+        },
+        {
+          "apiName": "paymentDate",
+          "type": "date",
+          "required": true
+        },
+        {
+          "apiName": "amount",
+          "type": "money",
+          "required": true
+        },
+        {
+          "apiName": "status",
+          "type": "enum",
+          "values": [
+            "DRAFT",
+            "POSTED"
+          ]
+        }
+      ],
+      "validations": [
+        {
+          "name": "positiveAmount",
+          "scope": "record",
+          "expression": "amount > 0",
+          "message": "A payment carries a positive amount"
+        }
+      ],
+      "indexes": [
+        {
+          "fields": [
+            "paymentDate"
+          ]
+        },
+        {
+          "fields": [
+            "status"
+          ]
+        },
+        {
+          "fields": [
+            "bill"
+          ]
+        }
+      ]
+    }
+  ],
+  "stateMachines": [
+    {
+      "id": "sm_po",
+      "entity": "PurchaseOrder",
+      "stateField": "status",
+      "initial": "DRAFT",
+      "states": [
+        {
+          "name": "DRAFT"
+        },
+        {
+          "name": "SUBMITTED"
+        },
+        {
+          "name": "APPROVED"
+        },
+        {
+          "name": "REJECTED"
+        },
+        {
+          "name": "CLOSED",
+          "terminal": true
+        }
+      ],
+      "transitions": [
+        {
+          "from": "DRAFT",
+          "to": "SUBMITTED"
+        },
+        {
+          "from": "SUBMITTED",
+          "to": "APPROVED"
+        },
+        {
+          "from": "SUBMITTED",
+          "to": "REJECTED"
+        },
+        {
+          "from": "REJECTED",
+          "to": "SUBMITTED"
+        },
+        {
+          "from": "APPROVED",
+          "to": "CLOSED"
+        }
+      ]
+    },
+    {
+      "id": "sm_receipt",
+      "entity": "GoodsReceipt",
+      "stateField": "status",
+      "initial": "DRAFT",
+      "states": [
+        {
+          "name": "DRAFT"
+        },
+        {
+          "name": "POSTED",
+          "terminal": true
+        }
+      ],
+      "transitions": [
+        {
+          "from": "DRAFT",
+          "to": "POSTED"
+        }
+      ]
+    },
+    {
+      "id": "sm_bill",
+      "entity": "VendorBill",
+      "stateField": "status",
+      "initial": "DRAFT",
+      "states": [
+        {
+          "name": "DRAFT"
+        },
+        {
+          "name": "SUBMITTED"
+        },
+        {
+          "name": "POSTED",
+          "terminal": true
+        }
+      ],
+      "transitions": [
+        {
+          "from": "DRAFT",
+          "to": "SUBMITTED"
+        },
+        {
+          "from": "SUBMITTED",
+          "to": "POSTED"
+        }
+      ]
+    },
+    {
+      "id": "sm_payment",
+      "entity": "BillPayment",
+      "stateField": "status",
+      "initial": "DRAFT",
+      "states": [
+        {
+          "name": "DRAFT"
+        },
+        {
+          "name": "POSTED",
+          "terminal": true
+        }
+      ],
+      "transitions": [
+        {
+          "from": "DRAFT",
+          "to": "POSTED"
+        }
+      ]
+    },
+    {
+      "id": "sm_journal",
+      "entity": "JournalEntry",
+      "stateField": "status",
+      "initial": "DRAFT",
+      "states": [
+        {
+          "name": "DRAFT"
+        },
+        {
+          "name": "SUBMITTED"
+        },
+        {
+          "name": "POSTED",
+          "terminal": true
+        }
+      ],
+      "transitions": [
+        {
+          "from": "DRAFT",
+          "to": "SUBMITTED"
+        },
+        {
+          "from": "SUBMITTED",
+          "to": "POSTED"
+        }
+      ]
+    }
+  ],
+  "reports": [
+    {
+      "id": "openBills",
+      "entity": "VendorBill",
+      "label": "Open Vendor Bills",
+      "filters": [
+        {
+          "field": "status",
+          "op": "eq",
+          "value": "POSTED"
+        }
+      ],
+      "groupBy": [
+        {
+          "field": "vendor"
+        }
+      ],
+      "aggregates": [
+        {
+          "op": "sum",
+          "field": "amountOutstanding",
+          "alias": "outstanding"
+        },
+        {
+          "op": "sum",
+          "field": "total",
+          "alias": "invoiced"
+        }
+      ],
+      "drillThrough": {
+        "entity": "VendorBill",
+        "carryFilters": true
+      }
+    },
+    {
+      "id": "poSpend",
+      "entity": "PurchaseOrder",
+      "label": "Purchase Spend by Vendor (book currency)",
+      "filters": [
+        {
+          "field": "status",
+          "op": "in",
+          "value": [
+            "APPROVED",
+            "CLOSED"
+          ]
+        }
+      ],
+      "groupBy": [
+        {
+          "field": "vendor"
+        }
+      ],
+      "aggregates": [
+        {
+          "op": "sum",
+          "field": "totalBook",
+          "alias": "spendBook"
+        },
+        {
+          "op": "count",
+          "alias": "orders"
+        }
+      ],
+      "drillThrough": {
+        "entity": "PurchaseOrder",
+        "carryFilters": false
+      }
+    }
+  ],
+  "dashboards": [
+    {
+      "id": "procurement",
+      "label": "Procurement",
+      "widgets": [
+        {
+          "widget": "kpi",
+          "reportRef": "openBills",
+          "options": {
+            "metric": "outstanding"
+          },
+          "span": 4
+        },
+        {
+          "widget": "chart",
+          "reportRef": "openBills",
+          "span": 8
+        },
+        {
+          "widget": "table",
+          "reportRef": "poSpend",
+          "params": {},
+          "span": 12
+        }
+      ],
+      "roles": [
+        "procurementManager"
+      ]
+    }
+  ],
+  "jobs": [
+    {
+      "name": "weeklyOpenBills",
+      "cron": "0 7 * * 1",
+      "target": "report",
+      "params": {
+        "reportId": "openBills",
+        "runAsRole": "reporting",
+        "format": "xlsx",
+        "recipients": {
+          "roles": [
+            "procurementManager"
+          ]
+        }
+      },
+      "enabled": true
+    }
+  ],
+  "gapLog": [
+    {
+      "id": "BR-G-1",
+      "area": "P1/P8 Apps",
+      "blocker": "Cross-app record creation: one app's flows cannot create records in another app's entities (createRecord resolves entities within the owning app), so the portfolio's P2P app cannot post its auto-journal into the Erp dogfood app's GL — every domain app must carry its own GL skeleton until an app-to-app primitive exists",
+      "workaround": "Wave 1 ships a self-contained P2P app with its own minimal GL (Account/JournalEntry/JournalLine mirroring the proven Erp patterns); consolidation across domain GLs is out of scope until the primitive lands",
+      "proposed": "cross-app createRecord (namespaced entity refs + target-app permission binding), or app-to-app event contracts consumed by flows",
+      "priority": "high",
+      "disposition": "backlog"
+    },
+    {
+      "id": "BR-G-2",
+      "area": "P3 Business Logic",
+      "blocker": "Cross-document quantity guards and roll-ups: the 3-way match (bill qty <= receipt qty <= ordered qty) and the automatic receipt-side update of PurchaseOrderLine.qtyReceived need aggregate queries over lookup traversals (sum receipts by poLine) or writes to a bound record — the bind primitive reads a bound target's view but cannot write it, and report vocabulary cannot join lookups (the Erp G-12 twin)",
+      "workaround": "Receipt carries denormalized po + poLine + item lookups (consistency by authoring discipline, pinned by the suites); PurchaseOrderLine.qtyReceived is clerk-maintained; over-receipt and bill-over-receipt mismatches ride the bill approval gate (procurementManager sees the documents) instead of a hard guard",
+      "proposed": "an aggregate-query flow step over lookup paths (e.g. sumLookups), or write-back bindings on bind (bind + setField targeting the bound record), or lookup-path rollups",
+      "priority": "high",
+      "disposition": "backlog"
+    },
+    {
+      "id": "BR-G-3",
+      "area": "AP",
+      "blocker": "Payment allocation across multiple bills: a payment split over several bills needs the Erp G-9 allocate primitive; wave 1 payments bind exactly one bill",
+      "workaround": "One payment per bill (the dominant AP case for merchandise invoices); split payments are logged, not automated",
+      "proposed": "the allocate primitive (payment → bills, FIFO or specific) shared with the Erp gap",
+      "priority": "medium",
+      "disposition": "backlog"
+    },
+    {
+      "id": "BR-G-4",
+      "area": "GL",
+      "blocker": "Period lock: the P2P app's GL carries no AccountingPeriod/periodLock — dated-write control for bill journals rides the Erp app's proven periodLock harvest only after BR-G-1 (cross-app) or a shared GL lands",
+      "workaround": "Bill journal dates are clerk-disciplined; the suite corpus pins current-period dates",
+      "proposed": "adopt the periodLock block (entity/dateField/restrictedStatus/exemptField) once the GL home is settled",
+      "priority": "medium",
+      "disposition": "backlog"
+    }
+  ]
+}

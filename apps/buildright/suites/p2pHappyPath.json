@@ -1,0 +1,281 @@
+{
+  "apiName": "p2pHappyPath",
+  "label": "P2P happy path — PO approval, receipt costing, bill auto-journal, settlement (VS-15)",
+  "cases": [
+    {
+      "name": "full-cycle-po-to-settlement",
+      "fixtures": [
+        {
+          "entity": "Account",
+          "asRole": "procurementManager",
+          "template": {
+            "code": "2100",
+            "name": "AP Control",
+            "type": "LIABILITY"
+          }
+        },
+        {
+          "entity": "Account",
+          "asRole": "procurementManager",
+          "template": {
+            "code": "6100",
+            "name": "Store Expense",
+            "type": "EXPENSE"
+          }
+        },
+        {
+          "entity": "Item",
+          "asRole": "receivingClerk",
+          "template": {
+            "sku": "SKU-BD-1001",
+            "name": "Cordless Drill",
+            "uom": "EA",
+            "unitCost": "25.0000"
+          }
+        },
+        {
+          "entity": "Vendor",
+          "asRole": "buyer",
+          "template": {
+            "name": "BuildRight Supply Co",
+            "paymentTerms": "NET30"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "template": {
+            "vendor": "${Vendor[0].id}",
+            "orderDate": "2026-09-07",
+            "status": "DRAFT",
+            "lines": [
+              {
+                "item": "${Item[0].id}",
+                "qty": 10,
+                "unitPrice": "25.0000"
+              },
+              {
+                "item": "${Item[0].id}",
+                "qty": 5,
+                "unitPrice": "8.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "recordId": "${PurchaseOrder[0].id}",
+          "template": {
+            "version": "${PurchaseOrder[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "PurchaseOrderLine",
+          "asRole": "buyer",
+          "template": {
+            "filter": {
+              "field": "po",
+              "op": "eq",
+              "value": "${PurchaseOrder[0].id}"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "GoodsReceipt",
+          "asRole": "receivingClerk",
+          "template": {
+            "po": "${PurchaseOrder[0].id}",
+            "poLine": "${PurchaseOrderLine[0].id}",
+            "item": "${Item[0].id}",
+            "receiptDate": "2026-09-08",
+            "qty": 10,
+            "unitCost": "25.0000",
+            "status": "DRAFT"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "GoodsReceipt",
+          "asRole": "receivingClerk",
+          "recordId": "${GoodsReceipt[0].id}",
+          "template": {
+            "version": "${GoodsReceipt[0].version}",
+            "status": "POSTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "VendorBill",
+          "asRole": "apClerk",
+          "template": {
+            "vendor": "${Vendor[0].id}",
+            "po": "${PurchaseOrder[0].id}",
+            "billDate": "2026-09-08",
+            "dueDate": "2026-10-08",
+            "apAccount": "${Account[0].id}",
+            "expenseAccount": "${Account[1].id}",
+            "status": "DRAFT",
+            "lines": [
+              {
+                "poLine": "${PurchaseOrderLine[0].id}",
+                "item": "${Item[0].id}",
+                "quantity": 10,
+                "unitPrice": "25.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "VendorBill",
+          "asRole": "apClerk",
+          "recordId": "${VendorBill[0].id}",
+          "template": {
+            "version": "${VendorBill[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "procurementManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "procurementManager",
+          "recordId": "${Task[0].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "JournalEntry",
+          "asRole": "procurementManager",
+          "template": {
+            "filter": {
+              "field": "sourceBill",
+              "op": "eq",
+              "value": "${VendorBill[0].id}"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "BillPayment",
+          "asRole": "apClerk",
+          "template": {
+            "bill": "${VendorBill[0].id}",
+            "vendor": "${Vendor[0].id}",
+            "paymentDate": "2026-09-20",
+            "amount": "100.0000",
+            "status": "DRAFT"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "VendorBill",
+          "asRole": "apClerk",
+          "template": {
+            "filter": {
+              "field": "number",
+              "op": "eq",
+              "value": "${VendorBill[0].number}"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "BillPayment",
+          "asRole": "apClerk",
+          "recordId": "${BillPayment[0].id}",
+          "template": {
+            "version": "${BillPayment[0].version}",
+            "status": "POSTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "VendorBill",
+          "asRole": "apClerk",
+          "template": {
+            "filter": {
+              "field": "number",
+              "op": "eq",
+              "value": "${VendorBill[0].number}"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Item",
+          "asRole": "receivingClerk",
+          "template": {
+            "filter": {
+              "field": "sku",
+              "op": "eq",
+              "value": "SKU-BD-1001"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "runReport",
+          "entity": "openBills",
+          "asRole": "procurementManager",
+          "template": {},
+          "expect": "ok"
+        },
+        {
+          "op": "runReport",
+          "entity": "poSpend",
+          "asRole": "procurementManager",
+          "template": {},
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${PurchaseOrder[0].status} == 'APPROVED'",
+        "${PurchaseOrder[0].total} == 290.0000",
+        "${GoodsReceipt[0].status} == 'POSTED'",
+        "${GoodsReceipt[0].value} == 250.0000",
+        "${VendorBill[0].status} == 'POSTED'",
+        "${VendorBill[0].total} == 250.0000",
+        "${JournalEntry[0].status} == 'DRAFT'",
+        "${JournalEntry[0].totalDebit} == 250.0000",
+        "${JournalEntry[0].totalCredit} == 250.0000",
+        "${Item[0].qtyReceived} == 10",
+        "${VendorBill[0].amountPaid} == 100.0000",
+        "${VendorBill[0].amountOutstanding} == 150.0000"
+      ]
+    }
+  ]
+}
