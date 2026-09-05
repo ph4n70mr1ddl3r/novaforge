@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { PlatformClient } from "@novaforge/shared";
+import { formatWhen } from "./format.ts";
 
 /**
  * The approval inbox (PHASE-4 §5's runtime UI — the Phase 2 surface it rides):
@@ -7,12 +8,25 @@ import { PlatformClient } from "@novaforge/shared";
  * comment, claim for role-addressed tasks, delegate (§11: "approve/reject with
  * comment, delegate"). Access is enforced server-side; this only renders.
  */
+
+/** The ask-for-a-value panel that replaced window.prompt: blocking prompts were
+ * unstylable, dumped focus, and sat entirely outside the design system. */
+interface AskDialog {
+    title: string;
+    label: string;
+    submitLabel: string;
+    multiline: boolean;
+    onSubmit: (value: string) => void;
+}
+
 export function Inbox({ client }: { client: PlatformClient }): ReactNode {
     const [tasks, setTasks] = useState<Record<string, unknown>[]>([]);
     const [total, setTotal] = useState(0);
     const [page, setPage] = useState(0);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [ask, setAsk] = useState<AskDialog | null>(null);
+    const [askValue, setAskValue] = useState("");
     const size = 25;
     const reloadSeq = useRef(0);
 
@@ -62,23 +76,38 @@ export function Inbox({ client }: { client: PlatformClient }): ReactNode {
         reload(page);
     };
 
-    const resolve = (taskId: string, approve: boolean): Promise<void> =>
-        run(async () => {
-            const comment = approve ? undefined : window.prompt("Rejection comment");
-            // cancelling the comment prompt cancels the rejection — `null ?? undefined`
-            // turned the cancel into a comment-less reject (delegate's own contract)
-            if (!approve && comment === null) return;
-            await client.resolveTask(taskId, approve, comment ?? undefined);
+    const approve = (taskId: string): Promise<void> => run(() => client.resolveTask(taskId, true));
+
+    const reject = (taskId: string): void => {
+        setAskValue("");
+        setAsk({
+            title: "Reject task",
+            label: "Rejection comment",
+            submitLabel: "Reject",
+            multiline: true,
+            // cancelling the dialog cancels the rejection — the old prompt's
+            // `null ?? undefined` turned a cancel into a comment-less reject
+            onSubmit: (comment) => {
+                void run(() => client.resolveTask(taskId, false, comment || undefined));
+            },
         });
+    };
 
     const claim = (taskId: string): Promise<void> => run(() => client.claimTask(taskId));
 
-    const delegate = (taskId: string): Promise<void> =>
-        run(async () => {
-            const toUser = window.prompt("Delegate to (user id)") ?? undefined;
-            if (!toUser) return;
-            await client.delegateTask(taskId, toUser);
+    const delegate = (taskId: string): void => {
+        setAskValue("");
+        setAsk({
+            title: "Delegate task",
+            label: "Delegate to (user id)",
+            submitLabel: "Delegate",
+            multiline: false,
+            onSubmit: (toUser) => {
+                if (!toUser) return;
+                void run(() => client.delegateTask(taskId, toUser));
+            },
         });
+    };
 
     return (
         <section className="nf-inbox" aria-busy={busy} aria-label="My approvals">
@@ -104,22 +133,27 @@ export function Inbox({ client }: { client: PlatformClient }): ReactNode {
                                 <td>{String(task.entity ?? "")}{task.recordId ? ` (${String(task.recordId)})` : ""}</td>
                                 <td>{addressed}</td>
                                 <td>{String(task.createdBy ?? "")}</td>
-                                <td>{String(task.createdAt ?? "")}</td>
                                 <td>
-                                    <button type="button" disabled={busy} onClick={() => void resolve(String(task.id), true)}>
-                                        Approve
-                                    </button>
-                                    <button type="button" disabled={busy} onClick={() => void resolve(String(task.id), false)}>
-                                        Reject
-                                    </button>
-                                    {!task.assignee && task.role ? (
-                                        <button type="button" disabled={busy} onClick={() => void claim(String(task.id))}>
-                                            Claim
+                                    {/* the raw ISO stayed machine-readable in dateTime */}
+                                    <time dateTime={String(task.createdAt ?? "")}>{formatWhen(task.createdAt)}</time>
+                                </td>
+                                <td>
+                                    <span className="nf-row-actions">
+                                        <button type="button" disabled={busy} onClick={() => void approve(String(task.id))}>
+                                            Approve
                                         </button>
-                                    ) : null}
-                                    <button type="button" disabled={busy} onClick={() => void delegate(String(task.id))}>
-                                        Delegate
-                                    </button>
+                                        <button type="button" disabled={busy} onClick={() => reject(String(task.id))}>
+                                            Reject
+                                        </button>
+                                        {!task.assignee && task.role ? (
+                                            <button type="button" disabled={busy} onClick={() => void claim(String(task.id))}>
+                                                Claim
+                                            </button>
+                                        ) : null}
+                                        <button type="button" disabled={busy} onClick={() => delegate(String(task.id))}>
+                                            Delegate
+                                        </button>
+                                    </span>
                                 </td>
                             </tr>
                         );
@@ -134,6 +168,64 @@ export function Inbox({ client }: { client: PlatformClient }): ReactNode {
                 <span>{page * size + 1}–{Math.min((page + 1) * size, total)} / {total}</span>
                 <button type="button" disabled={(page + 1) * size >= total || busy} onClick={() => setPage(page + 1)}>Next</button>
             </div>
+            {ask ? (
+                // scrim click and Escape both cancel — a prompt's cancel button was
+                // the ONLY escape hatch, and the browser-owned dialog fought the app
+                <div
+                    className="nf-dialog-scrim"
+                    onClick={() => setAsk(null)}
+                    onKeyDown={(event) => {
+                        if (event.key === "Escape") setAsk(null);
+                    }}
+                >
+                    <div
+                        role="dialog"
+                        aria-label={ask.title}
+                        className="nf-dialog"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <h3>{ask.title}</h3>
+                        <label>
+                            {ask.label}
+                            {ask.multiline ? (
+                                <textarea
+                                    autoFocus
+                                    rows={3}
+                                    value={askValue}
+                                    onChange={(event) => setAskValue(event.target.value)}
+                                />
+                            ) : (
+                                <input
+                                    autoFocus
+                                    type="text"
+                                    value={askValue}
+                                    onChange={(event) => setAskValue(event.target.value)}
+                                    onKeyDown={(event) => {
+                                        if (event.key === "Enter") {
+                                            ask.onSubmit(askValue.trim());
+                                            setAsk(null);
+                                        }
+                                    }}
+                                />
+                            )}
+                        </label>
+                        <div className="nf-dialog-actions">
+                            <button type="button" onClick={() => setAsk(null)}>Cancel</button>
+                            <button
+                                type="button"
+                                className="nf-action-primary"
+                                disabled={ask.multiline ? false : askValue.trim() === ""}
+                                onClick={() => {
+                                    ask.onSubmit(askValue.trim());
+                                    setAsk(null);
+                                }}
+                            >
+                                {ask.submitLabel}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
         </section>
     );
 }

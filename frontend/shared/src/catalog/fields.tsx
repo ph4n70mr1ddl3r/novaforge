@@ -378,6 +378,47 @@ export function FieldMultiLookup(props: FieldWidgetProps): ReactNode {
     };
     const labelOf = (row: Record<string, unknown>): string =>
         String((displayField && row[displayField] != null ? row[displayField] : row.id) ?? "");
+    // Chips labeled by raw FK id (a uuid) read as noise — the single lookup
+    // resolves its closed display through the data service; the chips ride the
+    // same resolution, batched into one `in` query. Unresolvable ids fall back
+    // to themselves (and stay as the chip title) instead of re-resolving forever.
+    const [labels, setLabels] = useState<Record<string, string>>({});
+    const labelSeqRef = useRef(0);
+    const selectedKey = selected.join("\u0000");
+    useEffect(() => {
+        const unresolved = selectedKey.split("\u0000").filter((id_) => id_ !== "" && labels[id_] === undefined);
+        if (unresolved.length === 0 || !renderer.data || !target) {
+            return;
+        }
+        let cancelled = false;
+        const seq = ++labelSeqRef.current;
+        void renderer.data
+            .list({ entity: target, filter: { op: "in", field: "id", value: unresolved }, size: unresolved.length, offset: 0 })
+            .then((result) => {
+                if (cancelled || seq !== labelSeqRef.current) return;
+                const next: Record<string, string> = {};
+                for (const id_ of unresolved) {
+                    next[id_] = id_; // the fallback: an id with no row shows itself
+                }
+                for (const row of result.rows) {
+                    const id_ = String(row.id ?? "");
+                    if (id_) next[id_] = labelOf(row);
+                }
+                setLabels((current) => ({ ...current, ...next }));
+            })
+            .catch(() => {
+                if (cancelled || seq !== labelSeqRef.current) return;
+                const next: Record<string, string> = {};
+                for (const id_ of unresolved) {
+                    next[id_] = id_;
+                }
+                setLabels((current) => ({ ...current, ...next }));
+            });
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- labels is deliberately not a dependency: the resolve must not re-trigger on its own commit
+    }, [selectedKey, target, renderer.data, displayField]);
     return (
         <div className="nf-field nf-field-multilookup">
             <label htmlFor={id}>
@@ -388,7 +429,7 @@ export function FieldMultiLookup(props: FieldWidgetProps): ReactNode {
                 <ul className="nf-chips" aria-label={`${label} selected`}>
                     {selected.map((id_) => (
                         <li key={id_} className="nf-chip">
-                            {id_}
+                            {labels[id_] ?? id_}
                             {!readonly ? (
                                 <button
                                     type="button"

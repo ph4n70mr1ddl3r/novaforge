@@ -351,6 +351,65 @@ select:disabled {
   background: var(--nf-color-surface-hover);
 }
 
+/* machine timestamps render localized in <time> — muted, never competing with
+   the row's content; the raw ISO rides the dateTime attribute/title */
+.nf-table time {
+  color: var(--nf-color-muted);
+  font-size: var(--nf-font-size-small);
+  white-space: nowrap;
+}
+
+/* sortable headers ride chromeless buttons (a bare form button in every header
+   read as table chrome, not a control) — the direction arrow lives in the label */
+.nf-table thead button {
+  background: none;
+  border-color: transparent;
+  padding: 0 var(--nf-spacing-1);
+  color: inherit;
+}
+
+.nf-table thead button:hover:not(:disabled) {
+  background: none;
+  border-color: transparent;
+  color: var(--nf-color-accent);
+}
+
+/* row-level action clusters (inbox resolve cells) — flush buttons read as one
+   blob and invited mis-clicks between Approve and Reject */
+.nf-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--nf-spacing-1);
+}
+
+/* the two-step destructive confirm — a warning-toned inline panel, so the
+   irreversible step is a deliberate second click, never a stray one */
+.nf-confirm {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--nf-spacing-2);
+  padding: 0 var(--nf-spacing-2);
+  border: 1px solid color-mix(in srgb, var(--nf-color-warning) 40%, transparent);
+  border-left: 3px solid var(--nf-color-warning);
+  border-radius: var(--nf-radius);
+  background: var(--nf-color-warning-soft);
+}
+
+.nf-confirm-text {
+  font-size: var(--nf-font-size-small);
+}
+
+/* unread inbox rows tint with the accent soft — a read row and an unread one
+   rendered identically, so the badge state was invisible at a glance */
+.nf-notifications tbody tr[data-read="false"] {
+  background: var(--nf-color-accent-soft);
+}
+
+.nf-notifications .nf-unread-title {
+  font-weight: 600;
+}
+
 /* --- shells (runtime + builder) --- */
 
 .nf-topbar {
@@ -397,7 +456,67 @@ select:disabled {
 
 .nf-navgroup {
   display: inline-flex;
+  align-items: center;
   gap: var(--nf-spacing-1);
+}
+
+/* module-grouped nav (§5): the group label rides the topbar as a muted divider —
+   an ERP's entities rendered as one unlabeled run of buttons */
+.nf-navgroup + .nf-navgroup {
+  margin-left: var(--nf-spacing-2);
+  padding-left: var(--nf-spacing-2);
+  border-left: 1px solid var(--nf-color-border);
+}
+
+.nf-navgroup-label {
+  font-size: var(--nf-font-size-small);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--nf-color-muted);
+  white-space: nowrap;
+}
+
+/* the inbox's confirm/delegate dialog — replaces the blocking window.prompt
+   (unstylable, focus-dumping, off-design-system) with an in-app panel */
+.nf-dialog-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgb(16 20 26 / 0.4);
+}
+
+.nf-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nf-spacing-3);
+  width: min(26rem, calc(100vw - 2 * var(--nf-spacing-4)));
+  padding: var(--nf-spacing-4);
+  background: var(--nf-color-bg);
+  color: var(--nf-color-text);
+  border: 1px solid var(--nf-color-border);
+  border-radius: var(--nf-radius-lg);
+  box-shadow: var(--nf-shadow-2);
+}
+
+.nf-dialog h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.nf-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nf-spacing-1);
+  font-size: var(--nf-font-size-small);
+  color: var(--nf-color-muted);
+}
+
+.nf-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--nf-spacing-2);
 }
 
 .nf-user {

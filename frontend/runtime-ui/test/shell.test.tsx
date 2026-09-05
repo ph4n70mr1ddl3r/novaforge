@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import axe from "axe-core";
 import {
@@ -302,7 +302,6 @@ describe("RuntimeShell", () => {
             }
             return new Response(JSON.stringify({ title: "not stubbed", status: 404 }), { status: 404 });
         });
-        const prompt = vi.spyOn(window, "prompt").mockReturnValue("u-9");
         const client = new PlatformClient("", () => "t", fetchImpl as unknown as typeof fetch);
 
         render(createElement(Inbox, { client }));
@@ -311,10 +310,13 @@ describe("RuntimeShell", () => {
         screen.getByRole("button", { name: "Claim" }).click();
         await waitFor(() => expect(calls.some((call) => call.includes("/tasks/t-1/claim"))).toBe(true));
 
+        // delegate rides the in-app dialog now (the blocking window.prompt is gone)
         screen.getByRole("button", { name: "Delegate" }).click();
+        const targetInput = await screen.findByRole("dialog", { name: "Delegate task" });
+        const field = targetInput.querySelector("input") as HTMLInputElement;
+        fireEvent.change(field, { target: { value: "u-9" } });
+        fireEvent.click(within(targetInput).getByRole("button", { name: "Delegate" }));
         await waitFor(() => expect(calls.some((call) => call.includes("/tasks/t-1/delegate"))).toBe(true));
-        expect(prompt).toHaveBeenCalled();
-        prompt.mockRestore();
     });
 
     it("passes axe on the shell chrome", async () => {

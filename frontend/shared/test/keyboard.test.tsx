@@ -260,6 +260,10 @@ describe("catalog keyboard-only runs (PHASE-2 §11 item 2)", () => {
     await user.tab();
     expect(document.activeElement?.textContent).toBe("Delete");
     await user.keyboard("{Enter}");
+    // the destructive delete is a two-step confirm — Enter arms it, the inline
+    // panel's "Delete record" fires it (focus lands on the safe "Keep" first)
+    const confirmDelete = await screen.findByRole("button", { name: "Delete record" });
+    await user.click(confirmDelete);
     expect(deleteRecord).toHaveBeenCalledTimes(1);
   });
 

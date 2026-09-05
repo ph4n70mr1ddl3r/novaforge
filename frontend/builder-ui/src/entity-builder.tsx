@@ -141,12 +141,16 @@ function EntityEditor({
 }): ReactNode {
     const [draft, setDraft] = useState<EntityDefinition>(entity);
     const [deleteError, setDeleteError] = useState<string | null>(null);
+    // deleting an entity ripples through every page built on it — the click used
+    // to fire the delete immediately, so a stray click destroyed real metadata
+    const [confirmingDelete, setConfirmingDelete] = useState(false);
     // selection resets the draft: a fresh "New entity" selection or picking another
     // entity must never carry the previous draft's fields/hooks — found live at the
     // golden-journey run (a stale draft from the shell's first-loaded app rode into
     // every "new" entity and failed the save compile-check)
     useEffect(() => {
         setDraft(entity);
+        setConfirmingDelete(false);
     }, [entity]);
     const update = (patch: Partial<EntityDefinition>): void => {
         setDraft((current) => ({ ...current, ...patch }));
@@ -259,15 +263,26 @@ function EntityEditor({
             <div className="nf-b-actions">
                 <button type="submit" className="nf-action-primary" disabled={busy}>Save entity</button>
                 {app.entities.some((candidate) => candidate.apiName === draft.apiName) ? (
-                    <button type="button" className="nf-danger"
-                        disabled={busy}
-                        onClick={() => {
-                            // a rejected delete (409 referenced-by-pages, 403) was a
-                            // silent unhandled rejection — surface it, never swallow
-                            void onDelete(draft.apiName)
-                                .catch((caught: unknown) =>
-                                    setDeleteError(caught instanceof Error ? caught.message : String(caught)));
-                        }}>Delete entity</button>
+                    confirmingDelete ? (
+                        <span className="nf-confirm" role="group" aria-label="Confirm entity delete">
+                            <span className="nf-confirm-text">Delete entity {draft.apiName}?</span>
+                            <button type="button" className="nf-danger"
+                                disabled={busy}
+                                onClick={() => {
+                                    setConfirmingDelete(false);
+                                    // a rejected delete (409 referenced-by-pages, 403) was a
+                                    // silent unhandled rejection — surface it, never swallow
+                                    void onDelete(draft.apiName)
+                                        .catch((caught: unknown) =>
+                                            setDeleteError(caught instanceof Error ? caught.message : String(caught)));
+                                }}>Delete entity</button>
+                            <button type="button" autoFocus onClick={() => setConfirmingDelete(false)}>Keep</button>
+                        </span>
+                    ) : (
+                        <button type="button" className="nf-danger"
+                            disabled={busy}
+                            onClick={() => setConfirmingDelete(true)}>Delete entity</button>
+                    )
                 ) : null}
                 {deleteError ? <p role="alert">{deleteError}</p> : null}
             </div>

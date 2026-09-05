@@ -146,6 +146,9 @@ export function RuntimeShell({ client, published, user, versionKey }: RuntimeShe
                     <button type="button" onClick={() => setRoute({ view: "home" })}>Home</button>
                     {nav.map((group) => (
                         <span key={group.label} className="nf-navgroup">
+                            {/* the module label was resolved and then dropped — an ERP's
+                                entities rendered as one flat, unlabeled run of buttons */}
+                            <span className="nf-navgroup-label">{group.label}</span>
                             {group.entities.map((entity) => (
                                 <button
                                     key={entity.apiName}

@@ -201,6 +201,8 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
                                     {props.sortable === false ? (
                                         resolveLabel(fieldMeta, renderer.user?.locale, field)
                                     ) : (
+                                        // the ▲/▼ cue mirrors aria-sort for sighted users —
+                                        // the state was previously announced but invisible
                                         <button
                                             type="button"
                                             onClick={() => {
@@ -210,6 +212,7 @@ export function ListLayout(props: LayoutProps & { pageSize?: number; sortable?: 
                                             }}
                                         >
                                             {resolveLabel(fieldMeta, renderer.user?.locale, field)}
+                                            {sortField === field ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
                                         </button>
                                     )}
                                 </th>
@@ -321,6 +324,12 @@ export function RelatedList(props: LayoutProps & { relationship?: string; target
 
 export function RecordActions(props: { showEdit?: boolean; showDelete?: boolean }): ReactNode {
     const renderer = useRenderer();
+    // The delete is guarded by a two-step inline confirm: delete is instant and
+    // irreversible server-side, and a single misclick used to destroy the record.
+    const [confirming, setConfirming] = useState(false);
+    // a confirm left open must not outlive its record — navigating to another
+    // record (or a reload after save) resets back to the safe single button
+    useEffect(() => setConfirming(false), [renderer.record?.id]);
     // Record-context only: the L1 list default carries this node too (list children
     // render now), but a list has no selected record — dead Edit/Delete buttons
     // there navigated to a bare "new" form and no-opped respectively
@@ -340,9 +349,28 @@ export function RecordActions(props: { showEdit?: boolean; showDelete?: boolean 
                 </button>
             ) : null}
             {props.showDelete !== false ? (
-                <button type="button" className="nf-danger" onClick={() => void renderer.actions.deleteRecord()}>
-                    Delete
-                </button>
+                confirming ? (
+                    <span className="nf-confirm" role="group" aria-label="Confirm delete">
+                        <span className="nf-confirm-text">Delete this record?</span>
+                        <button
+                            type="button"
+                            className="nf-danger"
+                            onClick={() => {
+                                setConfirming(false);
+                                void renderer.actions.deleteRecord();
+                            }}
+                        >
+                            Delete record
+                        </button>
+                        <button type="button" className="nf-confirm-cancel" autoFocus onClick={() => setConfirming(false)}>
+                            Keep
+                        </button>
+                    </span>
+                ) : (
+                    <button type="button" className="nf-danger" onClick={() => setConfirming(true)}>
+                        Delete
+                    </button>
+                )
             ) : null}
         </div>
     );

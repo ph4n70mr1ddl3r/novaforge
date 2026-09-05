@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { PlatformClient } from "@novaforge/shared";
+import { formatWhen } from "./format.ts";
 
 /**
  * The notification inbox + preferences (PHASE-4 §8's runtime UI): my platform
@@ -120,12 +121,14 @@ export function Notifications({ client }: { client: PlatformClient }): ReactNode
                     {(rows ?? []).map((row) => (
                         <tr key={String(row.id)} data-read={row.read_at != null ? "true" : "false"}>
                             <td>{String(row.category ?? "")}</td>
-                            <td>{String(row.title ?? "")}</td>
+                            <td className={row.read_at == null ? "nf-unread-title" : undefined}>{String(row.title ?? "")}</td>
                             <td>{String(row.body ?? "")}</td>
-                            <td>{String(row.created_at ?? "")}</td>
+                            <td>
+                                <time dateTime={String(row.created_at ?? "")}>{formatWhen(row.created_at)}</time>
+                            </td>
                             <td>
                                 {row.read_at != null ? (
-                                    String(row.read_at)
+                                    <time dateTime={String(row.read_at)}>{formatWhen(row.read_at)}</time>
                                 ) : (
                                     <button type="button" disabled={busy}
                                         aria-label={`Mark read ${String(row.title ?? row.id)}`}
