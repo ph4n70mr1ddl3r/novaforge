@@ -145,7 +145,11 @@ Operators v1: `and`/`or` nesting, `eq ne in gt gte lt lte contains isNull`
 inline children 100) read the same way (§12 Q2, resolved) — keyset joins only if the §10 load test shows deep-offset pain. The GET list endpoint carries the same DSL with
 **one canonical encoding, pinned**: each of `filter`/`sort`/`page` holds its DSL node
 as compact JSON, percent-encoded per RFC 3986 (`filter=%7B%22and%22%3A…%7D`) — no
-bespoke flattening; anything richer — deep nesting,
+bespoke flattening. The percent-encoding is the transport's, decoded exactly once by
+the servlet container before parameter binding; the door parses the bound value as
+JSON verbatim and never decodes again (a second decode silently rewrote literal `+`
+to a space and died on literal `%` inside filter values, found in the 2026-09-05
+hunt). Anything richer — deep nesting,
 aggregates — goes to `POST /{entity}/query`.
 
 **Keyset paging (the §12 Q2 landing, pinned 2026-09-04):** `page` grows an optional

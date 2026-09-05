@@ -301,9 +301,7 @@ class BindStepTests extends PostgresTestBase {
 
     /** The single row matching a sku filter — never a positional assumption. */
     private tools.jackson.databind.JsonNode rowBySku(String sku) throws Exception {
-        String filter = java.net.URLEncoder.encode(
-                "{\"field\":\"sku\",\"op\":\"eq\",\"value\":\"" + sku + "\"}",
-                java.nio.charset.StandardCharsets.UTF_8);
+        String filter = "{\"field\":\"sku\",\"op\":\"eq\",\"value\":\"" + sku + "\"}";
         String body = mockMvc.perform(get("/api/v1/runtime/Item").with(jwtFor())
                         .param("filter", filter))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
@@ -393,9 +391,7 @@ class BindStepTests extends PostgresTestBase {
         // the movement's own transition is what moves the parent: post it
         var created = MAPPER.readTree(mockMvc.perform(get("/api/v1/runtime/StockLedger")
                         .with(jwtFor())
-                        .param("filter", java.net.URLEncoder.encode(
-                                "{\"field\":\"item\",\"op\":\"eq\",\"value\":\"" + itemId + "\"}",
-                                java.nio.charset.StandardCharsets.UTF_8)))
+                        .param("filter", "{\"field\":\"item\",\"op\":\"eq\",\"value\":\"" + itemId + "\"}"))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString())
                 .get("rows").get(0);
         mockMvc.perform(patch("/api/v1/runtime/StockLedger/" + created.get("id").asString())

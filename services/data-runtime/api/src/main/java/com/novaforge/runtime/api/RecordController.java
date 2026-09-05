@@ -8,7 +8,6 @@ import com.novaforge.runtime.engine.RecordEngine;
 import com.novaforge.runtime.engine.idempotency.IdempotencyRecorder;
 import com.novaforge.runtime.engine.idempotency.IdempotencyRecorder.Claim;
 import com.novaforge.runtime.engine.query.QueryModel;
-import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -198,10 +197,17 @@ public class RecordController {
     // --- helpers ---
 
     /**
-     * The GET list canonical encoding (§5): each of filter/sort/page holds its DSL node
-     * as compact JSON, percent-encoded per RFC 3986. Composed through the mapper — never
-     * hand-built strings — with each node parsed once at the door, so a malformed DSL
-     * node rejects as VALIDATION_FAILED here rather than as a parse error downstream.
+     * The GET list door (§5): each of filter/sort/page carries its DSL node as compact
+     * JSON — percent-encoded per RFC 3986 on the wire, where the servlet container's
+     * parameter decoding is the ONE decode that transport encoding gets (the TS client's
+     * URLSearchParams and the harness's URLEncoder each encode exactly once). The bound
+     * parameter is therefore the JSON text itself and is parsed verbatim — never decoded
+     * a second time. A second {@code URLDecoder.decode} here used to corrupt every value
+     * carrying a literal {@code +} (silently rewritten to a space — searching "C++" or a
+     * "+02:00" offset answered with a space-mangled term) and rejected every value
+     * carrying a literal {@code %} with an uncaught IllegalArgumentException from the
+     * decoder itself. A malformed DSL node still rejects as VALIDATION_FAILED at this
+     * door rather than as a parse error downstream.
      */
     static String encodeQuery(String filter, String sort, String page) {
         Map<String, JsonNode> query = new LinkedHashMap<>();
@@ -217,14 +223,14 @@ public class RecordController {
         return MAPPER.writeValueAsString(query);
     }
 
-    private static JsonNode dslNode(String name, String encoded) {
+    private static JsonNode dslNode(String name, String json) {
         try {
-            return MAPPER.readTree(java.net.URLDecoder.decode(encoded, StandardCharsets.UTF_8));
+            return MAPPER.readTree(json);
         } catch (tools.jackson.core.JacksonException e) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                     "the " + name + " query parameter is not a valid JSON DSL node",
                     ProblemErrors.of(new ProblemErrors.FieldError(name,
-                            "must be a JSON DSL node, percent-encoded per RFC 3986", encoded)), e);
+                            "must be a JSON DSL node", json)), e);
         }
     }
 

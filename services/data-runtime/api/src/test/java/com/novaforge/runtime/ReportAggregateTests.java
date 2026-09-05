@@ -303,18 +303,13 @@ class ReportAggregateTests extends PostgresTestBase {
                 .andExpect(status().isForbidden());
         // the list door: the same leaf through the GET filter param — once it rode
         // verbatim and row counts answered binary-search questions about hidden values
-        String listFilter = java.net.URLEncoder.encode(
-                "{\"field\":\"amountOutstanding\",\"op\":\"gt\",\"value\":100}",
-                java.nio.charset.StandardCharsets.UTF_8);
-        String page = java.net.URLEncoder.encode("{\"size\":10}",
-                java.nio.charset.StandardCharsets.UTF_8);
+        String listFilter = "{\"field\":\"amountOutstanding\",\"op\":\"gt\",\"value\":100}";
+        String page = "{\"size\":10}";
         mockMvc.perform(get("/api/v1/runtime/AgingInvoice").with(jwtFor(AR_VIEWER))
                         .param("filter", listFilter).param("page", page))
                 .andExpect(status().isForbidden());
         // a filter on a field the viewer CAN read still answers
-        String visibleFilter = java.net.URLEncoder.encode(
-                "{\"field\":\"status\",\"op\":\"eq\",\"value\":\"POSTED\"}",
-                java.nio.charset.StandardCharsets.UTF_8);
+        String visibleFilter = "{\"field\":\"status\",\"op\":\"eq\",\"value\":\"POSTED\"}";
         mockMvc.perform(get("/api/v1/runtime/AgingInvoice").with(jwtFor(AR_VIEWER))
                         .param("filter", visibleFilter).param("page", page))
                 .andExpect(status().isOk());

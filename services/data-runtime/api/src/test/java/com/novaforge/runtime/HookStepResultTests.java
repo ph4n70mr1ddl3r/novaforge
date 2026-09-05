@@ -189,8 +189,7 @@ class HookStepResultTests extends PostgresTestBase {
                 .andExpect(status().isOk())
                 .andReturn();
 
-        String page = java.net.URLEncoder.encode("{\"size\":50}",
-                java.nio.charset.StandardCharsets.UTF_8);
+        String page = "{\"size\":50}";
 
         // the journal landed with its top-level template resolved…
         MvcResult journals = mockMvc.perform(get("/api/v1/runtime/Journal").with(jwtFor())

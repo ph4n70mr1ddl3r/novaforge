@@ -616,7 +616,7 @@ class RecordApiTests extends PostgresTestBase {
     // --- query path ---
 
     @Test
-    @DisplayName("GET list: percent-encoded DSL nodes filter/sort/page; over-limit page size rejects")
+    @DisplayName("GET list: the DSL nodes filter/sort/page ride as compact JSON; over-limit page size rejects")
     void listQueryDsl() throws Exception {
         for (double amount : new double[] {50, 150, 250}) {
             mockMvc.perform(post("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
@@ -624,13 +624,9 @@ class RecordApiTests extends PostgresTestBase {
                             .content("{\"title\":\"t" + amount + "\"}"))
                     .andExpect(status().isOk());
         }
-        String filter = java.net.URLEncoder.encode(
-                "{\"field\":\"title\",\"op\":\"contains\",\"value\":\"t\"}",
-                java.nio.charset.StandardCharsets.UTF_8);
-        String sort = java.net.URLEncoder.encode(
-                "[{\"field\":\"title\",\"dir\":\"desc\"}]", java.nio.charset.StandardCharsets.UTF_8);
-        String page = java.net.URLEncoder.encode(
-                "{\"size\":2,\"offset\":0}", java.nio.charset.StandardCharsets.UTF_8);
+        String filter = "{\"field\":\"title\",\"op\":\"contains\",\"value\":\"t\"}";
+        String sort = "[{\"field\":\"title\",\"dir\":\"desc\"}]";
+        String page = "{\"size\":2,\"offset\":0}";
 
         MvcResult listed = mockMvc.perform(get("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
                         .param("filter", filter).param("sort", sort).param("page", page))
@@ -640,8 +636,7 @@ class RecordApiTests extends PostgresTestBase {
         assertThat(MAPPER.readTree(listed.getResponse().getContentAsString()).get("rows").size())
                 .isLessThanOrEqualTo(2);
 
-        String overLimit = java.net.URLEncoder.encode("{\"size\":201}",
-                java.nio.charset.StandardCharsets.UTF_8);
+        String overLimit = "{\"size\":201}";
         mockMvc.perform(get("/api/v1/runtime/Ticket").with(jwtFor(TENANT)).param("page", overLimit))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("4000"));
@@ -650,13 +645,59 @@ class RecordApiTests extends PostgresTestBase {
     @Test
     @DisplayName("GET list: a malformed DSL node rejects at the door as 400, not a downstream 500")
     void malformedDslNodeRejects() throws Exception {
-        String malformed = java.net.URLEncoder.encode("{not json",
-                java.nio.charset.StandardCharsets.UTF_8);
+        String malformed = "{not json";
         mockMvc.perform(get("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
                         .param("filter", malformed))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("4000"))
                 .andExpect(jsonPath("$.errors[?(@.field=='filter')]").isNotEmpty());
+    }
+
+    @Test
+    @DisplayName("GET list: '+' and '%' in a filter value survive verbatim — the door never decodes a second time")
+    void listDslValueSurvivesPlusAndPercent() throws Exception {
+        // The wire's percent-encoding is decoded exactly once — by the servlet
+        // container, before parameter binding. A second decode in the door used to
+        // silently rewrite every literal '+' into a space (a contains filter for
+        // "C++" searched for "C  " and answered with the wrong rows) and reject
+        // every literal '%' with the decoder's own raw IllegalArgumentException.
+        // These params ride as the container would deliver them: raw JSON.
+        mockMvc.perform(post("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"title\":\"C++ basics\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"title\":\"50% off\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
+                        .contentType("application/json")
+                        .content("{\"title\":\"plain note\"}"))
+                .andExpect(status().isOk());
+
+        // a literal '+' matches itself — not the space the old decode made of it
+        MvcResult plus = mockMvc.perform(get("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
+                        .param("filter", "{\"field\":\"title\",\"op\":\"contains\",\"value\":\"C++\"}"))
+                .andExpect(status().isOk()).andReturn();
+        var plusRows = MAPPER.readTree(plus.getResponse().getContentAsString()).get("rows");
+        assertThat(plusRows.size()).isEqualTo(1);
+        assertThat(plusRows.get(0).get("title").asString()).isEqualTo("C++ basics");
+
+        // a literal '%' matches itself — the old decode died on it before parsing
+        MvcResult percent = mockMvc.perform(get("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
+                        .param("filter", "{\"field\":\"title\",\"op\":\"contains\",\"value\":\"50%\"}"))
+                .andExpect(status().isOk()).andReturn();
+        var percentRows = MAPPER.readTree(percent.getResponse().getContentAsString()).get("rows");
+        assertThat(percentRows.size()).isEqualTo(1);
+        assertThat(percentRows.get(0).get("title").asString()).isEqualTo("50% off");
+
+        // an escape-sequence-looking term ('%3D' as text) survives verbatim too —
+        // the second decode used to rewrite it into '='
+        MvcResult escape = mockMvc.perform(get("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
+                        .param("filter", "{\"field\":\"title\",\"op\":\"contains\",\"value\":\"%3D\"}"))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(MAPPER.readTree(escape.getResponse().getContentAsString()).get("rows").size())
+                .isZero();
     }
 
     @Test
@@ -972,16 +1013,14 @@ class RecordApiTests extends PostgresTestBase {
     void crossTenantFailsClosed() throws Exception {
         // second tenant sees none of the first tenant's rows
         MvcResult listed = mockMvc.perform(get("/api/v1/runtime/Ticket").with(jwtFor(SECOND_TENANT))
-                        .param("page", java.net.URLEncoder.encode("{\"size\":200}",
-                                java.nio.charset.StandardCharsets.UTF_8)))
+                        .param("page", "{\"size\":200}"))
                 .andExpect(status().isOk()).andReturn();
         int visible = MAPPER.readTree(listed.getResponse().getContentAsString()).get("rows").size();
         assertThat(visible).isZero();
 
         // cross-tenant point read 404s
         MvcResult anyId = mockMvc.perform(get("/api/v1/runtime/Ticket").with(jwtFor(TENANT))
-                        .param("page", java.net.URLEncoder.encode("{\"size\":1}",
-                                java.nio.charset.StandardCharsets.UTF_8)))
+                        .param("page", "{\"size\":1}"))
                 .andExpect(status().isOk()).andReturn();
         String victim = MAPPER.readTree(anyId.getResponse().getContentAsString())
                 .get("rows").get(0).get("id").asString();
@@ -994,7 +1033,7 @@ class RecordApiTests extends PostgresTestBase {
     void publishInvalidatesCacheAndMaterializes() throws Exception {
         // warm the cache with v1
         mockMvc.perform(get("/api/v1/runtime/Ticket").with(jwtFor(TENANT)).param("page",
-                        java.net.URLEncoder.encode("{\"size\":1}", java.nio.charset.StandardCharsets.UTF_8)))
+                        "{\"size\":1}"))
                 .andExpect(status().isOk());
         assertThat(resolver.cacheSize()).isGreaterThanOrEqualTo(1);
 
@@ -1061,8 +1100,7 @@ class RecordApiTests extends PostgresTestBase {
 
         // list strips the hidden field server-side for the clerk too
         MvcResult listed = mockMvc.perform(get("/api/v1/runtime/Ticket").with(clerkJwt)
-                        .param("page", java.net.URLEncoder.encode(
-                                "{\"size\":50}", java.nio.charset.StandardCharsets.UTF_8)))
+                        .param("page", "{\"size\":50}"))
                 .andExpect(status().isOk()).andReturn();
         assertThat(MAPPER.readTree(listed.getResponse().getContentAsString()).get("rows").toString())
                 .doesNotContain("\"title\"");
@@ -1076,7 +1114,7 @@ class RecordApiTests extends PostgresTestBase {
 
         // a clerk cannot see records of an entity the matrix denies (JournalEntry has no grant)
         mockMvc.perform(get("/api/v1/runtime/JournalEntry").with(clerkJwt).param("page",
-                        java.net.URLEncoder.encode("{\"size\":1}", java.nio.charset.StandardCharsets.UTF_8)))
+                        "{\"size\":1}"))
                 .andExpect(status().isForbidden());
     }
 
@@ -1257,9 +1295,7 @@ class RecordApiTests extends PostgresTestBase {
                 .andExpect(jsonPath("$.loggedAt").value("2026-08-21T09:00:00.000Z"));
 
         // the canonical form drives range filters: only the +02:00 row is after 09:30Z
-        String filter = java.net.URLEncoder.encode(
-                "{\"field\":\"loggedAt\",\"op\":\"gt\",\"value\":\"2026-08-21T09:30:00.000Z\"}",
-                java.nio.charset.StandardCharsets.UTF_8);
+        String filter = "{\"field\":\"loggedAt\",\"op\":\"gt\",\"value\":\"2026-08-21T09:30:00.000Z\"}";
         MvcResult listed = mockMvc.perform(get("/api/v1/runtime/LedgerNote").with(jwtFor(TENANT))
                         .param("filter", filter))
                 .andExpect(status().isOk()).andReturn();

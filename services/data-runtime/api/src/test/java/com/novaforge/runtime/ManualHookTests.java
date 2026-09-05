@@ -159,7 +159,7 @@ class ManualHookTests extends PostgresTestBase {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(id));
 
-        String page = java.net.URLEncoder.encode("{\"size\":50}", java.nio.charset.StandardCharsets.UTF_8);
+        String page = "{\"size\":50}";
         MvcResult notes = mockMvc.perform(get("/api/v1/runtime/DeskNote").with(jwtFor()).param("page", page))
                 .andExpect(status().isOk())
                 .andReturn();
