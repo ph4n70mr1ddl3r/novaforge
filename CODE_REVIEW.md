@@ -4016,3 +4016,29 @@ The catalog gallery axe-scans all 22 components and the runtime shell axe-scans 
 ### Recorded open after this pass
 
 Empty.
+
+## Forty-First Pass — 2026-09-05 (the pin that never landed, landed: §5's keyset paging was spec-only — the engine landing its own commit promised never shipped)
+
+### C-41P1 — PHASE-1 §5's keyset-paging paragraph (pinned 2026-09-04, commit `d22a457`, whose message says "the engine landing is the next commit") had NO engine: `page.after` parsed nowhere, `nextAfter` minted nowhere, the §12 Q2 trigger's own remedy absent from the product
+
+The §12 Q2 closeout measured the pain (filtered p95 408→2329 ms across OFFSET 1k→400k at the 1M-row fixture; the per-page `count(*)` alone 364.9 ms — docs/loadtests/results-2026-09-04-deep-offset.md), the spec-first commit pinned the wire contract, and then nothing: five commits later the only occurrences of `nextAfter` in the tree were the spec's own three lines. A reviewer walking §5 found a pinned wire contract that did not exist — the phantom-contract class by the repo's own definition, and the measured cure for the platform's worst documented latency cliff was nowhere installable.
+
+**Fixed (V-C41P1) — the landing, exactly per the pin:**
+
+- **`SeekCursor`** (`services/data-runtime/engine/.../query/SeekCursor.java`): the self-describing cursor — base64url JSON `{v, sort[], pos[]}` (version, the effective sort contract, the last row's position), numbers read exact (BigDecimal float mapping — the money rule holds inside the cursor). `effectiveSort` = declared sorts + the engine's `id` tiebreaker (a sortless list's effective order is `id asc`); a garbled token, wrong version, mismatched contract, or position/sort arity disagreement rejects `VALIDATION_FAILED` naming `page.after` at the door.
+- **`QueryParser`**: `page.after` parses (non-blank string), `after` + `offset` mutually exclusive (reject), decode against the request's own effective sort — before any SQL exists.
+- **`QueryLowering.list`**: one seek conjunct after the filter — per key `>` (asc) / `<` (desc), chained through `IS NOT DISTINCT FROM`, under Postgres's nulls-largest default (ASC nulls sort last, so an ASC key past a non-null position widens to the nulls; DESC nulls sort first, so a DESC key is strictly `k < v` — a null key is never after anything). Keys ride exactly the ORDER BY's promoted/JSONB expressions; values bind in the key's compare domain (id as UUID, version as integer, numerics as exact decimals, booleans as canonical text); a seek page emits LIMIT without OFFSET.
+- **`RecordEngine`**: the seek door's field-security walk (seeking by a field hidden for the actor rejects FORBIDDEN — the filter door's own shape, on both the user and `runAsRole` export doors); `nextAfter` minted on any full page when every sort-key value survives the projection (never a hidden value inside a token whose base64 is an encoding, not cryptography; never off a partial page; suppressed for non-scalar JSON-typed sort-key values, where no faithful canonical text form exists); seek pages skip the count and omit `total`. The internal principal doors (`listAsPrincipal`, `listAsIntegration`) reject a seek loudly instead of silently answering the first page again.
+- **`RecordStore.list`**: a null count SQL skips the `count(*)` — the 364.9 ms/1M-row tax the feature exists to retire.
+- **`QueryResult`** grows nullable `total` + `nextAfter` under `NON_NULL`: offset pages render byte-compatible `{"rows", "total"}` (wire default unchanged); seek pages render `{"rows"}` plus `nextAfter` while the walk continues.
+
+**Pinned (V-C41P2):** `services/data-runtime/api/src/test/java/com/novaforge/runtime/KeysetPagingTests.java` — ten legs over a live Postgres fixture with a three-way `dueDate` tie (the id-tiebreaker chain), a never-written null `dueDate` (nulls-largest across page edges), and a `"90"`/`"90.00"` numeric tie: seek walk ≡ offset walk under a declared sort, with a filter composed, and sortless (id order); `total` on offset pages, absent on seek pages, `nextAfter` on full pages only; after/offset mutual exclusion, garbled-cursor and wrong-sort-cursor rejections; the hidden-field seek door (FORBIDDEN) and the never-mints-a-hidden-value leg. The suite bit twice during the landing itself: the mint's scalar guard initially rejected the `id` key's `UUID` (no cursor at all — caught by `seekWalkMatchesOffsetWalkUnderDeclaredSort`), and the first DESC predicate wrongly widened to nulls (the null-due row repeated on every page — caught by the same walk plus the explicit DESC-nulls-first leg).
+
+### Verification (this pass)
+
+- `KeysetPagingTests` 10/10; the full data-runtime api module 140/140 (sharing, roll-ups, child walks, state machines, freeze/period — every other `QueryLowering` consumer unchanged).
+- Full `./mvnw test` BUILD SUCCESS across the whole reactor (all 12 services).
+
+### Recorded open after this pass
+
+Empty.

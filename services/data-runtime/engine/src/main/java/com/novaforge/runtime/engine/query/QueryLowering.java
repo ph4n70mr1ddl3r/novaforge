@@ -106,6 +106,15 @@ public final class QueryLowering {
         if (query.filter() != null) {
             sql.append(" AND ").append(lowerFilter(query.filter(), params));
         }
+        if (query.seek()) {
+            // The §5 keyset conjunct: one OR over per-key direction predicates,
+            // chained through null-safe equality — the row-wise seek past the
+            // cursor's position under the effective order. Same expressions the
+            // ORDER BY below rides, so the conjunct and the order can never
+            // disagree.
+            sql.append(" AND ").append(seekConjunct(query.cursor().sort(),
+                    query.cursor().position(), params));
+        }
         sql.append(" ORDER BY ");
         if (query.sort().isEmpty()) {
             sql.append("id");
@@ -125,10 +134,96 @@ public final class QueryLowering {
             orderItems.add("id");
             sql.append(String.join(", ", orderItems));
         }
-        sql.append(" LIMIT ? OFFSET ?");
+        sql.append(" LIMIT ?");
         params.add(query.page().size());
-        params.add(query.page().offset());
+        if (!query.seek()) {
+            sql.append(" OFFSET ?");
+            params.add(query.page().offset());
+        }
         return new Lowered(sql.toString(), params);
+    }
+
+    /**
+     * The seek predicate for one cursor position, under Postgres's default null
+     * ordering (nulls largest: last in ASC, first in DESC):
+     * <pre>
+     * (k1 ⊙ v1)
+     * OR (k1 ≡ v1 AND (k2 ⊙ v2))
+     * OR (k1 ≡ v1 AND k2 ≡ v2 AND (k3 ⊙ v3)) …
+     * </pre>
+     * where ≡ is {@code IS NOT DISTINCT FROM} (the null-safe equality the chain
+     * needs — a row equal on the earlier keys still seeks on a later one, nulls
+     * included) and ⊙ is the key's direction predicate under Postgres's
+     * nulls-largest default: ASC nulls sort LAST, so an ASC key past a non-null
+     * position widens to the nulls ({@code k > v OR (k IS NULL AND v IS NOT NULL)});
+     * DESC nulls sort FIRST, so a DESC key past anything is strictly the smaller
+     * rows ({@code k < v}) — a null key is never after anything, and past a null
+     * position nothing remains. Bound twice where the predicate names the position
+     * twice; the standalone null test casts its parameter (Postgres cannot infer a
+     * bare {@code ? IS NOT NULL}).
+     */
+    private String seekConjunct(List<QueryModel.Sort> sort, List<Object> position,
+                                List<Object> params) {
+        StringBuilder conjunct = new StringBuilder("(");
+        for (int level = 0; level < sort.size(); level++) {
+            if (level > 0) {
+                conjunct.append(" OR ");
+            }
+            conjunct.append("(");
+            for (int chain = 0; chain < level; chain++) {
+                String chainExpr = sortKeyExpr(sort.get(chain).field());
+                params.add(seekValue(sort.get(chain).field(), position.get(chain)));
+                conjunct.append(chainExpr).append(" IS NOT DISTINCT FROM ? AND ");
+            }
+            QueryModel.Sort key = sort.get(level);
+            String expr = sortKeyExpr(key.field());
+            Object value = seekValue(key.field(), position.get(level));
+            boolean asc = key.dir() == QueryModel.SortDir.asc;
+            params.add(value);
+            if (asc) {
+                conjunct.append("(").append(expr).append(" > ? OR (").append(expr)
+                        .append(" IS NULL AND ?::text IS NOT NULL)))");
+                params.add(value);   // the null-widening leg names the position again
+            } else {
+                conjunct.append("(").append(expr).append(" < ?))");
+            }
+        }
+        return conjunct.append(")").toString();
+    }
+
+    /** The seek key's expression — exactly the one the ORDER BY rides. */
+    private String sortKeyExpr(String field) {
+        boolean numeric = SYSTEM_NUMERIC_FIELDS.contains(field)
+                || (numericFields.getOrDefault(field, false)
+                        && promotedColumns.get(field) == null
+                        && !SYSTEM_COLUMN_EXPR.containsKey(field));
+        return numeric ? numericExpr(field) : textExpr(field);
+    }
+
+    /**
+     * A cursor position bound in the key's own compare domain: {@code id} as a UUID
+     * against its projection column, {@code version} as an integer, numeric fields as
+     * exact decimals (money never rides a binary float, inside the cursor either),
+     * booleans as the platform's canonical {@code 'true'/'false'} text, everything
+     * else as the canonical text the JSONB/promoted expressions compare.
+     */
+    private Object seekValue(String field, Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (field.equals("id")) {
+            return UUID.fromString(String.valueOf(value));
+        }
+        if (field.equals("version")) {
+            return new java.math.BigDecimal(String.valueOf(value)).longValueExact();
+        }
+        if (numericFields.getOrDefault(field, false)) {
+            return new java.math.BigDecimal(String.valueOf(value));
+        }
+        if (value instanceof Boolean b) {
+            return b ? "true" : "false";
+        }
+        return String.valueOf(value);
     }
 
     public Lowered count(String entityApiName, UUID tenantId, Filter filter) {

@@ -24,6 +24,7 @@ import com.novaforge.runtime.engine.sequence.SequenceService;
 import com.novaforge.runtime.engine.write.FieldCoercer;
 import com.novaforge.runtime.engine.query.QueryLowering;
 import com.novaforge.runtime.engine.query.QueryModel;
+import com.novaforge.runtime.engine.query.SeekCursor;
 import com.novaforge.runtime.engine.query.QueryParser;
 import com.novaforge.runtime.storage.record.RecordStore;
 import com.novaforge.metadata.Snake;
@@ -294,9 +295,10 @@ public class RecordEngine {
                 handle.appApiName(), app.permissionSet());
         QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
         requireFilterFieldsVisible(tenantId, actorId, handle, app, query.filter());
+        requireSeekSortVisible(tenantId, actorId, handle, app, query);
         QueryLowering lowering = new QueryLowering(handle.entity());
-        QueryLowering.Lowered countSql = lowering.count(handle.entityKey(), tenantId,
-                query.filter());
+        QueryLowering.Lowered countSql = query.seek() ? null
+                : lowering.count(handle.entityKey(), tenantId, query.filter());
         QueryLowering.Lowered listSql = lowering.list(handle.entityKey(), tenantId, query);
         // Sharing lowers into the pipeline exactly as the aggregate path does
         // (PHASE-5 §4): owners as created_by IN (…), criteria as compiled boolean
@@ -307,15 +309,82 @@ public class RecordEngine {
         // A criterion that cannot lower fails closed — the same stance reports
         // already carry (applySharing).
         var restriction = sharing.forActor(tenantId, actorId, handle.entity(), app);
-        countSql = applySharing(countSql, handle, restriction);
+        countSql = countSql == null ? null : applySharing(countSql, handle, restriction);
         listSql = applySharing(listSql, handle, restriction);
-        RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
+        RecordStore.PageResult page = records.list(
+                countSql == null ? null : countSql.sql(),
+                countSql == null ? List.of() : countSql.params(),
                 listSql.sql(), listSql.params());
         java.util.function.Predicate<String> strip = strip(tenantId, actorId, handle, app);
         List<Map<String, Object>> rows = page.rows().stream()
                 .map(row -> stripHidden(row, strip))
                 .toList();
-        return new QueryModel.QueryResult(rows, page.total());
+        return new QueryModel.QueryResult(rows, query.seek() ? null : page.total(),
+                nextAfter(query, page.rows(), strip));
+    }
+
+    /**
+     * The internal principal doors page by offset only (bounded lookups, bounded
+     * script reads): a caller-authored {@code after} rejects loudly instead of
+     * being silently ignored — a seek that answers with the first page again would
+     * be a wrong answer wearing a 200.
+     */
+    private static void rejectSeek(QueryModel.ListQuery query, String door) {
+        if (query.seek()) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    door + " pages by offset only — page.after is the list/export "
+                            + "doors' keyset surface (PHASE-1 §5)");
+        }
+    }
+
+    /**
+     * The seek door's field-security walk (PHASE-1 §5): the effective order — the
+     * declared sorts plus the engine's {@code id} tiebreaker — is a value oracle
+     * exactly like a filter, so seeking by a field hidden for the actor rejects at
+     * the same door filters reject. Offset paging's ordering predates the pin and
+     * keeps its shape; a seek request must clear the door.
+     */
+    private void requireSeekSortVisible(UUID tenantId, UUID actorId, EntityHandle handle,
+                                        AppDefinition app, QueryModel.ListQuery query) {
+        if (!query.seek()) {
+            return;
+        }
+        for (QueryModel.Sort key : query.cursor().sort()) {
+            requireFieldVisible(roleMatrix.fieldAccess(tenantId, actorId, handle.appApiName(),
+                    app.permissionSet(), handle.entity().apiName(), key.field()),
+                    handle.entity().apiName(), key.field());
+        }
+    }
+
+    /**
+     * Mints the {@code nextAfter} cursor for a page that came back full (PHASE-1 §5):
+     * the last row's position under the effective sort contract. Never mints off a
+     * partial page (the walk's end), and never minted when a sort-key value would
+     * ride stripped — a hidden field's value does not belong inside a token whose
+     * base64 is an encoding, not cryptography — or when that value is a non-scalar
+     * (a JSON-typed field's tree), where no faithful canonical text form exists.
+     */
+    private static String nextAfter(QueryModel.ListQuery query, List<Map<String, Object>> rows,
+                                    java.util.function.Predicate<String> hidden) {
+        if (rows.size() < query.page().size()) {
+            return null;
+        }
+        List<QueryModel.Sort> effective = SeekCursor.effectiveSort(query.sort());
+        Map<String, Object> last = rows.getLast();
+        List<Object> position = new ArrayList<>();
+        for (QueryModel.Sort key : effective) {
+            if (hidden != null && hidden.test(key.field())) {
+                return null;
+            }
+            Object value = last.get(key.field());
+            if (value != null && !(value instanceof java.math.BigDecimal
+                    || value instanceof String || value instanceof Boolean
+                    || value instanceof Number || value instanceof UUID)) {
+                return null;
+            }
+            position.add(value);
+        }
+        return SeekCursor.encode(effective, position);
     }
 
     public QueryModel.AggregateResult aggregate(UUID tenantId, UUID actorId, String entityApiName,
@@ -769,17 +838,28 @@ public class RecordEngine {
         }
         QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
         requireFilterFieldsVisibleForRole(app, handle, asRole, query.filter());
+        // the export scope seeks under the same door the user list does (§5): the
+        // runAsRole's field security decides, hidden sort keys reject
+        if (query.seek()) {
+            for (QueryModel.Sort key : query.cursor().sort()) {
+                requireFieldVisible(
+                        roleFieldAccess(app, handle.entity().apiName(), key.field(), asRole),
+                        handle.entity().apiName(), key.field());
+            }
+        }
         QueryLowering lowering = new QueryLowering(handle.entity());
-        QueryLowering.Lowered countSql = lowering.count(handle.entityKey(), tenantId,
-                query.filter());
+        QueryLowering.Lowered countSql = query.seek() ? null
+                : lowering.count(handle.entityKey(), tenantId, query.filter());
         QueryLowering.Lowered listSql = lowering.list(handle.entityKey(), tenantId, query);
         // The export scope rides the same lowered sharing as user lists (the
         // 2025-08-27 review unified the two paths) — never the page-skewing
         // post-filter.
         var restriction = sharing.forRole(tenantId, handle.entity(), app, asRole);
-        countSql = applySharing(countSql, handle, restriction);
+        countSql = countSql == null ? null : applySharing(countSql, handle, restriction);
         listSql = applySharing(listSql, handle, restriction);
-        RecordStore.PageResult page = records.list(countSql.sql(), countSql.params(),
+        RecordStore.PageResult page = records.list(
+                countSql == null ? null : countSql.sql(),
+                countSql == null ? List.of() : countSql.params(),
                 listSql.sql(), listSql.params());
         java.util.function.Predicate<String> hidden = field ->
                 com.novaforge.metadata.PermissionSet.FieldSecurity.HIDDEN.equals(
@@ -787,7 +867,8 @@ public class RecordEngine {
         List<Map<String, Object>> rows = page.rows().stream()
                 .map(row -> stripHidden(row, hidden))
                 .toList();
-        return new QueryModel.QueryResult(rows, page.total());
+        return new QueryModel.QueryResult(rows, query.seek() ? null : page.total(),
+                nextAfter(query, page.rows(), hidden));
     }
 
     /**
@@ -799,6 +880,7 @@ public class RecordEngine {
                                                     String queryJson) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
+        rejectSeek(query, "the integration lookup");
         QueryLowering lowering = new QueryLowering(handle.entity());
         QueryLowering.Lowered countSql = lowering.count(handle.entityKey(), tenantId,
                 query.filter());
@@ -1127,6 +1209,7 @@ public class RecordEngine {
                                                   String queryJson) {
         EntityHandle handle = resolver.resolve(tenantId, entityApiName);
         QueryModel.ListQuery query = QueryParser.parseList(queryJson, handle.entity());
+        rejectSeek(query, "the system-principal list");
         QueryLowering lowering = new QueryLowering(handle.entity());
         QueryLowering.Lowered countSql = lowering.count(handle.entityKey(), tenantId,
                 query.filter());

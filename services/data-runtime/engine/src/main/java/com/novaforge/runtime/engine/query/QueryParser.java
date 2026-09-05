@@ -19,7 +19,10 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Parses and validates the query DSL against entity metadata (fields must exist; ops
  * must be v1; {@code contains} only on text fields; page size ≤ 200 — over-limit
- * rejects, never clamps, PHASE-1 §12 Q2).
+ * rejects, never clamps, PHASE-1 §12 Q2). The §5 keyset growth: {@code page.after}
+ * decodes against the request's effective sort at this door — a garbled cursor, a
+ * wrong-sort cursor, and an {@code after}/{@code offset} pairing all reject
+ * VALIDATION_FAILED here, never downstream.
  */
 public final class QueryParser {
 
@@ -56,7 +59,8 @@ public final class QueryParser {
             }
         }
         int size = QueryModel.DEFAULT_PAGE_SIZE;
-        long offset = 0;
+        Long offset = null;
+        String after = null;
         if (root.hasNonNull("page")) {
             JsonNode page = root.get("page");
             if (page.hasNonNull("size")) {
@@ -72,8 +76,23 @@ public final class QueryParser {
                     throw validation("page.offset", "page offset must be >= 0");
                 }
             }
+            if (page.hasNonNull("after")) {
+                if (!page.get("after").isString()
+                        || page.get("after").asString().isBlank()) {
+                    throw validation("page.after", "after must be a non-blank seek cursor token");
+                }
+                after = page.get("after").asString();
+            }
+            if (after != null && offset != null) {
+                throw validation("page.after",
+                        "after and offset are mutually exclusive — a seek page carries no offset");
+            }
         }
-        return new QueryModel.ListQuery(filter, List.copyOf(sort), new QueryModel.Page(size, offset));
+        SeekCursor cursor = after == null ? null
+                : SeekCursor.decode(after,
+                        SeekCursor.effectiveSort(List.copyOf(sort)));
+        return new QueryModel.ListQuery(filter, List.copyOf(sort),
+                new QueryModel.Page(size, offset == null ? 0 : offset), cursor);
     }
 
     public static QueryModel.AggregateQuery parseAggregate(String json, EntityDefinition entity) {

@@ -8,7 +8,10 @@ import java.util.Set;
  * Query DSL v1 (PHASE-1 §5): structured JSON, never raw SQL. Operators: {@code and/or}
  * nesting plus leaves {@code eq ne in gt gte lt lte contains isNull} ({@code contains} on
  * text fields only). Aggregates: {@code count sum avg min max} with optional
- * {@code groupBy}. Paging: offset + total count, max page size 200.
+ * {@code groupBy}. Paging: offset + total count, max page size 200 — plus the §5
+ * keyset growth: {@code page.after} seeks past a previous full page's
+ * {@code nextAfter} cursor (offset pages keep their per-page count; seek pages skip
+ * it and omit {@code total}).
  */
 public final class QueryModel {
 
@@ -31,10 +34,30 @@ public final class QueryModel {
     public record Sort(String field, SortDir dir) {
     }
 
-    public record Page(int size, long offset) {
+    /**
+     * Offset paging ({@code offset}, mutually exclusive with {@code after}), or the
+     * §5 keyset growth: {@code after} — the opaque {@link SeekCursor} token the
+     * previous full page returned as {@code nextAfter}. The parser enforces the
+     * exclusivity and the cursor's contract; the lowering turns a present cursor
+     * into one seek conjunct and drops the OFFSET tail.
+     */
+    public record Page(int size, long offset, String after) {
+
+        public Page(int size, long offset) {
+            this(size, offset, null);
+        }
     }
 
-    public record ListQuery(Filter filter, List<Sort> sort, Page page) {
+    public record ListQuery(Filter filter, List<Sort> sort, Page page, SeekCursor cursor) {
+
+        public ListQuery(Filter filter, List<Sort> sort, Page page) {
+            this(filter, sort, page, null);
+        }
+
+        /** True when the page seeks past a cursor instead of offsetting. */
+        public boolean seek() {
+            return cursor != null;
+        }
     }
 
     public enum AggregateOp { count, sum, avg, min, max }
@@ -89,7 +112,20 @@ public final class QueryModel {
         }
     }
 
-    public record QueryResult(List<Map<String, Object>> rows, long total) {
+    /**
+     * A list page's result. Offset pages carry {@code total} (the per-page count);
+     * a seek page skips the count the §5 measurement taxed at 364.9 ms/1M rows and
+     * OMITS {@code total} — clients take it from an offset page and walk
+     * {@code nextAfter} after. {@code nextAfter} rides only on a page that came back
+     * full and whose every sort-key value survived the projection; absent otherwise.
+     */
+    @com.fasterxml.jackson.annotation.JsonInclude(
+            com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    public record QueryResult(List<Map<String, Object>> rows, Long total, String nextAfter) {
+
+        public QueryResult(List<Map<String, Object>> rows, long total) {
+            this(rows, total, null);
+        }
     }
 
     public record AggregateResult(List<String> groupBy, List<Map<String, Object>> rows) {

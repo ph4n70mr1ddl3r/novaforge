@@ -148,10 +148,15 @@ public class RecordStore {
     public record GroupedResult(List<Map<String, Object>> rows) {
     }
 
-    /** Executes the lowered statements — the storage SPI stays engine-type-free. */
+    /** Executes the lowered statements — the storage SPI stays engine-type-free.
+     *  A null count SQL (the §5 seek page) skips the count entirely — the per-page
+     *  count(*) the deep-offset measurement taxed at 364.9 ms/1M rows is the cost
+     *  keyset paging exists to retire; the caller omits {@code total} from such a
+     *  page instead of serving a zero that reads as “empty”. */
     public PageResult list(String countSql, List<Object> countParams,
                            String listSql, List<Object> listParams) {
-        Long total = jdbc.queryForObject(countSql, Long.class, countParams.toArray());
+        Long total = countSql == null ? null
+                : jdbc.queryForObject(countSql, Long.class, countParams.toArray());
         List<Map<String, Object>> rows = new ArrayList<>();
         jdbc.query(listSql, (org.springframework.jdbc.core.RowCallbackHandler) rs ->
                 rows.add(rowShape(rs)), listParams.toArray());
