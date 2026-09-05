@@ -125,6 +125,19 @@
             "version": "${GoodsReceipt[0].version}"
           },
           "expect": "error(RECORD_FROZEN)"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Item",
+          "asRole": "receivingClerk",
+          "template": {
+            "filter": {
+              "field": "sku",
+              "op": "eq",
+              "value": "SKU-BD-3001"
+            }
+          },
+          "expect": "ok"
         }
       ],
       "assertExpressions": [
@@ -336,6 +349,19 @@
           "template": {
             "version": "${BillPayment[0].version}",
             "status": "POSTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "VendorBill",
+          "asRole": "apClerk",
+          "template": {
+            "filter": {
+              "field": "number",
+              "op": "eq",
+              "value": "${VendorBill[0].number}"
+            }
           },
           "expect": "ok"
         },

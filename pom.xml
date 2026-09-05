@@ -46,6 +46,9 @@
   <modules>
     <module>platform</module>
     <module>services</module>
+    <!-- Last: the e2e cycles boot the services from their packaged jars, so the whole
+         reactor must be built first. -->
+    <module>e2e-tests</module>
   </modules>
 
   <dependencyManagement>

@@ -115,6 +115,9 @@ novaforge/
 │                        #   L1 resolver, renderer, gateway client; runtime-ui =
 │                        #   the metadata-driven app shell; builder-ui = the
 │                        #   entity/page/RBAC/report/i18n/lifecycle builders
+├── e2e-tests/           # whole-platform end-to-end ERP cycles (O2C/P2P/R2R) —
+│                        #   nine services boot from their packaged jars against
+│                        #   Testcontainers infra; cycles ride the public APIs
 ├── deploy/              # compose (Keycloak/PG/Redis/Kafka/Prometheus/Grafana
 │                        #   + Tempo/Loki/promtail, Mailpit), postgres-init,
 │                        #   kind/, helm/ (one chart per service + umbrella)
@@ -166,6 +169,18 @@ TOKEN=$(curl -s -X POST http://localhost:8082/realms/novaforge/protocol/openid-c
   -d 'grant_type=password&client_id=novaforge-api&username=demo&password=demo' \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 ```
+
+**E2E cycle tests (`e2e-tests/`):** the whole platform against Testcontainers —
+ine services boot from their packaged jars (the bring-up above, automated), a
+Keycloak container imports the realm, and the ERP cycles run end to end through
+the public APIs: **O2C** (invoice → approval → auto-journal → payment → aging),
+**P2P** (the BuildRight wave-1 corpus: PO → receipt → bill → settlement), **R2R**
+(posting, the soft-close close-journal exemption, the BPMN period-close checklist
+with its parallel candidate-role tasks, lock → reopen, trial balance / P&L), plus
+the five Phase-7 acceptance suites re-run live. The stack boots once per test JVM;
+CI's build job runs it inside `./mvnw verify` (the reactor builds the module last
+— it needs the services' packaged jars). `-De2e.skip=true` skips it for a fast
+inner loop; details and failure diagnostics: `e2e-tests/README.md`.
 
 **Full cluster stack (kind-on-Podman):** `deploy/kind/smoke.sh` is the repeatable
 cold-boot pass — kind cluster (reused if present), jib images loaded, the

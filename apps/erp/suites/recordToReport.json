@@ -1,0 +1,383 @@
+{
+  "apiName": "recordToReport",
+  "label": "Record-to-Report — post, soft close with close-journal exemption, reopen, financial reports",
+  "cases": [
+    {
+      "name": "pl-and-ledger-pin-after-postings",
+      "fixtures": [
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "1001",
+            "name": "Cash",
+            "type": "ASSET"
+          }
+        },
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "5100",
+            "name": "Rent Expense",
+            "type": "EXPENSE"
+          }
+        },
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "4100",
+            "name": "Service Fees",
+            "type": "REVENUE"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "template": {
+            "entryDate": "2026-10-20",
+            "memo": "october rent",
+            "lines": [
+              {
+                "account": "${Account[1].id}",
+                "debit": "30.0000"
+              },
+              {
+                "account": "${Account[0].id}",
+                "credit": "30.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "recordId": "${JournalEntry[0].id}",
+          "template": {
+            "version": "${JournalEntry[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "template": {
+            "entryDate": "2026-10-21",
+            "memo": "fees earned",
+            "lines": [
+              {
+                "account": "${Account[0].id}",
+                "debit": "45.0000"
+              },
+              {
+                "account": "${Account[2].id}",
+                "credit": "45.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "recordId": "${JournalEntry[1].id}",
+          "template": {
+            "version": "${JournalEntry[1].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "recordId": "${Task[1].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "runReport",
+          "entity": "plSketch",
+          "asRole": "controller",
+          "template": {},
+          "expect": "ok"
+        },
+        {
+          "op": "runReport",
+          "entity": "trialBalance",
+          "asRole": "controller",
+          "template": {},
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${JournalEntry[0].status} == 'POSTED'",
+        "${JournalEntry[1].status} == 'POSTED'",
+        "${Report[0].rowCount} == 2",
+        "${Report[1].totals.debitTotal} == ${Report[1].totals.creditTotal}",
+        "${Report[1].totals.debitTotal} == 75.0000"
+      ]
+    },
+    {
+      "name": "close-blocks-except-close-journals-and-reopen-admits",
+      "fixtures": [
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "1105",
+            "name": "Checking",
+            "type": "ASSET"
+          }
+        },
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "4005",
+            "name": "Sales",
+            "type": "REVENUE"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "template": {
+            "entryDate": "2026-10-08",
+            "memo": "october sale, before close",
+            "lines": [
+              {
+                "account": "${Account[0].id}",
+                "debit": "12.0000"
+              },
+              {
+                "account": "${Account[1].id}",
+                "credit": "12.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "recordId": "${JournalEntry[0].id}",
+          "template": {
+            "version": "${JournalEntry[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "AccountingPeriod",
+          "asRole": "accountingManager",
+          "template": {
+            "name": "Oct 2026",
+            "startDate": "2026-10-01",
+            "endDate": "2026-10-31"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "AccountingPeriod",
+          "asRole": "accountingManager",
+          "recordId": "${AccountingPeriod[0].id}",
+          "template": {
+            "version": "${AccountingPeriod[0].version}",
+            "status": "CLOSING"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "template": {
+            "entryDate": "2026-10-12",
+            "memo": "a normal posting into a closing period",
+            "lines": [
+              {
+                "account": "${Account[0].id}",
+                "debit": "3.0000"
+              },
+              {
+                "account": "${Account[1].id}",
+                "credit": "3.0000"
+              }
+            ]
+          },
+          "expect": "error(PERIOD_LOCKED)"
+        },
+        {
+          "op": "createRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "template": {
+            "entryDate": "2026-10-12",
+            "memo": "the accrual close journal",
+            "closeJournal": true,
+            "lines": [
+              {
+                "account": "${Account[0].id}",
+                "debit": "9.0000"
+              },
+              {
+                "account": "${Account[1].id}",
+                "credit": "9.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "AccountingPeriod",
+          "asRole": "accountingManager",
+          "recordId": "${AccountingPeriod[0].id}",
+          "template": {
+            "version": "${AccountingPeriod[0].version}",
+            "status": "CLOSED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "template": {
+            "entryDate": "2026-10-15",
+            "memo": "into the closed period",
+            "lines": [
+              {
+                "account": "${Account[0].id}",
+                "debit": "2.0000"
+              },
+              {
+                "account": "${Account[1].id}",
+                "credit": "2.0000"
+              }
+            ]
+          },
+          "expect": "error(PERIOD_LOCKED)"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "AccountingPeriod",
+          "asRole": "accountingManager",
+          "recordId": "${AccountingPeriod[0].id}",
+          "template": {
+            "version": "${AccountingPeriod[0].version}",
+            "status": "OPEN"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "template": {
+            "entryDate": "2026-10-15",
+            "memo": "the reopened period admits new dated writes",
+            "lines": [
+              {
+                "account": "${Account[0].id}",
+                "debit": "7.0000"
+              },
+              {
+                "account": "${Account[1].id}",
+                "credit": "7.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "runReport",
+          "entity": "trialBalance",
+          "asRole": "controller",
+          "template": {},
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${JournalEntry[0].status} == 'POSTED'",
+        "${JournalEntry[1].closeJournal} == true",
+        "${JournalEntry[1].status} == 'DRAFT'",
+        "${JournalEntry[2].status} == 'DRAFT'",
+        "${AccountingPeriod[0].status} == 'OPEN'",
+        "${Report[0].totals.debitTotal} == ${Report[0].totals.creditTotal}",
+        "${Report[0].totals.debitTotal} == 103.0000"
+      ]
+    }
+  ]
+}

@@ -3076,3 +3076,82 @@ Verified: `ErpAppArtifactTests` 12/12 (save-clean, compile-clean, the new gate
 green after its bite-proof restore); `BindStepTests` 3/3 + `ConditionalRollupTests`
 3/3 against Postgres; `RollupExpressionTests` 5/5; `git diff` scoped to the ERP
 artifact, its gap log, the spec amendments, the two test files, and this entry.
+
+## The e2e stack lands — whole-platform ERP cycles (2026-09-06, forty-third pass)
+
+**The nine-phase exits were verified live, but by hand; nothing in the repo
+re-played them.** `e2e-tests/` closes that: a Maven module whose five tests boot
+the entire platform — Testcontainers infra at the compose stack's image pins
+(Postgres with the per-service databases + audit role, Redis, Kafka, Keycloak
+importing the realm) and **nine services from their packaged Spring Boot jars** on
+the documented ports with the documented defaults — then drive complete ERP cycles
+through the public APIs only:
+
+- **O2C** (`ErpOrderToCashE2ETest` + the new `apps/erp/suites/orderToCash.json`):
+  invoice authored by the preparer → manager approval (SoD-safe) → POSTED with its
+  auto-journal → the journal's own approval and posting → payment application →
+  trial balance + A/R aging pinning the settlement (partial payment leaves 70 open;
+  payment-in-full empties the aging).
+- **R2R** (`ErpRecordToReportE2ETest` + the new `apps/erp/suites/recordToReport.json`
+  **plus a direct-API BPMN journey**): posting, the soft close that blocks ordinary
+  journals while admitting `closeJournal` accruals, the hard close that period-locks
+  dated writes (`PERIOD_LOCKED`), the reopen that admits them again, and the
+  trial-balance / P&L pins — and the `closeChecklist` workflow itself: the CLOSING
+  event-start fans out three parallel reconciliation tasks to their candidate roles
+  (A/R, inventory, accrual journals), the join hands the controller the confirmation,
+  and Awaitility polls the async legs the suites must never race.
+- **P2P** (`BuildRightProcureToPayE2ETest`): the BuildRight wave-1 corpus — happy
+  path (PO → threshold approval → costed receipt → bill auto-journal → settlement by
+  posted-payment roll-up), approval edges, receiving/billing edges — its **first
+  live run**; the wave had only static artifact gates.
+- **Regression** (`ErpSuiteCorpusE2ETest`): the five Phase-7 acceptance suites
+  re-run live under automation (the 2026-09-03 exit re-run, now repeatable).
+
+The stack boots once per test JVM (singleton; Ryuk + shutdown hooks reap it),
+waits the publish-driven projection materializer before driving cycles
+(`rec_*` DDL rides the spine — query/report legs otherwise outrun it on a fresh
+app), and prints RED artifacts per case/step and service log tails on unhealthy
+boots. `-De2e.skip=true` skips the module; CI's build job runs it in `verify`.
+
+**Five defects only a live run could see, all fixed with the run that caught them:**
+
+1. **P2P report permissions never existed** — `runReport openBills/poSpend as
+   procurementManager` 403s: no role held `reportExecute` on `VendorBill` or
+   `PurchaseOrder`. The static artifact gate validated the permission set's *shape*,
+   not its behavior. Fixed in `buildright-app.json`; coverage evidence reworded.
+2. **Roll-up recompute skipped dependent formulas** — posting a payment moved
+   `VendorBill.amountPaid` to 100 while `amountOutstanding` (= `total - amountPaid`,
+   the formula the BR-G-2 design pins as "no flow write needed") stayed 250. The
+   create path's roll-ups-before-formulas ordering (the 2026-09-03 fix) had no twin
+   on the child-write leg: `recomputeRollupsIfChanged` now re-evaluates the parent's
+   formulas after a roll-up moves (`FormulaRollupOrderingTests` corpus stays green).
+3. **Entity-resolver race NPE'd fresh tenants** — `EntityResolver.index()` re-read
+   the map after `refreshTenant`, and the publish subscriber's concurrent `evict`
+   (same tenant, same publish) removed the entry between put and get → the first
+   writes of a freshly published tenant 500'd intermittently (`entry.apps()` on
+   null — the flaky `creditAndCurrency` red). The built entry is used directly.
+4. **Validation errors were unaddressable** — record-validation failures rendered
+   `field: "<Entity>.validations"`, so the harness's `expect: validation(<rule>)`
+   matched nothing and every authored validation pin read red against a *green*
+   rejection (the rule fired; its name was lost). The rule name is the field now.
+5. **Suite authoring bugs the artifact gates cannot see** — the approval-edges
+   suite resolved `Task[0]` twice (the resubmission's new task is `Task[1]`), the
+   receiving/billing edges asserted settlement roll-ups against never-re-observed
+   records (the happy path's re-query pattern, missing there), the buyer's
+   self-approval attempt pinned `SOD_VIOLATION` where §13's task-access gate
+   returns `FORBIDDEN` (a non-role-holder never reaches the SoD check), and a
+   freeze pin rode a role with no DELETE grant. Suites fixed, docs synced; the
+   harness now fails a case loudly when a **fixture** create fails (a silently
+   broken GIVEN used to surface as an unrelated `field is required` 400 steps
+   later).
+
+Also in the artifact: `reportExecute` for `procurementManager` on `PurchaseOrder`/
+`VendorBill`, `delete` for `receivingClerk`/`procurementManager` on `GoodsReceipt`
+(the freeze pin needs a deleter that holds the grant); `BuildrightAppArtifactTests`
+stays green over the changed permissions.
+
+Verified: the five e2e tests green end to end against the booted stack (5/5);
+`data-runtime` (142) + `metadata-service` (85, artifact gates included) green
+after the engine/harness changes; `git diff` scoped to the new module, the two
+new ERP suites, the BuildRight permission/suite/doc syncs, the two engine fixes,
+the harness fixture check, the root-pom module registration, and docs.

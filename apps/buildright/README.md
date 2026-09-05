@@ -50,7 +50,9 @@
 
 Decimal-precision money (never floats), immutable auditable postings
 (`freezeOnTerminal`), approval hierarchies and segregation of duties
-(`SOD_VIOLATION` is suite-pinned), gapless document numbering, and — as the
+(the requester's denial at the approval task — §13's `FORBIDDEN` — is
+suite-pinned; the pure `SOD_VIOLATION` lives in the Erp reconciliation suite),
+gapless document numbering, and — as the
 portfolio grows toward erpplans volumes (134M POS lines/yr, ~100 GB/yr,
 BIR 10-year retention) — scale and archival hardening becomes the biggest
 platform forcing function. That work is *supposed* to be uncomfortable here.

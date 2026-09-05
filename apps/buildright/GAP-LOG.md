@@ -21,6 +21,9 @@
   cross-document guards exist, receiving discipline is procedural, not enforced.
 - The same suite pins an **overpayment** (`amountOutstanding == -100.0000`) so
   the missing hard guard cannot regress silently.
-- `p2pApprovalEdges.json` pins the SoD rejection
-  (`error(SOD_VIOLATION)`) — the approval gate is the compensating control that
-  makes the procedural workarounds auditable.
+- `p2pApprovalEdges.json` pins the requester's denial at the approval task
+  (`error(FORBIDDEN)`, §13's task-access rule — the buyer holds no approver role;
+  the pure SoD rejection stays suite-pinned in the Erp app's reconciliation suite)
+  — the approval gate is the compensating control that makes the procedural
+  workarounds auditable. (Corrected from a live e2e run: the authored pin expected
+  `SOD_VIOLATION`, but a non-role-holder is rejected at access, before SoD.)

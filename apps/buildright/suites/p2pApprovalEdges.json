@@ -3,7 +3,7 @@
   "label": "PO approval edges — threshold branching, SoD on self-approval, rejection + resubmission",
   "cases": [
     {
-      "name": "po-above-threshold-needs-manager-approval-and-sod-blocks-self-approval",
+      "name": "po-above-threshold-needs-manager-approval-and-the-requester-is-denied-at-the-task-gate",
       "fixtures": [
         {
           "entity": "Item",
@@ -71,7 +71,7 @@
           "template": {
             "action": "approve"
           },
-          "expect": "error(SOD_VIOLATION)"
+          "expect": "error(FORBIDDEN)"
         },
         {
           "op": "resolveTask",
@@ -243,7 +243,7 @@
           "op": "resolveTask",
           "entity": "Task",
           "asRole": "procurementManager",
-          "recordId": "${Task[0].id}",
+          "recordId": "${Task[1].id}",
           "template": {
             "action": "approve"
           },

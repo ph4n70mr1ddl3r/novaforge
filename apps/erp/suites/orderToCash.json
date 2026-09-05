@@ -1,0 +1,351 @@
+{
+  "apiName": "orderToCash",
+  "label": "Order-to-Cash — invoice approval, auto-journal, payment application, aging settlement",
+  "cases": [
+    {
+      "name": "invoice-to-journal-to-partial-payment",
+      "fixtures": [
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "1100",
+            "name": "Accounts Receivable",
+            "type": "ASSET"
+          }
+        },
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "4000",
+            "name": "Sales Revenue",
+            "type": "REVENUE"
+          }
+        },
+        {
+          "entity": "Customer",
+          "asRole": "arClerk",
+          "template": {
+            "name": "Metro Retail Group",
+            "creditLimit": "5000.0000"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "arAccount": "${Account[0].id}",
+            "revenueAccount": "${Account[1].id}",
+            "invoiceDate": "2026-09-05",
+            "dueDate": "2026-10-05",
+            "amountOutstanding": "120.0000",
+            "lines": [
+              {
+                "description": "Widgets, case of 12",
+                "quantity": "2",
+                "unitPrice": "60.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": {
+            "version": "${Invoice[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": {
+            "action": "approve",
+            "comment": "approved"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "template": {
+            "filter": {
+              "sourceInvoice": "${Invoice[0].id}"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "recordId": "${JournalEntry[0].id}",
+          "template": {
+            "version": "${JournalEntry[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "recordId": "${Task[1].id}",
+          "template": {
+            "action": "approve",
+            "comment": "approved"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "Payment",
+          "asRole": "arClerk",
+          "template": {
+            "invoice": "${Invoice[0].id}",
+            "customer": "${Customer[0].id}",
+            "paymentDate": "2026-09-20",
+            "amount": "50.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": {
+            "version": "${Invoice[0].version}",
+            "amountOutstanding": "70.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "runReport",
+          "entity": "trialBalance",
+          "asRole": "controller",
+          "template": {},
+          "expect": "ok"
+        },
+        {
+          "op": "runReport",
+          "entity": "arAging",
+          "asRole": "controller",
+          "template": {},
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${Invoice[0].status} == 'POSTED'",
+        "${Invoice[0].total} == 120.0000",
+        "${Invoice[0].totalBook} == 120.0000",
+        "${JournalEntry[0].status} == 'POSTED'",
+        "${JournalEntry[0].totalDebit} == ${Invoice[0].totalBook}",
+        "${JournalEntry[0].totalCredit} == ${Invoice[0].totalBook}",
+        "${Payment[0].amount} == 50.0000",
+        "${Invoice[0].amountOutstanding} == 70.0000",
+        "${Report[0].totals.debitTotal} == ${Report[0].totals.creditTotal}",
+        "${Report[0].totals.debitTotal} == 120.0000",
+        "${Report[1].totals.outstanding} == 70.0000"
+      ]
+    },
+    {
+      "name": "payment-in-full-closes-the-invoice",
+      "fixtures": [
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "1101",
+            "name": "Accounts Receivable",
+            "type": "ASSET"
+          }
+        },
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "4001",
+            "name": "Sales Revenue",
+            "type": "REVENUE"
+          }
+        },
+        {
+          "entity": "Customer",
+          "asRole": "arClerk",
+          "template": {
+            "name": "Golden Harvest Foods"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "arAccount": "${Account[0].id}",
+            "revenueAccount": "${Account[1].id}",
+            "invoiceDate": "2026-09-06",
+            "dueDate": "2026-10-06",
+            "amountOutstanding": "80.0000",
+            "lines": [
+              {
+                "description": "Produce crates",
+                "quantity": "8",
+                "unitPrice": "10.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": {
+            "version": "${Invoice[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "template": {
+            "filter": {
+              "sourceInvoice": "${Invoice[0].id}"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "recordId": "${JournalEntry[0].id}",
+          "template": {
+            "version": "${JournalEntry[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "recordId": "${Task[1].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "Payment",
+          "asRole": "arClerk",
+          "template": {
+            "invoice": "${Invoice[0].id}",
+            "customer": "${Customer[0].id}",
+            "paymentDate": "2026-09-21",
+            "amount": "80.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": {
+            "version": "${Invoice[0].version}",
+            "amountOutstanding": "0.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "runReport",
+          "entity": "arAging",
+          "asRole": "controller",
+          "template": {},
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${Invoice[0].status} == 'POSTED'",
+        "${Invoice[0].amountOutstanding} == 0.0000",
+        "${Payment[0].amount} == ${Invoice[0].total}",
+        "${Report[0].totals.outstanding} == 70.0000"
+      ]
+    }
+  ]
+}

@@ -955,7 +955,7 @@
       "status": "partial",
       "app": "apps/buildright",
       "wave": 1,
-      "note": "Threshold approval (approvalThreshold, mode-all, SOD_VIOLATION pinned in p2pApprovalEdges); single approval level \u2014 multi-level escalation is a platform deferral (PLAN \u00a71)"
+      "note": "Threshold approval (approvalThreshold, mode-all, the requester's task-access denial pinned in p2pApprovalEdges); single approval level \u2014 multi-level escalation is a platform deferral (PLAN \u00a71)"
     },
     {
       "id": "PUR-011",

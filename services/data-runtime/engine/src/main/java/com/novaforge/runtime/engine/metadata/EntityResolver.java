@@ -155,7 +155,7 @@ public class EntityResolver {
         return matches.isEmpty() ? null : matches.getFirst();
     }
 
-    private void refreshTenant(UUID tenantId) {
+    private IndexEntry refreshTenant(UUID tenantId) {
         // The service-caller index is cross-tenant (the materializer's union needs
         // every tenant — projections are shared DDL); the resolver's view is THIS
         // tenant's apps only, so scratch-tenant publishes can never collide with a
@@ -164,17 +164,23 @@ public class EntityResolver {
         List<MetadataClient.PublishedApp> apps = client.publishedApps().stream()
                 .filter(app -> app.tenantId() == null || app.tenantId().equals(tenantId))
                 .toList();
-        indexes.put(tenantId, new IndexEntry(System.currentTimeMillis(), apps));
+        IndexEntry fresh = new IndexEntry(System.currentTimeMillis(), apps);
+        indexes.put(tenantId, fresh);
         for (MetadataClient.PublishedApp app : apps) {
             bundleOf(tenantId, app);
         }
+        return fresh;
     }
 
     private List<MetadataClient.PublishedApp> index(UUID tenantId) {
         IndexEntry entry = indexes.get(tenantId);
         if (entry == null || System.currentTimeMillis() - entry.loadedAtMillis() > indexTtlMillis) {
-            refreshTenant(tenantId);
-            entry = indexes.get(tenantId);
+            // Use the entry refreshTenant BUILT, never a map re-get: the publish
+            // subscriber's evict can remove the tenant's entry between this
+            // refresh's put and a re-get, and the re-get then NPEd the first writes
+            // of a freshly published tenant (found live in the e2e stack run —
+            // back-to-back suite publishes raced their own eviction every time).
+            entry = refreshTenant(tenantId);
         }
         return entry.apps();
     }

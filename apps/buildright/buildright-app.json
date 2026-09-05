@@ -130,7 +130,8 @@
         "entity": "GoodsReceipt",
         "create": true,
         "read": true,
-        "update": true
+        "update": true,
+        "delete": true
       },
       {
         "role": "receivingClerk",
@@ -198,7 +199,8 @@
         "create": true,
         "read": true,
         "update": true,
-        "delete": true
+        "delete": true,
+        "reportExecute": true
       },
       {
         "role": "procurementManager",
@@ -214,7 +216,8 @@
         "create": true,
         "read": true,
         "update": true,
-        "delete": true
+        "delete": true,
+        "reportExecute": true
       },
       {
         "role": "procurementManager",
@@ -258,7 +261,8 @@
       {
         "role": "procurementManager",
         "entity": "GoodsReceipt",
-        "read": true
+        "read": true,
+        "delete": true
       },
       {
         "role": "procurementManager",

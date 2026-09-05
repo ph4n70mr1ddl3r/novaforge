@@ -1527,6 +1527,14 @@ public class RecordEngine {
             }
         }
         if (changed) {
+            // Formulas read roll-ups (VendorBill.amountOutstanding =
+            // total - amountPaid): after a child write moved a rollup, the parent's
+            // dependent formulas follow — the same roll-ups-before-formulas ordering
+            // the create and inline-children paths pin (PHASE-3 §3). Found live in
+            // the e2e P2P cycle: posting a payment recomputed amountPaid while
+            // amountOutstanding stayed stale, and the settlement suite read the
+            // pre-settlement bill.
+            evaluateFormulas(parent.entity(), parentData);
             int newVersion = updateShaped(tenantId, actorId, parent, parentId, parentData,
                     currentVersion, "roll-up recompute");
             if (publishEvent) {
@@ -1955,8 +1963,13 @@ public class RecordEngine {
         for (EntityDefinition.ValidationRule rule : entity.validations()) {
             Object outcome = evaluate(entity, rule.expression(), data);
             if (!(outcome instanceof Boolean b) || !b) {
+                // the rule NAME is the addressable field: suites pin
+                // `expect: validation(<rule>)` and the harness matches it against
+                // the rendered errors — an opaque "<Entity>.validations" field made
+                // authored rule names unreachable (found live in the e2e P2P run:
+                // every validation(rule) step read red against a green rejection)
                 errors.add(new ProblemErrors.FieldError(
-                        entity.apiName() + ".validations",
+                        rule.name() != null ? rule.name() : entity.apiName() + ".validations",
                         rule.message() != null ? rule.message()
                                 : "validation rule failed: " + rule.name(),
                         rule.expression()));

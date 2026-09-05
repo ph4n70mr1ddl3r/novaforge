@@ -226,6 +226,16 @@ public class TestRunner {
                 Map<String, Object> body = interpolate(fixture.template(), scope);
                 JsonNode created = runtimeCall(HttpMethod.POST,
                         "/api/v1/runtime/" + fixture.entity(), token, MAPPER.writeValueAsString(body));
+                // fixtures are the case's GIVEN state — a failure here cannot satisfy
+                // any expect (they carry none), so it surfaces as the case's failure
+                // instead of poisoning every later ${Entity[n].id} with nulls (found
+                // live in the e2e stack run: a silently failed fixture read as a
+                // "field is required" 400 three steps later)
+                if (isProblem(created) || !created.hasNonNull("id")) {
+                    failures.add("fixture " + fixture.entity() + " (as "
+                            + (fixture.asRole() == null ? "scratch admin" : fixture.asRole())
+                            + ") did not create: " + MAPPER.writeValueAsString(created));
+                }
                 remember(scope, fixture.entity(), created);
             }
             for (Step step : testCase.steps()) {
