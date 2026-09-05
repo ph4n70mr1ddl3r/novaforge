@@ -7,6 +7,12 @@
 > expected platform work. The PHASE-4 §1 spec-driven agreement applies, with one
 > addition: the ERP app's ADR-010 suites are its acceptance contract (§9).
 >
+> **Portfolio extension (§12, added post-exit):** Phase 7's mini-ERP is the
+> *acceptance* tier of the dogfood program. §12 adds the standing *product* tier —
+> a portfolio of domain apps that must be able to implement the [BuildRight Depot
+> model company](https://github.com/ph4n70mr1ddl3r/erpplans) — under this phase's
+> binding rules, executed as PLAN.md §5's Phase 9.
+>
 > | | |
 > |---|---|
 > | Status | Decided (open questions resolved 2026-08-21) |
@@ -374,3 +380,79 @@ soon as T2 confirms the gaps.
   as a versioned feature when the gap log demands it.
 - **Q2 — Dunning scope: DECIDED — letters + scheduler.** Full escalation chains
   are a Phase 4 escalation reuse if the dogfood demands them.
+
+## 12. The Portfolio Tier — implementing the BuildRight Depot model company (erpplans)
+
+> Added post-exit: **part of the implementation/dogfooding obligation is that the
+> platform must be able to implement the [BuildRight Depot Corp. model company]
+> (https://github.com/ph4n70mr1ddl3r/erpplans)** — a complete retail operating spec:
+> 724 requirements across 38 categories, 5,426 workflows across 188 value streams
+> and 569 process areas, volumes of 33.6M POS transaction headers / 134.4M POS lines
+> per year, ~100 GB/yr, and BIR 10-year retention. This section pins the two-tier
+> dogfood contract; PLAN.md §5's Phase 9 executes it, and `apps/buildright/` is the
+> corpus.
+
+**12.1 Two tiers, two jobs.** The §1–§11 mini-ERP remains the **acceptance tier**:
+small enough to finish, suite-gated, version-frozen as the platform's regression
+corpus (`apps/erp`). The **product tier** is a growing portfolio of domain apps
+(`apps/buildright/`) implementing the erpplans model company on the platform. The
+acceptance tier keeps the platform honest against ERP-grade *depth*; the product
+tier keeps it honest against real *breadth* — and it is where domain pressure must
+keep forcing platform features after the acceptance corpus freezes. Neither tier
+substitutes for the other: the acceptance corpus never absorbs portfolio scope,
+and the portfolio never relaxes the acceptance gates.
+
+**12.2 Binding rules (inherited from §1, unchanged, per app).** Zero handwritten
+application code; every gap becomes a log entry before any workaround — each
+portfolio app carries its own gap log (`apps/buildright/GAP-LOG.md` mirrored into
+the app definition's versioned `gapLog` branch) and the gap-log harvest protocol
+(§8) applies; script ratio ≤ 20% per app; every module ships ADR-010 suites, and
+the promotion gate (ADR-010 §4, Phase 8) executes them against a published
+candidate — §9's acceptance contract, scaled to the portfolio.
+
+**12.3 Coverage discipline — the definition of done.** Every requirement in
+erpplans' `erp-requirements.md` is in exactly one of two states: (a) **claimed** —
+the committed coverage matrix (`apps/buildright/requirements-coverage/`, generated
+by `scripts/generate-coverage.py` from the erpplans checkout + the hand-maintained
+`coverage-map.json`) maps the requirement ID to the owning app and names the
+evidence; or (b) **uncovered** — an honest, visible state, not a failure. A wave
+is done when its claimed rows are `covered`/`partial` *with evidence and a suite
+pin* — never merely because entities exist. The matrix's honesty (totals reconcile
+to the 724-row catalog; claims reference existing apps) is CI-gated by
+`BuildrightAppArtifactTests`, the portfolio's `ErpAppArtifactTests` twin.
+
+**12.4 Build order follows erpplans' own criticality register.** Waves follow
+`workflows/workflow-criticality-classification.md` (Tier 1 first):
+- **Wave 1 (shipped):** the Tier-1 procure-to-pay cycle (VS-15, R3/PUR) — PO with
+  threshold approval, goods receipts with costing, vendor bills with auto-journal,
+  settlement by posted-payment roll-up, open-bills/spend reporting
+- **Wave 2:** record-to-report depth (VS-17, R1/R11) — fixed assets, intercompany,
+  BIR tax reporting, consolidation; forces the report join-lowering (Erp gap
+  G-12) and the `allocate` primitive (Erp gap G-9) as platform features
+- **Wave 3:** breadth domains (MDM R13, credit & collections R31, vendor portal
+  R28) — each its own versioned app with its own gap log
+- **Wave 4:** the long tail (governance, loss prevention, ESG, services)
+
+**12.5 Edges stay edges.** Per erpplans' own sourcing doctrine
+(`07-methodology/capability-sourcing-and-engineering-model.md` — unified core,
+bought edges, built differentiators), POS, WMS, TMS, and WFM are bought
+best-of-breed systems: the portfolio models them as **integration metadata**
+(connectors, inbound webhooks, import mappings) against the canonical integration
+map (`data-volumes-and-integrations.md`) — never as entities. The portfolio
+implements the core and the in-house differentiators; it does not rebuild the
+edges.
+
+**12.6 Scale is a platform forcing function, not an app concern.** erpplans'
+volumes (134M POS lines/yr arriving through integrations, ~100 GB/yr, 10-year
+retention) exceed everything the platform has validated (the 1M-row list target,
+Phase 8). Meeting them is harvested platform work — archival/retention strategy,
+partitioning, integration throughput — tracked through the portfolio's gap logs
+and the perf harness (`apps/perf`), never per-app workarounds. That is the point
+of the tier: the portfolio exists to keep forcing honest platform growth after
+the acceptance dogfood freezes.
+
+**12.7 The repo is the spec of record for the corpus; erpplans is the spec of
+record for the requirements.** erpplans revisions are inputs: a changed
+requirement catalog re-runs the coverage generator, and the diff is reviewed like
+code — new requirements surface as uncovered rows, changed ones may invalidate
+c claims, and both route into wave planning.

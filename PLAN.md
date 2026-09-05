@@ -1,8 +1,10 @@
 # NovaForge — No-Code App Builder Platform
 
-> **Mission:** A Spring-microservices-based, metadata-driven no-code platform capable of hosting real business applications — validated by building a working ERP (GL, AR/AP, Inventory) *on the platform itself*, with zero handwritten application code.
+> **Mission:** A Spring-microservices-based, metadata-driven no-code platform capable of hosting real business applications — validated by building a working ERP (GL, AR/AP, Inventory) *on the platform itself*, with zero handwritten application code, and bound by the standing obligation that the platform must be able to implement the [BuildRight Depot model company](https://github.com/ph4n70mr1ddl3r/erpplans) (724 requirements, 5,426 workflows — the portfolio dogfood, PHASE-7 §12).
 
 **North-star milestone:** A functional mini-ERP (chart of accounts, journal entries with posting rules, invoices, inventory with costing, period close, approvals, financial reports) built entirely through the platform's builder UI, promoted from dev → staging → prod as a versioned app artifact.
+
+**The standing portfolio obligation:** the mini-ERP above is the *acceptance* dogfood — small enough to finish, version-frozen as the platform's regression corpus. Beyond it, part of the implementation is a second, *product* dogfood: a growing portfolio of domain apps that must be able to implement the BuildRight Depot Corp. model company ([github.com/ph4n70mr1ddl3r/erpplans](https://github.com/ph4n70mr1ddl3r/erpplans) — 724 requirements across 38 categories, 5,426 workflows across 188 value streams, retail volumes of 134M POS lines/yr and BIR 10-year retention). Its rules, per-requirement coverage discipline, and wave plan are pinned in PHASE-7 §12; the corpus lives at `apps/buildright/`.
 
 ---
 
@@ -169,7 +171,14 @@ Build on the platform itself:
 - Security review, pen test, DR/backup strategy
 - Detailed spec (spec-driven): [docs/specs/PHASE-8-LIFECYCLE.md](./docs/specs/PHASE-8-LIFECYCLE.md) — the scratch-tenant mechanism grows into dev/staging/prod environments (one provisioning path, per ADR-010), promotion-gate mechanics pinned (green run against exactly V, visible audited overrides, compatibility-scoped rollback), headless API + CI wiring, templates-as-artifacts with a catalog-only marketplace, the i18n editor with its fallback chain, and the pinned pen-test/DR scope
 
-> **Total: ~8–10 months with a small senior team** (see §7). Phases 1–3 are the make-or-break core. Phases 2–6 can partially overlap once the core stabilizes.
+> **Total: ~8–10 months with a small senior team** (see §7). Phases 1–3 are the make-or-break core. Phases 2–6 can partially overlap once the core stabilizes. Phase 9 is the standing product obligation that outlives the plan: the platform must keep being able to implement [erpplans](https://github.com/ph4n70mr1ddl3r/erpplans).
+
+### Phase 9 — BuildRight Portfolio Dogfood (continuing) ← *the product deployment*
+Implement the BuildRight Depot model company ([erpplans](https://github.com/ph4n70mr1ddl3r/erpplans)) as a growing family of versioned apps — `apps/buildright/` — under the same binding rules as Phase 7 (zero app code, gap log before any workaround, ≤ 20% script ratio, ADR-010 suites per module):
+- Spec: [PHASE-7 §12](./docs/specs/PHASE-7-ERP-DOGFOOD.md) — the two-tier dogfood contract. Waves follow erpplans' criticality register: wave 1 (shipped) is the Tier-1 procure-to-pay cycle (VS-15/R3); wave 2 is R2R depth (fixed assets, intercompany, BIR tax reporting); wave 3 breadth domains (MDM, credit & collections, vendor portal); wave 4 the long tail
+- POS/WMS/TMS/WFM stay bought edges modeled as integration metadata — connectors, webhooks, imports — never entities (erpplans' own sourcing doctrine, PHASE-7 §12.5)
+- Traceability is the definition of done: the committed coverage matrix maps every one of the 724 requirements to app metadata or a visible gap; `BuildrightAppArtifactTests` gates the artifact, the suites, and the matrix's honesty
+- **Exit (per wave):** claimed coverage rows `covered`/`partial` with evidence and a suite pin; every platform forcing function the waves surface (scale/retention to erpplans volumes, report join-lowering, allocation, cross-app orchestration) harvested as versioned platform features, not per-app workarounds
 
 ---
 
@@ -181,7 +190,7 @@ Build on the platform itself:
 | Generic runtime too slow for ERP lists | Query DSL → tuned SQL with generated columns + indexes; load-test in Phase 1, not Phase 7 |
 | User scripts crash or hang the platform | GraalVM isolates with CPU/memory caps, no I/O by default, kill-switch timeouts |
 | Workflow vs script event semantics confusing | Single event spine (Kafka) with documented delivery semantics (at-least-once, idempotency keys) |
-| Scope explosion ("build everything") | ERP dogfood is the acceptance test; every feature must trace to it |
+| Scope explosion ("build everything") | ERP dogfood is the acceptance test; every feature must trace to it. Portfolio demand (PHASE-7 §12) is the product-side filter: a feature traces to a coverage-matrix claim or a gap-log entry, never to taste |
 | Microservice sprawl slows early delivery | Start with gateway + Metadata + Data Runtime (Identity is deployed Keycloak, not built — §3); extract other services only when boundaries prove stable (ADR-008 already sequences Script Engine after the flow engine) |
 
 ---

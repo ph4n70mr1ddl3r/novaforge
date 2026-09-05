@@ -1,14 +1,16 @@
 # NovaForge
 
-**A metadata-driven, no-code application platform — built on Spring microservices and validated by building a real ERP on the platform itself, with zero handwritten application code.**
+**A metadata-driven, no-code application platform — built on Spring microservices, validated by building a real ERP on the platform itself with zero handwritten application code, and bound by a standing obligation: the platform must be able to implement the [BuildRight Depot model company](https://github.com/ph4n70mr1ddl3r/erpplans) (724 requirements, 5,426 workflows).**
 
 > **North-star milestone:** a functional mini-ERP (chart of accounts, journal entries with posting rules, invoices, inventory with costing, period close, approvals, financial reports) built entirely through the platform's builder UI and promoted from dev → staging → prod as a versioned app artifact.
+>
+> **Standing portfolio obligation:** the mini-ERP is the *acceptance* dogfood; the *product* dogfood is a growing portfolio of versioned apps (`apps/buildright/`) that must be able to implement the BuildRight Depot Corp. model company from [erpplans](https://github.com/ph4n70mr1ddl3r/erpplans) — pinned in [PHASE-7 §12](docs/specs/PHASE-7-ERP-DOGFOOD.md), executed as [Phase 9](#roadmap).
 
 ---
 
 ## Why NovaForge?
 
-Most no-code tools handle forms and lists well but collapse under ERP-grade requirements: decimal-precise money, immutable auditable postings, approval hierarchies, gapless document numbering, period locking, and 100k+-row list performance. NovaForge is designed so that **if the platform supports these, it supports almost any business app** — and the ERP dogfood build ([Phase 7](docs/specs/PHASE-7-ERP-DOGFOOD.md)) is the acceptance test that keeps scope honest.
+Most no-code tools handle forms and lists well but collapse under ERP-grade requirements: decimal-precise money, immutable auditable postings, approval hierarchies, gapless document numbering, period locking, and 100k+-row list performance. NovaForge is designed so that **if the platform supports these, it supports almost any business app** — and the ERP dogfood build ([Phase 7](docs/specs/PHASE-7-ERP-DOGFOOD.md)) is the acceptance test that keeps scope honest. Past acceptance, the standing portfolio dogfood ([Phase 9](docs/specs/PHASE-7-ERP-DOGFOOD.md), PHASE-7 §12) keeps the platform honest against real breadth: it must be able to implement the full BuildRight Depot model company — the [erpplans](https://github.com/ph4n70mr1ddl3r/erpplans) spec: 724 requirements across 38 categories, 5,426 workflows across 188 value streams, retail scale, BIR 10-year retention — with per-requirement coverage tracking and edges (POS/WMS/TMS) modeled as integrations, per erpplans' own sourcing doctrine.
 
 ## How It Works
 
@@ -77,6 +79,7 @@ Full service landscape, data strategy (JSONB hybrid + projections), and security
 | 6 | Integration layer | [PHASE-6-INTEGRATION.md](docs/specs/PHASE-6-INTEGRATION.md) |
 | 7 | **ERP dogfood — the proving ground** | [PHASE-7-ERP-DOGFOOD.md](docs/specs/PHASE-7-ERP-DOGFOOD.md) |
 | 8 | App lifecycle & hardening | [PHASE-8-LIFECYCLE.md](docs/specs/PHASE-8-LIFECYCLE.md) |
+| 9 | **BuildRight portfolio dogfood — implement the [erpplans](https://github.com/ph4n70mr1ddl3r/erpplans) model company as versioned, coverage-tracked apps** (continuing; wave 1 shipped) | [PHASE-7-ERP-DOGFOOD.md §12](docs/specs/PHASE-7-ERP-DOGFOOD.md) |
 
 Timeline estimate: ~8–10 months with a small senior team; Phases 1–3 are the make-or-break core.
 
@@ -103,8 +106,10 @@ novaforge/
 │                        #   script-engine, audit-service, workflow-service,
 │                        #   scheduler-service, notification-service,
 │                        #   reporting-service, integration-service, file-service
-├── apps/erp/            # the Phase 7 dogfood: the ERP app as metadata (entities,
+├── apps/erp/            # the Phase 7 acceptance dogfood: the mini-ERP as metadata (entities,
 │                        #   flows, machines, reports, suites) + the binding gap log
+├── apps/buildright/     # the Phase 9 portfolio dogfood (PHASE-7 §12): implements the
+│                        #   erpplans model company in waves (wave 1 = P2P), coverage-tracked
 ├── frontend/            # pnpm workspace (PHASE-2 §2): shared/ = the versioned
 │                        #   catalog + registry, the expr/v1 TS twin, page model,
 │                        #   L1 resolver, renderer, gateway client; runtime-ui =
@@ -250,5 +255,10 @@ frontend (220: shared 135, builder 63, runtime 22) tests green under `./mvnw ver
 `pnpm -r test`. The recorded-open
 set is empty; the remaining surfaces are the deliberate v1 deferrals (PLAN.md §1)
 and the standing operational cadences (the pen pass and DR drill re-run quarterly
-per the runbooks). Progress ledger:
+per the runbooks). With the v1 plan closed, the dogfood program continues per
+PLAN.md §5's Phase 9 / PHASE-7 §12: the BuildRight portfolio (`apps/buildright/`,
+CI-gated by `BuildrightAppArtifactTests`) opens with the wave-1 procure-to-pay app
+— the standing obligation being that the platform must be able to implement the
+[erpplans](https://github.com/ph4n70mr1ddl3r/erpplans) model company, coverage-tracked
+across its 724 requirements. Progress ledger:
 [IMPLEMENTATION.md](IMPLEMENTATION.md).
