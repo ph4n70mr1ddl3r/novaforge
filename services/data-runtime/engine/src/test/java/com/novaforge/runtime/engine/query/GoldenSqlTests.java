@@ -210,4 +210,81 @@ class GoldenSqlTests {
                 .isInstanceOf(PlatformException.class)
                 .hasMessageContaining("in requires an array value");
     }
+
+    @Test
+    @DisplayName("parser rejects: a non-finite number literal (1e400) rejects shaped, never a raw JsonNodeException 500")
+    void parserNonFiniteNumberValue() {
+        // A JSON number past double range parses to a non-finite DoubleNode whose
+        // decimalValue() throws JsonNodeException — not one of ProblemAdvice's 400
+        // mappings, so every query door 500'd (unhandled-error log included) on a
+        // malformed REQUEST VALUE. Same class as the in-leaf NPE: the door owes the
+        // shaped VALIDATION_FAILED.
+        assertThatThrownBy(() -> QueryParser.parseList(
+                "{\"filter\":{\"field\":\"amount\",\"op\":\"eq\",\"value\":1e400}}", entity))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("unsupported filter value");
+        assertThatThrownBy(() -> QueryParser.parseList(
+                "{\"filter\":{\"field\":\"amount\",\"op\":\"gt\",\"value\":-1e400}}", entity))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("unsupported filter value");
+        // the same throw hides one level deep: an in-list's items ride decimalValue() too
+        assertThatThrownBy(() -> QueryParser.parseList(
+                "{\"filter\":{\"field\":\"amount\",\"op\":\"in\",\"value\":[1,1e400]}}", entity))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("unsupported filter value");
+        assertThatThrownBy(() -> QueryParser.parseAggregate(
+                "{\"filter\":{\"field\":\"amount\",\"op\":\"lte\",\"value\":1.7976931348623157e309},"
+                        + "\"aggregates\":[{\"op\":\"count\"}]}", entity))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("unsupported filter value");
+        // sanity: the finite band around the hazard still parses and binds
+        QueryParser.parseList(
+                "{\"filter\":{\"field\":\"amount\",\"op\":\"eq\",\"value\":1e308}}", entity);
+    }
+
+    @Test
+    @DisplayName("a seek cursor whose position its sort key cannot type rejects shaped at the lowering, never a raw ArithmeticException 500")
+    void seekCursorRejectsUntypeablePosition() {
+        // decode() validates the contract and the arity, but the POSITION VALUES are
+        // typed only where they bind — QueryLowering.seekValue. "1e999999999" is a
+        // legal JSON number and a legal BigDecimal, but longValueExact() throws a raw
+        // ArithmeticException (not in ProblemAdvice's 400 mapping → 500); "abc"
+        // against a numeric key threw an unscoped NumberFormatException. Both owe the
+        // page.after-scoped VALIDATION_FAILED the cursor door's contract pins.
+        String token = SeekCursor.encode(
+                List.of(new QueryModel.Sort("version", QueryModel.SortDir.asc),
+                        new QueryModel.Sort("id", QueryModel.SortDir.asc)),
+                List.of("1e999999999", "22222222-2222-4222-8222-222222222222"));
+        QueryModel.ListQuery query = QueryParser.parseList(
+                "{\"sort\":[{\"field\":\"version\",\"dir\":\"asc\"}],"
+                        + "\"page\":{\"size\":50,\"after\":\"" + token + "\"}}", entity);
+        assertThat(query.seek()).isTrue();
+        QueryLowering lowering = new QueryLowering(entity);
+        assertThatThrownBy(() -> lowering.list("JournalEntry", TENANT, query))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("page.after")
+                .hasMessageContaining("numeric");
+
+        // the id key names its own domain
+        String idToken = SeekCursor.encode(
+                List.of(new QueryModel.Sort("id", QueryModel.SortDir.asc)),
+                List.of("not-a-uuid"));
+        QueryModel.ListQuery idQuery = QueryParser.parseList(
+                "{\"page\":{\"size\":50,\"after\":\"" + idToken + "\"}}", entity);
+        assertThatThrownBy(() -> lowering.list("JournalEntry", TENANT, idQuery))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("page.after")
+                .hasMessageContaining("uuid");
+
+        // and a well-typed cursor still lowers untouched (finite decimal pos)
+        String goodToken = SeekCursor.encode(
+                List.of(new QueryModel.Sort("amount", QueryModel.SortDir.asc),
+                        new QueryModel.Sort("id", QueryModel.SortDir.asc)),
+                List.of(new BigDecimal("90.00"), "22222222-2222-4222-8222-222222222222"));
+        QueryModel.ListQuery goodQuery = QueryParser.parseList(
+                "{\"sort\":[{\"field\":\"amount\",\"dir\":\"asc\"}],"
+                        + "\"page\":{\"size\":50,\"after\":\"" + goodToken + "\"}}", entity);
+        Lowered lowered = lowering.list("JournalEntry", TENANT, goodQuery);
+        assertThat(lowered.sql()).contains("ORDER BY");
+    }
 }

@@ -226,13 +226,13 @@ public final class QueryParser {
         // of 500-ing the list/aggregate path with a raw NullPointerException.
         Object javaValue = value == null ? null : switch (value.getNodeType()) {
             case STRING -> value.asString();
-            case NUMBER -> value.decimalValue();
+            case NUMBER -> decimalValue(value);
             case BOOLEAN -> value.asBoolean();
             case NULL -> null;
             case ARRAY -> {
                 List<Object> items = new ArrayList<>();
                 for (JsonNode item : value) {
-                    items.add(item.isNumber() ? item.decimalValue() : item.isBoolean()
+                    items.add(item.isNumber() ? decimalValue(item) : item.isBoolean()
                             ? item.asBoolean() : item.asString());
                 }
                 yield items;
@@ -260,6 +260,22 @@ public final class QueryParser {
             parsed.add(parseFilter(child, entity));
         }
         return new QueryModel.Filter.Composite(op, parsed);
+    }
+
+    /**
+     * A JSON number literal past double range ({@code 1e400}, the ±1.7…e309 band)
+     * parses to a NON-FINITE DoubleNode whose {@code decimalValue()} throws a raw
+     * {@code JsonNodeException} — not one of ProblemAdvice's 400 mappings, so a
+     * malformed filter value used to 500 the list/aggregate/export doors with an
+     * unhandled-error log. The parse door owes a shaped rejection instead (the
+     * in-leaf-without-value rule: same class, same wire).
+     */
+    private static java.math.BigDecimal decimalValue(JsonNode number) {
+        if (number.isDouble() && !Double.isFinite(number.asDouble())) {
+            throw validation("filter.value",
+                    "unsupported filter value: " + number.asString());
+        }
+        return number.decimalValue();
     }
 
     private static void requireField(EntityDefinition entity, String field, String scope) {

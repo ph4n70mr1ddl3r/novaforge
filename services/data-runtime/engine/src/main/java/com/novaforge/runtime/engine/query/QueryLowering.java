@@ -1,5 +1,8 @@
 package com.novaforge.runtime.engine.query;
 
+import com.novaforge.common.error.PlatformErrorCode;
+import com.novaforge.common.error.PlatformException;
+import com.novaforge.common.error.ProblemErrors;
 import com.novaforge.metadata.EntityDefinition;
 import com.novaforge.metadata.PromotionPolicy;
 import com.novaforge.metadata.Snake;
@@ -233,19 +236,38 @@ public final class QueryLowering {
         if (value == null) {
             return null;
         }
-        if (field.equals("id")) {
-            return UUID.fromString(String.valueOf(value));
+        try {
+            if (field.equals("id")) {
+                return UUID.fromString(String.valueOf(value));
+            }
+            if (field.equals("version")) {
+                return new java.math.BigDecimal(String.valueOf(value)).longValueExact();
+            }
+            if (numericFields.getOrDefault(field, false)) {
+                return new java.math.BigDecimal(String.valueOf(value));
+            }
+            if (value instanceof Boolean b) {
+                return b ? "true" : "false";
+            }
+            return String.valueOf(value);
+        } catch (RuntimeException malformed) {
+            // A cursor whose contract and arity decode cleanly can still carry a
+            // position value the sort key's compare domain cannot type ("abc" or an
+            // integral-but-beyond-long 1e999999999 against a version key; a garbage
+            // id). The raw NumberFormatException/IllegalArgumentException/
+            // ArithmeticException used to escape the lowering — the Arithmetic case
+            // is not even in ProblemAdvice's 400 mapping, so it 500'd. The door's
+            // contract names the shape: reject VALIDATION_FAILED naming page.after,
+            // never a downstream bind error.
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "page.after: cursor position is not a valid "
+                            + (field.equals("id") ? "uuid" : "numeric")
+                            + " for sort key " + field,
+                    ProblemErrors.of(new ProblemErrors.FieldError("page.after",
+                            "cursor position is not a valid "
+                                    + (field.equals("id") ? "uuid" : "numeric")
+                                    + " for sort key " + field, String.valueOf(value))));
         }
-        if (field.equals("version")) {
-            return new java.math.BigDecimal(String.valueOf(value)).longValueExact();
-        }
-        if (numericFields.getOrDefault(field, false)) {
-            return new java.math.BigDecimal(String.valueOf(value));
-        }
-        if (value instanceof Boolean b) {
-            return b ? "true" : "false";
-        }
-        return String.valueOf(value);
     }
 
     public Lowered count(String entityApiName, UUID tenantId, Filter filter) {
