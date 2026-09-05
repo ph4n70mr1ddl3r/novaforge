@@ -159,4 +159,21 @@ class GoldenSqlTests {
                 .isInstanceOf(PlatformException.class)
                 .hasMessageContaining("aggregates and/or groupBy");
     }
+
+    @Test
+    @DisplayName("parser rejects: an in-leaf without a value key rejects shaped, never NPEs")
+    void parserInWithoutValue() {
+        // The required-value guard exempts "in" (its own array check carries the
+        // message for a present-but-not-array value), but a wholly ABSENT value key
+        // rode that exemption straight into value.getNodeType() on a null node — a
+        // raw NullPointerException 500 where the parse door owes VALIDATION_FAILED.
+        assertThatThrownBy(() -> QueryParser.parseList(
+                "{\"filter\":{\"field\":\"status\",\"op\":\"in\"}}", entity))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("in requires an array value");
+        assertThatThrownBy(() -> QueryParser.parseList(
+                "{\"filter\":{\"and\":[{\"field\":\"status\",\"op\":\"in\"}]}}", entity))
+                .isInstanceOf(PlatformException.class)
+                .hasMessageContaining("in requires an array value");
+    }
 }

@@ -220,7 +220,11 @@ public final class QueryParser {
             throw validation("filter.value", "operator " + op + " requires a value");
         }
         JsonNode value = node.get("value");
-        Object javaValue = switch (value.getNodeType()) {
+        // An absent value under "in" reaches here legitimately (the array check
+        // below carries its message) — read it as null instead of NPE-ing on the
+        // missing node, so the leaf rejects VALIDATION_FAILED at this door instead
+        // of 500-ing the list/aggregate path with a raw NullPointerException.
+        Object javaValue = value == null ? null : switch (value.getNodeType()) {
             case STRING -> value.asString();
             case NUMBER -> value.decimalValue();
             case BOOLEAN -> value.asBoolean();
