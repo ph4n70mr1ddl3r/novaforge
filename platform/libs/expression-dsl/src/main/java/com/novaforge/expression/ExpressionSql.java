@@ -260,14 +260,21 @@ public final class ExpressionSql {
                 + right.sql() + "))", List.copyOf(params), SqlType.NUMBER);
     }
 
-    /** {@code in (…)} lowers to an OR-chain of equalities (the query DSL's shape). */
+    /**
+     * {@code in (…)} lowers to an OR-chain of equalities (the query DSL's shape).
+     * The left side re-lowers per arm: a lowered node pairs its {@code ?}s with its
+     * params snapshot, so reusing one arm's SQL text would stamp a bind-carrying
+     * left (a literal, {@code today()}) into every arm while binding its value only
+     * once — placeholders and params drift apart, and the statement dies on the
+     * JDBC bind count after save-time {@link #checkLowerable} blessed the shape.
+     */
     private Lowered membership(Node.Binary binary) {
         if (!(binary.right() instanceof Node.ListLiteral options) || options.items().isEmpty()) {
             throw new ExpressionException("'in' requires a non-empty list operand");
         }
-        Lowered left = lower(binary.left());
         List<String> equals = new ArrayList<>();
         for (Node option : options.items()) {
+            Lowered left = lower(binary.left());
             Lowered lowered = lower(option);
             requireSameType(left, lowered, "in");
             equals.add(left.sql() + " = " + lowered.sql());

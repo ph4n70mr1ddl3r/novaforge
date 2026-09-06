@@ -28,8 +28,10 @@ class ExpressionSqlTest {
     /** A record-ish resolver: the field's SQL is just its quoted apiName here. */
     private static final FieldResolver FIELDS = path -> switch (path) {
         case "dueDate" -> new Field("'dueDate'", SqlType.DATE);
+        case "shipDate" -> new Field("'shipDate'", SqlType.DATE);
         case "amount" -> new Field("'amount'", SqlType.NUMBER);
         case "status" -> new Field("'status'", SqlType.TEXT);
+        case "prevStatus" -> new Field("'prevStatus'", SqlType.TEXT);
         case "active" -> new Field("'active'", SqlType.BOOLEAN);
         default -> null;
     };
@@ -90,6 +92,42 @@ class ExpressionSqlTest {
         Lowered lowered = lower("status in ('POSTED', 'OPEN')");
         assertThat(lowered.sql()).isEqualTo("('status' = ? OR 'status' = ?)");
         assertThat(lowered.params()).containsExactly("POSTED", "OPEN");
+    }
+
+    @Test
+    @DisplayName("a bind-carrying left of 'in' re-binds per OR arm — placeholders and params stay paired")
+    void membershipWithBoundLeftSide() {
+        // A literal (or today()) on the left of 'in' is a legal shape: the evaluator
+        // answers it and checkLowerable blesses it. The OR-chain stamps the left's
+        // '?' into every arm, so its value must bind once per arm — a single bind
+        // under two placeholders used to die on the JDBC bind count at execution
+        // (a 500 after the save-time gate passed the same shape).
+        Lowered literalLeft = lower("'POSTED' in (status, prevStatus)");
+        assertThat(literalLeft.sql()).isEqualTo("(? = 'status' OR ? = 'prevStatus')");
+        assertThat(literalLeft.params()).containsExactly("POSTED", "POSTED");
+
+        Lowered clockLeft = lower("today() in (dueDate, shipDate)");
+        assertThat(clockLeft.sql()).isEqualTo("(? = 'dueDate' OR ? = 'shipDate')");
+        assertThat(clockLeft.params()).containsExactly("2026-08-23", "2026-08-23");
+    }
+
+    @Test
+    @DisplayName("lowered SQL pairs every ? with exactly one param, in order")
+    void placeholdersAndParamsStayPaired() {
+        for (String source : new String[] {
+                "today() - dueDate >= 0 && today() - dueDate <= 30 && amount > 100.50",
+                "status in ('POSTED', 'OPEN')",
+                "'POSTED' in (status, prevStatus)",
+                "today() in (dueDate, shipDate)",
+                "contains(status, '50%_off') || status != 'VOID'",
+                "dueDate + 3 > today() && !(active == true)",
+                "amount / 3 > 0 || amount == null"}) {
+            Lowered lowered = lower(source);
+            long placeholders = lowered.sql().codePoints().filter(c -> c == '?').count();
+            assertThat(placeholders)
+                    .as("sql/param drift for <%s>: %s vs %s", source, lowered.sql(), lowered.params())
+                    .isEqualTo(lowered.params().size());
+        }
     }
 
     @Test
