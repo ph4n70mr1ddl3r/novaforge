@@ -264,6 +264,18 @@ public class MetadataStore {
         AppDefinition.PageDefinition stamped = new AppDefinition.PageDefinition(page.id(),
                 page.apiName(), page.label(), page.labelI18n(), page.type(), page.entity(),
                 page.layout(), revision);
+        // The fence's bind: a first save holds NO revision token, so its ON CONFLICT
+        // arm binds an IMPOSSIBLE revision (-1 — the column is NOT NULL DEFAULT 1 and
+        // only the V8 trigger's bump ever moves it) and the conditional update matches
+        // nothing when the pre-check raced a concurrent first save: written==0 raises
+        // the same concurrent-save 409 any stale revision gets. Binding the first-save
+        // default (1) instead let a raced first save ADOPT the winner's fresh row —
+        // the trigger bumped the physical revision to 2 while the stored document kept
+        // the loser's embedded revision 1, and reads serve the document: every later
+        // save then rebased against a revision the physical column had left behind, a
+        // 409 loop no client could ever rebase out of, with the winner's draft
+        // silently lost under a 200.
+        int fenceRevision = page.revision() == null ? -1 : page.revision();
         int written = jdbc.update("""
                 INSERT INTO md_pages (id, tenant_id, app_id, api_name, document, created_by, updated_by)
                 VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)
@@ -272,7 +284,7 @@ public class MetadataStore {
                  WHERE md_pages.revision = ?""",
                 pageId, tenantId, appId, page.apiName(),
                 DefinitionParser.write(stamped), actorId, actorId,
-                page.revision() == null ? 1 : page.revision());
+                fenceRevision);
         if (written == 0) {
             // The pre-check raced another editor's commit (or two first-saves collided):
             // the conditional update matched nothing — never a silent no-op.
