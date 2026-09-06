@@ -1,0 +1,784 @@
+{
+  "apiName": "arDocumentEdges",
+  "label": "AR edges — invoice/credit-note/dunning validations, reject→no-journal→resubmit, role walls, overpay (logged v1 behavior), uniqueness walls",
+  "cases": [
+    {
+      "name": "invoice-validation-edges-and-line-roll-up-recompute",
+      "fixtures": [
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "1200",
+            "name": "Accounts Receivable",
+            "type": "ASSET"
+          }
+        },
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "4100",
+            "name": "Sales Revenue",
+            "type": "REVENUE"
+          }
+        },
+        {
+          "entity": "Customer",
+          "asRole": "arClerk",
+          "template": {
+            "name": "Edge Probe Trading"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "arAccount": "${Account[0].id}",
+            "revenueAccount": "${Account[1].id}",
+            "invoiceDate": "2026-09-10",
+            "dueDate": "2026-09-01",
+            "amountOutstanding": "10.0000",
+            "lines": [
+              {
+                "description": "due date before invoice date",
+                "quantity": "1",
+                "unitPrice": "10.0000"
+              }
+            ]
+          },
+          "expect": "validation(dueNotBeforeInvoice)"
+        },
+        {
+          "op": "createRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "template": {
+            "arAccount": "${Account[0].id}",
+            "revenueAccount": "${Account[1].id}",
+            "invoiceDate": "2026-09-10",
+            "dueDate": "2026-10-10",
+            "amountOutstanding": "10.0000"
+          },
+          "expect": "error(VALIDATION_FAILED)"
+        },
+        {
+          "op": "createRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "arAccount": "${Account[0].id}",
+            "revenueAccount": "${Account[1].id}",
+            "invoiceDate": "2026-09-10",
+            "dueDate": "2026-10-10",
+            "amountOutstanding": "150.0000",
+            "lines": [
+              {
+                "description": "line formula: 4 x 25",
+                "quantity": "4",
+                "unitPrice": "25.0000"
+              },
+              {
+                "description": "line formula: 1 x 50",
+                "quantity": "1",
+                "unitPrice": "50.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "InvoiceLine",
+          "asRole": "arClerk",
+          "template": {
+            "invoice": "${Invoice[0].id}",
+            "description": "standalone line lands on the draft",
+            "quantity": "2",
+            "unitPrice": "25.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "template": {
+            "filter": {
+              "number": "${Invoice[0].number}"
+            }
+          },
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${InvoiceLine[0].amount} == 50.0000",
+        "${Invoice[0].total} == 200.0000",
+        "${Invoice[0].totalBook} == 200.0000",
+        "${Query[0].count} == 1"
+      ]
+    },
+    {
+      "name": "rejected-invoice-creates-no-journal-resubmit-posts-one",
+      "fixtures": [
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "1201",
+            "name": "Accounts Receivable",
+            "type": "ASSET"
+          }
+        },
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "4101",
+            "name": "Sales Revenue",
+            "type": "REVENUE"
+          }
+        },
+        {
+          "entity": "Customer",
+          "asRole": "arClerk",
+          "template": {
+            "name": "Second Probe LLC"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "arAccount": "${Account[0].id}",
+            "revenueAccount": "${Account[1].id}",
+            "invoiceDate": "2026-09-10",
+            "dueDate": "2026-10-10",
+            "amountOutstanding": "90.0000",
+            "lines": [
+              {
+                "description": "consulting day rate",
+                "quantity": "1",
+                "unitPrice": "90.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": {
+            "version": "${Invoice[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": {
+            "action": "reject",
+            "comment": "rate not contracted — reject"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "template": {
+            "filter": {
+              "sourceInvoice": "${Invoice[0].id}"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": {
+            "version": "${Invoice[0].version}",
+            "dueDate": "2026-10-15"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "recordId": "${Task[1].id}",
+          "template": {
+            "action": "approve",
+            "comment": "approved on resubmission"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "JournalEntry",
+          "asRole": "arClerk",
+          "template": {
+            "filter": {
+              "sourceInvoice": "${Invoice[0].id}"
+            }
+          },
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${Query[1].count} == 0",
+        "${Query[3].count} == 1",
+        "${Invoice[0].status} == 'POSTED'",
+        "${JournalEntry[1].status} == 'DRAFT'",
+        "${JournalEntry[1].totalDebit} == 90.0000",
+        "${JournalEntry[1].totalCredit} == 90.0000",
+        "${JournalEntry[1].sourceInvoice} == ${Invoice[0].id}"
+      ]
+    },
+    {
+      "name": "inventory-clerk-hits-the-ar-walls",
+      "fixtures": [
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "1202",
+            "name": "Accounts Receivable",
+            "type": "ASSET"
+          }
+        },
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "4102",
+            "name": "Sales Revenue",
+            "type": "REVENUE"
+          }
+        },
+        {
+          "entity": "Customer",
+          "asRole": "arClerk",
+          "template": {
+            "name": "Third Probe GmbH"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "Invoice",
+          "asRole": "inventoryClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "arAccount": "${Account[0].id}",
+            "revenueAccount": "${Account[1].id}",
+            "invoiceDate": "2026-09-10",
+            "dueDate": "2026-10-10",
+            "amountOutstanding": "45.0000",
+            "lines": [
+              {
+                "description": "AR is not the inventory clerk's desk",
+                "quantity": "1",
+                "unitPrice": "45.0000"
+              }
+            ]
+          },
+          "expect": "error(FORBIDDEN)"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Invoice",
+          "asRole": "inventoryClerk",
+          "template": {
+            "filter": {
+              "status": "DRAFT"
+            }
+          },
+          "expect": "error(FORBIDDEN)"
+        },
+        {
+          "op": "createRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "arAccount": "${Account[0].id}",
+            "revenueAccount": "${Account[1].id}",
+            "invoiceDate": "2026-09-10",
+            "dueDate": "2026-10-10",
+            "amountOutstanding": "45.0000",
+            "lines": [
+              {
+                "description": "the clerk books it",
+                "quantity": "1",
+                "unitPrice": "45.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": {
+            "version": "${Invoice[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "inventoryClerk",
+          "recordId": "${Task[0].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "error(FORBIDDEN)"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${Invoice[0].status} == 'POSTED'",
+        "${Invoice[0].amountOutstanding} == 45.0000"
+      ]
+    },
+    {
+      "name": "credit-note-validations-settle-with-numbering-pin",
+      "fixtures": [
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "1203",
+            "name": "Accounts Receivable",
+            "type": "ASSET"
+          }
+        },
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "4103",
+            "name": "Sales Revenue",
+            "type": "REVENUE"
+          }
+        },
+        {
+          "entity": "Customer",
+          "asRole": "arClerk",
+          "template": {
+            "name": "Fourth Probe Retail"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "CreditNote",
+          "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "noteDate": "2026-09-11",
+            "amount": "0.0000",
+            "reason": "zero credit is no credit"
+          },
+          "expect": "validation(positiveAmount)"
+        },
+        {
+          "op": "createRecord",
+          "entity": "CreditNote",
+          "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "noteDate": "2026-09-11",
+            "amount": "-5.0000",
+            "reason": "a debit note is not a credit note"
+          },
+          "expect": "validation(positiveAmount)"
+        },
+        {
+          "op": "createRecord",
+          "entity": "DunningLetter",
+          "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "asOfDate": "2026-09-11",
+            "bucket": "current",
+            "outstanding": "-1.0000",
+            "letterDate": "2026-09-11"
+          },
+          "expect": "validation(nonNegativeOutstanding)"
+        },
+        {
+          "op": "createRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "arAccount": "${Account[0].id}",
+            "revenueAccount": "${Account[1].id}",
+            "invoiceDate": "2026-09-11",
+            "dueDate": "2026-10-11",
+            "amountOutstanding": "200.0000",
+            "lines": [
+              {
+                "description": "bulk order",
+                "quantity": "2",
+                "unitPrice": "100.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": {
+            "version": "${Invoice[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "CreditNote",
+          "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "invoice": "${Invoice[0].id}",
+            "noteDate": "2026-09-12",
+            "amount": "30.0000",
+            "reason": "returned one crate"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": {
+            "version": "${Invoice[0].version}",
+            "amountOutstanding": "170.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "runReport",
+          "entity": "arAging",
+          "asRole": "controller",
+          "template": {},
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${CreditNote[0].number} == 'CN-000001'",
+        "${CreditNote[0].amount} == 30.0000",
+        "${Invoice[0].status} == 'POSTED'",
+        "${Invoice[0].amountOutstanding} == 170.0000",
+        "${Report[0].totals.outstanding} == 305.0000"
+      ]
+    },
+    {
+      "name": "overpayment-lands-with-no-allocation-engine-yet",
+      "fixtures": [
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "1204",
+            "name": "Accounts Receivable",
+            "type": "ASSET"
+          }
+        },
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "4104",
+            "name": "Sales Revenue",
+            "type": "REVENUE"
+          }
+        },
+        {
+          "entity": "Customer",
+          "asRole": "arClerk",
+          "template": {
+            "name": "Overpayer Inc"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "template": {
+            "customer": "${Customer[0].id}",
+            "arAccount": "${Account[0].id}",
+            "revenueAccount": "${Account[1].id}",
+            "invoiceDate": "2026-09-12",
+            "dueDate": "2026-10-12",
+            "amountOutstanding": "100.0000",
+            "lines": [
+              {
+                "description": "pallet of mulch",
+                "quantity": "1",
+                "unitPrice": "100.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": {
+            "version": "${Invoice[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "recordId": "${Task[0].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "Payment",
+          "asRole": "arClerk",
+          "template": {
+            "invoice": "${Invoice[0].id}",
+            "customer": "${Customer[0].id}",
+            "paymentDate": "2026-09-13",
+            "amount": "120.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "Invoice",
+          "asRole": "arClerk",
+          "recordId": "${Invoice[0].id}",
+          "template": {
+            "version": "${Invoice[0].version}",
+            "amountOutstanding": "-20.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "runReport",
+          "entity": "arAging",
+          "asRole": "controller",
+          "template": {},
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${Invoice[0].status} == 'POSTED'",
+        "${Payment[0].amount} == 120.0000",
+        "${Invoice[0].amountOutstanding} == -20.0000",
+        "${Report[0].totals.outstanding} == 285.0000"
+      ]
+    },
+    {
+      "name": "uniqueness-walls-and-missing-record",
+      "label": "field-level uniqueness enforces; the declared composite unique (FxRate currency+rateDate) does not — G-16's honest pin",
+      "fixtures": [
+        {
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "1300",
+            "name": "Uniqueness Probe",
+            "type": "ASSET"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "template": {
+            "code": "1300",
+            "name": "Duplicate code",
+            "type": "ASSET"
+          },
+          "expect": "error(VALIDATION_FAILED)"
+        },
+        {
+          "op": "createRecord",
+          "entity": "FxRate",
+          "asRole": "accountingManager",
+          "template": {
+            "currency": "EUR",
+            "rateDate": "2026-09-01",
+            "rate": "1.100000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "FxRate",
+          "asRole": "accountingManager",
+          "template": {
+            "currency": "EUR",
+            "rateDate": "2026-09-01",
+            "rate": "1.200000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "Customer",
+          "asRole": "arClerk",
+          "template": {
+            "email": "noname@probe.example"
+          },
+          "expect": "error(VALIDATION_FAILED)"
+        },
+        {
+          "op": "createRecord",
+          "entity": "Item",
+          "asRole": "inventoryClerk",
+          "template": {
+            "sku": "DUP-SKU",
+            "name": "Uniqueness Widget"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "Item",
+          "asRole": "inventoryClerk",
+          "template": {
+            "sku": "DUP-SKU",
+            "name": "Second Widget, same sku"
+          },
+          "expect": "error(VALIDATION_FAILED)"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "Account",
+          "asRole": "accountingManager",
+          "recordId": "8f8f8f8f-8f8f-8f8f-8f8f-8f8f8f8f8f8f",
+          "template": {
+            "version": 1,
+            "name": "no such account"
+          },
+          "expect": "error(NOT_FOUND)"
+        }
+      ],
+      "assertExpressions": [
+        "${FxRate[0].rate} == 1.100000",
+        "${FxRate[1].rate} == 1.200000",
+        "${Item[0].sku} == 'DUP-SKU'"
+      ]
+    }
+  ]
+}

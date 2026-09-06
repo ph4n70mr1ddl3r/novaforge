@@ -1,0 +1,433 @@
+{
+  "apiName": "inventoryCostingEdges",
+  "label": "Inventory costing edges — blended weighted average, conditional roll-ups (draft movements never count), movement validations, empty-stock and explicit-cost issues",
+  "cases": [
+    {
+      "name": "weighted-average-blends-multiple-receipts",
+      "fixtures": [
+        {
+          "entity": "Item",
+          "asRole": "inventoryClerk",
+          "template": {
+            "sku": "BOLT",
+            "name": "Hex bolt boxes"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "template": {
+            "item": "${Item[0].id}",
+            "movementType": "RECEIPT",
+            "movementDate": "2026-09-01",
+            "qty": "10",
+            "unitCost": "5.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "recordId": "${StockLedger[0].id}",
+          "template": {
+            "version": "${StockLedger[0].version}",
+            "status": "POSTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "template": {
+            "item": "${Item[0].id}",
+            "movementType": "RECEIPT",
+            "movementDate": "2026-09-02",
+            "qty": "5",
+            "unitCost": "8.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "recordId": "${StockLedger[1].id}",
+          "template": {
+            "version": "${StockLedger[1].version}",
+            "status": "POSTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "template": {
+            "item": "${Item[0].id}",
+            "movementType": "ISSUE",
+            "movementDate": "2026-09-03",
+            "qty": "-6"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "recordId": "${StockLedger[2].id}",
+          "template": {
+            "version": "${StockLedger[2].version}",
+            "status": "POSTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Item",
+          "asRole": "inventoryClerk",
+          "template": {
+            "filter": {
+              "sku": "BOLT"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "runReport",
+          "entity": "inventoryValuation",
+          "asRole": "controller",
+          "template": {},
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${StockLedger[2].unitCost} == 6.0000",
+        "${StockLedger[2].value} == -36.0000",
+        "${Item[0].qtyOnHand} == 9",
+        "${Item[0].inventoryValue} == 54.0000",
+        "${Report[0].totals.qtyTotal} == 9",
+        "${Report[0].totals.valueTotal} == 54.0000"
+      ]
+    },
+    {
+      "name": "draft-movements-never-count-into-stock",
+      "fixtures": [
+        {
+          "entity": "Item",
+          "asRole": "inventoryClerk",
+          "template": {
+            "sku": "NUT",
+            "name": "Wing nut boxes"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "template": {
+            "item": "${Item[0].id}",
+            "movementType": "RECEIPT",
+            "movementDate": "2026-09-04",
+            "qty": "100",
+            "unitCost": "2.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "template": {
+            "item": "${Item[0].id}",
+            "movementType": "ISSUE",
+            "movementDate": "2026-09-05",
+            "qty": "-10"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "recordId": "${StockLedger[0].id}",
+          "template": {
+            "version": "${StockLedger[0].version}",
+            "status": "POSTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "recordId": "${StockLedger[1].id}",
+          "template": {
+            "version": "${StockLedger[1].version}",
+            "status": "POSTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "template": {
+            "item": "${Item[0].id}",
+            "movementType": "RECEIPT",
+            "movementDate": "2026-09-06",
+            "qty": "50",
+            "unitCost": "1.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Item",
+          "asRole": "inventoryClerk",
+          "template": {
+            "filter": {
+              "sku": "NUT"
+            }
+          },
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${StockLedger[0].value} == 200.0000",
+        "${StockLedger[1].unitCost} == 2.0000",
+        "${StockLedger[1].value} == -20.0000",
+        "${StockLedger[2].status} == 'DRAFT'",
+        "${Item[0].qtyOnHand} == 90",
+        "${Item[0].inventoryValue} == 180.0000"
+      ]
+    },
+    {
+      "name": "movement-validations-at-the-door",
+      "fixtures": [
+        {
+          "entity": "Item",
+          "asRole": "inventoryClerk",
+          "template": {
+            "sku": "WASHER",
+            "name": "Flat washer bags"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "template": {
+            "item": "${Item[0].id}",
+            "movementType": "RECEIPT",
+            "movementDate": "2026-09-06",
+            "qty": "0",
+            "unitCost": "1.0000"
+          },
+          "expect": "validation(receiptPositive)"
+        },
+        {
+          "op": "createRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "template": {
+            "item": "${Item[0].id}",
+            "movementType": "ISSUE",
+            "movementDate": "2026-09-06",
+            "qty": "5"
+          },
+          "expect": "validation(issueNegative)"
+        },
+        {
+          "op": "createRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "template": {
+            "item": "${Item[0].id}",
+            "movementType": "RECEIPT",
+            "movementDate": "2026-09-06",
+            "qty": "3"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "recordId": "${StockLedger[0].id}",
+          "template": {
+            "version": "${StockLedger[0].version}",
+            "status": "POSTED"
+          },
+          "expect": "validation(receiptPriced)"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "recordId": "${StockLedger[0].id}",
+          "template": {
+            "version": "${StockLedger[0].version}",
+            "status": "POSTED",
+            "unitCost": "4.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "template": {
+            "item": "${Item[0].id}",
+            "movementType": "ISSUE",
+            "movementDate": "2026-09-07",
+            "qty": "-3"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "recordId": "${StockLedger[1].id}",
+          "template": {
+            "version": "${StockLedger[1].version}",
+            "status": "POSTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "template": {
+            "item": "${Item[0].id}",
+            "movementType": "ISSUE",
+            "movementDate": "2026-09-08",
+            "qty": "-1"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "recordId": "${StockLedger[2].id}",
+          "template": {
+            "version": "${StockLedger[2].version}",
+            "status": "POSTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Item",
+          "asRole": "inventoryClerk",
+          "template": {
+            "filter": {
+              "sku": "WASHER"
+            }
+          },
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${StockLedger[0].value} == 12.0000",
+        "${StockLedger[1].unitCost} == 4.0000",
+        "${StockLedger[1].value} == -12.0000",
+        "${StockLedger[2].unitCost} == null",
+        "${StockLedger[2].value} == null",
+        "${Item[0].qtyOnHand} == -1",
+        "${Item[0].inventoryValue} == 0.0000"
+      ]
+    },
+    {
+      "name": "explicit-cost-issue-keeps-its-cost-skips-the-value-stamp",
+      "fixtures": [
+        {
+          "entity": "Item",
+          "asRole": "inventoryClerk",
+          "template": {
+            "sku": "SHIM",
+            "name": "Shim packs"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "template": {
+            "item": "${Item[0].id}",
+            "movementType": "RECEIPT",
+            "movementDate": "2026-09-09",
+            "qty": "4",
+            "unitCost": "5.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "recordId": "${StockLedger[0].id}",
+          "template": {
+            "version": "${StockLedger[0].version}",
+            "status": "POSTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "createRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "template": {
+            "item": "${Item[0].id}",
+            "movementType": "ISSUE",
+            "movementDate": "2026-09-10",
+            "qty": "-2",
+            "unitCost": "3.0000"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "StockLedger",
+          "asRole": "inventoryClerk",
+          "recordId": "${StockLedger[1].id}",
+          "template": {
+            "version": "${StockLedger[1].version}",
+            "status": "POSTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Item",
+          "asRole": "inventoryClerk",
+          "template": {
+            "filter": {
+              "sku": "SHIM"
+            }
+          },
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${StockLedger[1].unitCost} == 3.0000",
+        "${StockLedger[1].value} == null",
+        "${Item[0].qtyOnHand} == 2",
+        "${Item[0].inventoryValue} == 20.0000"
+      ]
+    }
+  ]
+}

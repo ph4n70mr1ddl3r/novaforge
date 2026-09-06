@@ -2028,6 +2028,15 @@
       "priority": "high",
       "disposition": "closed",
       "resolvedIn": "spec §3.5 (2026-08-27): conditional roll-ups — SUM(rel.field WHERE status = 'POSTED'), both aggregation paths filter identically; adopted by the corpus 2026-09-04 (the 42nd pass) — Item.qtyOnHand/inventoryValue carry the WHERE clause and the flow's manual row discount is retired (the divisor is the plain bound view; the pinned costing numbers are unchanged)"
+    },
+    {
+      "id": "G-16",
+      "area": "P1 Data Modeling / materializer",
+      "blocker": "Declared composite unique indexes are parsed but never enforced: EntityDefinition.IndexDefinition carries unique (with uniqueOn()) and save validation accepts the declaration, but the projection Materializer reads only field-level uniqueness (uniqueFields from field.uniqueOn()) and lowers every declared index as a plain non-unique CREATE INDEX - so the FxRate (currency, rateDate) composite unique admits duplicate rows and nothing at the write path checks it. Found live authoring the e2e edge corpus (2026-09-06): the second EUR rate for 2026-09-01 created clean",
+      "workaround": "The suite pins current behavior honestly (the arDocumentEdges uniqueness case expects the duplicate to be accepted, named for this gap) until the materializer enforces the declaration; field-level uniqueness (Account.code, Item.sku, document numbers) stays enforced through the partial-unique index path and is pinned rejecting in the same case",
+      "proposed": "the Materializer lowers unique index declarations to CREATE UNIQUE INDEX (NULLs-distinct, per-app discriminator included) and the FieldCoercer grows a composite-uniqueness pre-check so the rejection keeps the friendly field-scoped shape",
+      "priority": "medium",
+      "disposition": "backlog"
     }
   ]
 }
