@@ -449,7 +449,8 @@ public final class Expression {
             return switch (unary.op()) {
                 case "!" -> truth(value) ? Boolean.FALSE : Boolean.TRUE;
                 case "-" -> {
-                    if (value instanceof BigDecimal decimal) {
+                    BigDecimal decimal = asDecimal(value);
+                    if (decimal != null) {
                         yield decimal.negate(MATH);
                     }
                     throw new ExpressionException("unary - requires a numeric operand");
@@ -479,7 +480,10 @@ public final class Expression {
                 case "in" -> membership(left, right);
                 case "+" -> additive(left, right, true);
                 case "-" -> additive(left, right, false);
-                case "*" -> pair(left, right)[0].multiply(pair(left, right)[1], MATH);
+                case "*" -> {
+                    BigDecimal[] operands = pair(left, right);
+                    yield operands[0].multiply(operands[1], MATH);
+                }
                 case "/" -> {
                     BigDecimal[] operands = pair(left, right);
                     if (operands[1].signum() == 0) {
@@ -503,13 +507,20 @@ public final class Expression {
             return Boolean.FALSE;
         }
 
-        /** Null-aware equality (Annex A): ==/!= compare against null. */
+        /** Null-aware equality (Annex A): ==/!= compare against null. Numeric
+         *  bindings compare by VALUE regardless of the carrier (the mirror of the TS
+         *  twin's either-Decimal leg): an Integer 5 equals the literal 5 and 5.0 —
+         *  Integer.equals(BigDecimal) is false, so the strict-equals fallback used to
+         *  answer quantity == 5 with FALSE on a quantity of 5 (FieldCoercer stores
+         *  INT fields as Integer). A number never equals a non-number. */
         private boolean equal(Object left, Object right) {
             if (left == null || right == null) {
                 return left == null && right == null;
             }
-            if (left instanceof BigDecimal l && right instanceof BigDecimal r) {
-                return l.compareTo(r) == 0;
+            if (left instanceof Number || right instanceof Number) {
+                BigDecimal l = asDecimal(left);
+                BigDecimal r = asDecimal(right);
+                return l != null && r != null && l.compareTo(r) == 0;
             }
             return left.equals(right);
         }
@@ -520,8 +531,8 @@ public final class Expression {
                 return Boolean.FALSE;
             }
             int ordering;
-            if (left instanceof BigDecimal l && right instanceof BigDecimal r) {
-                ordering = l.compareTo(r);
+            if (left instanceof Number l && right instanceof Number r) {
+                ordering = asDecimal(l).compareTo(asDecimal(r));
             } else if (left instanceof String l && right instanceof String r) {
                 ordering = l.compareTo(r);
             } else if (left instanceof LocalDate l && right instanceof LocalDate r) {
@@ -553,7 +564,7 @@ public final class Expression {
                 return BigDecimal.valueOf(java.time.temporal.ChronoUnit.DAYS.between(other, date));
             }
             if (left instanceof LocalDate date) {
-                long days = requireDays(right);
+                long days = requireDays(right);   // any integral numeric carrier
                 try {
                     return plus ? date.plusDays(days) : date.minusDays(days);
                 } catch (ArithmeticException | java.time.DateTimeException outOfRange) {
@@ -565,14 +576,17 @@ public final class Expression {
                             + decimal(days) + " is outside the supported calendar range");
                 }
             }
-            if (left instanceof BigDecimal l && right instanceof BigDecimal r) {
+            BigDecimal l = asDecimal(left);
+            BigDecimal r = asDecimal(right);
+            if (l != null && r != null) {
                 return plus ? l.add(r, MATH) : l.subtract(r, MATH);
             }
             throw new ExpressionException("arithmetic requires numeric or date operands");
         }
 
         private long requireDays(Object value) {
-            if (value instanceof BigDecimal decimal && decimal.stripTrailingZeros().scale() <= 0) {
+            BigDecimal decimal = asDecimal(value);
+            if (decimal != null && decimal.stripTrailingZeros().scale() <= 0) {
                 try {
                     return decimal.longValueExact();
                 } catch (ArithmeticException outOfRange) {
@@ -591,7 +605,9 @@ public final class Expression {
         }
 
         private BigDecimal[] pair(Object left, Object right) {
-            if (left instanceof BigDecimal l && right instanceof BigDecimal r) {
+            BigDecimal l = asDecimal(left);
+            BigDecimal r = asDecimal(right);
+            if (l != null && r != null) {
                 return new BigDecimal[] {l, r};
             }
             throw new ExpressionException("arithmetic requires numeric operands");
@@ -726,7 +742,8 @@ public final class Expression {
         }
 
         private BigDecimal numeric(Object value) {
-            if (value instanceof BigDecimal decimal) {
+            BigDecimal decimal = asDecimal(value);
+            if (decimal != null) {
                 return decimal;
             }
             throw new ExpressionException("expected a numeric value");
@@ -737,6 +754,35 @@ public final class Expression {
                 return s;
             }
             throw new ExpressionException("expected a string value");
+        }
+
+        /**
+         * The evaluator's numeric domain: every {@link Number} binding coerces exactly
+         * through its string form — never through a binary float. The strict
+         * {@code instanceof BigDecimal} reads used to reject the numeric carriers the
+         * platform itself binds: FieldCoercer canonicalizes INT to Integer and LONG to
+         * Long, Jackson parses JSON-typed fields and connector payloads to
+         * Integer/Long/Double/BigInteger, and HookExecutor's bound lookup views ride
+         * those nested values into dot-path reads. Every formula, validation rule,
+         * sharing criterion, and hook guard over an INT/LONG field then failed at its
+         * first evaluation — {@code quantity >= 0} threw "ordered comparison requires
+         * two operands of one comparable type", {@code quantity * unitPrice} threw
+         * "arithmetic requires numeric operands" (both rendering 400 on every write
+         * of an entity whose static compile-check had blessed the shapes), and worst
+         * of all {@code quantity == 5} answered FALSE on a quantity of 5, silently
+         * flipping validation outcomes. The TS twin normalizes at its binding door
+         * (renderer bindRecord: {@code Decimal.fromNumber(String(value))}); this is the
+         * JVM's equivalent, applied at the point of use so nested and JSON-typed
+         * values coerce too.
+         */
+        private static BigDecimal asDecimal(Object value) {
+            if (value instanceof BigDecimal decimal) {
+                return decimal;
+            }
+            if (value instanceof Number number) {
+                return new BigDecimal(number.toString());
+            }
+            return null;
         }
     }
 }

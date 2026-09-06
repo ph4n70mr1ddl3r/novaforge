@@ -147,6 +147,80 @@ class ExpressionConformanceTest {
                 .as("negate(MATH) rounds to the context").isZero();
     }
 
+    @Test
+    @DisplayName("an INT field binding (Integer) compares by value in ordered comparisons — quantity >= 0 must not throw on the write path")
+    void intBindingOrdersByValue() {
+        // FieldCoercer canonicalizes INT to Integer; the evaluator's strict
+        // instanceof-BigDecimal compare used to throw "ordered comparison requires two
+        // operands of one comparable type" — a 400 on EVERY write of an entity whose
+        // validation rule read an INT field (statically blessed as NUMERIC).
+        Clock clock = Clock.fixed(Instant.parse("2026-09-06T00:00:00Z"), ZoneOffset.UTC);
+        Object pass = Expression.parse("quantity >= 0").evaluate(
+                Expression.Bindings.of(Map.of("quantity", 5)), clock);
+        assertThat(pass).isEqualTo(Boolean.TRUE);
+        Object againstDecimal = Expression.parse("quantity > 4.5").evaluate(
+                Expression.Bindings.of(Map.of("quantity", 5)), clock);
+        assertThat(againstDecimal).as("Integer 5 > decimal 4.5 compares by value").isEqualTo(Boolean.TRUE);
+        Object fail = Expression.parse("quantity > 5").evaluate(
+                Expression.Bindings.of(Map.of("quantity", 5)), clock);
+        assertThat(fail).isEqualTo(Boolean.FALSE);
+    }
+
+    @Test
+    @DisplayName("an INT × MONEY formula evaluates to the exact decimal — never 'arithmetic requires numeric operands'")
+    void intTimesMoneyFormulaEvaluates() {
+        // lines.amount = quantity * unitPrice with an INT quantity passes the static
+        // arithmetic check (INT is numeric()); the strict pair() used to reject the
+        // same shape at evaluation — 400 on every write, on the corpus's own ERP
+        // formula shape.
+        Clock clock = Clock.fixed(Instant.parse("2026-09-06T00:00:00Z"), ZoneOffset.UTC);
+        Object amount = Expression.parse("quantity * unitPrice").evaluate(
+                Expression.Bindings.of(Map.of("quantity", 5,
+                        "unitPrice", new BigDecimal("10.50"))), clock);
+        assertThat(((BigDecimal) amount).compareTo(new BigDecimal("52.50"))).isZero();
+    }
+
+    @Test
+    @DisplayName("quantity == 5 is TRUE when quantity is the Integer 5 — the silent wrong answer must stay dead")
+    void intEqualityIsValueBased() {
+        // Integer.equals(BigDecimal) is false, so the strict-equals fallback answered
+        // quantity == 5 with FALSE on a quantity of 5 — silently flipping validation
+        // outcomes instead of failing loudly. Equality across numeric carriers is by
+        // value (the TS twin's either-Decimal leg), scale-insensitive, and a number
+        // never equals a non-number.
+        Clock clock = Clock.fixed(Instant.parse("2026-09-06T00:00:00Z"), ZoneOffset.UTC);
+        assertThat(Expression.parse("quantity == 5").evaluate(
+                Expression.Bindings.of(Map.of("quantity", 5)), clock)).isEqualTo(Boolean.TRUE);
+        assertThat(Expression.parse("quantity == 5.0").evaluate(
+                Expression.Bindings.of(Map.of("quantity", 5)), clock)).isEqualTo(Boolean.TRUE);
+        assertThat(Expression.parse("quantity != 4").evaluate(
+                Expression.Bindings.of(Map.of("quantity", 5)), clock)).isEqualTo(Boolean.TRUE);
+        assertThat(Expression.parse("quantity == '5'").evaluate(
+                Expression.Bindings.of(Map.of("quantity", 5)), clock))
+                .as("a number never equals a string").isEqualTo(Boolean.FALSE);
+    }
+
+    @Test
+    @DisplayName("LONG, JSON-typed, and day-count carriers ride the same value domain — Long + literal and Integer day counts evaluate")
+    void longAndJsonCarriersEvaluate() {
+        Clock clock = Clock.fixed(Instant.parse("2026-09-06T00:00:00Z"), ZoneOffset.UTC);
+        Object sum = Expression.parse("bigCount + 1").evaluate(
+                Expression.Bindings.of(Map.of("bigCount", 10L)), clock);
+        assertThat(((BigDecimal) sum).compareTo(new BigDecimal("11"))).isZero();
+
+        // a JSON-typed field rides through FieldCoercer unparsed — Jackson materializes
+        // its numbers as Integer/Long/Double, and the hook/graph dot-paths read them raw
+        Object product = Expression.parse("payload.factor * 4").evaluate(
+                Expression.Bindings.of(Map.of("payload", Map.of("factor", 2.5))), clock);
+        assertThat(((BigDecimal) product).compareTo(BigDecimal.TEN)).isZero();
+
+        // an INT binding as a date day count: entryDate + graceDays
+        Object dated = Expression.parse("entryDate + graceDays").evaluate(
+                Expression.Bindings.of(Map.of("entryDate", LocalDate.parse("2026-08-31"),
+                        "graceDays", 30)), clock);
+        assertThat(dated).isEqualTo(LocalDate.parse("2026-09-30"));
+    }
+
     private void run(JsonNode item) {
         String source = item.path("expr").asString();
         boolean invalid = item.path("invalid").asBoolean(false);
