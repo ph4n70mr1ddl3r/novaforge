@@ -25,9 +25,9 @@ export type Route =
  *   #/e/{entity}/{kind}[/{id}]?f={filter}     — the drill-through payload,
  *       JSON-encoded query DSL (§5), so a filtered list survives a refresh
  *
- * Decoding is paranoid: unknown screens, unknown entities, malformed kinds, and
- * junk filter payloads all degrade to `null` (the caller falls back to home)
- * rather than crashing a mount or trusting a hand-edited URL.
+ * Decoding is paranoid: unknown screens, unknown entities, malformed kinds, junk
+ * filter payloads, and malformed percent-escapes all degrade to `null` (the caller
+ * falls back to home) rather than crashing a mount or trusting a hand-edited URL.
  */
 
 /** QueryFilter guard for the URL-round-tripped payload — a leaf, or an and/or
@@ -75,7 +75,16 @@ export function decodeRoute(hash: string, entities: ReadonlySet<string>): Route 
     if (raw === "notifications") return { view: "notifications" };
     if (raw === "dashboards") return { view: "dashboards" };
     const [path, query] = raw.split("?") as [string, string | undefined];
-    const parts = path.split("/").map((part) => decodeURIComponent(part));
+    let parts: string[];
+    try {
+        parts = path.split("/").map((part) => decodeURIComponent(part));
+    } catch {
+        // a malformed percent-escape (a bare `%`, `%zz`) throws URIError, and a
+        // hand-edited or corrupted shared link can carry one — the same junk-hash
+        // class as an unknown screen: degrade to null (falls home; the shell's
+        // hashchange arm snaps the URL back), never a thrown decode
+        return null;
+    }
     if (parts[0] !== "e") return null;
     const entity = parts[1] ?? "";
     const kind = parts[2] as (typeof KINDS)[number];

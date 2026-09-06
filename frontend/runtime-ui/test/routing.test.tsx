@@ -172,6 +172,36 @@ describe("runtime hash routing", () => {
         expect(window.location.hash).toBe("#/home");
     });
 
+    it("a hash carrying a malformed percent-escape falls home, not crash", async () => {
+        // %zz is not a valid escape: the path decode used to throw a raw URIError
+        // out of decodeRoute — the boot render crashed (and stayed crashed on every
+        // refresh, the junk URL pinned in the address bar) instead of degrading home.
+        const { client } = stubClient();
+        window.location.hash = "#/e/%zz/list";
+        render(shell(client));
+        await screen.findByText("Select a record type to begin.");
+        await waitFor(() => expect(window.location.hash).toBe("#/home"));
+    });
+
+    it("a committed jump to a malformed escape keeps the route and rewinds the URL", async () => {
+        // the Back/Forward arm: a truncated escape (#/e/Customer%2) decodes to null —
+        // the listener must ignore the junk and snap the URL back to where the app
+        // still is, the same contract an unknown screen gets
+        const { client } = stubClient();
+        render(shell(client));
+        await screen.findByRole("button", { name: "Customers" });
+        await act(async () => {
+            screen.getByRole("button", { name: "Customers" }).click();
+        });
+        await waitFor(() => expect(window.location.hash).toBe("#/e/Customer/list"));
+        await act(async () => {
+            window.location.hash = "#/e/Customer%2";
+        });
+        await waitFor(() => expect(window.location.hash).toBe("#/e/Customer/list"));
+        // the route survived: the list is still what the page serves
+        expect(screen.getByText("1 record")).toBeTruthy();
+    });
+
     it("the browser's Back button walks in-app navigations", async () => {
         const { client } = stubClient();
         render(shell(client));
