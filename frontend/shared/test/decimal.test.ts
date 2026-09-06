@@ -162,4 +162,28 @@ describe("Decimal — the 34-digit HALF_EVEN context (Java BigDecimal parity)", 
         expect(d("9999999").setScale(-2147483647).compareTo(Decimal.ZERO)).toBe(0);
         expect(Date.now() - start).toBeLessThan(1000);
     });
+
+    it("the digits ≥ 0 invariant is enforced at the constructor, not trusted", () => {
+        // daysBetween once built the raw signed day count as digits (−73n, sign 1),
+        // smuggling a negative magnitude past "absolute digits" — the next
+        // multiply/divide against a negative operand composed its sign logic with
+        // the hidden magnitude and answered a value its own compareTo disagreed
+        // with (toString "--182.5", add/subtract silently wrong). The constructor
+        // folds a negative magnitude into the sign carrier; the value semantics
+        // survive any caller that forgets the contract again.
+        const smuggled = new Decimal(-73n, 0);
+        expect(smuggled.sign).toBe(-1);
+        expect(smuggled.toString()).toBe("-73");
+        expect(smuggled.compareTo(Decimal.parse("-73"))).toBe(0);
+        expect(smuggled.compareTo(Decimal.ZERO)).toBe(-1);
+        // a magnitude already carrying a negative sign flips to positive — the
+        // two negations compose, they do not cancel into a wrong sign
+        const doubleNegation = new Decimal(-1825n, 1, -1);
+        expect(doubleNegation.sign).toBe(1);
+        expect(doubleNegation.toString()).toBe("182.5");
+        expect(doubleNegation.compareTo(Decimal.parse("182.5"))).toBe(0);
+        // arithmetic on a normalized value stays exact
+        expect(new Decimal(-73n, 0).add(Decimal.parse("10")).toString()).toBe("-63");
+        expect(new Decimal(-73n, 0).multiply(Decimal.parse("-2.5")).toString()).toBe("182.5");
+    });
 });

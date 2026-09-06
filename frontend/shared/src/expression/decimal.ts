@@ -13,7 +13,16 @@ export class Decimal {
         readonly scale: number,
         /** −1 | 1 (zero carries no sign ambiguity in comparisons). */
         readonly sign: 1 | -1 = 1,
-    ) {}
+    ) {
+        // The invariant is enforced, not trusted: a negative digit magnitude folds
+        // into the sign carrier (daysBetween once passed the raw signed day count
+        // here, and every sign-composing operation downstream — multiply, divide,
+        // toString — answered a value its own compareTo disagreed with).
+        if (this.digits < 0n) {
+            this.digits = -this.digits;
+            this.sign = this.sign === 1 ? -1 : 1;
+        }
+    }
 
     static readonly ZERO = new Decimal(0n, 0);
     static readonly ONE = new Decimal(1n, 0);

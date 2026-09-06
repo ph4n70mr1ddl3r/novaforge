@@ -59,9 +59,19 @@ export function parseInstant(iso: string): InstantValue {
     return instantValue(iso);
 }
 
-/** Days between two canonical dates (b - a, in whole days). */
+/**
+ * Days between two canonical dates (b - a, in whole days) — SIGNED: a span that
+ * runs backwards (b before a) is a negative day count, and the sign must ride
+ * the Decimal's own sign carrier. Building the raw negative difference as
+ * `digits` smuggled a negative BigInt past the "digits ≥ 0" invariant, and the
+ * next multiply/divide against a negative operand composed its sign logic with
+ * the hidden magnitude: a product that compareTo read as +182.5 while toString
+ * rendered "--182.5", and whose add/subtract silently answered wrong values
+ * (date('2026-01-01') - date('2026-03-15') × −2.5 — the corpus pins it).
+ */
 export function daysBetween(a: DateValue, b: DateValue): Decimal {
-    return new Decimal(BigInt(dayNumber(b.$date) - dayNumber(a.$date)), 0);
+    const days = BigInt(dayNumber(b.$date) - dayNumber(a.$date));
+    return days < 0n ? new Decimal(-days, 0, -1) : new Decimal(days, 0, 1);
 }
 
 /**
