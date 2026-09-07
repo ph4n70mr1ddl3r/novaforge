@@ -23,7 +23,7 @@ driven against the **real service topology**, not mocks:
 | `ErpOrderToCashE2ETest` | **O2C** | the `orderToCash` suite: invoice → approval → auto-journal → journal approval → payment application → trial balance / A-R aging |
 | `ErpRecordToReportE2ETest` | **R2R** | the `recordToReport` suite (soft close, close-journal exemption, hard close, reopen, P&L/trial-balance pins) **plus** the BPMN `closeChecklist` journey: CLOSING event → three parallel reconciliation tasks resolved by their candidate roles → the controller's confirmation → lock → reopen, with Awaitility polling the async legs |
 | `BuildRightProcureToPayE2ETest` | **P2P** | the BuildRight wave-1 corpus: happy path, threshold/approval edges, receiving/billing/settlement edges |
-| `ErpSuiteCorpusE2ETest` | regression | the five Phase-7 acceptance suites re-run live (controls, inventoryCosting, creditAndCurrency, bankFeed, reconciliation) |
+| `ErpSuiteCorpusE2ETest` | regression | the eight-suite Phase-7 corpus re-run live — the five acceptance suites (controls, inventoryCosting, creditAndCurrency, bankFeed, reconciliation) plus the three workflow-edge suites (glLedgerEdges, arDocumentEdges, inventoryCostingEdges) |
 
 ## Run
 

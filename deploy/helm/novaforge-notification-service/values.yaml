@@ -71,6 +71,12 @@ env:
         key: password
   - name: NOVAFORGE_KAFKA
     value: "novaforge-kafka:9092"
+  # SMTP delivery rides the infra chart's mailpit (the compose email sink's
+  # in-cluster twin, PHASE-4 §2) — the localhost default would aim the pod at
+  # itself and silently swallow every email (the forty-second pass's chart twin
+  # of the yaml's spring.mail block; the port default 1025 matches the Service).
+  - name: NOVAFORGE_MAIL_HOST
+    value: "novaforge-mailpit"
   - name: NOVAFORGE_DATA_RUNTIME_URL
     value: "http://novaforge-data-runtime:8083"
   - name: NOVAFORGE_METADATA_URL

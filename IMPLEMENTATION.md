@@ -3108,6 +3108,10 @@ through the public APIs only:
   live run**; the wave had only static artifact gates.
 - **Regression** (`ErpSuiteCorpusE2ETest`): the five Phase-7 acceptance suites
   re-run live under automation (the 2026-09-03 exit re-run, now repeatable).
+  *Amended 2026-09-06, commit `53b61cb`: the corpus is eight suites — the three
+  workflow-edge suites (glLedgerEdges, arDocumentEdges, inventoryCostingEdges;
+  17 cases, 118 steps) joined, and `ErpSuiteCorpusE2ETest` runs all eight per
+  boot.*
 
 The stack boots once per test JVM (singleton; Ryuk + shutdown hooks reap it),
 waits the publish-driven projection materializer before driving cycles
@@ -3157,3 +3161,7 @@ Verified: the five e2e tests green end to end against the booted stack (5/5);
 after the engine/harness changes; `git diff` scoped to the new module, the two
 new ERP suites, the BuildRight permission/suite/doc syncs, the two engine fixes,
 the harness fixture check, the root-pom module registration, and docs.
+
+**Deploy-parity closeout (2026-09-07, the forty-second review pass) — the charts learn what the yamls already knew, and the e2e ledger stops lying about the corpus.** The integration service's published-integrations Redis plumb (`fff348d`) fixed the service's yaml but not its chart: `NOVAFORGE_REDIS_HOST` was consumed in every cluster and set nowhere, and the chart gate's parity leg only walked `*URL` names, so the same hole had swallowed the notification service's SMTP sink (`NOVAFORGE_MAIL_HOST` never chart-fed) and the compose email sink's in-cluster twin — Mailpit — had never shipped in the infra chart at all. Fixed: the integration chart carries the redis env twin plus its NetworkPolicy egress allow; the infra chart ships Mailpit (compose's pinned image, in-memory store, posture podman-verified live — boots as uid 1000 on a read-only rootfs with all caps dropped) with its ServiceAccount, PDB, and default-deny section; the notification chart points `NOVAFORGE_MAIL_HOST` at it with its own egress allow; and the chart gate's env parity now walks the whole wiring shape (`*URL`, `*HOST`, `NOVAFORGE_KAFKA`, `NOVAFORGE_TEMPO_ENDPOINT`) — bite-proven: deleting the new env fails the gate with the defect's own sentence. The ledger rot beside it: the README's e2e paragraph said "ine services" (a corrupted word; the stack boots five cycle-path services) and "five Phase-7 acceptance suites" (the corpus is eight since `53b61cb` — the module entry above amended with the dated note), the Status section's "18-component" catalog is 22 (Phase 5's four reporting components joined), and the test counts are recounted from this pass's own runs: **Java (727) + frontend (302: shared 184, builder 74, runtime 44)**.
+
+Verified: full `./mvnw verify` BUILD SUCCESS (24 reactor modules, the five e2e cycle tests green — run before this pass's non-Java edits); `pnpm -r check` + `pnpm -r test` green (302); `deploy/helm/check-charts.sh` CLEAN after the fixes (env parity widened, DNS 18/18, 31 pods isolated, 13 default-deny charts, 30 budgets); 41 markdown files' links all resolve.

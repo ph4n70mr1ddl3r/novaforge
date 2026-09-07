@@ -63,17 +63,24 @@ cmp -s deploy/helm/novaforge-infra/files/tempo.yml \
   || fail "files/tempo.yml drifted from deploy/compose/observability/tempo/tempo.yml"
 echo "infra embedded files: byte-identical to their compose-stack sources"
 
-# 2b) URL-env parity: every NOVAFORGE_*URL a service's application.yaml can
-# consume, its chart must set. The inverse of the DNS leg below — that check
-# proves every env the charts SET resolves; it says nothing about wiring a
-# service consumes but its chart never ships. That gap is not hypothetical:
-# the data-runtime dials script hooks at localhost:8084 in every cluster
-# deploy because its chart never set NOVAFORGE_SCRIPT_ENGINE_URL (thirtieth
-# pass) — and its default-deny egress policy is derived from the same env
-# list, so the missing var blocked the flow twice over. localhost defaults
-# only work where services run as host JVMs beside compose infra (the dev
-# launcher); the charts are the in-cluster wiring, and a peer URL left to its
-# localhost default silently aims the pod at itself.
+# 2b) env parity: every wiring env a service's application.yaml can consume, its
+# chart must set. The inverse of the DNS leg below — that check proves every env
+# the charts SET resolves; it says nothing about wiring a service consumes but
+# its chart never ships. That gap is not hypothetical: the data-runtime dials
+# script hooks at localhost:8084 in every cluster deploy because its chart never
+# set NOVAFORGE_SCRIPT_ENGINE_URL (thirtieth pass) — and its default-deny egress
+# policy is derived from the same env list, so the missing var blocked the flow
+# twice over. localhost defaults only work where services run as host JVMs
+# beside compose infra (the dev launcher); the charts are the in-cluster wiring,
+# and a peer left to its localhost default silently aims the pod at itself.
+# The class is wider than URLs: the forty-second pass found the integration
+# service's published-integrations Redis counters and the notification
+# service's SMTP sink aimed at localhost in every cluster for the same reason
+# (spring.data.redis / spring.mail hosts are bare HOST names, not URLs) — so
+# the parity walk names the whole wiring shape: *URL, *HOST, NOVAFORGE_KAFKA,
+# NOVAFORGE_TEMPO_ENDPOINT. (Knob-like placeholders with behavior defaults —
+# intervals, flags, sizes — stay out by construction: the shape is wiring.)
+WIRING='NOVAFORGE_[A-Z0-9_]*URL|NOVAFORGE_[A-Z0-9_]*HOST|NOVAFORGE_KAFKA|NOVAFORGE_TEMPO_ENDPOINT'
 for chart in deploy/helm/novaforge-*/; do
   name=$(basename "$chart")
   [ "$name" = "novaforge-infra" ] && continue
@@ -83,17 +90,17 @@ for chart in deploy/helm/novaforge-*/; do
   # the data-runtime artifact lives under api/ (its four-module split)
   [ -f "$res" ] || res="services/$svc/api/src/main/resources/application.yaml"
   if [ ! -f "$res" ]; then
-    fail "URL parity: no application.yaml found for chart $name (expected $res)"
+    fail "env parity: no application.yaml found for chart $name (expected $res)"
     continue
   fi
-  consumed=$(grep -oE 'NOVAFORGE_[A-Z0-9_]*URL' "$res" | sort -u)
-  set_vars=$(grep -oE 'NOVAFORGE_[A-Z0-9_]*URL' "$chart/values.yaml" | sort -u)
+  consumed=$(grep -oE "$WIRING" "$res" | sort -u)
+  set_vars=$(grep -oE "$WIRING" "$chart/values.yaml" | sort -u)
   for var in $consumed; do
     grep -qx "$var" <<< "$set_vars" \
-      || fail "URL parity: $name consumes $var (its application.yaml) but values.yaml never sets it — the peer URL falls back to localhost in-cluster"
+      || fail "env parity: $name consumes $var (its application.yaml) but values.yaml never sets it — the wiring falls back to localhost in-cluster"
   done
 done
-[ "$status" -eq 0 ] && echo "url-env parity: every consumed NOVAFORGE_*URL is set by its service's chart"
+[ "$status" -eq 0 ] && echo "env parity: every consumed wiring var (URL/HOST/KAFKA/TEMPO) is set by its service's chart"
 
 # 3) DNS consistency: every env-referenced host resolves to a rendered Service
 python3 - "$render_dir" <<'PY' || status=1

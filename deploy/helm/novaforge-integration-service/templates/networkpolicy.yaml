@@ -84,6 +84,17 @@ spec:
       ports:
         - protocol: TCP
           port: 9092
+    # redis: NOVAFORGE_REDIS_HOST — the published-integrations epoch counters
+    # (the forty-second pass's chart twin of the yaml's spring.data.redis block;
+    # the reporting chart carries the same rule for its caches)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: novaforge-infra
+              component: redis
+      ports:
+        - protocol: TCP
+          port: 6379
     # metadata-service: NOVAFORGE_METADATA_URL — connection metadata
     - to:
         - podSelector:

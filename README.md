@@ -171,13 +171,16 @@ TOKEN=$(curl -s -X POST http://localhost:8082/realms/novaforge/protocol/openid-c
 ```
 
 **E2E cycle tests (`e2e-tests/`):** the whole platform against Testcontainers —
-ine services boot from their packaged jars (the bring-up above, automated), a
-Keycloak container imports the realm, and the ERP cycles run end to end through
-the public APIs: **O2C** (invoice → approval → auto-journal → payment → aging),
-**P2P** (the BuildRight wave-1 corpus: PO → receipt → bill → settlement), **R2R**
-(posting, the soft-close close-journal exemption, the BPMN period-close checklist
-with its parallel candidate-role tasks, lock → reopen, trial balance / P&L), plus
-the five Phase-7 acceptance suites re-run live. The stack boots once per test JVM;
+five cycle-path services boot from their packaged jars (the bring-up above,
+automated), a Keycloak container imports the realm, and the ERP cycles run end
+to end through the public APIs: **O2C** (invoice → approval → auto-journal →
+payment → aging), **P2P** (the BuildRight wave-1 corpus: PO → receipt → bill →
+settlement), **R2R** (posting, the soft-close close-journal exemption, the BPMN
+period-close checklist with its parallel candidate-role tasks, lock → reopen,
+trial balance / P&L), plus the eight-suite Phase-7 corpus re-run live — the five
+acceptance suites (controls, inventoryCosting, creditAndCurrency, bankFeed,
+reconciliation) beside the three workflow-edge suites (glLedgerEdges,
+arDocumentEdges, inventoryCostingEdges). The stack boots once per test JVM;
 CI's build job runs it inside `./mvnw verify` (the reactor builds the module last
 — it needs the services' packaged jars). `-De2e.skip=true` skips it for a fast
 inner loop; details and failure diagnostics: `e2e-tests/README.md`.
@@ -249,7 +252,7 @@ the hashed+signed promotion artifact (ZIP), headless suite-run APIs + the
 i18n translation workspaces with the pinned fallback chain — and the Phase 2
 builder/runtime UIs landed: the `frontend/` workspace ships the expr/v1 TS twin
 (100% shared-corpus parity), the page model with structural-delta overlays, the
-18-component v1 catalog, the role-parameterized L1 resolver, the renderer
+22-component v1 catalog, the role-parameterized L1 resolver, the renderer
 interpreter, the runtime app shell (auto list/form/detail pages, approval inbox,
 dashboards, locale fallback), and the builder shell (entity builder, page builder
 with live preview + rebase, RBAC editors, tenant onboarding, report builder +
@@ -265,8 +268,8 @@ the §4 page-bind rules server-side — the TS twin's mismatch/presence/resoluti
 checks now gate `PUT /pages` too — and the BPMN timer flake's true root
 (Flowable's hour-long job locks met a minute-long reset-expired cadence;
 pinned to 20 s / 5 s, two consecutive full-reactor runs green)). The latest
-counts: Java (660) +
-frontend (220: shared 135, builder 63, runtime 22) tests green under `./mvnw verify` +
+counts: Java (727) +
+frontend (302: shared 184, builder 74, runtime 44) tests green under `./mvnw verify` +
 `pnpm -r test`. The recorded-open
 set is empty; the remaining surfaces are the deliberate v1 deferrals (PLAN.md §1)
 and the standing operational cadences (the pen pass and DR drill re-run quarterly

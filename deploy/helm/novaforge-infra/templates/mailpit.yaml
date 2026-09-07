@@ -1,0 +1,76 @@
+# Mailpit (the local email sink — the compose mailpit's twin, PHASE-4 §2): the
+# Notification Service's SMTP target in-cluster. Plain single instance, no
+# persistence — storage is in-memory by default, exactly like the compose twin
+# (a dev sink, never a mail store; nothing here changes the deferred-with-demand
+# production mail posture). The web UI port (8025) renders no Service — reach it
+# through `kubectl port-forward` (NetworkPolicy does not gate port-forward).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: novaforge-mailpit
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: mailpit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "mailpit") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+      {{- include "novaforge-infra.selector" (dict "root" . "component" "mailpit") | nindent 8 }}
+    spec:
+      # k8s EnableServiceLinks auto-injects <FLATNAME>_PORT=tcp://… for every Service
+      # whose name collides with an env placeholder — the same collision surface the
+      # sibling components already disable (found live on kind: boots died on mangled
+      # placeholders). DNS owns name resolution here.
+      enableServiceLinks: false
+      # Cluster isolation (twenty-second pass): the component's own token-less
+      # ServiceAccount, automount disabled at the pod level — nothing here touches
+      # the Kubernetes API.
+      serviceAccountName: {{ .Release.Name }}-novaforge-infra-mailpit
+      automountServiceAccountToken: false
+      containers:
+        - name: mailpit
+          image: {{ .Values.mailpit.image }}
+          ports:
+            - containerPort: 1025
+              name: smtp
+            - containerPort: 8025
+              name: http
+          readinessProbe:
+            tcpSocket:
+              port: smtp
+          livenessProbe:
+            tcpSocket:
+              port: smtp
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+          {{- /* uid 1000: the image carries no USER, but the binary is static and
+                 keeps its store in memory — verified live: boots and serves SMTP
+                 as a non-root uid on a read-only root filesystem with all caps
+                 dropped (the forty-second pass ran it before landing this). */}}
+          {{- include "novaforge-infra.securityContext" (dict "uid" 1000 "ro" true) | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: novaforge-mailpit   # flat: the notification chart references this DNS name verbatim
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 1025
+      targetPort: smtp
+      name: smtp
+  selector:
+  {{- include "novaforge-infra.selector" (dict "root" . "component" "mailpit") | nindent 4 }}

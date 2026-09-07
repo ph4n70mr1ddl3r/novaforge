@@ -130,6 +130,45 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
+  name: novaforge-mailpit
+  labels:
+  {{- include "novaforge-infra.labels" . | nindent 4 }}
+    component: mailpit
+spec:
+  podSelector:
+    matchLabels:
+    {{- include "novaforge-infra.selector" (dict "root" . "component" "mailpit") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # the notification service's SMTP delivery (NOVAFORGE_MAIL_HOST) — and no
+    # 8025 rule: the web UI rides kubectl port-forward, which network policies
+    # do not gate
+    - from:
+        - podSelector:
+            matchLabels:
+      ports:
+        - protocol: TCP
+          port: 1025
+  egress:
+    # an in-memory sink answers; it asks nothing but kube-dns
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
   name: novaforge-keycloak
   labels:
   {{- include "novaforge-infra.labels" . | nindent 4 }}

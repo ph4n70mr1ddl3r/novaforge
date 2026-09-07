@@ -70,6 +70,13 @@ env:
         key: data-key
   - name: NOVAFORGE_KAFKA
     value: "novaforge-kafka:9092"
+  # The published-integrations epoch counters ride Redis (PublishedIntegrations —
+  # the same plumb the data runtime, reporting, and the gateway carry). The yaml
+  # gained its spring.data.redis block when the live e2e stack caught the service
+  # dialing the localhost default; this is that wiring's in-cluster twin (the
+  # forty-second pass) — without it the pod aims the counters at itself.
+  - name: NOVAFORGE_REDIS_HOST
+    value: "novaforge-redis"
   - name: NOVAFORGE_METADATA_URL
     value: "http://novaforge-metadata-service:8081"
   - name: NOVAFORGE_DATA_RUNTIME_URL

@@ -4042,3 +4042,42 @@ The §12 Q2 closeout measured the pain (filtered p95 408→2329 ms across OFFSET
 ### Recorded open after this pass
 
 Empty.
+
+## Forty-Second Pass — 2026-09-07 (the parity class fff348d fixed in one yaml bit the charts twice: the integration service's Redis counters and the notification service's SMTP sink both aim at localhost in every cluster — and the README/e2e ledger had drifted four ways behind the corpus it describes)
+
+### C-42P1 — the charts never learned what the yamls already knew: `fff348d` taught integration-service's application.yaml to consume `NOVAFORGE_REDIS_HOST/PORT` but left its chart env list empty (the pod aims the published-integrations epoch counters at its own loopback in every cluster deploy), the notification chart never set `NOVAFORGE_MAIL_HOST` at all, and the in-cluster twin of the compose email sink it should point at — Mailpit — was never shipped by the infra chart. The chart gate could see none of it: its parity leg (§2b, thirtieth pass) compared `NOVAFORGE_*URL` names only, so the whole non-URL wiring class (HOST names, KAFKA, TEMPO_ENDPOINT) had no gate
+
+`fff348d`'s own message names the class — "the service reached for the localhost default wherever Redis does not sit on 6379" — and the twentieth pass pinned the discipline ("every chart env name must be consumed by a yaml placeholder and every non-knob placeholder must be chart-fed"). The yaml half landed; the chart half did not, on either service:
+
+- **integration-service**: its `values.yaml` env list carried POSTGRES/KAFKA/TEMPO/siblings but no REDIS pair — the exact hole the yaml fix exists to fill, now only in the pod topology where the default is wrong. Its default-deny NetworkPolicy compounded the hole: no egress allow to redis:6379, so even a hand-patched env dies on a policy-enforcing CNI (the same flow-blocked-twice shape as the thirtieth pass's missing script-engine URL).
+- **notification-service**: `spring.mail.host` consumes `NOVAFORGE_MAIL_HOST` (default localhost:1025) — never chart-fed. And pointing it anywhere would have needed a target: the infra chart, the compose stack's self-declared in-cluster twin, shipped Postgres/Kafka/Redis/Keycloak/Tempo/MinIO/ClamAV but **no Mailpit**, though compose carries it and PHASE-4 §2's scheduled-delivery leg was verified live against it on the host stack. In-cluster, every email notification silently dialed the pod itself.
+- **The gate's blind spot**: §2b's own comment says the thirtieth pass added URL parity after the data-runtime's missing script-engine URL — and stopped at URLs. `NOVAFORGE_REDIS_HOST`, `NOVAFORGE_MAIL_HOST`, `NOVAFORGE_CLAMAV_HOST`, `NOVAFORGE_KAFKA`, `NOVAFORGE_TEMPO_ENDPOINT` all escaped the walk.
+
+**Fixed (V-C42P1, three edits and one gate widening):**
+
+- **integration-service chart**: `NOVAFORGE_REDIS_HOST: novaforge-redis` joins the env list (the yaml comment's in-cluster twin), and the NetworkPolicy gains the redis:6379 egress allow keyed to the same var — the reporting chart's rule, mirrored.
+- **the infra chart ships Mailpit**: `templates/mailpit.yaml` (Deployment + flat `novaforge-mailpit` Service on 1025; the 8025 UI deliberately renders no Service — `kubectl port-forward` reaches it and NetworkPolicy does not gate port-forwarding), the compose pin (`axllent/mailpit:v1.23`) in values, one ServiceAccount, a PDB row, and its default-deny policy section (ingress 1025 from the release; egress DNS only — an in-memory sink asks for nothing else). Posture **verified live before landing**: the image boots and serves SMTP as uid 1000, read-only root filesystem, all caps dropped, no volumes but a tmpfs `/tmp` — `podman run --user 1000 --read-only --cap-drop=ALL axllent/mailpit:v1.23` logs `[smtpd] starting on [::]:1025` and answers. Storage stays in-memory, exactly the compose twin's ephemeral sink; nothing here changes the deferred-with-demand production mail posture.
+- **notification-service chart**: `NOVAFORGE_MAIL_HOST: novaforge-mailpit` joins the env list; the NetworkPolicy gains the mailpit:1025 egress allow.
+- **the gate widens with the class**: §2b is renamed env parity and walks `NOVAFORGE_[A-Z0-9_]*URL | NOVAFORGE_[A-Z0-9_]*HOST | NOVAFORGE_KAFKA | NOVAFORGE_TEMPO_ENDPOINT` — consumed-by-yaml vs set-by-values per chart. Knob-like placeholders (intervals, flags, sizes, ports — in-cluster ports ride the Service definitions and `enableServiceLinks: false`, the twentieth pass's own convention) stay out by construction. A sweep of the widened walk over all eleven charts found exactly the two defects above; every other consumed wiring var was already fed.
+
+**Bite-proven**: with the integration chart's REDIS_HOST env deleted, the gate fails with the defect's own sentence — `env parity: novaforge-integration-service consumes NOVAFORGE_REDIS_HOST (its application.yaml) but values.yaml never sets it — the wiring falls back to localhost in-cluster`; restored, the gate is CLEAN. The gate also caught the first mailpit render live (a ServiceAccount the deployment referenced that no template owned — fixed in the same pass), which is the gate working as designed.
+
+### C-42P2 — the e2e ledger's prose rotted behind the corpus: a corrupted word, two stale counts, and a stale component count, all on the README's most-read paths
+
+Four claims, each checkable against a file in the tree:
+
+- **"ine services boot from their packaged jars"** (README's e2e paragraph): a word corrupted in the fde035e landing — whose own commit message says "nine booted services", also wrong. The stack boots **five** cycle-path services (`NovaForgeStack.startServices`: metadata, data-runtime, workflow, reporting, integration — the README's repository-layout section and e2e-tests/README.md already said so).
+- **"the five Phase-7 acceptance suites re-run live"** (same paragraph; the e2e-tests/README.md table row carried the same five-name list): the corpus is **eight** since `53b61cb` — glLedgerEdges, arDocumentEdges, and inventoryCostingEdges joined, and `ErpSuiteCorpusE2ETest`'s `CORPUS` array names all eight. The README and the e2e README now name the eight; IMPLEMENTATION.md's module entry is amended with a dated note (the ledger's records stay honest in place).
+- **"18-component v1 catalog"** (README Status): the catalog is **22** — Phase 2's eighteen plus PHASE-5 §5's four versioned reporting components (ChartWidget, KpiTile, ReportTable, DashboardGrid; `frontend/shared/src/catalog/schemas.ts` names all twenty-two). The PHASE-2 spec's §6 item 3 list stays untouched: it is the faithful record of what Phase 2 itself shipped, and the growth is Phase 5's own pinned landing.
+- **Status test counts "Java (660) + frontend (220: shared 135, builder 63, runtime 22)"**: recounted from this pass's own runs — **Java (727)** (the full reactor's twenty test-bearing module summaries) and **frontend (302: shared 184, builder 74, runtime 44)**.
+
+### Verification (this pass)
+
+- Full `./mvnw verify` BUILD SUCCESS across the 24-module reactor on the podman socket — Testcontainers suites green everywhere, the five e2e cycle tests green end to end (the run predates this pass's edits, which touch no Java or frontend source; the gates below re-prove the changed surface).
+- `pnpm -r check` + `pnpm -r test` green: 302 frontend tests (shared 184, runtime 44, builder 74).
+- `deploy/helm/check-charts.sh` CLEAN after the fixes: 12 charts lint+render, the umbrella vendored/linted/rendered, infra embedded files byte-identical, the widened env-parity leg green, DNS consistency 18/18 hosts resolving, 31 workload pods on named token-less ServiceAccounts, 13 charts default-deny both ways, 30 disruption budgets.
+- Whole-repo sweeps: 41 markdown files' relative links all resolve; zero TODO/FIXME markers in shipped source; the deploy shell scripts `bash -n` clean and every referenced script exists.
+
+### Recorded open after this pass
+
+Empty — with one honest note: the mailpit pod's boot posture is podman-verified, not yet kind-verified; the next `deploy/kind/smoke.sh` run sees it live (the smoke's `wait --for=condition=Ready pod --all` already covers it).

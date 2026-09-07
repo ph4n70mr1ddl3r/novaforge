@@ -50,6 +50,9 @@ minio:
   bucket: novaforge-attachments
 clamav:
   image: docker.io/clamav/clamav:1.4.3
+mailpit:
+  # The compose stack's email sink (PHASE-4 §2) — the same pin novaforge.yaml carries.
+  image: docker.io/axllent/mailpit:v1.23
 
 resources:
   requests:
