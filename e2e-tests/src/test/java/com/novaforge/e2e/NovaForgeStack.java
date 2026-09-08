@@ -286,10 +286,6 @@ public final class NovaForgeStack {
         }
     }
 
-    private void stopServices() {
-        shutdownSpawnedServices();
-    }
-
     /**
      * Idempotent teardown of every service this JVM spawned — destroy, 15 s grace,
      * SIGKILL. It runs from the launcher session's close, not just the JVM shutdown

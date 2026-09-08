@@ -58,6 +58,8 @@
 | 1 | **P2P cycle** (VS-15 procure-to-pay; R3 procurement; PUR-*): PO with threshold approval, goods receipts with costing, vendor bills with auto-journal + approval, settlement by posted-payment roll-up, open-bills/spend reporting | **this artifact** |
 | 2 | **R2R depth** (VS-17 record-to-report; R1/R11): fixed assets, intercompany, tax/BIR reporting, consolidation — forces the report join-lowering (Erp G-12) and `allocate` (Erp G-9) platform features | planned |
 | 3 | **Breadth domains** (MDM R13, credit/collections R31, vendor portal R28): each its own versioned app with its own gap log | planned |
+| 4 | **The long tail** (governance, loss prevention, ESG, services — PHASE-7 §12.4): the remaining uncovered prefixes ride `coverage-map.json`'s wave-4 prefix defaults (HR, CRM, GOV, MER, LP, BCP, RCL, MKT, SRV, INS, HSE, BIA, ESG, WHL, WSL, MNT, HAZ, ENG, REG, PRJ, PROP, AUD today) | planned |
+| platform | **Non-functionals** (NFR): platform contracts (PLAN.md §1, IMPLEMENTATION.md), not app metadata — tracked by the platform phases and the perf harness (`apps/perf`), never per-requirement here (the `coverage-map.json` NFR prefix's own wording) | standing |
 | edge | POS (R5), WMS (R4), ecommerce (R6): **integration metadata only** — inbound webhooks, scheduled connector pulls, import mappings against the canonical integration map (`data-volumes-and-integrations.md`) | planned |
 
 ## Non-negotiables carried over (PLAN.md §1)
