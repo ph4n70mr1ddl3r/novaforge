@@ -168,8 +168,7 @@ def main() -> int:
     for req in requirements:
         if req["status"] != "uncovered":
             prio = {"Must Have": "M", "Should Have": "S"}.get(req["priority"], "N")
-            evidence = req["note"] if req["status"] == "partial" and not any(
-                r["id"] == req["id"] for r in []) else req["note"]
+            evidence = req["note"]
             lines.append(f"| {req['id']} | {prio} | {req['status']} |"
                          f" {req['app'] or '—'} | {evidence} |")
 

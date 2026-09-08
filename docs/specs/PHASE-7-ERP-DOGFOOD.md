@@ -426,7 +426,9 @@ by `scripts/generate-coverage.py` from the erpplans checkout + the hand-maintain
 evidence; or (b) **uncovered** — an honest, visible state, not a failure. A wave
 is done when its claimed rows are `covered`/`partial` *with evidence and a suite
 pin* — never merely because entities exist. The matrix's honesty (totals reconcile
-to the 728-row catalog; claims reference existing apps) is CI-gated by
+to the 728-row catalog; claims reference existing apps; the hand-maintained
+`coverage-map.json` may not drift from the committed matrix — a map edit must ship
+with its regeneration) is CI-gated by
 `BuildrightAppArtifactTests`, the portfolio's `ErpAppArtifactTests` twin.
 
 **12.3a Workflow-traceability discipline — the register (added 2026-09-08).** The
@@ -441,11 +443,17 @@ hand-maintained `workflow-map.json` + the requirement states of §12.3): (a)
 the entry names the suite file(s); (b) **partial** — the workflow's
 primary-linked requirement is claimed but no dedicated suite pin exists yet (the
 requirement's own evidence and gaps travel with the derived note); or (c)
-**uncovered** — visible and wave-attributed. The register's honesty is CI-gated
+**uncovered** — visible, and wave-attributed where the upstream
+requirement-workflow matrix links them (honestly `null` where it does not yet —
+the matrix covers the core value streams incrementally). The register's honesty
+is CI-gated
 by `BuildrightWorkflowRegisterTests`: canon reconciliation (5,426 / 5,449 /
 tiers 1,396-3,295-758), every pin naming a suite that both exists and rides the
 live e2e corpus (a pin is only as real as the executable that runs it), every
-partial naming an existing app. A wave lands workflow pins the same way it lands
+partial naming an existing app, and the hand-maintained `workflow-map.json` —
+the surface pins are authored on — forbidden from drifting from the committed
+register (an edit there must ship with its regeneration). A wave lands workflow
+pins the same way it lands
 requirement claims — the corpus grows wave by wave toward the full register, and
 the gate keeps every intermediate state honest.
 

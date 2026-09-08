@@ -19,7 +19,10 @@ the 5,426 workflows is in exactly one):
   partial    app metadata exercises the workflow via a claimed requirement,
              with no dedicated suite pin yet (the requirement's own evidence
              and its gaps travel with the derived note)
-  uncovered  visible and wave-attributed — the register's honest empty state
+  uncovered  visible — wave-attributed where the upstream requirement-workflow
+             matrix links them (honestly null where it does not yet, the
+             matrix covering the core value streams incrementally) — the
+             register's honest empty state
 
 Usage:
   python3 generate-workflow-coverage.py [path-to-erpplans-checkout]
@@ -98,11 +101,9 @@ def parse_tiers(erpplans: Path) -> dict:
     `##` header of their own."""
     tiers = {}
     tier = None
-    headings = [re.compile(r"^## Tier (\d):"), re.compile(r"^### Tier (\d) Additions"),
-                re.compile(r"^#### Tier (\d)\b")]
     path = erpplans / "01-model-company" / "workflows" / "workflow-criticality-classification.md"
     for line in path.read_text(encoding="utf-8").splitlines():
-        matched = [int(h.match(line).group(1)) for h in headings if h.match(line)]
+        matched = [int(h.match(line).group(1)) for h in TIER_HEADING if h.match(line)]
         if matched:
             tier = matched[0]
             continue
@@ -132,7 +133,7 @@ def parse_requirement_links(erpplans: Path) -> dict:
     return links
 
 
-def derive_wave(req_ids: list, links: dict, req_state: dict, prefix_waves: dict):
+def derive_wave(req_ids: list, prefix_waves: dict):
     """The most concrete wave attributable to a workflow: the minimum integer
     wave over its linked requirements' prefixes; a string wave ('edge',
     'platform') if no integer applies; None when nothing is planned yet."""
@@ -220,7 +221,7 @@ def main() -> int:
             row["suites"] = sorted(entry.get("suites", []))
             row["app"] = entry.get("app")
             row["wave"] = entry.get("wave", derive_wave(
-                linked["primary"] + linked["supporting"], links, req_rows, prefix_waves))
+                linked["primary"] + linked["supporting"], prefix_waves))
             row["note"] = entry.get("note", "")
             if row["status"] == "pinned" and not row["suites"]:
                 print(f"{wf_id} is pinned but names no suite", file=sys.stderr)
@@ -233,7 +234,7 @@ def main() -> int:
                 row["status"] = "partial"
                 row["suites"] = []
                 row["app"] = req.get("app")
-                row["wave"] = derive_wave(claimed, links, req_rows, prefix_waves)
+                row["wave"] = derive_wave(claimed, prefix_waves)
                 row["note"] = (f"exercises {claimed[0]} ({req['status']} via {row['app']}); "
                                f"no dedicated suite pin")
             else:
@@ -241,7 +242,7 @@ def main() -> int:
                 row["suites"] = []
                 row["app"] = None
                 row["wave"] = derive_wave(
-                    linked["primary"] + linked["supporting"], links, req_rows, prefix_waves)
+                    linked["primary"] + linked["supporting"], prefix_waves)
                 row["note"] = (f"rides uncovered requirement(s) "
                                f"{', '.join((linked['primary'] + linked['supporting'])[:3])}"
                                if linked else
@@ -303,7 +304,7 @@ def main() -> int:
         f"| Workflow register rows (5,426 canonical + 23 sub-workflows) | {len(workflows)} |",
         f"| Pinned (executed by the e2e corpus) | {by_status.get('pinned', 0)} |",
         f"| Partial (claimed requirement, no dedicated pin) | {by_status.get('partial', 0)} |",
-        f"| Uncovered (visible, wave-attributed) | {by_status.get('uncovered', 0)} |",
+        f"| Uncovered (visible; wave-attributed where the matrix links them) | {by_status.get('uncovered', 0)} |",
         "",
         f"Tier split (universe): " + ", ".join(
             f"Tier {t}: {by_tier.get(t, 0)}" for t in (1, 2, 3)) + ".", "",
@@ -325,7 +326,7 @@ def main() -> int:
             lines.append(f"| {w['id']} | {w['title']} | {w['tier']} | {w['app'] or '—'} |"
                          f" {reqs} | {w['note'][:160]} |")
 
-    lines += ["", "## By value stream (188)", "",
+    lines += ["", f"## By value stream ({len(vs_stats)})", "",
               "| VS | Total | Pinned | Partial | Uncovered |", "|---|---|---|---|---|"]
     for vs, stat in sorted(vs_stats.items()):
         lines.append(f"| {vs} | {stat['total']} | {stat.get('pinned', 0)} |"

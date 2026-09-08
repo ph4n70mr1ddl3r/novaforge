@@ -10,7 +10,7 @@
 
 ## Why NovaForge?
 
-Most no-code tools handle forms and lists well but collapse under ERP-grade requirements: decimal-precise money, immutable auditable postings, approval hierarchies, gapless document numbering, period locking, and 100k+-row list performance. NovaForge is designed so that **if the platform supports these, it supports almost any business app** — and the ERP dogfood build ([Phase 7](docs/specs/PHASE-7-ERP-DOGFOOD.md)) is the acceptance test that keeps scope honest. Past acceptance, the standing portfolio dogfood ([Phase 9](docs/specs/PHASE-7-ERP-DOGFOOD.md), PHASE-7 §12) keeps the platform honest against real breadth: it must be able to implement the full BuildRight Depot model company — the [erpplans](https://github.com/ph4n70mr1ddl3r/erpplans) spec: 728 requirements across 38 categories, 5,426 workflows across 188 value streams, retail scale, BIR 10-year retention — with per-requirement and per-workflow coverage tracking (all 5,426 workflows register-pinned, requirement-derived, or uncovered with wave attribution) and edges (POS/WMS/TMS) modeled as integrations, per erpplans' own sourcing doctrine.
+Most no-code tools handle forms and lists well but collapse under ERP-grade requirements: decimal-precise money, immutable auditable postings, approval hierarchies, gapless document numbering, period locking, and 100k+-row list performance. NovaForge is designed so that **if the platform supports these, it supports almost any business app** — and the ERP dogfood build ([Phase 7](docs/specs/PHASE-7-ERP-DOGFOOD.md)) is the acceptance test that keeps scope honest. Past acceptance, the standing portfolio dogfood ([Phase 9](docs/specs/PHASE-7-ERP-DOGFOOD.md), PHASE-7 §12) keeps the platform honest against real breadth: it must be able to implement the full BuildRight Depot model company — the [erpplans](https://github.com/ph4n70mr1ddl3r/erpplans) spec: 728 requirements across 38 categories, 5,426 workflows across 188 value streams, retail scale, BIR 10-year retention — with per-requirement and per-workflow coverage tracking (all 5,426 workflows register-pinned, requirement-derived, or uncovered — wave-attributed where the upstream matrix links them) and edges (POS/WMS/TMS) modeled as integrations, per erpplans' own sourcing doctrine.
 
 ## How It Works
 
@@ -268,15 +268,16 @@ the §4 page-bind rules server-side — the TS twin's mismatch/presence/resoluti
 checks now gate `PUT /pages` too — and the BPMN timer flake's true root
 (Flowable's hour-long job locks met a minute-long reset-expired cadence;
 pinned to 20 s / 5 s, two consecutive full-reactor runs green)). The latest
-counts: Java (727) +
+counts: Java (730) +
 frontend (302: shared 184, builder 74, runtime 44) tests green under `./mvnw verify` +
 `pnpm -r test`. The recorded-open
 set is empty; the remaining surfaces are the deliberate v1 deferrals (PLAN.md §1)
 and the standing operational cadences (the pen pass and DR drill re-run quarterly
 per the runbooks). With the v1 plan closed, the dogfood program continues per
 PLAN.md §5's Phase 9 / PHASE-7 §12: the BuildRight portfolio (`apps/buildright/`,
-CI-gated by `BuildrightAppArtifactTests`) opens with the wave-1 procure-to-pay app
+CI-gated by `BuildrightAppArtifactTests` and `BuildrightWorkflowRegisterTests`)
+opens with the wave-1 procure-to-pay app
 — the standing obligation being that the platform must be able to implement the
 [erpplans](https://github.com/ph4n70mr1ddl3r/erpplans) model company, coverage-tracked
-across its 728 requirements. Progress ledger:
+across its 728 requirements and all 5,449 classified workflow rows. Progress ledger:
 [IMPLEMENTATION.md](IMPLEMENTATION.md).

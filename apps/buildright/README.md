@@ -31,10 +31,13 @@
    app's two hand-maintained maps) puts every one of the 5,449 classified rows
    in exactly one state — **pinned** (the workflow's core cycle executes green
    in the e2e corpus; the entry names the suite file(s)), **partial** (claimed
-   requirement, no dedicated pin yet), or **uncovered** (visible,
-   wave-attributed). The register's honesty is CI-gated
+   requirement, no dedicated pin yet), or **uncovered** (visible;
+   wave-attributed where the upstream requirement-workflow matrix links them —
+   honestly null where it does not yet). The register's honesty is CI-gated
    (`BuildrightWorkflowRegisterTests`): a pin is only as real as the executable
-   that runs it.
+   that runs it — on the committed register and on the hand-maintained
+   `workflow-map.json` alike, and the map may not drift from the register (an
+   edit there must ship with its regeneration).
 4. **Build order follows erpplans' own criticality register**
    (`workflows/workflow-criticality-classification.md`): Tier 1 value streams
    first. Wave ordering below.

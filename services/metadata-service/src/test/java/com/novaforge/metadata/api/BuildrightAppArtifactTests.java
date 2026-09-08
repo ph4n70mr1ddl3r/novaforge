@@ -301,4 +301,75 @@ class BuildrightAppArtifactTests {
         assertThat(BUILDRIGHT.resolve("requirements-coverage").resolve("matrix.md"))
                 .as("the human-readable matrix rides the commit").exists();
     }
+
+    @Test
+    @DisplayName("the hand-maintained coverage map stays in sync with the committed matrix")
+    @SuppressWarnings("unchecked")
+    void coverageMapStaysInSyncWithTheMatrix() throws Exception {
+        Path mapPath = BUILDRIGHT.resolve("coverage-map.json");
+        assertThat(mapPath).as("the hand-maintained coverage map rides the commit").exists();
+        Map<String, Object> map = MAPPER.readValue(mapPath.toFile(), Map.class);
+        Map<String, Object> prefixes = (Map<String, Object>) map.get("prefixes");
+        Map<String, Object> overrides = (Map<String, Object>) map.getOrDefault("requirements", Map.of());
+        Map<String, Object> coverage = MAPPER.readValue(
+                BUILDRIGHT.resolve("requirements-coverage").resolve("coverage.json").toFile(), Map.class);
+        List<Map<String, Object>> requirements =
+                (List<Map<String, Object>>) coverage.get("requirements");
+        Set<String> catalogPrefixes = new java.util.HashSet<>();
+        Set<String> catalogIds = new java.util.HashSet<>();
+        for (Map<String, Object> req : requirements) {
+            catalogPrefixes.add(String.valueOf(req.get("prefix")));
+            catalogIds.add(String.valueOf(req.get("id")));
+        }
+        // a map prefix or override id that names no catalog row would apply to
+        // nothing — silently, at generation time; both key sets must reconcile
+        assertThat(prefixes.keySet())
+                .as("every coverage-map prefix is a real catalog prefix")
+                .containsExactlyInAnyOrderElementsOf(catalogPrefixes);
+        for (String id : overrides.keySet()) {
+            assertThat(catalogIds).as("coverage-map override %s names no catalog row", id)
+                    .contains(id);
+        }
+        // merge parity: every committed row must equal the map's own merge (the
+        // generator's logic, mirrored) — an edit to the map must ship with its
+        // regeneration, or this fails
+        for (Map<String, Object> row : requirements) {
+            String id = String.valueOf(row.get("id"));
+            String prefix = String.valueOf(row.get("prefix"));
+            Map<String, Object> override = (Map<String, Object>) overrides.get(id);
+            Map<String, Object> prefixDefault = (Map<String, Object>) prefixes.get(prefix);
+            String status;
+            String app;
+            String wave;
+            String note;
+            if (override != null) {
+                status = String.valueOf(override.get("status"));
+                app = String.valueOf(override.get("app"));
+                Object prefixWave = prefixDefault == null ? "?"
+                        : prefixDefault.getOrDefault("wave", "?");
+                wave = String.valueOf(override.containsKey("wave")
+                        ? override.get("wave") : prefixWave);
+                note = String.valueOf(override.getOrDefault("evidence", ""));
+            } else if (prefixDefault == null) {
+                status = "uncovered";
+                app = "null";
+                wave = "?";
+                note = "no coverage claim — review the map";
+            } else {
+                status = String.valueOf(prefixDefault.get("status"));
+                app = String.valueOf(prefixDefault.get("app"));
+                wave = String.valueOf(prefixDefault.getOrDefault("wave", "?"));
+                note = String.valueOf(prefixDefault.getOrDefault("note", ""));
+            }
+            assertThat(String.valueOf(row.get("status")))
+                    .as("%s's committed status diverges from coverage-map.json — re-run "
+                            + "scripts/generate-coverage.py", id).isEqualTo(status);
+            assertThat(String.valueOf(row.get("app")))
+                    .as("%s's committed app diverges from coverage-map.json", id).isEqualTo(app);
+            assertThat(String.valueOf(row.get("wave")))
+                    .as("%s's committed wave diverges from coverage-map.json", id).isEqualTo(wave);
+            assertThat(String.valueOf(row.get("note")))
+                    .as("%s's committed note diverges from coverage-map.json", id).isEqualTo(note);
+        }
+    }
 }
