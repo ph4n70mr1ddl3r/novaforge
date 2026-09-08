@@ -256,6 +256,16 @@
       "app": "apps/buildright",
       "evidence": "GoodsReceipt with costing on post, terminal freeze (p2pHappyPath, p2pReceivingBillingEdges); DSD store-level receipt is the same entity (location dimension wave 2)"
     },
+    "PUR-025a": {
+      "status": "uncovered",
+      "wave": 2,
+      "evidence": "Commodity price-index tracking & forward-buy triggers — wave 2+; the PUR prefix default (partial, wave 1) would overclaim: the wave-1 P2P app ships the PO→receipt→bill chain only"
+    },
+    "PUR-025b": {
+      "status": "uncovered",
+      "wave": 2,
+      "evidence": "Supplier innovation & new-product-introduction collaboration — wave 2+; same overclaim guard as PUR-025a"
+    },
     "FIN-004": {
       "status": "partial",
       "app": "apps/buildright",

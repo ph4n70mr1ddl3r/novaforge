@@ -266,12 +266,21 @@ class BuildrightAppArtifactTests {
         Map<String, Object> coverage = MAPPER.readValue(coverageJson.toFile(), Map.class);
         Map<String, Object> totals = (Map<String, Object>) coverage.get("totals");
         Map<String, Object> all = (Map<String, Object>) totals.get("all");
+        // The catalog canon: 728 rows — 724 plain-numbered plus the four
+        // letter-suffixed requirements (POS-014a, NFR-022a, PUR-025a, PUR-025b)
+        // a strict \d{3} parse anchor used to drop. The split pins (429 must)
+        // make future upstream catalog growth fail loudly here — a change means
+        // re-running generate-coverage.py and re-pointing this pin consciously.
         assertThat((Integer) all.get("total"))
-                .as("the matrix totals the erpplans catalog (724 rows)")
-                .isEqualTo(724);
+                .as("the matrix totals the erpplans catalog (728 rows)")
+                .isEqualTo(728);
         int summed = (Integer) all.get("covered")
                 + (Integer) all.get("partial") + (Integer) all.get("uncovered");
-        assertThat(summed).isEqualTo(724);
+        assertThat(summed).isEqualTo(728);
+        Map<String, Object> mustHave = (Map<String, Object>) totals.get("mustHave");
+        assertThat((Integer) mustHave.get("total"))
+                .as("the must-have tier totals the erpplans canon (429 of the 728)")
+                .isEqualTo(429);
         // every claim names only apps that exist in this repository
         List<Map<String, Object>> requirements =
                 (List<Map<String, Object>>) coverage.get("requirements");

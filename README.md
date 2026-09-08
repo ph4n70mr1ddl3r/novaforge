@@ -1,6 +1,6 @@
 # NovaForge
 
-**A metadata-driven, no-code application platform — built on Spring microservices, validated by building a real ERP on the platform itself with zero handwritten application code, and bound by a standing obligation: the platform must be able to implement the [BuildRight Depot model company](https://github.com/ph4n70mr1ddl3r/erpplans) (724 requirements, 5,426 workflows).**
+**A metadata-driven, no-code application platform — built on Spring microservices, validated by building a real ERP on the platform itself with zero handwritten application code, and bound by a standing obligation: the platform must be able to implement the [BuildRight Depot model company](https://github.com/ph4n70mr1ddl3r/erpplans) (728 requirements, 5,426 workflows).**
 
 > **North-star milestone:** a functional mini-ERP (chart of accounts, journal entries with posting rules, invoices, inventory with costing, period close, approvals, financial reports) built entirely through the platform's builder UI and promoted from dev → staging → prod as a versioned app artifact.
 >
@@ -10,7 +10,7 @@
 
 ## Why NovaForge?
 
-Most no-code tools handle forms and lists well but collapse under ERP-grade requirements: decimal-precise money, immutable auditable postings, approval hierarchies, gapless document numbering, period locking, and 100k+-row list performance. NovaForge is designed so that **if the platform supports these, it supports almost any business app** — and the ERP dogfood build ([Phase 7](docs/specs/PHASE-7-ERP-DOGFOOD.md)) is the acceptance test that keeps scope honest. Past acceptance, the standing portfolio dogfood ([Phase 9](docs/specs/PHASE-7-ERP-DOGFOOD.md), PHASE-7 §12) keeps the platform honest against real breadth: it must be able to implement the full BuildRight Depot model company — the [erpplans](https://github.com/ph4n70mr1ddl3r/erpplans) spec: 724 requirements across 38 categories, 5,426 workflows across 188 value streams, retail scale, BIR 10-year retention — with per-requirement coverage tracking and edges (POS/WMS/TMS) modeled as integrations, per erpplans' own sourcing doctrine.
+Most no-code tools handle forms and lists well but collapse under ERP-grade requirements: decimal-precise money, immutable auditable postings, approval hierarchies, gapless document numbering, period locking, and 100k+-row list performance. NovaForge is designed so that **if the platform supports these, it supports almost any business app** — and the ERP dogfood build ([Phase 7](docs/specs/PHASE-7-ERP-DOGFOOD.md)) is the acceptance test that keeps scope honest. Past acceptance, the standing portfolio dogfood ([Phase 9](docs/specs/PHASE-7-ERP-DOGFOOD.md), PHASE-7 §12) keeps the platform honest against real breadth: it must be able to implement the full BuildRight Depot model company — the [erpplans](https://github.com/ph4n70mr1ddl3r/erpplans) spec: 728 requirements across 38 categories, 5,426 workflows across 188 value streams, retail scale, BIR 10-year retention — with per-requirement coverage tracking and edges (POS/WMS/TMS) modeled as integrations, per erpplans' own sourcing doctrine.
 
 ## How It Works
 
@@ -278,5 +278,5 @@ PLAN.md §5's Phase 9 / PHASE-7 §12: the BuildRight portfolio (`apps/buildright
 CI-gated by `BuildrightAppArtifactTests`) opens with the wave-1 procure-to-pay app
 — the standing obligation being that the platform must be able to implement the
 [erpplans](https://github.com/ph4n70mr1ddl3r/erpplans) model company, coverage-tracked
-across its 724 requirements. Progress ledger:
+across its 728 requirements. Progress ledger:
 [IMPLEMENTATION.md](IMPLEMENTATION.md).

@@ -142,7 +142,9 @@ public final class NovaForgeStack {
         keycloak.start();
 
         NovaForgeStack stack = new NovaForgeStack(postgres, redis, kafka, keycloak);
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> stack.stopServices()));
+        // belt-and-braces only — the fork may halt past JVM hooks (see StackTeardown);
+        // the launcher session's close is the teardown the runs can rely on
+        Runtime.getRuntime().addShutdownHook(new Thread(NovaForgeStack::shutdownSpawnedServices));
         stack.initPostgresDatabases();
         stack.awaitKeycloak();
         stack.startServices();
@@ -285,7 +287,26 @@ public final class NovaForgeStack {
     }
 
     private void stopServices() {
-        for (Process process : ALL_SPAWNED) {
+        shutdownSpawnedServices();
+    }
+
+    /**
+     * Idempotent teardown of every service this JVM spawned — destroy, 15 s grace,
+     * SIGKILL. It runs from the launcher session's close, not just the JVM shutdown
+     * hook: the surefire fork demonstrably halts past its hooks (two green runs
+     * leaked the integration-service jar — the one service that survives
+     * infrastructure loss, its Kafka clients retrying forever — and the next run's
+     * port preflight bricked on the held port), while the session close runs while
+     * this JVM still lives and owns its children, so the destroy ladder actually
+     * executes. See {@link StackTeardown}.
+     */
+    static synchronized void shutdownSpawnedServices() {
+        if (ALL_SPAWNED.isEmpty()) {
+            return;
+        }
+        List<Process> spawned = new ArrayList<>(ALL_SPAWNED);
+        ALL_SPAWNED.clear();
+        for (Process process : spawned) {
             if (process.isAlive()) {
                 process.destroy();
                 try {
@@ -334,9 +355,45 @@ public final class NovaForgeStack {
             } catch (IOException occupied) {
                 throw new IllegalStateException("port " + port + " is already in use — the "
                         + "e2e stack needs the services' default ports free (is the dev "
-                        + "stack running? see README 'Full local stack').", occupied);
+                        + "stack running? see README 'Full local stack')."
+                        + occupierHint(port), occupied);
             }
         }
+    }
+
+    /**
+     * Best-effort "who holds this port" appended to the preflight failure. A packaged
+     * jar left running by a previous e2e attempt (the stack's own between-attempt
+     * reaping cannot see an orphan that outlived its test JVM) or the dev stack is the
+     * common cause, and naming the pid turns the diagnosis into a one-line kill. Every
+     * failure inside is swallowed — ss missing, a non-Linux host, a timeout — the hint
+     * must never mask the original bind error.
+     */
+    private static String occupierHint(int port) {
+        try {
+            Process probe = new ProcessBuilder("ss", "-tlnp").start();
+            String output = probe.inputReader().lines()
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            probe.waitFor(2, TimeUnit.SECONDS);
+            var pid = java.util.regex.Pattern.compile(":" + port + "\\s.*pid=(\\d+)")
+                    .matcher(output);
+            if (pid.find()) {
+                String cmd = "";
+                try {
+                    cmd = Files.readString(Path.of("/proc", pid.group(1), "cmdline"))
+                            .replace('\0', ' ').trim();
+                } catch (IOException gone) {
+                    // non-Linux host or the listener just exited — the pid alone still points at it
+                }
+                return " The listener is pid " + pid.group(1)
+                        + (cmd.isBlank() ? "" : " (" + cmd + ")");
+            }
+        } catch (Exception ignored) {
+            if (ignored instanceof InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        return "";
     }
 
     private static void await(int timeoutSeconds, String what, BooleanProbe probe) {

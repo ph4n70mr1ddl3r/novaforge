@@ -27,8 +27,14 @@ APP = HERE.parent
 REPO = APP.parent.parent
 DEFAULT_ERPPLANS = Path("~/erpplans").expanduser()
 
+# The id carries an optional lowercase letter suffix: the catalog's four
+# letter-suffixed requirements (POS-014a, NFR-022a, PUR-025a, PUR-025b — canon
+# since the catalog's first commit, 2026-06-08) are real rows with priorities,
+# and a strict \d{3} anchor silently dropped all four, undercounting the
+# catalog 724 vs the upstream canon of 728 and starving the coverage tracker
+# of their rows.
 ROW = re.compile(
-    r"^\| ([A-Z]{2,4}-\d{3}) \| (.+?) \| (Must Have|Should Have|Nice to Have) \|")
+    r"^\| ([A-Z]{2,4}-\d{3}[a-z]?) \| (.+?) \| (Must Have|Should Have|Nice to Have) \|")
 HEADING = re.compile(r"^## (R\d+)\. (.+)$")
 
 
@@ -75,7 +81,10 @@ def main() -> int:
         entry = overrides.get(req_id)
         if entry:
             status, app, note = entry["status"], entry.get("app"), entry.get("evidence", "")
-            wave = prefixes.get(prefix, {}).get("wave", "?")
+            # an override may pin its own wave (a PUR row can be uncovered wave 2
+            # while the PUR prefix default is partial wave 1 — inheriting the
+            # prefix's wave would misstate the row's plan)
+            wave = entry.get("wave", prefixes.get(prefix, {}).get("wave", "?"))
         else:
             p = prefixes.get(prefix)
             if p is None:

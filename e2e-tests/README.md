@@ -12,7 +12,11 @@ driven against the **real service topology**, not mocks:
   engine are off-path; no authored flow uses `runScript`) — each booted from its
   **packaged Spring Boot jar** with the same defaults and ports the README's
   host-JVM bring-up uses, one awaited before the next spawns. One stack per test
-  JVM; a failed boot attempt's orphans are reaped before the next one starts.
+  JVM; a failed boot attempt's orphans are reaped before the next one starts, and
+  the whole stack is torn down at the launcher session's close — services get
+  destroy → 15 s grace → SIGKILL while the test JVM still lives, so no packaged
+  jar outlives the run (the JVM's own shutdown hooks are only belt-and-braces:
+  the surefire fork halts past them).
 - **The cycles** ride public APIs only: the admin surface (tenants/users/roles), the
   runtime write path, the workflow inbox, the report run surface, and the builder's
   headless suite-run API (`TestRunner`'s scratch-tenant machinery is the platform's

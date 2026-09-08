@@ -1,21 +1,21 @@
 {
-  "generatedAt": "2026-09-05T10:51:52+00:00",
-  "erpplansRev": "e85b1d76",
-  "novaforgeRev": "c046968",
+  "generatedAt": "2026-09-08T10:05:34+00:00",
+  "erpplansRev": "5b877964",
+  "novaforgeRev": "513ef30",
   "source": "01-model-company/erp-requirements.md",
   "claims": "apps/buildright/coverage-map.json",
   "totals": {
     "all": {
-      "total": 724,
+      "total": 728,
       "covered": 1,
       "partial": 188,
-      "uncovered": 535
+      "uncovered": 539
     },
     "mustHave": {
-      "total": 426,
+      "total": 429,
       "covered": 1,
       "partial": 128,
-      "uncovered": 297
+      "uncovered": 300
     }
   },
   "prefixes": {
@@ -236,19 +236,19 @@
       "note": "Maintenance wave 4."
     },
     "NFR": {
-      "total": 41,
+      "total": 42,
       "covered": 0,
       "partial": 0,
-      "uncovered": 41,
+      "uncovered": 42,
       "wave": "platform",
       "app": null,
       "note": "Non-functionals are platform contracts (PLAN.md \u00a71, IMPLEMENTATION.md), not app metadata \u2014 tracked by the platform phases and the perf harness (apps/perf), not per-requirement here."
     },
     "POS": {
-      "total": 117,
+      "total": 118,
       "covered": 0,
       "partial": 0,
-      "uncovered": 117,
+      "uncovered": 118,
       "wave": "edge",
       "app": null,
       "note": "Best-of-breed edge per the sourcing doctrine \u2014 integration metadata (webhooks/imports), never entities."
@@ -272,10 +272,10 @@
       "note": "Property wave 4."
     },
     "PUR": {
-      "total": 42,
+      "total": 44,
       "covered": 0,
       "partial": 42,
-      "uncovered": 0,
+      "uncovered": 2,
       "wave": 1,
       "app": "apps/buildright",
       "note": "Wave 1 ships the PO\u2192receipt\u2192bill\u2192payment document chain with threshold approval; replenishment/imports/RTV/scorecards are wave 2+; hard 3-way-match guards are logged (BR-G-2)."
@@ -1268,6 +1268,17 @@
     {
       "id": "POS-014",
       "title": "Promotional Pricing Auto-Apply",
+      "priority": "Must Have",
+      "section": "R5 Point-of-Sale (POS) & Retail",
+      "prefix": "POS",
+      "status": "uncovered",
+      "app": null,
+      "wave": "edge",
+      "note": "Best-of-breed edge per the sourcing doctrine \u2014 integration metadata (webhooks/imports), never entities."
+    },
+    {
+      "id": "POS-014a",
+      "title": "Senior Citizen & PWD Discount Compliance (PH Legal)",
       "priority": "Must Have",
       "section": "R5 Point-of-Sale (POS) & Retail",
       "prefix": "POS",
@@ -2597,6 +2608,17 @@
       "note": "Non-functionals are platform contracts (PLAN.md \u00a71, IMPLEMENTATION.md), not app metadata \u2014 tracked by the platform phases and the perf harness (apps/perf), not per-requirement here."
     },
     {
+      "id": "NFR-022a",
+      "title": "BIR CAS Registration per Location",
+      "priority": "Must Have",
+      "section": "R14 Non-Functional Requirements",
+      "prefix": "NFR",
+      "status": "uncovered",
+      "app": null,
+      "wave": "platform",
+      "note": "Non-functionals are platform contracts (PLAN.md \u00a71, IMPLEMENTATION.md), not app metadata \u2014 tracked by the platform phases and the perf harness (apps/perf), not per-requirement here."
+    },
+    {
       "id": "FIN-020",
       "title": "Duplicate Vendor Invoice Detection",
       "priority": "Must Have",
@@ -3904,6 +3926,28 @@
       "app": "apps/buildright",
       "wave": 1,
       "note": "Wave 1 ships the PO\u2192receipt\u2192bill\u2192payment document chain with threshold approval; replenishment/imports/RTV/scorecards are wave 2+; hard 3-way-match guards are logged (BR-G-2)."
+    },
+    {
+      "id": "PUR-025a",
+      "title": "Vendor-Specific Commodity Price Index Tracking & Procurement Trigger Management",
+      "priority": "Must Have",
+      "section": "R14 Non-Functional Requirements",
+      "prefix": "PUR",
+      "status": "uncovered",
+      "app": null,
+      "wave": 2,
+      "note": "Commodity price-index tracking & forward-buy triggers \u2014 wave 2+; the PUR prefix default (partial, wave 1) would overclaim: the wave-1 P2P app ships the PO\u2192receipt\u2192bill chain only"
+    },
+    {
+      "id": "PUR-025b",
+      "title": "Supplier Innovation & New Product Introduction Collaboration Processing",
+      "priority": "Should Have",
+      "section": "R14 Non-Functional Requirements",
+      "prefix": "PUR",
+      "status": "uncovered",
+      "app": null,
+      "wave": 2,
+      "note": "Supplier innovation & new-product-introduction collaboration \u2014 wave 2+; same overclaim guard as PUR-025a"
     },
     {
       "id": "DOC-008",

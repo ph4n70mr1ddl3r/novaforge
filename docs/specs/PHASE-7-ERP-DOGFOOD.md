@@ -386,11 +386,19 @@ soon as T2 confirms the gaps.
 > Added post-exit: **part of the implementation/dogfooding obligation is that the
 > platform must be able to implement the [BuildRight Depot Corp. model company]
 > (https://github.com/ph4n70mr1ddl3r/erpplans)** — a complete retail operating spec:
-> 724 requirements across 38 categories, 5,426 workflows across 188 value streams
+> 728 requirements across 38 categories, 5,426 workflows across 188 value streams
 > and 569 process areas, volumes of 33.6M POS transaction headers / 134.4M POS lines
 > per year, ~100 GB/yr, and BIR 10-year retention. This section pins the two-tier
 > dogfood contract; PLAN.md §5's Phase 9 executes it, and `apps/buildright/` is the
 > corpus.
+>
+> Amended 2026-09-08 (forty-third pass): the count re-points 724 → 728. The
+> catalog's four letter-suffixed requirements (POS-014a, NFR-022a, PUR-025a,
+> PUR-025b — canon since the catalog's first commit, 2026-06-08) were invisible to the coverage
+> generator's strict `\d{3}` id anchor, which undercounted 724 and fed every
+> hand-quote derived from it; the generator now parses the full canon
+> (728 = 429 Must / 293 Should / 6 Nice), the matrix is regenerated, and
+> `BuildrightAppArtifactTests` pins the canon.
 
 **12.1 Two tiers, two jobs.** The §1–§11 mini-ERP remains the **acceptance tier**:
 small enough to finish, suite-gated, version-frozen as the platform's regression
@@ -418,7 +426,7 @@ by `scripts/generate-coverage.py` from the erpplans checkout + the hand-maintain
 evidence; or (b) **uncovered** — an honest, visible state, not a failure. A wave
 is done when its claimed rows are `covered`/`partial` *with evidence and a suite
 pin* — never merely because entities exist. The matrix's honesty (totals reconcile
-to the 724-row catalog; claims reference existing apps) is CI-gated by
+to the 728-row catalog; claims reference existing apps) is CI-gated by
 `BuildrightAppArtifactTests`, the portfolio's `ErpAppArtifactTests` twin.
 
 **12.4 Build order follows erpplans' own criticality register.** Waves follow
