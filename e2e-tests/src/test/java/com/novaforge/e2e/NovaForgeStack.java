@@ -45,7 +45,10 @@ public final class NovaForgeStack {
 
     private static volatile NovaForgeStack instance;
 
-    /** The stack singleton — booted once per test JVM, reaped by Ryuk + shutdown hooks. */
+    /** The stack singleton — booted once per test JVM; the launcher session's close
+     *  tears the spawned services down ({@link StackTeardown}), the JVM shutdown hook
+     *  registered in {@link #start()} is belt-and-braces, and Ryuk reaps the
+     *  containers on JVM exit. */
     public static NovaForgeStack stack() {
         if (instance == null) {
             synchronized (NovaForgeStack.class) {
@@ -212,8 +215,8 @@ public final class NovaForgeStack {
 
         // boot order matters only for warm-up latency: metadata first (everything
         // resolves through it), then the runtime, then the rest — each awaited
-        // before the next spawns, so a 2-CPU runner never boots nine fat contexts
-        // into each other
+        // before the next spawns, so a 2-CPU runner never boots its five fat
+        // contexts into each other
         List<String> order = List.of(METADATA, RUNTIME, WORKFLOW, REPORTING, INTEGRATION);
         for (String service : order) {
             Path jar = serviceJar(SERVICE_MODULES.get(service));

@@ -3,8 +3,9 @@
 The Phase 7 proving-ground artifact (PHASE-7 §2): a mini-ERP authored **entirely as
 metadata** — entities, relationships, state machines, posting flows, roles, sequences,
 reports, dashboard, scheduled delivery, integrations — with zero handwritten
-application code and exactly one budgeted escape-hatch script (§5, rule 3 — the
-budget is exceeded, 1 script of 4 hooks = 25%, under G-2's reviewed exception;
+application code and zero escape-hatch scripts (the costing hook entered as G-2's
+one budgeted script and left with the G-2 harvest — §3.7's declarative `bind`
+flow, adopted 2026-09-03; 0 of 4 hooks, the §1 rule 3 ≤ 20% ceiling holds;
 reported per module in change-set review, PHASE-7 §9 item 7).
 
 | File | What it is |
@@ -44,9 +45,13 @@ reported per module in change-set review, PHASE-7 §9 item 7).
   `invoice.rejected` and creates nothing.
 - **Inventory** — `Item` (roll-up maintained `qtyOnHand`/`inventoryValue` — the
   running weighted average is exactly `inventoryValue / qtyOnHand`), `StockLedger`
-  (append-only movements, terminal `POSTED` + `freezeOnTerminal`). The **one budgeted
-  script** (`costMovement`, beforeSave) costs issues at the running average and stamps
-  receipt values — §5's canonical ADR-008 escape-hatch case.
+  (append-only movements, terminal `POSTED` + `freezeOnTerminal`). The costing hook
+  (`costMovement`, beforeSave) is §3.7's declarative `bind` flow (G-2's harvest —
+  historically §5's canonical escape-hatch case, the one budgeted script): a posted
+  issue binds the `Item` roll-up and prices at `inventoryValue / qtyOnHand` (§3.5's
+  conditional roll-ups dropped the manual-row discount from the divisor), a receipt
+  stamps `value = qty × unitCost` — the exact numbers the retired script produced,
+  pinned unchanged by the `inventoryCosting` suite.
 - **Periods** — `AccountingPeriod` `OPEN → CLOSING → CLOSED` with the audited
   `CLOSED → OPEN` reopen edge (§4); `CLOSING` blocks postings unless the entry
   carries `closeJournal: true` (§4's soft close — the `PeriodLock`

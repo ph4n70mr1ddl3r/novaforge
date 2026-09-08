@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-09-08T13:31:20+00:00",
+  "generatedAt": "2026-09-08T22:36:18+00:00",
   "erpplansRev": "5b877964",
-  "novaforgeRev": "6a40724",
+  "novaforgeRev": "3948547",
   "sources": {
     "universe": "01-model-company/workflows/VS-*/PA-*.md (## W headers)",
     "tiers": "01-model-company/workflows/workflow-criticality-classification.md",

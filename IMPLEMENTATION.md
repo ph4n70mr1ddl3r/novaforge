@@ -3113,7 +3113,9 @@ through the public APIs only:
   17 cases, 118 steps) joined, and `ErpSuiteCorpusE2ETest` runs all eight per
   boot.*
 
-The stack boots once per test JVM (singleton; Ryuk + shutdown hooks reap it),
+The stack boots once per test JVM (singleton; the launcher session's close tears the
+spawned services down — the fork halts past shutdown hooks, the pass-43 lesson — and
+Ryuk reaps the containers),
 waits the publish-driven projection materializer before driving cycles
 (`rec_*` DDL rides the spine — query/report legs otherwise outrun it on a fresh
 app), and prints RED artifacts per case/step and service log tails on unhealthy

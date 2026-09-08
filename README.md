@@ -10,7 +10,7 @@
 
 ## Why NovaForge?
 
-Most no-code tools handle forms and lists well but collapse under ERP-grade requirements: decimal-precise money, immutable auditable postings, approval hierarchies, gapless document numbering, period locking, and 100k+-row list performance. NovaForge is designed so that **if the platform supports these, it supports almost any business app** — and the ERP dogfood build ([Phase 7](docs/specs/PHASE-7-ERP-DOGFOOD.md)) is the acceptance test that keeps scope honest. Past acceptance, the standing portfolio dogfood ([Phase 9](docs/specs/PHASE-7-ERP-DOGFOOD.md), PHASE-7 §12) keeps the platform honest against real breadth: it must be able to implement the full BuildRight Depot model company — the [erpplans](https://github.com/ph4n70mr1ddl3r/erpplans) spec: 728 requirements across 38 categories, 5,426 workflows across 188 value streams, retail scale, BIR 10-year retention — with per-requirement and per-workflow coverage tracking (all 5,426 workflows register-pinned, requirement-derived, or uncovered — wave-attributed where the upstream matrix links them) and edges (POS/WMS/TMS) modeled as integrations, per erpplans' own sourcing doctrine.
+Most no-code tools handle forms and lists well but collapse under ERP-grade requirements: decimal-precise money, immutable auditable postings, approval hierarchies, gapless document numbering, period locking, and 100k+-row list performance. NovaForge is designed so that **if the platform supports these, it supports almost any business app** — and the ERP dogfood build ([Phase 7](docs/specs/PHASE-7-ERP-DOGFOOD.md)) is the acceptance test that keeps scope honest. Past acceptance, the standing portfolio dogfood ([Phase 9](docs/specs/PHASE-7-ERP-DOGFOOD.md), PHASE-7 §12) keeps the platform honest against real breadth: it must be able to implement the full BuildRight Depot model company — the [erpplans](https://github.com/ph4n70mr1ddl3r/erpplans) spec: 728 requirements across 38 categories, 5,426 workflows across 188 value streams, retail scale, BIR 10-year retention — with per-requirement and per-workflow coverage tracking (all 5,449 classified workflow rows register-pinned, requirement-derived, or uncovered — wave-attributed where the upstream matrix links them) and edges (POS/WMS/TMS) modeled as integrations, per erpplans' own sourcing doctrine.
 
 ## How It Works
 
@@ -110,6 +110,12 @@ novaforge/
 │                        #   flows, machines, reports, suites) + the binding gap log
 ├── apps/buildright/     # the Phase 9 portfolio dogfood (PHASE-7 §12): implements the
 │                        #   erpplans model company in waves (wave 1 = P2P), coverage-tracked
+├── apps/purchasing/     # the Phase 4 exit journey as a versioned app (PurchaseOrder
+│                        #   machine + exitJourney suite, CI-gated by
+│                        #   PurchasingAppArtifactTests)
+├── apps/perf/           # the perf fixture (PerfHook: one synchronous hook + one
+│                        #   validation rule, measured at the 1M-row dataset —
+│                        #   ARCHITECTURE.md §9)
 ├── frontend/            # pnpm workspace (PHASE-2 §2): shared/ = the versioned
 │                        #   catalog + registry, the expr/v1 TS twin, page model,
 │                        #   L1 resolver, renderer, gateway client; runtime-ui =
