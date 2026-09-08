@@ -1,0 +1,82 @@
+{
+  "comment": "Hand-maintained workflow pins for the BuildRight portfolio register (workflow-coverage/). Every workflow of the erpplans corpus that the e2e suite corpus actually executes is pinned here by name — a pin claims the workflow's core cycle runs green in CI, with the note carrying the honest scope. Everything not listed here derives its state from the requirement claims (requirements-coverage/coverage.json via the upstream requirement-workflow-matrix): a workflow whose primary-linked requirement is claimed is 'partial' with that requirement's evidence; everything else is 'uncovered', wave-attributed. Suite paths are repo-root-relative and must exist (the register gate enforces both existence and membership in the live e2e corpus).",
+  "workflows": {
+    "W2": {
+      "status": "pinned",
+      "suites": [
+        "apps/buildright/suites/p2pHappyPath.json"
+      ],
+      "wave": 1,
+      "app": "apps/buildright",
+      "note": "The PO cycle's DRAFT→SUBMITTED→APPROVED spine with line integrity rides the full-cycle case; the PO close step itself is unsuite-pinned (wave 2, per PUR-001's evidence)"
+    },
+    "W2A": {
+      "status": "pinned",
+      "suites": [
+        "apps/buildright/suites/p2pApprovalEdges.json"
+      ],
+      "wave": 1,
+      "app": "apps/buildright",
+      "note": "The approval-tier branch: threshold gate (mode-all), the requester's task-access denial, reject→resubmit→re-approve, below-threshold auto-approval; multi-level escalation is the platform deferral (PLAN §1) and the auto-replenishment cycle is wave 2+"
+    },
+    "W3": {
+      "status": "pinned",
+      "suites": [
+        "apps/buildright/suites/p2pHappyPath.json",
+        "apps/buildright/suites/p2pReceivingBillingEdges.json"
+      ],
+      "wave": 1,
+      "app": "apps/buildright",
+      "note": "DC receiving: receipt posting with costing on post, validation gates at the door, terminal freeze (frozen receipt rejects updates and deletes), receipt-vs-PO quantity edges"
+    },
+    "W7": {
+      "status": "pinned",
+      "suites": [
+        "apps/buildright/suites/p2pHappyPath.json",
+        "apps/buildright/suites/p2pReceivingBillingEdges.json"
+      ],
+      "wave": 1,
+      "app": "apps/buildright",
+      "note": "AP invoice processing: vendor bill → auto-journal (submitForPosting, JE balanced + frozen) → approval → settlement by posted-payment roll-up; bill validation edges and the BR-G-2 overpay pin; the hard 3-way match guard is BR-G-2's logged gap (approval gate is the compensating control)"
+    },
+    "W8": {
+      "status": "pinned",
+      "suites": [
+        "apps/erp/suites/reconciliation.json",
+        "apps/erp/suites/creditAndCurrency.json",
+        "apps/erp/suites/bankFeed.json",
+        "apps/erp/suites/arDocumentEdges.json"
+      ],
+      "wave": 2,
+      "app": "apps/erp",
+      "note": "AR processing: invoice → approval → auto-journal → POSTED → settlement (aging reconciles), credit-note allocation, dunning mirroring its aging bucket, document-currency FX posting in book currency, the bank-feed webhook payment, and the document edges (validation at the door, rejected-invoice-creates-no-journal, role walls, overpayment without allocation per G-3/G-9)"
+    },
+    "W9": {
+      "status": "partial",
+      "suites": [],
+      "wave": 2,
+      "app": "apps/erp",
+      "note": "The period control legs are pinned (controls suite: soft close, absolute lock, reopen) but the workflow's close-checklist core is gap-logged (ERP G-10/G-11 — the parallel close tasks and controller confirmation are wave-2 platform work), and year-end close is not implemented"
+    },
+    "W9A": {
+      "status": "pinned",
+      "suites": [
+        "apps/erp/suites/controls.json",
+        "apps/erp/suites/reconciliation.json",
+        "apps/erp/suites/inventoryCosting.json"
+      ],
+      "wave": 2,
+      "app": "apps/erp",
+      "note": "Month-end close: period CLOSING→CLOSED→OPEN edges with the closeJournal exemption, trial balance nets zero after the full book→approval→posting→settlement cycle, the WAC verification leg (inventory value = qty × running average)"
+    },
+    "W308": {
+      "status": "pinned",
+      "suites": [
+        "apps/erp/suites/controls.json"
+      ],
+      "wave": 2,
+      "app": "apps/erp",
+      "note": "Fiscal calendar & posting period master: the AccountingPeriod machine admits only its listed edges, CLOSING blocks dated postings unless the entry carries closeJournal, CLOSED activates the absolute lock, the reopen re-admits writes"
+    }
+  }
+}

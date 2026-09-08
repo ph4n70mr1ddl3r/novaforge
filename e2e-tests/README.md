@@ -29,6 +29,11 @@ driven against the **real service topology**, not mocks:
 | `BuildRightProcureToPayE2ETest` | **P2P** | the BuildRight wave-1 corpus: happy path, threshold/approval edges, receiving/billing/settlement edges |
 | `ErpSuiteCorpusE2ETest` | regression | the eight-suite Phase-7 corpus re-run live — the five acceptance suites (controls, inventoryCosting, creditAndCurrency, bankFeed, reconciliation) plus the three workflow-edge suites (glLedgerEdges, arDocumentEdges, inventoryCostingEdges) |
 
+These thirteen suites are the workflow register's executable half
+(`apps/buildright/workflow-coverage/`): every `pinned` workflow names one of
+them, and `BuildrightWorkflowRegisterTests` fails any register pin whose suite
+does not ride this corpus.
+
 ## Run
 
 ```bash
