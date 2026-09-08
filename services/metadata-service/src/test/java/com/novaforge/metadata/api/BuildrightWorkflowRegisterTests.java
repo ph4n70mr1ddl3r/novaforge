@@ -36,11 +36,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code workflow-coverage/}.
  *
  * <p>The pins are <em>authored</em> on the hand-maintained {@code workflow-map.json},
- * so the gate walks that map too: it may not drift from the committed register (an
- * edit here must ship with its regeneration), and the pin-realism contract — suites
- * that exist and ride the live corpus — holds on the authored surface as much as on
- * the generated one. The forty-fourth pass closed the hole where a map edit shipped
- * green with a stale register behind it.
+ * so the gate walks that map too — in <em>both</em> directions, and across <em>both</em>
+ * merge branches of the wave: an authored edit must ship with its regeneration (an
+ * added or edited pin fails against the register), a register row whose state only a
+ * map entry can produce must still have one (a deleted pin used to ship green with
+ * the stale register behind it — the forty-fifth pass's hole), and a pin that omits
+ * its {@code wave} key is compared through the generator's derived-wave fallback,
+ * mirrored from committed inputs. The pin-realism contract — suites that exist and
+ * ride the live corpus — holds on the authored surface as much as on the generated
+ * one. The forty-fourth pass closed the hole where a map edit shipped green with a
+ * stale register behind it; the forty-fifth closed the same class's other direction.
  */
 class BuildrightWorkflowRegisterTests {
 
@@ -165,7 +170,7 @@ class BuildrightWorkflowRegisterTests {
     }
 
     @Test
-    @DisplayName("the hand-maintained workflow map stays in sync with the committed register")
+    @DisplayName("the hand-maintained workflow map stays in sync with the committed register — both directions, every merge branch")
     @SuppressWarnings("unchecked")
     void workflowMapStaysInSyncWithTheRegister() throws Exception {
         Path mapPath = BUILDRIGHT.resolve("workflow-map.json");
@@ -178,37 +183,23 @@ class BuildrightWorkflowRegisterTests {
         for (Map<String, Object> wf : (List<Map<String, Object>>) coverage.get("workflows")) {
             register.put(String.valueOf(wf.get("id")), wf);
         }
+        // the coverage-map feeds the derived-wave branch (generate-workflow-coverage
+        // reads its prefix waves) — committed, so the mirror below can read it too
+        Map<String, Object> coverageMap = MAPPER.readValue(
+                BUILDRIGHT.resolve("coverage-map.json").toFile(), Map.class);
+        Map<String, Object> prefixWaves = (Map<String, Object>) coverageMap.get("prefixes");
+
+        // the map→register direction: an authored edit must ship with its regeneration
         for (var entry : pins.entrySet()) {
             String id = entry.getKey();
             Map<String, Object> pin = (Map<String, Object>) entry.getValue();
             Map<String, Object> row = register.get(id);
             assertThat(row).as("workflow-map.json pins %s but the register has no such row "
                     + "— re-run scripts/generate-workflow-coverage.py", id).isNotNull();
-            assertThat(String.valueOf(pin.get("status")))
-                    .as("%s's map status diverges from the register — re-run "
-                            + "scripts/generate-workflow-coverage.py", id)
-                    .isEqualTo(String.valueOf(row.get("status")));
-            List<String> pinSuites = new java.util.ArrayList<>(
-                    (List<String>) pin.getOrDefault("suites", List.of()));
-            java.util.Collections.sort(pinSuites);
-            assertThat(pinSuites)
-                    .as("%s's map suite pins diverge from the register — re-run "
-                            + "scripts/generate-workflow-coverage.py", id)
-                    .isEqualTo(row.get("suites"));
-            assertThat(String.valueOf(pin.get("app")))
-                    .as("%s's map app diverges from the register", id)
-                    .isEqualTo(String.valueOf(row.get("app")));
-            assertThat(String.valueOf(pin.getOrDefault("note", "")))
-                    .as("%s's map note diverges from the register", id)
-                    .isEqualTo(String.valueOf(row.get("note")));
-            if (pin.containsKey("wave")) {
-                assertThat(String.valueOf(pin.get("wave")))
-                        .as("%s's map wave diverges from the register", id)
-                        .isEqualTo(String.valueOf(row.get("wave")));
-            }
+            assertPinMatchesRegister(id, pin, row, prefixWaves);
             // the pin-realism contract holds on the authored surface too, and every
             // named app (any status) is known and on disk
-            for (String suite : pinSuites) {
+            for (String suite : sortedSuites(pin)) {
                 assertThat(LIVE_E2E_CORPUS)
                         .as("%s pins via %s on workflow-map.json — a pin is only real if "
                                 + "its suite rides the live e2e corpus", id, suite)
@@ -226,5 +217,114 @@ class BuildrightWorkflowRegisterTests {
                 }
             }
         }
+
+        // the register→map direction (the forty-fifth pass): a register row whose
+        // state only a map entry can produce must still have one — this leg used to
+        // walk the map side only, so DELETING an authored pin shipped green with the
+        // stale register row still claiming it (the requirements twin never had the
+        // hole: it walks all 728 artifact rows against the map's merge)
+        for (Map<String, Object> row : register.values()) {
+            String id = String.valueOf(row.get("id"));
+            if (!mustBeMapAuthored(row)) {
+                continue;
+            }
+            Map<String, Object> pin = (Map<String, Object>) pins.get(id);
+            assertThat(pins).as("the register's %s row is %s — a state only the map can "
+                            + "author — but workflow-map.json has no entry for it (the pin was "
+                            + "deleted without regenerating?) — re-run "
+                            + "scripts/generate-workflow-coverage.py", id, row.get("status"))
+                    .containsKey(id);
+            assertThat(pin).as("workflow-map.json's %s entry is null — the pin was emptied "
+                            + "without regenerating? — re-run scripts/generate-workflow-coverage.py", id)
+                    .isNotNull();
+            assertPinMatchesRegister(id, pin, row, prefixWaves);
+        }
+    }
+
+    /** The generator's pin merge, mirrored: every authored field must equal the
+     *  register row — and the wave comparison covers BOTH branches, an explicit map
+     *  wave and the derived fallback the generator computes when the key is absent
+     *  (itself a pure function of committed inputs, so the mirror is exact). */
+    @SuppressWarnings("unchecked")
+    private void assertPinMatchesRegister(String id, Map<String, Object> pin,
+            Map<String, Object> row, Map<String, Object> prefixWaves) {
+        assertThat(String.valueOf(pin.get("status")))
+                .as("%s's map status diverges from the register — re-run "
+                        + "scripts/generate-workflow-coverage.py", id)
+                .isEqualTo(String.valueOf(row.get("status")));
+        assertThat(sortedSuites(pin))
+                .as("%s's map suite pins diverge from the register — re-run "
+                        + "scripts/generate-workflow-coverage.py", id)
+                .isEqualTo(row.get("suites"));
+        assertThat(String.valueOf(pin.get("app")))
+                .as("%s's map app diverges from the register", id)
+                .isEqualTo(String.valueOf(row.get("app")));
+        assertThat(String.valueOf(pin.getOrDefault("note", "")))
+                .as("%s's map note diverges from the register", id)
+                .isEqualTo(String.valueOf(row.get("note")));
+        Object expectedWave = pin.containsKey("wave")
+                ? pin.get("wave")
+                : deriveWave((Map<String, List<String>>) row.get("requirements"), prefixWaves);
+        assertThat(String.valueOf(expectedWave))
+                .as("%s's %s wave diverges from the register — re-run "
+                        + "scripts/generate-workflow-coverage.py", id,
+                        pin.containsKey("wave") ? "map" : "map-derived")
+                .isEqualTo(String.valueOf(row.get("wave")));
+    }
+
+    private static List<String> sortedSuites(Map<String, Object> pin) {
+        List<String> suites = new java.util.ArrayList<>(
+                (List<String>) pin.getOrDefault("suites", List.of()));
+        java.util.Collections.sort(suites);
+        return suites;
+    }
+
+    /** {@code generate-workflow-coverage.py}'s {@code derive_wave}, mirrored exactly:
+     *  the minimum integer wave over the linked requirements' prefix waves (coverage-map
+     *  prefix defaults — never a per-requirement override wave); else the first
+     *  non-integer wave in primary-then-supporting order; else null. */
+    @SuppressWarnings("unchecked")
+    private Object deriveWave(Map<String, List<String>> links, Map<String, Object> prefixWaves) {
+        List<Object> waves = new java.util.ArrayList<>();
+        for (String kind : List.of("primary", "supporting")) {
+            for (String reqId : links.getOrDefault(kind, List.of())) {
+                String prefix = reqId.substring(0, reqId.lastIndexOf('-'));
+                Map<String, Object> prefixDefault = (Map<String, Object>) prefixWaves.get(prefix);
+                Object wave = prefixDefault == null ? null : prefixDefault.get("wave");
+                if (wave != null) {
+                    waves.add(wave);
+                }
+            }
+        }
+        Integer minInteger = null;
+        for (Object wave : waves) {
+            if (wave instanceof Integer i && (minInteger == null || i < minInteger)) {
+                minInteger = i;
+            }
+        }
+        if (minInteger != null) {
+            return minInteger;
+        }
+        return waves.isEmpty() ? null : waves.getFirst();
+    }
+
+    /** A register row whose state only a map entry can produce: pinned (pins are the
+     *  only source), partial with a hand-authored note (a derived partial's note is
+     *  exactly the generator's template — the pattern mirrors it), or uncovered with
+     *  an empty note (a derived uncovered note is never empty). If the generator's
+     *  note templates ever change, this predicate changes in the same commit — the
+     *  same coupling convention the merge mirrors carry. */
+    private static final java.util.regex.Pattern DERIVED_PARTIAL_NOTE = java.util.regex.Pattern
+            .compile("^exercises [A-Z]{2,4}-\\d{3}[a-z]? \\((covered|partial) via .+\\); no dedicated suite pin$");
+
+    private boolean mustBeMapAuthored(Map<String, Object> row) {
+        String status = String.valueOf(row.get("status"));
+        String note = String.valueOf(row.get("note"));
+        return switch (status) {
+            case "pinned" -> true;
+            case "partial" -> !DERIVED_PARTIAL_NOTE.matcher(note).matches();
+            case "uncovered" -> note.isEmpty();
+            default -> false;
+        };
     }
 }

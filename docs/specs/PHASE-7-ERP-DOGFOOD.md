@@ -492,4 +492,4 @@ the acceptance dogfood freezes.
 record for the requirements.** erpplans revisions are inputs: a changed
 requirement catalog re-runs the coverage generator, and the diff is reviewed like
 code — new requirements surface as uncovered rows, changed ones may invalidate
-c claims, and both route into wave planning.
+claims, and both route into wave planning.
