@@ -94,6 +94,8 @@ class TestRunnerJourneyTests {
     private static final AtomicReference<String> SCAN_PATH = new AtomicReference<>();
     private static final AtomicReference<String> SCAN_BODY = new AtomicReference<>();
     private static final AtomicReference<String> SCAN_TOKEN = new AtomicReference<>();
+    private static final AtomicReference<String> SYNC_METHOD = new AtomicReference<>();
+    private static final AtomicReference<String> SYNC_TOKEN = new AtomicReference<>();
     private static final AtomicReference<String> REOBSERVE_METHOD = new AtomicReference<>();
     private static final AtomicReference<String> REOBSERVE_PATH = new AtomicReference<>();
 
@@ -172,6 +174,17 @@ class TestRunnerJourneyTests {
                 }
                 respond(exchange, 200, "{\"scanned\":true,\"asOf\":\"2026-08-24T12:00:00Z\","
                         + "\"warned\":1,\"breached\":1}");
+                return;
+            }
+            if (path.equals("/api/v1/workflow/internal/processes/sync")) {
+                // the G-17 harvest: the harness's post-publish deployment catch-up
+                SYNC_METHOD.set(method);
+                SYNC_TOKEN.set(exchange.getRequestHeaders().getFirst("Authorization"));
+                if (!"POST".equals(method)) {
+                    respond(exchange, 405, "{\"code\":\"4000\",\"detail\":\"process sync is POST\"}");
+                    return;
+                }
+                respond(exchange, 200, "{\"synced\":true}");
                 return;
             }
             if (path.endsWith("/approve") && "POST".equals(method)) {
@@ -310,6 +323,10 @@ class TestRunnerJourneyTests {
                 "{\"tenantId\":\"11111111-1111-1111-1111-111111111111\",\"advance\":\"PT26H\"}", Map.class),
                 MAPPER.readValue(SCAN_BODY.get(), Map.class));
         assertEquals("Bearer svc", SCAN_TOKEN.get());
+        // the G-17 catch-up: the sync rode the internal surface right after the
+        // publish, POST-only with the service client's token, and confirmed
+        assertEquals("POST", SYNC_METHOD.get());
+        assertEquals("Bearer svc", SYNC_TOKEN.get());
         // the resolveTask re-observation: a successful resolution re-reads the task's
         // record through the runtime (a GET, the app-prefixed entity stripped) so
         // post-resolution assertions read the resumed state — never a stale snapshot
@@ -397,5 +414,94 @@ class TestRunnerJourneyTests {
         assertTrue(String.valueOf(cases.get(2).get("failures")).contains("ISO-8601"),
                 () -> String.valueOf(cases.get(2)));
         assertEquals(Boolean.FALSE, artifact.get("green"));
+    }
+
+    @Test
+    @DisplayName("the G-11 harvest: awaitTasks polls the inbox until the tasks bridge, "
+            + "times out audibly otherwise")
+    void awaitTasksPollsTheInbox() throws IOException {
+        // the event-start leg's spine latency, stubbed: the first two inbox reads
+        // answer an empty inbox (the process has not bridged yet), then the task
+        // appears — the bounded retry is the op's whole point
+        java.util.concurrent.atomic.AtomicInteger polls =
+                new java.util.concurrent.atomic.AtomicInteger();
+        AtomicReference<String> awaitQuery = new AtomicReference<>();
+        HttpServer workflow = server((exchange, body) -> {
+            String path = exchange.getRequestURI().getPath();
+            if (path.equals("/api/v1/workflow/internal/processes/sync")) {
+                respond(exchange, 200, "{\"synced\":true}");
+                return;
+            }
+            if (path.equals("/api/v1/workflow/tasks")
+                    && "GET".equals(exchange.getRequestMethod())) {
+                awaitQuery.set(exchange.getRequestURI().getRawQuery());
+                if (polls.incrementAndGet() < 3) {
+                    respond(exchange, 200, "{\"rows\":[],\"total\":0}");
+                } else {
+                    respond(exchange, 200, "{\"rows\":[{\"id\":\"t-9\",\"type\":\"todo\","
+                            + "\"status\":\"OPEN\",\"role\":\"JourneyApp.arClerk\","
+                            + "\"recordId\":\"r-1\"}],\"total\":1}");
+                }
+                return;
+            }
+            respond(exchange, 405, "{\"code\":\"4000\",\"detail\":\"unexpected "
+                    + exchange.getRequestMethod() + " " + path + "\"}");
+        });
+        TestRunner polling = new TestRunner(
+                // runtime + metadata + auth: the shared stubs (scratch provisioning
+                // and the candidate publish ride them); only the workflow leg —
+                // this test's subject — is local
+                "http://127.0.0.1:" + SERVERS.get(1).getAddress().getPort(),
+                "http://127.0.0.1:" + SERVERS.get(2).getAddress().getPort(),
+                "http://127.0.0.1:" + SERVERS.getFirst().getAddress().getPort(),
+                "http://127.0.0.1:" + workflow.getAddress().getPort(),
+                "http://127.0.0.1:1", "http://127.0.0.1:1",
+                "novaforge-runtime", "novaforge-runtime-secret", new SimpleMeterRegistry());
+
+        AppDefinition candidate = new AppDefinition(null, "JourneyApp", null, null, null,
+                null, null, null, null, null, null, null, null);
+        TestSuiteDefinition suite = new TestSuiteDefinition("await", null, List.of(
+                new TestSuiteDefinition.TestCase("checklist joins", List.of(), List.of(
+                        new Step("awaitTasks", "Task", "arClerk", null,
+                                Map.of("count", 1, "status", "OPEN"), "ok")),
+                        List.of("${Query[0].count} == 1",
+                                "${Task[0].status} == 'OPEN'"))));
+        Map<String, Object> artifact = polling.run(candidate, suite, null);
+
+        assertTrue(Boolean.TRUE.equals(artifact.get("green")),
+                () -> "awaitTasks journey should be green: " + artifact.get("cases"));
+        // the poll rode the same GET the query branch makes, with the v1 filter
+        assertTrue(awaitQuery.get().contains("status=OPEN"), awaitQuery.get());
+        // the bounded retry happened: two empty reads before the satisfied third
+        assertTrue(polls.get() >= 3, () -> "expected the poll to retry, saw " + polls.get());
+
+        // the timeout leg: an inbox that never fills — the poll gives up with the
+        // AWAIT_TIMEOUT problem body, and expect: error(AWAIT_TIMEOUT) pins it
+        HttpServer never = server((exchange, body) -> {
+            if (exchange.getRequestURI().getPath().equals("/api/v1/workflow/internal/processes/sync")) {
+                respond(exchange, 200, "{\"synced\":true}");
+                return;
+            }
+            if (exchange.getRequestURI().getPath().equals("/api/v1/workflow/tasks")) {
+                respond(exchange, 200, "{\"rows\":[],\"total\":0}");
+                return;
+            }
+            respond(exchange, 405, "{\"code\":\"4000\",\"detail\":\"unexpected\"}");
+        });
+        TestRunner timingOut = new TestRunner(
+                "http://127.0.0.1:" + SERVERS.get(1).getAddress().getPort(),
+                "http://127.0.0.1:" + SERVERS.get(2).getAddress().getPort(),
+                "http://127.0.0.1:" + SERVERS.getFirst().getAddress().getPort(),
+                "http://127.0.0.1:" + never.getAddress().getPort(),
+                "http://127.0.0.1:1", "http://127.0.0.1:1",
+                "novaforge-runtime", "novaforge-runtime-secret", new SimpleMeterRegistry());
+        TestSuiteDefinition timeout = new TestSuiteDefinition("await", null, List.of(
+                new TestSuiteDefinition.TestCase("never bridges", List.of(), List.of(
+                        new Step("awaitTasks", "Task", "arClerk", null,
+                                Map.of("count", 1, "timeoutMs", 500), "error(AWAIT_TIMEOUT)")),
+                        List.of())));
+        Map<String, Object> timedOut = timingOut.run(candidate, timeout, null);
+        assertTrue(Boolean.TRUE.equals(timedOut.get("green")),
+                () -> "the timeout leg should pin AWAIT_TIMEOUT: " + timedOut.get("cases"));
     }
 }

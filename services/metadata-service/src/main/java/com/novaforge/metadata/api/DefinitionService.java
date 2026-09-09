@@ -438,6 +438,29 @@ public class DefinitionService {
                                 where + " action must be approve or reject: " + action);
                     }
                 }
+                // awaitTasks (the G-11 harvest): the poll rides the workflow inbox,
+                // so the op is Task-shaped by construction — and its poll slots are
+                // numeric-positive-checked here, at save time, not at run time
+                if ("awaitTasks".equals(step.op())) {
+                    if (!"Task".equals(step.entity())) {
+                        throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                                where + " polls the workflow inbox — entity must be Task");
+                    }
+                    for (String slot : List.of("count", "timeoutMs")) {
+                        Object value = step.template() == null ? null : step.template().get(slot);
+                        if (value instanceof Number number && number.intValue() <= 0) {
+                            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                                    where + " template." + slot + " must be a positive integer: "
+                                            + value);
+                        }
+                        if (value instanceof String text && !isReference(text)
+                                && !text.matches("\\d+")) {
+                            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                                    where + " template." + slot + " must be a positive integer"
+                                            + " (or a ${…} reference): " + value);
+                        }
+                    }
+                }
                 // scanSla (§12's clock leg): exactly one governing instant — a duration
                 // to advance past now or an absolute asOf, both parse-checked at save
                 if ("scanSla".equals(step.op())) {

@@ -53,11 +53,14 @@
       "note": "AR processing: invoice → approval → auto-journal → POSTED → settlement (aging reconciles), credit-note allocation, dunning mirroring its aging bucket, document-currency FX posting in book currency, the bank-feed webhook payment, and the document edges (validation at the door, rejected-invoice-creates-no-journal, role walls, overpayment without allocation per G-3/G-9)"
     },
     "W9": {
-      "status": "partial",
-      "suites": [],
+      "status": "pinned",
+      "suites": [
+        "apps/erp/suites/closeChecklist.json",
+        "apps/erp/suites/controls.json"
+      ],
       "wave": 2,
       "app": "apps/erp",
-      "note": "The period control legs are pinned (controls suite: soft close, absolute lock, reopen) but the workflow's close-checklist core is gap-logged (ERP G-10/G-11 — the parallel close tasks and controller confirmation are wave-2 platform work), and year-end close is not implemented"
+      "note": "The close-checklist core rides the closeChecklist suite (the G-11/G-17 harvests): the CLOSING event-start forks the three reconciliation tasks, the parallel join holds the controller's confirm back until all three resolve — pinned refusing early — and the confirmed close lands CLOSING→CLOSED; the period control edges (soft close, absolute lock, reopen) ride the controls suite; year-end close is not implemented"
     },
     "W9A": {
       "status": "pinned",

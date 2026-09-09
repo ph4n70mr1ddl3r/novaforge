@@ -2,6 +2,7 @@ package com.novaforge.workflow.api;
 
 import com.novaforge.common.error.PlatformErrorCode;
 import com.novaforge.common.error.PlatformException;
+import com.novaforge.workflow.process.ProcessDeployer;
 import com.novaforge.workflow.process.ProcessStarts;
 import com.novaforge.security.ServiceClientGate;
 import java.util.Map;
@@ -14,16 +15,21 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * The internal process-start surface (PHASE-4 §9/§7): the Scheduler's
  * {@code processStart} target calls here with the platform service client's token
- * — service-client gated like the approval surface, never user traffic.
+ * — service-client gated like the approval surface, never user traffic — and the
+ * deployment catch-up leg (the G-17 harvest): a synchronous deployment sync the
+ * harness drives right after publishing a candidate, so a suite's triggering
+ * write can never beat its own event-started workflows into the registry.
  */
 @RestController
 @RequestMapping("/api/v1/workflow/internal")
 public class InternalProcessController {
 
     private final ProcessStarts starts;
+    private final ProcessDeployer deployer;
 
-    public InternalProcessController(ProcessStarts starts) {
+    public InternalProcessController(ProcessStarts starts, ProcessDeployer deployer) {
         this.starts = starts;
+        this.deployer = deployer;
     }
 
     public record StartRequest(String tenantId, String app, String process,
@@ -43,6 +49,25 @@ public class InternalProcessController {
         String instanceId = starts.start(UUID.fromString(request.tenantId()),
                 request.app(), request.process(), recordId, request.variables());
         return Map.of("instanceId", instanceId, "started", true);
+    }
+
+    /**
+     * The deployment catch-up (the G-17 harvest, found live authoring the
+     * close-checklist suite leg, 2026-09-09): the deployer syncs on a schedule
+     * (30 s default), so a freshly published app's event-started workflows are
+     * inert until the next pass — and a spine event inside that window skips
+     * quietly, never to retry ({@code ProcessStarts} evaluates deployed
+     * subscriptions only; the filter reads the record's state at consume time,
+     * so even the retry-by-re-entry shape cannot recover a missed start).
+     * Any publish-then-write sequence — a suite run, the real promotion flow,
+     * an integrator's onboarding — closes the race by driving this one
+     * synchronous pass before its first write. Idempotent by content hash.
+     */
+    @PostMapping("/processes/sync")
+    public Map<String, Object> sync() {
+        ServiceClientGate.require("process-sync");
+        deployer.syncOnce();
+        return Map.of("synced", true);
     }
 
 }

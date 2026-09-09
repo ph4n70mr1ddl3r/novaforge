@@ -304,6 +304,21 @@ Statuses v1: `OPEN → APPROVED | REJECTED | DELEGATED | ESCALATED | CANCELLED`.
   every entity (a later growth, adopted for PHASE-7 §9 item 1's auto-journal
   assertions) so flow-created records are observable like human-created ones;
   `resolveTask` `{ match | taskId, action: approve | reject, asRole, comment? }`.
+- **The poll op (PHASE-7's G-11 harvest, 2026-09-09):** `awaitTasks`
+  `{ count?, status?, timeoutMs? }` — bounded retries (200 ms) over the same
+  inbox query `queryRecord Task` makes, until the step's actor sees `count`
+  tasks (default 1) or `timeoutMs` (default 20 s, capped at 60 s) elapses.
+  Event-started processes ride the spine asynchronously, so a query
+  right-after-the-write races; a timed-out poll answers a problem body
+  (`AWAIT_TIMEOUT`) so `expect: ok` fails loudly — or the timeout itself is
+  pinned with `expect: error(AWAIT_TIMEOUT)`. The satisfied poll lands rows and
+  result exactly where the query does. Its companion harvest (PHASE-7's G-17):
+  the Workflow Service's internal `POST /api/v1/workflow/internal/processes/sync`
+  (service-client gated, content-hash idempotent) runs one deployment-sync pass
+  on demand — the harness calls it right after publishing the candidate, because
+  a scheduled deployer (30 s default) otherwise lets a triggering write beat its
+  own event-started workflows into the registry, and a skipped start never
+  retries (`ProcessStarts` evaluates deployed subscriptions only).
 - **New assertion surface:** task references `${Task[n].status}`,
   `${Task[n].assignee}`; `requestApproval` inside a flow under test creates real
   tasks in the scratch tenant; resolution goes through the same inbox API synthetic

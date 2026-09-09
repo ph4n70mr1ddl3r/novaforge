@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-09-09T10:23:07+00:00",
-  "erpplansRev": "5b877964",
-  "novaforgeRev": "f29d6f8",
+  "generatedAt": "2026-09-09T11:32:37+00:00",
+  "erpplansRev": "dd49ecf0",
+  "novaforgeRev": "41e73b3",
   "source": "01-model-company/erp-requirements.md",
   "claims": "apps/buildright/coverage-map.json",
   "totals": {

@@ -702,13 +702,17 @@ class BpmnProcessTests extends PostgresTestBase {
         publishApp("po_review", reviewBpmn("po_review"));
         deployer.syncOnce();
 
-        // user tokens never reach the surface (§13: service-client gate)
+        // user tokens never reach the surface (§13: service-client gate) — neither
+        // the start nor the G-17 deployment catch-up beside it
         mockMvc.perform(post("/api/v1/workflow/internal/processes/start")
                         .with(jwt().jwt(jwt -> jwt.claim("tenant_id", TENANT.toString())))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(MAPPER.writeValueAsString(Map.of(
                                 "tenantId", TENANT.toString(), "app", APP,
                                 "process", "po_review"))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/v1/workflow/internal/processes/sync")
+                        .with(jwt().jwt(jwt -> jwt.claim("tenant_id", TENANT.toString()))))
                 .andExpect(status().isForbidden());
 
         // the service-client path starts the process (call the service directly —

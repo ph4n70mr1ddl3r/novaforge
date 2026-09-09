@@ -27,9 +27,9 @@ driven against the **real service topology**, not mocks:
 | `ErpOrderToCashE2ETest` | **O2C** | the `orderToCash` suite: invoice → approval → auto-journal → journal approval → payment application → trial balance / A-R aging |
 | `ErpRecordToReportE2ETest` | **R2R** | the `recordToReport` suite (soft close, close-journal exemption, hard close, reopen, P&L/trial-balance pins) **plus** the BPMN `closeChecklist` journey: CLOSING event → three parallel reconciliation tasks resolved by their candidate roles → the controller's confirmation → lock → reopen, with Awaitility polling the async legs |
 | `BuildRightProcureToPayE2ETest` | **P2P** | the BuildRight wave-1 corpus: happy path, threshold/approval edges, receiving/billing/settlement edges |
-| `ErpSuiteCorpusE2ETest` | regression | the eight-suite Phase-7 corpus re-run live — the five acceptance suites (controls, inventoryCosting, creditAndCurrency, bankFeed, reconciliation) plus the three workflow-edge suites (glLedgerEdges, arDocumentEdges, inventoryCostingEdges) |
+| `ErpSuiteCorpusE2ETest` | regression | the nine-suite Phase-7 corpus re-run live — the five acceptance suites (controls, inventoryCosting, creditAndCurrency, bankFeed, reconciliation) plus the four workflow-edge suites (glLedgerEdges, arDocumentEdges, inventoryCostingEdges, closeChecklist — the BPMN checklist pinned through the suite harness via the G-11/G-17 harvests) |
 
-These thirteen suites are the workflow register's executable half
+These fourteen suites are the workflow register's executable half
 (`apps/buildright/workflow-coverage/`): every `pinned` workflow names one of
 them, and `BuildrightWorkflowRegisterTests` fails any register pin whose suite
 does not ride this corpus.

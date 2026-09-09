@@ -1,0 +1,145 @@
+{
+  "apiName": "closeChecklist",
+  "label": "Period close checklist (PHASE-7 §4/§9 item 3 — the G-11/G-17 harvests)",
+  "cases": [
+    {
+      "name": "checklist-tasks-join-before-confirm-close",
+      "fixtures": [],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "AccountingPeriod",
+          "asRole": "accountingManager",
+          "template": {
+            "name": "Sep 2026",
+            "startDate": "2026-09-01",
+            "endDate": "2026-09-30"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "AccountingPeriod",
+          "asRole": "accountingManager",
+          "recordId": "${AccountingPeriod[0].id}",
+          "template": {
+            "version": "${AccountingPeriod[0].version}",
+            "status": "CLOSING"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "awaitTasks",
+          "entity": "Task",
+          "asRole": "arClerk",
+          "template": {
+            "count": 1,
+            "status": "OPEN",
+            "timeoutMs": 60000
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "awaitTasks",
+          "entity": "Task",
+          "asRole": "inventoryClerk",
+          "template": {
+            "count": 1,
+            "status": "OPEN",
+            "timeoutMs": 60000
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "awaitTasks",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "template": {
+            "count": 1,
+            "status": "OPEN",
+            "timeoutMs": 60000
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "arClerk",
+          "recordId": "${Task[0].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "inventoryClerk",
+          "recordId": "${Task[1].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "Task",
+          "asRole": "controller",
+          "template": {
+            "filter": {
+              "status": "OPEN"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "accountingManager",
+          "recordId": "${Task[2].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "awaitTasks",
+          "entity": "Task",
+          "asRole": "controller",
+          "template": {
+            "count": 1,
+            "status": "OPEN",
+            "timeoutMs": 60000
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "resolveTask",
+          "entity": "Task",
+          "asRole": "controller",
+          "recordId": "${Task[3].id}",
+          "template": {
+            "action": "approve"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "AccountingPeriod",
+          "asRole": "controller",
+          "recordId": "${AccountingPeriod[0].id}",
+          "template": {
+            "version": "${AccountingPeriod[0].version}",
+            "status": "CLOSED"
+          },
+          "expect": "ok"
+        }
+      ],
+      "assertExpressions": [
+        "${Query[3].count} == 0",
+        "${Query[4].count} == 1",
+        "${AccountingPeriod[0].status} == 'CLOSED'"
+      ]
+    }
+  ]
+}

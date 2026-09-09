@@ -10,14 +10,16 @@ import org.junit.jupiter.api.Test;
  * posting-immutability and period-lock controls, the weighted-average inventory
  * costing, the credit-note / EUR / dunning A-R edges, the bank-feed webhook journey,
  * and the book-to-post reconciliation exit — then the edge suites: GL numbering and
- * state-machine walls, AR document validation and rejection edges, and the costing
- * edges (draft movements, empty-stock and explicit-cost issues).
+ * state-machine walls, AR document validation and rejection edges, the costing
+ * edges (draft movements, empty-stock and explicit-cost issues), and the
+ * close-checklist workflow (the G-11/G-17 harvests: the CLOSING event-start forks
+ * the three reconciliation tasks; the parallel join gates the controller's confirm).
  */
 class ErpSuiteCorpusE2ETest {
 
     private static final String[] CORPUS = {
             "controls", "inventoryCosting", "creditAndCurrency", "bankFeed", "reconciliation",
-            "glLedgerEdges", "arDocumentEdges", "inventoryCostingEdges"};
+            "glLedgerEdges", "arDocumentEdges", "inventoryCostingEdges", "closeChecklist"};
 
     @Test
     void erpAcceptanceCorpusRunsGreen() {

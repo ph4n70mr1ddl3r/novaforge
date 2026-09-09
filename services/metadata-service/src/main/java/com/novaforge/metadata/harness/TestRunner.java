@@ -166,6 +166,14 @@ public class TestRunner {
         //    the runtime-never-serves-drafts rule holds)
         publishCandidate(adminUsername, adminPassword, candidate);
 
+        // 3a. the deployment catch-up (the G-17 harvest): the workflow service's
+        //     deployer syncs on a schedule (30 s default), so a case's triggering
+        //     write could beat the candidate's event-started workflows into the
+        //     registry — the spine event would skip quietly and never retry. One
+        //     synchronous sync pass here makes every published workflow DEPLOYED
+        //     before the first step, so event-start legs are deterministic.
+        syncProcessDeployments();
+
         // 3b. the scratch tenant's webhook secrets (§10): provisioned through the
         //     Integration Service's builder surface as the scratch admin — the
         //     harness then signs postWebhook steps with what it provisioned, so
@@ -257,6 +265,7 @@ public class TestRunner {
                                     String.valueOf(step.template().get("version")), scope),
                             token, null);
                     case "queryRecord" -> queryRecord(step, token, scope);
+                    case "awaitTasks" -> awaitTasks(step, token, scope);
                     case "resolveTask" -> resolveTask(step, token, scope, appApiName);
                     case "runReport" -> runReport(step, token, scope, appApiName);
                     case "postWebhook" -> postWebhook(step, scope, tenantId, hookSecrets);
@@ -376,6 +385,82 @@ public class TestRunner {
             scope.putIfAbsent(step.entity() + "[0]", Map.of());
         }
         return queryResult(scope, page.path("total").asLong(), ids);
+    }
+
+    /**
+     * awaitTasks (the G-11 harvest, 2026-09-09): a bounded poll over the inbox
+     * query — the exact read {@link #queryRecord(Step, String, Map)} makes for
+     * {@code entity: Task}, retried until the step's actor sees {@code count}
+     * tasks (default 1) or {@code timeoutMs} (default 20 s, hard-capped at 60 s)
+     * elapses. Event-started processes ride the spine asynchronously, so the
+     * poll is the only honest way to observe them: a right-after-the-write
+     * {@code queryRecord Task} races, a sleep is the flake it replaces. The
+     * satisfied poll lands its rows and {@code {count, ids}} result exactly
+     * where the query does (§12's Task-remembering rule — {@code ${Task[n]}} in
+     * scope, the result as the next {@code ${Query[n]}}); a timed-out poll
+     * answers a problem body ({@code AWAIT_TIMEOUT}, never a quiet empty page)
+     * so {@code expect: ok} fails loudly — and a suite may pin the timeout
+     * itself with {@code expect: error(AWAIT_TIMEOUT)}.
+     */
+    private JsonNode awaitTasks(Step step, String token, Map<String, Object> scope) {
+        Map<String, Object> template = interpolate(
+                step.template() == null ? Map.of() : step.template(), scope);
+        String status = template.getOrDefault("status", "OPEN").toString();
+        int count = positiveInt(template.get("count"), 1, "awaitTasks count");
+        long timeoutMs = positiveInt(template.get("timeoutMs"), 20_000,
+                "awaitTasks timeoutMs");
+        if (timeoutMs > 60_000) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "awaitTasks timeoutMs is capped at 60000: " + timeoutMs);
+        }
+        long deadline = System.nanoTime() + timeoutMs * 1_000_000;
+        JsonNode inbox;
+        while (true) {
+            inbox = workflowCall(HttpMethod.GET, "/api/v1/workflow/tasks?status="
+                    + url(status) + "&size=200", token, null);
+            if (inbox.path("total").asLong() >= count) {
+                break;
+            }
+            if (System.nanoTime() >= deadline) {
+                return MAPPER.valueToTree(Map.of(
+                        "code", "AWAIT_TIMEOUT",
+                        "type", "/problems/await-timeout",
+                        "title", "awaitTasks timed out",
+                        "detail", "the actor's '" + status + "' tasks never reached "
+                                + count + " within " + timeoutMs + "ms"));
+            }
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new PlatformException(PlatformErrorCode.INTERNAL,
+                        "awaitTasks poll interrupted");
+            }
+        }
+        // the satisfied poll remembers exactly like the query branch it retries
+        List<String> ids = new ArrayList<>();
+        for (JsonNode task : inbox.path("rows")) {
+            remember(scope, "Task", task);
+            ids.add(task.path("id").asString());
+        }
+        return queryResult(scope, inbox.path("total").asLong(), ids);
+    }
+
+    /** A positive-int template slot with a default — awaitTasks' poll shape. */
+    private static int positiveInt(Object value, int fallback, String what) {
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            int parsed = Integer.parseInt(String.valueOf(value));
+            if (parsed <= 0) {
+                throw new NumberFormatException(parsed + "");
+            }
+            return parsed;
+        } catch (NumberFormatException e) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    what + " must be a positive integer: " + value);
+        }
     }
 
     /**
@@ -668,6 +753,23 @@ public class TestRunner {
     }
 
     // --- scratch tenant machinery ---
+
+    /**
+     * One synchronous deployment-sync pass over the just-published candidate
+     * (the internal surface, the trusted leg — the same client the SLA scan
+     * rides). Audibly fatal: a failed sync would leave event-start legs racy,
+     * and a suite that cannot trust its own deployment is worse than no run.
+     */
+    private void syncProcessDeployments() {
+        String response = call(workflow, HttpMethod.POST,
+                "/api/v1/workflow/internal/processes/sync", serviceToken(), null);
+        JsonNode result = MAPPER.readTree(response == null || response.isBlank()
+                ? "{}" : response);
+        if (!result.path("synced").asBoolean(false)) {
+            throw new PlatformException(PlatformErrorCode.INTERNAL,
+                    "the post-publish deployment sync did not confirm: " + response);
+        }
+    }
 
     /** Creates + publishes the candidate app in the scratch tenant (as its admin). */
     private void publishCandidate(String adminUsername, String adminPassword,

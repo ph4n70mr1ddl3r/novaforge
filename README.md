@@ -183,10 +183,12 @@ to end through the public APIs: **O2C** (invoice → approval → auto-journal �
 payment → aging), **P2P** (the BuildRight wave-1 corpus: PO → receipt → bill →
 settlement), **R2R** (posting, the soft-close close-journal exemption, the BPMN
 period-close checklist with its parallel candidate-role tasks, lock → reopen,
-trial balance / P&L), plus the eight-suite Phase-7 corpus re-run live — the five
+trial balance / P&L), plus the nine-suite Phase-7 corpus re-run live — the five
 acceptance suites (controls, inventoryCosting, creditAndCurrency, bankFeed,
-reconciliation) beside the three workflow-edge suites (glLedgerEdges,
-arDocumentEdges, inventoryCostingEdges). The stack boots once per test JVM;
+reconciliation) beside the four workflow-edge suites (glLedgerEdges,
+arDocumentEdges, inventoryCostingEdges, closeChecklist — the BPMN checklist
+driven through the suite harness, the G-11/G-17 harvests). The stack boots once
+per test JVM;
 CI's build job runs it inside `./mvnw verify` (the reactor builds the module last
 — it needs the services' packaged jars). `-De2e.skip=true` skips it for a fast
 inner loop; details and failure diagnostics: `e2e-tests/README.md`.

@@ -56,10 +56,10 @@ class BuildrightWorkflowRegisterTests {
 
     /** The suites the e2e module actually executes green against the live stack —
      * the only suites a workflow pin may name. ErpSuiteCorpusE2ETest runs the
-     * eight-suite Phase-7 corpus (the five acceptance suites beside the three
-     * workflow-edge suites); ErpOrderToCashE2ETest and ErpRecordToReportE2ETest run
-     * their own; BuildRightProcureToPayE2ETest runs the three P2P suites. Extending
-     * the corpus means extending this list in the same commit. */
+     * nine-suite Phase-7 corpus (the five acceptance suites beside the four
+     * workflow-edge suites — GL, AR, costing, and the close-checklist); the O2C and
+     * R2R cycle tests run their own; BuildRightProcureToPayE2ETest runs the three
+     * P2P suites. Extending the corpus means extending this list in the same commit. */
     private static final Set<String> LIVE_E2E_CORPUS = Set.of(
         "apps/erp/suites/orderToCash.json",
         "apps/erp/suites/recordToReport.json",
@@ -71,6 +71,7 @@ class BuildrightWorkflowRegisterTests {
         "apps/erp/suites/glLedgerEdges.json",
         "apps/erp/suites/arDocumentEdges.json",
         "apps/erp/suites/inventoryCostingEdges.json",
+        "apps/erp/suites/closeChecklist.json",
         "apps/buildright/suites/p2pHappyPath.json",
         "apps/buildright/suites/p2pApprovalEdges.json",
         "apps/buildright/suites/p2pReceivingBillingEdges.json");

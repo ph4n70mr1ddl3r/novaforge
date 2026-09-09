@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-09-09T10:50:35+00:00",
-  "erpplansRev": "f74f0a2d",
-  "novaforgeRev": "909609d",
+  "generatedAt": "2026-09-09T11:32:40+00:00",
+  "erpplansRev": "dd49ecf0",
+  "novaforgeRev": "41e73b3",
   "sources": {
     "universe": "01-model-company/workflows/VS-*/PA-*.md (## W headers)",
     "tiers": "01-model-company/workflows/workflow-criticality-classification.md",
@@ -11,8 +11,8 @@
   "totals": {
     "all": {
       "total": 5449,
-      "pinned": 9,
-      "partial": 226,
+      "pinned": 10,
+      "partial": 225,
       "uncovered": 5214
     },
     "canonical": 5426,
@@ -403,8 +403,8 @@
     "VS-17-record-to-report": {
       "total": 70,
       "uncovered": 40,
-      "partial": 28,
-      "pinned": 2
+      "partial": 27,
+      "pinned": 3
     },
     "VS-170-inventory-pledge-asset-based-lending-and-trust-receipt-financing": {
       "total": 24,
@@ -96041,11 +96041,14 @@
           "MDM-009"
         ]
       },
-      "status": "partial",
-      "suites": [],
+      "status": "pinned",
+      "suites": [
+        "apps/erp/suites/closeChecklist.json",
+        "apps/erp/suites/controls.json"
+      ],
       "app": "apps/erp",
       "wave": 2,
-      "note": "The period control legs are pinned (controls suite: soft close, absolute lock, reopen) but the workflow's close-checklist core is gap-logged (ERP G-10/G-11 — the parallel close tasks and controller confirmation are wave-2 platform work), and year-end close is not implemented"
+      "note": "The close-checklist core rides the closeChecklist suite (the G-11/G-17 harvests): the CLOSING event-start forks the three reconciliation tasks, the parallel join holds the controller's confirm back until all three resolve — pinned refusing early — and the confirmed close lands CLOSING→CLOSED; the period control edges (soft close, absolute lock, reopen) ride the controls suite; year-end close is not implemented"
     },
     {
       "id": "W90",

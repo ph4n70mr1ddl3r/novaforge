@@ -1990,7 +1990,8 @@
       "workaround": "The checklist's all-tasks-then-confirm shape is structural (the BPMN parallel join gates confirmClose) and pinned service-level by BpmnProcessTests; the authored suite covers the CLOSING write gate instead",
       "proposed": "an awaitTasks/poll step op (bounded retries over the inbox query)",
       "priority": "medium",
-      "disposition": "backlog"
+      "disposition": "closed",
+      "resolvedIn": "PHASE-4 §12 (2026-09-09): the awaitTasks poll op — bounded retries over the inbox query, the rows and {count, ids} landing exactly where queryRecord puts them, a timed-out poll answering AWAIT_TIMEOUT; adopted by the corpus 2026-09-09 — the closeChecklist suite drives the real checklist: the fork's three role tasks, the join holding confirmClose back until all three resolve (pinned refusing early), the controller's confirmation, the CLOSING→CLOSED landing"
     },
     {
       "id": "G-12",
@@ -2037,6 +2038,16 @@
       "proposed": "the Materializer lowers unique index declarations to CREATE UNIQUE INDEX (NULLs-distinct, per-app discriminator included) and the FieldCoercer grows a composite-uniqueness pre-check so the rejection keeps the friendly field-scoped shape",
       "priority": "medium",
       "disposition": "backlog"
+    },
+    {
+      "id": "G-17",
+      "area": "P4 Workflow / ADR-010 harness",
+      "blocker": "Freshly published event-start workflows miss their first spine events: the process deployer syncs on a schedule (30 s default), so any publish-then-write — a suite run, the real promotion flow, an integrator's onboarding — can fire the triggering record event while the workflow is still undeployed; ProcessStarts evaluates deployed subscriptions only and the filter reads the record's state at consume time, so the skipped start never retries (a re-entry cannot recover it: the filter sees the re-opened state). Found live authoring the close-checklist suite leg (2026-09-09): the CLOSING update raced the 5 s e2e sync every run",
+      "workaround": "The harness drives one synchronous deployment-sync pass right after publishing the candidate (the internal surface, service-client gated, content-hash idempotent), so every published workflow is DEPLOYED before the first case step — the race is closed for the suite corpus and the promotion flow alike",
+      "proposed": "publish-triggered deployment sync (the internal processes/sync surface the harness calls; a metadata.published consumer is the same harvest's push form)",
+      "priority": "high",
+      "disposition": "closed",
+      "resolvedIn": "the internal processes/sync surface + the harness's post-publish call (2026-09-09); the closeChecklist suite is the first leg that cannot run without it"
     }
   ]
 }

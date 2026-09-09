@@ -68,9 +68,20 @@ public record TestSuiteDefinition(
          * {@code postWebhook} (§10: the harness signs with the scratch tenant's
          * hook secret, so suites exercise the real HMAC path — expect {@code ok}
          * or {@code error(SIGNATURE_INVALID)} for deliberately mangled signatures).
+         *
+         * <p>{@code awaitTasks} (PHASE-7's G-11 harvest, 2026-09-09) is the bounded
+         * poll over the inbox query: event-started processes ride the spine
+         * asynchronously, so a {@code queryRecord Task} right after the triggering
+         * write races — {@code awaitTasks} retries the same inbox read until the
+         * actor's task count reaches {@code count} (default 1) or {@code timeoutMs}
+         * (default 20 s, hard-capped) elapses, then lands the rows and the
+         * {@code {count, ids}} result exactly where {@code queryRecord} does
+         * (§12's Task-remembering rule); a timed-out poll answers a problem body
+         * ({@code AWAIT_TIMEOUT}) so {@code expect: ok} fails loudly.
          */
         public static final java.util.Set<String> OPS =
                 java.util.Set.of("createRecord", "updateRecord", "deleteRecord",
-                        "queryRecord", "resolveTask", "runReport", "postWebhook", "scanSla");
+                        "queryRecord", "resolveTask", "awaitTasks", "runReport",
+                        "postWebhook", "scanSla");
     }
 }
