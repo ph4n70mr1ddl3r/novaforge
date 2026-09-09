@@ -1,6 +1,6 @@
 {
   "apiName": "p2pReceivingBillingEdges",
-  "label": "Receiving + billing edges — validation gates, terminal freeze, draft-vs-posted settlement, the BR-G-2 pins",
+  "label": "Receiving + billing edges — validation gates, terminal freeze, draft-vs-posted settlement, the BR-G-2 pins, the PO close edge",
   "cases": [
     {
       "name": "receipt-validation-and-terminal-freeze-edges",
@@ -570,6 +570,120 @@
         "${BillPayment[0].status} == 'DRAFT'",
         "${VendorBill[0].amountPaid} == 300.0000",
         "${VendorBill[0].amountOutstanding} == -100.0000"
+      ]
+    },
+    {
+      "name": "po-close-edge-the-machine-terminal-contract",
+      "fixtures": [
+        {
+          "entity": "Item",
+          "asRole": "receivingClerk",
+          "template": {
+            "sku": "SKU-BD-4001",
+            "name": "Utility Knife",
+            "uom": "PK"
+          }
+        },
+        {
+          "entity": "Vendor",
+          "asRole": "buyer",
+          "template": {
+            "name": "Fastener Wholesale"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "op": "createRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "template": {
+            "vendor": "${Vendor[0].id}",
+            "orderDate": "2026-09-07",
+            "status": "DRAFT",
+            "lines": [
+              {
+                "item": "${Item[0].id}",
+                "qty": 20,
+                "unitPrice": "5.0000"
+              }
+            ]
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "recordId": "${PurchaseOrder[0].id}",
+          "template": {
+            "version": "${PurchaseOrder[0].version}",
+            "status": "CLOSED"
+          },
+          "expect": "error(STATE_TRANSITION)"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "recordId": "${PurchaseOrder[0].id}",
+          "template": {
+            "version": "${PurchaseOrder[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "template": {
+            "filter": {
+              "field": "number",
+              "op": "eq",
+              "value": "${PurchaseOrder[0].number}"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "recordId": "${PurchaseOrder[0].id}",
+          "template": {
+            "version": "${PurchaseOrder[0].version}",
+            "status": "CLOSED"
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "queryRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "template": {
+            "filter": {
+              "field": "number",
+              "op": "eq",
+              "value": "${PurchaseOrder[0].number}"
+            }
+          },
+          "expect": "ok"
+        },
+        {
+          "op": "updateRecord",
+          "entity": "PurchaseOrder",
+          "asRole": "buyer",
+          "recordId": "${PurchaseOrder[0].id}",
+          "template": {
+            "version": "${PurchaseOrder[0].version}",
+            "status": "SUBMITTED"
+          },
+          "expect": "error(STATE_TRANSITION)"
+        }
+      ],
+      "assertExpressions": [
+        "${PurchaseOrder[0].status} == 'CLOSED'"
       ]
     }
   ]

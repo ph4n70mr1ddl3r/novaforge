@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-09-09T10:23:08+00:00",
-  "erpplansRev": "5b877964",
-  "novaforgeRev": "f29d6f8",
+  "generatedAt": "2026-09-09T10:50:35+00:00",
+  "erpplansRev": "f74f0a2d",
+  "novaforgeRev": "909609d",
   "sources": {
     "universe": "01-model-company/workflows/VS-*/PA-*.md (## W headers)",
     "tiers": "01-model-company/workflows/workflow-criticality-classification.md",
@@ -11,8 +11,8 @@
   "totals": {
     "all": {
       "total": 5449,
-      "pinned": 7,
-      "partial": 228,
+      "pinned": 9,
+      "partial": 226,
       "uncovered": 5214
     },
     "canonical": 5426,
@@ -356,8 +356,9 @@
     },
     "VS-16-order-to-cash": {
       "total": 31,
-      "partial": 16,
-      "uncovered": 15
+      "partial": 15,
+      "uncovered": 15,
+      "pinned": 1
     },
     "VS-160-global-mobility-immigration-and-foreign-worker-compliance": {
       "total": 24,
@@ -402,8 +403,8 @@
     "VS-17-record-to-report": {
       "total": 70,
       "uncovered": 40,
-      "partial": 29,
-      "pinned": 1
+      "partial": 28,
+      "pinned": 2
     },
     "VS-170-inventory-pledge-asset-based-lending-and-trust-receipt-financing": {
       "total": 24,
@@ -20153,11 +20154,12 @@
       },
       "status": "pinned",
       "suites": [
-        "apps/buildright/suites/p2pHappyPath.json"
+        "apps/buildright/suites/p2pHappyPath.json",
+        "apps/buildright/suites/p2pReceivingBillingEdges.json"
       ],
       "app": "apps/buildright",
       "wave": 1,
-      "note": "The PO cycle's DRAFT→SUBMITTED→APPROVED spine with line integrity rides the full-cycle case; the PO close step itself is unsuite-pinned (wave 2, per PUR-001's evidence)"
+      "note": "The PO cycle's DRAFT→SUBMITTED→APPROVED spine with line integrity rides the full-cycle case; the close edge rides the edges suite (an APPROVED order closes; unlisted jumps and post-CLOSED transitions are refused — the machine's own contract; the order itself carries no freeze — only the receipt freezes)"
     },
     {
       "id": "W20",
@@ -90133,11 +90135,15 @@
           "HR-050"
         ]
       },
-      "status": "partial",
-      "suites": [],
+      "status": "pinned",
+      "suites": [
+        "apps/erp/suites/glLedgerEdges.json",
+        "apps/erp/suites/orderToCash.json",
+        "apps/erp/suites/reconciliation.json"
+      ],
       "app": "apps/erp + apps/buildright",
       "wave": 2,
-      "note": "exercises FIN-055 (partial via apps/erp + apps/buildright); no dedicated suite pin"
+      "note": "The journal-entry review & approval spine — submit → accountingManager approval (SoD fail-closed) → POSTED, with the zero-total-no-approval, reject→resubmit→post, and role-wall edges — rides the O2C cycle and the GL edges suite; a period-end batch review workbench is not authored (approvals are per-entry)"
     },
     {
       "id": "W639",
@@ -95797,11 +95803,15 @@
         ],
         "supporting": []
       },
-      "status": "partial",
-      "suites": [],
+      "status": "pinned",
+      "suites": [
+        "apps/erp/suites/creditAndCurrency.json",
+        "apps/erp/suites/orderToCash.json",
+        "apps/erp/suites/reconciliation.json"
+      ],
       "app": "apps/erp",
       "wave": 3,
-      "note": "exercises CCR-004 (partial via apps/erp); no dedicated suite pin"
+      "note": "AR aging buckets computed over POSTED invoices and reconciled; dunning letters mirror the aging bucket (the prioritized collection action); payment-in-full empties the aging — scoring/alert automation is wave 3 (the CCR claim's own scope)"
     },
     {
       "id": "W89",

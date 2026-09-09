@@ -95,7 +95,8 @@ apps/buildright/
     ├── p2pHappyPath.json           ← full PO → receipt → bill → journal → payment cycle
     ├── p2pApprovalEdges.json       ← threshold branch, SoD self-approval block, reject/resubmit
     └── p2pReceivingBillingEdges.json ← validation gates, terminal freeze, draft-vs-posted
-                                       settlement, BR-G-2 pins (receipt-on-draft-PO, overpay)
+                                       settlement, BR-G-2 pins (receipt-on-draft-PO, overpay),
+                                       the PO close edge (CLOSED terminal, unlisted jumps refused)
 ```
 
 ## Running the gates

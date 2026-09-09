@@ -4,11 +4,12 @@
     "W2": {
       "status": "pinned",
       "suites": [
-        "apps/buildright/suites/p2pHappyPath.json"
+        "apps/buildright/suites/p2pHappyPath.json",
+        "apps/buildright/suites/p2pReceivingBillingEdges.json"
       ],
       "wave": 1,
       "app": "apps/buildright",
-      "note": "The PO cycle's DRAFT→SUBMITTED→APPROVED spine with line integrity rides the full-cycle case; the PO close step itself is unsuite-pinned (wave 2, per PUR-001's evidence)"
+      "note": "The PO cycle's DRAFT→SUBMITTED→APPROVED spine with line integrity rides the full-cycle case; the close edge rides the edges suite (an APPROVED order closes; unlisted jumps and post-CLOSED transitions are refused — the machine's own contract; the order itself carries no freeze — only the receipt freezes)"
     },
     "W2A": {
       "status": "pinned",
@@ -77,6 +78,28 @@
       "wave": 2,
       "app": "apps/erp",
       "note": "Fiscal calendar & posting period master: the AccountingPeriod machine admits only its listed edges, CLOSING blocks dated postings unless the entry carries closeJournal, CLOSED activates the absolute lock, the reopen re-admits writes"
+    },
+    "W638": {
+      "status": "pinned",
+      "suites": [
+        "apps/erp/suites/glLedgerEdges.json",
+        "apps/erp/suites/orderToCash.json",
+        "apps/erp/suites/reconciliation.json"
+      ],
+      "wave": 2,
+      "app": "apps/erp + apps/buildright",
+      "note": "The journal-entry review & approval spine — submit → accountingManager approval (SoD fail-closed) → POSTED, with the zero-total-no-approval, reject→resubmit→post, and role-wall edges — rides the O2C cycle and the GL edges suite; a period-end batch review workbench is not authored (approvals are per-entry)"
+    },
+    "W889": {
+      "status": "pinned",
+      "suites": [
+        "apps/erp/suites/creditAndCurrency.json",
+        "apps/erp/suites/orderToCash.json",
+        "apps/erp/suites/reconciliation.json"
+      ],
+      "wave": 3,
+      "app": "apps/erp",
+      "note": "AR aging buckets computed over POSTED invoices and reconciled; dunning letters mirror the aging bucket (the prioritized collection action); payment-in-full empties the aging — scoring/alert automation is wave 3 (the CCR claim's own scope)"
     }
   }
 }
