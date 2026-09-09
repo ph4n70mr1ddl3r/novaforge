@@ -216,6 +216,61 @@ class DefinitionLifecycleTests extends PostgresTestBase {
                                                             "value": "x" } }, "expect": "ok" } ] } ] }
                                 """))
                 .andExpect(status().isBadRequest());
+        // awaitTasks polls the workflow inbox — only a Task step carries it
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/test-suites/bad-await-entity")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "bad-await-entity", "cases": [ { "name": "c",
+                                  "steps": [ { "op": "awaitTasks", "entity": "Thing",
+                                  "template": { "count": 1 }, "expect": "ok" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest());
+        // its poll slots are positive integers — zero rejects on save…
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/test-suites/zero-await")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "zero-await", "cases": [ { "name": "c",
+                                  "steps": [ { "op": "awaitTasks", "entity": "Task",
+                                  "template": { "count": 0 }, "expect": "ok" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest());
+        // …and so does a non-integer the old shape check admitted and only the
+        // run's parse refused (2.0, a boolean — the save/run split this gate closes)
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/test-suites/fraction-await")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "fraction-await", "cases": [ { "name": "c",
+                                  "steps": [ { "op": "awaitTasks", "entity": "Task",
+                                  "template": { "timeoutMs": 2.5 }, "expect": "ok" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/test-suites/boolean-await")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "boolean-await", "cases": [ { "name": "c",
+                                  "steps": [ { "op": "awaitTasks", "entity": "Task",
+                                  "template": { "count": true }, "expect": "ok" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest());
+        // the run's 60000 ms cap is a save-time check too — over the cap rejects at the door
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/test-suites/overcap-await")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "overcap-await", "cases": [ { "name": "c",
+                                  "steps": [ { "op": "awaitTasks", "entity": "Task",
+                                  "template": { "timeoutMs": 120000 }, "expect": "ok" } ] } ] }
+                                """))
+                .andExpect(status().isBadRequest());
+        // …while references and absent slots stay legal (they resolve or default at run time)
+        mockMvc.perform(put("/api/v1/metadata/apps/" + appId + "/test-suites/ref-await")
+                        .with(builderJwt()).contentType("application/json")
+                        .content("""
+                                { "apiName": "ref-await", "cases": [ { "name": "c",
+                                  "steps": [ { "op": "awaitTasks", "entity": "Task",
+                                  "template": { "count": "${Query[0].count}", "status": "OPEN" },
+                                  "expect": "ok" } ] } ] }
+                                """))
+                .andExpect(status().isOk());
     }
 
     @Test

@@ -448,15 +448,27 @@ public class DefinitionService {
                     }
                     for (String slot : List.of("count", "timeoutMs")) {
                         Object value = step.template() == null ? null : step.template().get(slot);
-                        if (value instanceof Number number && number.intValue() <= 0) {
-                            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
-                                    where + " template." + slot + " must be a positive integer: "
-                                            + value);
+                        if (value == null || (value instanceof String text && isReference(text))) {
+                            continue;   // absent slots take the run-time default; references resolve first
                         }
-                        if (value instanceof String text && !isReference(text)
-                                && !text.matches("\\d+")) {
+                        // the run-time checks (positiveInt: Integer.parseInt of the
+                        // value's string form, then > 0; timeoutMs capped at 60000),
+                        // mirrored exactly — a JSON 2.0 or true passed the old
+                        // Number/String shape check and only died mid-run, the exact
+                        // class this gate exists to move to save time
+                        try {
+                            int parsed = Integer.parseInt(String.valueOf(value));
+                            if (parsed <= 0) {
+                                throw new NumberFormatException(String.valueOf(value));
+                            }
+                            if ("timeoutMs".equals(slot) && parsed > 60_000) {
+                                throw new NumberFormatException(parsed
+                                        + " exceeds the 60000 cap");
+                            }
+                        } catch (NumberFormatException malformed) {
                             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
                                     where + " template." + slot + " must be a positive integer"
+                                            + ("timeoutMs".equals(slot) ? " (capped at 60000)" : "")
                                             + " (or a ${…} reference): " + value);
                         }
                     }

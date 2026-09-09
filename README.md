@@ -276,7 +276,7 @@ the §4 page-bind rules server-side — the TS twin's mismatch/presence/resoluti
 checks now gate `PUT /pages` too — and the BPMN timer flake's true root
 (Flowable's hour-long job locks met a minute-long reset-expired cadence;
 pinned to 20 s / 5 s, two consecutive full-reactor runs green)). The latest
-counts: Java (730) +
+counts: Java (731) +
 frontend (302: shared 184, builder 74, runtime 44) tests green under `./mvnw verify` +
 `pnpm -r test`. The recorded-open
 set is empty; the remaining surfaces are the deliberate v1 deferrals (PLAN.md §1)
