@@ -13,7 +13,7 @@ the hand-maintained pins (../workflow-map.json), and writes:
   workflow-coverage/matrix.md      — human-readable matrix
 
 States (the workflow-level twin of §12.3's requirement states — every one of
-the 5,426 workflows is in exactly one):
+the 5,449 register rows is in exactly one):
 
   pinned     executed by the e2e corpus — the entry names the suite file(s)
   partial    app metadata exercises the workflow via a claimed requirement,
@@ -306,7 +306,7 @@ def main() -> int:
         f"| Partial (claimed requirement, no dedicated pin) | {by_status.get('partial', 0)} |",
         f"| Uncovered (visible; wave-attributed where the matrix links them) | {by_status.get('uncovered', 0)} |",
         "",
-        f"Tier split (universe): " + ", ".join(
+        f"Tier split (register): " + ", ".join(
             f"Tier {t}: {by_tier.get(t, 0)}" for t in (1, 2, 3)) + ".", "",
         "## Pinned — the corpus's workflow pins",
         "",

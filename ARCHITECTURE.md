@@ -265,10 +265,20 @@ novaforge/
 │   ├── integration-service/
 │   ├── audit-service/
 │   └── scheduler-service/
+├── apps/                         # the dogfood corpus — versioned app artifacts,
+│   │                             #   each gated by its artifact test in CI
+│   ├── erp/                      #   the Phase 7 acceptance dogfood + its gap log
+│   ├── buildright/               #   the Phase 9 portfolio dogfood (PHASE-7 §12),
+│   │                             #   coverage-tracked against erpplans
+│   ├── purchasing/               #   the Phase 4 exit journey as a versioned app
+│   └── perf/                     #   the 1M-row measurement fixture (§9)
 ├── frontend/
 │   ├── builder-ui/               # React design-time
 │   ├── runtime-ui/               # metadata renderer + shell
 │   └── shared/                   # page-model types, expression runtime, registry
+├── e2e-tests/                    # whole-platform ERP cycles (O2C/P2P/R2R) driven
+│                                 #   against the services' packaged jars — the
+│                                 #   reactor's last module
 ├── deploy/
 │   ├── compose/                  # podman compose: lean local stack (PG, Redis,
 │   │                             #   Kafka, Keycloak, Prometheus/Grafana —

@@ -60,7 +60,7 @@
 | 3 | **Breadth domains** (MDM R13, credit/collections R31, vendor portal R28): each its own versioned app with its own gap log | planned |
 | 4 | **The long tail** (governance, loss prevention, ESG, services — PHASE-7 §12.4): the remaining uncovered prefixes ride `coverage-map.json`'s wave-4 prefix defaults (HR, CRM, GOV, MER, LP, BCP, RCL, MKT, SRV, INS, HSE, BIA, ESG, WHL, WSL, MNT, HAZ, ENG, REG, PRJ, PROP, AUD today) | planned |
 | platform | **Non-functionals** (NFR): platform contracts (PLAN.md §1, IMPLEMENTATION.md), not app metadata — tracked by the platform phases and the perf harness (`apps/perf`), never per-requirement here (the `coverage-map.json` NFR prefix's own wording) | standing |
-| edge | POS (R5), WMS (R4), ecommerce (R6): **integration metadata only** — inbound webhooks, scheduled connector pulls, import mappings against the canonical integration map (`data-volumes-and-integrations.md`) | planned |
+| edge | POS (R5), WMS (R4), ecommerce (R6), transport/TMS (R20's `LOG` prefix): **integration metadata only** — inbound webhooks, scheduled connector pulls, import mappings against the canonical integration map (`data-volumes-and-integrations.md`) | planned |
 
 ## Non-negotiables carried over (PLAN.md §1)
 
