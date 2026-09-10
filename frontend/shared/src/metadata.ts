@@ -149,13 +149,18 @@ export interface TestSuiteDefinition {
     cases: SuiteCase[];
 }
 
-/** The suite step vocabulary v1 + the growth (§12/§9/§10). */
+/** The suite step vocabulary v1 + the growth (§12/§9/§10) — the TS twin of
+ * TestSuiteDefinition.Step.OPS, lockstep-pinned by the metadata-model's
+ * SuiteOpsLockstepTest (a vocabulary only one twin knows strands the other:
+ * awaitTasks shipped server-side first and the builder's suite editor could not
+ * author it). */
 export const SUITE_OPS = [
     "createRecord",
     "updateRecord",
     "deleteRecord",
     "queryRecord",
     "resolveTask",
+    "awaitTasks",
     "runReport",
     "postWebhook",
     "scanSla",

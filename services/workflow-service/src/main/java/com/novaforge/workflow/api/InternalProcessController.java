@@ -15,10 +15,13 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * The internal process-start surface (PHASE-4 §9/§7): the Scheduler's
  * {@code processStart} target calls here with the platform service client's token
- * — service-client gated like the approval surface, never user traffic — and the
- * deployment catch-up leg (the G-17 harvest): a synchronous deployment sync the
- * harness drives right after publishing a candidate, so a suite's triggering
- * write can never beat its own event-started workflows into the registry.
+ * — service-client gated like the approval surface (the gateway's
+ * {@code Path=/api/v1/workflow/**} route reaches this internal prefix too; the
+ * gate refusing every user token with 403 is what keeps user traffic off it, the
+ * leg {@code BpmnProcessTests} pins) — and the deployment catch-up leg (the G-17
+ * harvest): a synchronous deployment sync the harness drives right after
+ * publishing a candidate, so a suite's triggering write can never beat its own
+ * event-started workflows into the registry.
  */
 @RestController
 @RequestMapping("/api/v1/workflow/internal")
@@ -39,6 +42,14 @@ public class InternalProcessController {
     @PostMapping("/processes/start")
     public Map<String, Object> start(@RequestBody StartRequest request) {
         ServiceClientGate.require("process-start");
+        // the same edge validation the sibling sla/scan surface pins (and the
+        // fiftieth pass's hole): an absent tenantId used to NPE inside
+        // UUID.fromString — a 500 with a logged stack trace where the surface's
+        // own contract answers 400 VALIDATION_FAILED
+        if (request.tenantId() == null || request.tenantId().isBlank()) {
+            throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,
+                    "process start requires tenantId");
+        }
         if (request.process() == null || request.process().isBlank()
                 || request.app() == null || request.app().isBlank()) {
             throw new PlatformException(PlatformErrorCode.VALIDATION_FAILED,

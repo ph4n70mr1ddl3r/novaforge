@@ -47,7 +47,7 @@ import tools.jackson.databind.json.JsonMapper;
  * spine (filter evaluation, redelivery collapse), the §5-inbox bridge (approve
  * completes the engine task and ends the process; delegation rejects), in-engine
  * timers on the async executor, workflow removal cascading, and the internal
- * start surface's service-client gate.
+ * start surface's service-client gate plus its edge validation (400s, not 500s).
  */
 @SpringBootTest(properties = {"novaforge.events.relay-interval-ms=3600000",
         "novaforge.sla.scan-interval-ms=3600000", "novaforge.process.sync-interval-ms=3600000"})
@@ -715,6 +715,22 @@ class BpmnProcessTests extends PostgresTestBase {
                         .with(jwt().jwt(jwt -> jwt.claim("tenant_id", TENANT.toString()))))
                 .andExpect(status().isForbidden());
 
+        // the service-client path validates at the edge (the fiftieth pass's hole:
+        // an absent tenantId used to NPE inside UUID.fromString — a 500 with a
+        // logged stack trace where the sibling sla/scan surface's own convention,
+        // and this controller's app/process check, answer 400 VALIDATION_FAILED;
+        // a malformed recordId rides the ProblemAdvice IllegalArgumentException
+        // mapping to the same 400)
+        mockMvc.perform(post("/api/v1/workflow/internal/processes/start")
+                        .with(serviceClient()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"app\":\"" + APP + "\",\"process\":\"po_review\"}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/v1/workflow/internal/processes/start")
+                        .with(serviceClient()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tenantId\":\"" + TENANT + "\",\"app\":\"" + APP
+                                + "\",\"process\":\"po_review\",\"recordId\":\"not-a-uuid\"}"))
+                .andExpect(status().isBadRequest());
+
         // the service-client path starts the process (call the service directly —
         // the token leg is the same trusted gate the approval surface uses)
         String instanceId = starts.start(TENANT, APP, "po_review", null, Map.of());
@@ -727,6 +743,16 @@ class BpmnProcessTests extends PostgresTestBase {
                         () -> starts.start(TENANT, APP, "nope", null, Map.of()))
                 .isInstanceOf(com.novaforge.common.error.PlatformException.class)
                 .hasMessageContaining("not deployed");
+    }
+
+    /** The platform service client's token as a MockMvc post-processor — the same
+     *  identity TaskApiTests rides through the sla/scan surface's gates. */
+    private static org.springframework.security.test.web.servlet.request
+            .SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor serviceClient() {
+        return jwt().jwt(token -> token.claim("azp",
+                        com.novaforge.security.ServiceClientGate.CLIENT_ID))
+                .authorities(new org.springframework.security.core.authority
+                        .SimpleGrantedAuthority("SCOPE_novaforge.api"));
     }
 
     @Test

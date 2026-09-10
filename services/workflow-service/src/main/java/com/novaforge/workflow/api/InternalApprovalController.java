@@ -12,8 +12,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * The internal suspension surface (PHASE-4 §4): the Data Runtime's
- * {@code requestApproval} calls here with the platform service client's token — no
- * gateway route, no user traffic. SOD_VIOLATION renders back onto the write path as
+ * {@code requestApproval} calls here with the platform service client's token —
+ * the service-client gate is the surface's security, not the routing topology:
+ * the gateway's {@code Path=/api/v1/workflow/**} route does reach this prefix
+ * (PHASE-4 §4's own landscape table), so "no user traffic" holds only because
+ * the gate refuses every user token with 403 — the leg TaskApiTests and
+ * BpmnProcessTests pin. SOD_VIOLATION renders back onto the write path as
  * problem+json (the flow fails audibly, §4's fail-closed pin).
  */
 @RestController

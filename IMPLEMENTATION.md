@@ -3111,7 +3111,11 @@ through the public APIs only:
   *Amended 2026-09-06, commit `53b61cb`: the corpus is eight suites — the three
   workflow-edge suites (glLedgerEdges, arDocumentEdges, inventoryCostingEdges;
   17 cases, 118 steps) joined, and `ErpSuiteCorpusE2ETest` runs all eight per
-  boot.*
+  boot.* *Amended 2026-09-09, commit `1fba240`: the ninth suite (`closeChecklist`
+  — the G-11/G-17 harvests: the BPMN close checklist pinned through the suite
+  harness) joined, and `ErpSuiteCorpusE2ETest` runs all nine per boot — the
+  corpus list in the register gate (`BuildrightWorkflowRegisterTests`) rides
+  along, as the pin-realism contract requires.*
 
 The stack boots once per test JVM (singleton; the launcher session's close tears the
 spawned services down — the fork halts past shutdown hooks, the pass-43 lesson — and
