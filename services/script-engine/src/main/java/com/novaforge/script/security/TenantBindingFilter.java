@@ -31,6 +31,7 @@ public class TenantBindingFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
+        boolean contextWasSet = false;
         try {
             Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
             if (authentication instanceof JwtAuthenticationToken jwtAuth
@@ -44,11 +45,14 @@ public class TenantBindingFilter extends OncePerRequestFilter {
                 }
                 if (tenantId != null && !tenantId.isBlank() && actorId != null && !actorId.isBlank()) {
                     TenantContext.set(new TenantContext.Context(tenantId, actorId));
+                    contextWasSet = true;
                 }
             }
             filterChain.doFilter(request, response);
         } finally {
-            TenantContext.clear();
+            if (contextWasSet) {
+                TenantContext.clear();
+            }
         }
     }
 }
