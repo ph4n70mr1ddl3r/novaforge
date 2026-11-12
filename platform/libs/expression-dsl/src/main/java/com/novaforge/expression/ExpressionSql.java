@@ -93,8 +93,16 @@ public final class ExpressionSql {
 
     /** Lowering viability check — the save/publish compile gate calls this (PHASE-5 §3). */
     public static void checkLowerable(Expression expression, FieldResolver fields) {
-        new ExpressionSql(fields, LocalDate.of(2000, 1, 1), Instant.parse(
-                "2000-01-01T00:00:00Z")).lower(expression.root());
+        checkLowerable(expression, fields, LocalDate.now(), Instant.now());
+    }
+
+    /**
+     * Lowering viability check with injectable clock — the save/publish compile gate
+     * calls this with the run's governing clock (PHASE-3 §7).
+     */
+    public static void checkLowerable(Expression expression, FieldResolver fields,
+                                       LocalDate today, Instant now) {
+        new ExpressionSql(fields, today, now).lower(expression.root());
     }
 
     // --- lowering ---

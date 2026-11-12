@@ -196,9 +196,10 @@ class ExpressionSqlTest {
     @Test
     @DisplayName("checkLowerable accepts a valid bucket and rejects a divergent one")
     void checkLowerableGatesAuthoring() {
-        ExpressionSql.checkLowerable(Expression.parse("today() - dueDate > 60"), FIELDS);
+        ExpressionSql.checkLowerable(Expression.parse("today() - dueDate > 60"),
+                FIELDS, TODAY, NOW);
         assertThatThrownBy(() -> ExpressionSql.checkLowerable(
-                Expression.parse("round(amount, 0) > 1"), FIELDS))
+                Expression.parse("round(amount, 0) > 1"), FIELDS, TODAY, NOW))
                 .isInstanceOf(ExpressionException.class);
     }
 
