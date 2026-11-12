@@ -248,6 +248,17 @@ class FieldCoercerTests {
     }
 
     @Test
+    @DisplayName("DATE accepts datetime strings and extracts the date portion")
+    void dateAcceptsDateTimeStrings() {
+        var errors = new java.util.ArrayList<ProblemErrors.FieldError>();
+        var canonical = FieldCoercer.canonicalize(
+                entity(field("date", FieldType.DATE)),
+                Map.of("date", "2026-01-15T10:30:00Z"), checks(true), null, errors);
+        assertThat(errors).isEmpty();
+        assertThat(canonical).containsEntry("date", "2026-01-15");
+    }
+
+    @Test
     @DisplayName("DATE, TIME, UUID canonicalize; LOOKUP canonicalizes and existence-checks")
     void dateUuidLookup() {
         var errors = new java.util.ArrayList<ProblemErrors.FieldError>();

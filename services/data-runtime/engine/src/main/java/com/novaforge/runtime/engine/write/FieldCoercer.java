@@ -118,6 +118,21 @@ public final class FieldCoercer {
         }
     }
 
+    private static String normalizeDateString(String dateText, List<ProblemErrors.FieldError> errors, String name) {
+        if (dateText.length() <= 10 || dateText.charAt(10) != 'T') {
+            return dateText;
+        }
+        // Extract date portion from datetime string
+        String datePortion = dateText.substring(0, 10);
+        try {
+            LocalDate.parse(datePortion);
+            return datePortion;
+        } catch (DateTimeParseException e) {
+            errors.add(error(name, "invalid ISO date/datetime string: " + dateText, dateText));
+            return null;
+        }
+    }
+
     private static Object coerce(FieldDefinition field, Object value,
                                  List<ProblemErrors.FieldError> errors) {
         String name = field.apiName();
@@ -197,7 +212,14 @@ public final class FieldCoercer {
                     if (!(value instanceof String dateText)) {
                         yield fail(name, "expected an ISO date string", value, errors);
                     }
-                    yield LocalDate.parse(dateText).toString();   // strict ISO, canonical
+                    // Try pure date string first, then fall back to extracting
+                    // date portion from a datetime string (e.g. "2026-01-15T10:30:00Z" -> "2026-01-15")
+                    String normalized = normalizeDateString(dateText, errors, name);
+                    if (normalized == null) {
+                        yield null;
+                    } else {
+                        yield LocalDate.parse(normalized).toString();
+                    }
                 }
                 case DATETIME -> {
                     if (!(value instanceof String stampText)) {
