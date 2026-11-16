@@ -1156,6 +1156,7 @@ public final class DefinitionValidator {
         validateRollups(app, entity, scope, errors);
 
         Set<String> indexFieldsChecked = new HashSet<>();
+        Set<String> managedIndexNames = new HashSet<>();
         for (EntityDefinition.IndexDefinition index : entity.indexes()) {
             for (String fieldName : index.fields()) {
                 if (!indexFieldsChecked.add(entity.apiName() + "." + String.join(",", index.fields()) + fieldName)) {
@@ -1168,6 +1169,21 @@ public final class DefinitionValidator {
             }
             if (index.fields().isEmpty()) {
                 errors.add(field(scope + "indexes", "index requires at least one field", null));
+                continue;
+            }
+            // The Materializer keys its managed index on the snake-cased field list alone
+            // (ix_<table>_<snake-cased fields joined by _>) — two declarations over the
+            // same fields lower to the SAME index name, and CREATE INDEX IF NOT EXISTS
+            // silently swallows the second (a redundant, unmanageable index the author
+            // cannot see or retire, even when one is unique and the other not). The
+            // authoring door says so now, in place of the DDL's no-op:
+            String managedName = String.join("_", index.fields().stream()
+                    .map(com.novaforge.metadata.Snake::caseName).toList());
+            if (!managedIndexNames.add(entity.apiName() + "." + managedName)) {
+                errors.add(field(scope + "indexes",
+                        "indexes share their managed name — "
+                                + "duplicate declaration over the same fields: "
+                                + index.fields(), index.fields()));
             }
         }
 

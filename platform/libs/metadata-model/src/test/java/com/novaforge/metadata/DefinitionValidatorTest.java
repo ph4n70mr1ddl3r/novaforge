@@ -157,6 +157,51 @@ class DefinitionValidatorTest {
     }
 
     @Test
+    @DisplayName("rule: two index declarations covering the same fields collapse into one managed index")
+    void duplicateIndexDeclarationsCollapse() {
+        AppDefinition app = baseApp();
+        EntityDefinition entry = app.entities().getFirst();
+        // The Materializer keys its managed indexes by the snake-cased field list alone —
+        // a second declaration over the same fields would create the same index name and
+        // be silently swallowed by CREATE INDEX IF NOT EXISTS (a redundant index the
+        // author cannot see or retire). Save validation is the authoring door that must
+        // say so: the duplication rejects before it can ride a publish.
+        EntityDefinition broken = EntityDefinition.copyWith(entry, e -> new EntityDefinition(
+                e.id(), e.apiName(), e.label(), e.labelI18n(), e.displayField(), e.module(),
+                e.fields(), e.relationships(), e.validations(),
+                java.util.List.of(
+                        new EntityDefinition.IndexDefinition(java.util.List.of("reference"), false),
+                        new EntityDefinition.IndexDefinition(java.util.List.of("reference"), false),
+                        new EntityDefinition.IndexDefinition(java.util.List.of("reference"), true))));
+        assertThat(mentions(validate(withEntity(app, broken)),
+                "indexes share their managed name")).isTrue();
+
+        // Same fields, different uniqueness still collides on the managed name too
+        EntityDefinition uniqueDup = EntityDefinition.copyWith(entry, e -> new EntityDefinition(
+                e.id(), e.apiName(), e.label(), e.labelI18n(), e.displayField(), e.module(),
+                e.fields(), e.relationships(), e.validations(),
+                java.util.List.of(
+                        new EntityDefinition.IndexDefinition(java.util.List.of("reference"), false),
+                        new EntityDefinition.IndexDefinition(java.util.List.of("reference"), false))));
+        assertThat(mentions(validate(withEntity(app, uniqueDup)),
+                "indexes share their managed name")).isTrue();
+    }
+
+    @Test
+    @DisplayName("rule: a non-duplicate set of index declarations saves clean")
+    void indexDeclarationsValid() {
+        AppDefinition app = baseApp();
+        EntityDefinition entry = app.entities().getFirst();
+        EntityDefinition good = EntityDefinition.copyWith(entry, e -> new EntityDefinition(
+                e.id(), e.apiName(), e.label(), e.labelI18n(), e.displayField(), e.module(),
+                e.fields(), e.relationships(), e.validations(),
+                java.util.List.of(
+                        new EntityDefinition.IndexDefinition(java.util.List.of("entryDate"), false),
+                        new EntityDefinition.IndexDefinition(java.util.List.of("status", "entryDate"), false))));
+        assertThat(validate(withEntity(app, good)).isEmpty()).isTrue();
+    }
+
+    @Test
     @DisplayName("rule: default sequence references resolve within the app")
     void sequenceReferenceResolves() {
         AppDefinition app = baseApp();
